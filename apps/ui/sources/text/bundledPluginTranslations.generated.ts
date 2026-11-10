@@ -2387,6 +2387,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.notifications.subscribed": "Subscrit",
     "plugins.github.ui.notifications.title": "Notificacions",
     "plugins.github.ui.openCheckOnGithub": "Obre a GitHub",
+    "plugins.github.ui.openFileOnGithub": "Obre a GitHub",
     "plugins.github.ui.openOnGithub": "Obre {item} a GitHub",
     "plugins.github.ui.openResults": "Obre els resultats de {item}",
     "plugins.github.ui.openSession": "Obre {session}",
@@ -6851,6 +6852,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.notifications.subscribed": "Abonniert",
     "plugins.github.ui.notifications.title": "Benachrichtigungen",
     "plugins.github.ui.openCheckOnGithub": "Auf GitHub öffnen",
+    "plugins.github.ui.openFileOnGithub": "Auf GitHub öffnen",
     "plugins.github.ui.openOnGithub": "{item} auf GitHub öffnen",
     "plugins.github.ui.openResults": "Ergebnisse für {item} öffnen",
     "plugins.github.ui.openSession": "{session} öffnen",
@@ -11319,6 +11321,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.notifications.subscribed": "Subscribed",
     "plugins.github.ui.notifications.title": "Notifications",
     "plugins.github.ui.openCheckOnGithub": "Open on GitHub",
+    "plugins.github.ui.openFileOnGithub": "Open on GitHub",
     "plugins.github.ui.openOnGithub": "Open {item} on GitHub",
     "plugins.github.ui.openResults": "Open results for {item}",
     "plugins.github.ui.openSession": "Open {session}",
@@ -15783,6 +15786,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.notifications.subscribed": "Suscrito",
     "plugins.github.ui.notifications.title": "Notificaciones",
     "plugins.github.ui.openCheckOnGithub": "Abrir en GitHub",
+    "plugins.github.ui.openFileOnGithub": "Abrir en GitHub",
     "plugins.github.ui.openOnGithub": "Abrir {item} en GitHub",
     "plugins.github.ui.openResults": "Abrir los resultados de {item}",
     "plugins.github.ui.openSession": "Abrir {session}",
@@ -20247,6 +20251,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.notifications.subscribed": "Abonné",
     "plugins.github.ui.notifications.title": "Notifications",
     "plugins.github.ui.openCheckOnGithub": "Ouvrir sur GitHub",
+    "plugins.github.ui.openFileOnGithub": "Ouvrir sur GitHub",
     "plugins.github.ui.openOnGithub": "Ouvrir {item} sur GitHub",
     "plugins.github.ui.openResults": "Ouvrir les résultats de {item}",
     "plugins.github.ui.openSession": "Ouvrir {session}",
@@ -24711,6 +24716,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.notifications.subscribed": "Iscritto",
     "plugins.github.ui.notifications.title": "Notifiche",
     "plugins.github.ui.openCheckOnGithub": "Apri su GitHub",
+    "plugins.github.ui.openFileOnGithub": "Apri su GitHub",
     "plugins.github.ui.openOnGithub": "Apri {item} su GitHub",
     "plugins.github.ui.openResults": "Apri i risultati di {item}",
     "plugins.github.ui.openSession": "Apri {session}",
@@ -29175,6 +29181,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.notifications.subscribed": "購読中",
     "plugins.github.ui.notifications.title": "通知",
     "plugins.github.ui.openCheckOnGithub": "GitHub で開く",
+    "plugins.github.ui.openFileOnGithub": "GitHub で開く",
     "plugins.github.ui.openOnGithub": "GitHub で {item} を開く",
     "plugins.github.ui.openResults": "{item} の結果を開く",
     "plugins.github.ui.openSession": "{session} を開く",
@@ -33639,6 +33646,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.notifications.subscribed": "Subskrybowane",
     "plugins.github.ui.notifications.title": "Powiadomienia",
     "plugins.github.ui.openCheckOnGithub": "Otwórz na GitHub",
+    "plugins.github.ui.openFileOnGithub": "Otwórz na GitHub",
     "plugins.github.ui.openOnGithub": "Otwórz {item} w GitHub",
     "plugins.github.ui.openResults": "Otwórz wyniki dla {item}",
     "plugins.github.ui.openSession": "Otwórz {session}",
@@ -38103,6 +38111,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.notifications.subscribed": "Subscrito",
     "plugins.github.ui.notifications.title": "Notificações",
     "plugins.github.ui.openCheckOnGithub": "Abrir no GitHub",
+    "plugins.github.ui.openFileOnGithub": "Abrir no GitHub",
     "plugins.github.ui.openOnGithub": "Abrir {item} no GitHub",
     "plugins.github.ui.openResults": "Abrir os resultados de {item}",
     "plugins.github.ui.openSession": "Abrir {session}",
@@ -42567,6 +42576,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.notifications.subscribed": "Подписка",
     "plugins.github.ui.notifications.title": "Уведомления",
     "plugins.github.ui.openCheckOnGithub": "Открыть на GitHub",
+    "plugins.github.ui.openFileOnGithub": "Открыть на GitHub",
     "plugins.github.ui.openOnGithub": "Открыть {item} на GitHub",
     "plugins.github.ui.openResults": "Открыть результаты для {item}",
     "plugins.github.ui.openSession": "Открыть {session}",
@@ -47031,6 +47041,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.notifications.subscribed": "已订阅",
     "plugins.github.ui.notifications.title": "通知",
     "plugins.github.ui.openCheckOnGithub": "在 GitHub 上打开",
+    "plugins.github.ui.openFileOnGithub": "在 GitHub 上打开",
     "plugins.github.ui.openOnGithub": "在 GitHub 上打开 {item}",
     "plugins.github.ui.openResults": "打开 {item} 的结果",
     "plugins.github.ui.openSession": "打开 {session}",
@@ -51495,6 +51506,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.notifications.subscribed": "已訂閱",
     "plugins.github.ui.notifications.title": "通知",
     "plugins.github.ui.openCheckOnGithub": "在 GitHub 上開啟",
+    "plugins.github.ui.openFileOnGithub": "在 GitHub 上開啟",
     "plugins.github.ui.openOnGithub": "在 GitHub 上開啟 {item}",
     "plugins.github.ui.openResults": "開啟 {item} 的結果",
     "plugins.github.ui.openSession": "開啟 {session}",
@@ -55965,6 +55977,7 @@ export type BundledPluginTranslationKey =
     | 'plugins.github.ui.notifications.subscribed'
     | 'plugins.github.ui.notifications.title'
     | 'plugins.github.ui.openCheckOnGithub'
+    | 'plugins.github.ui.openFileOnGithub'
     | 'plugins.github.ui.openOnGithub'
     | 'plugins.github.ui.openResults'
     | 'plugins.github.ui.openSession'

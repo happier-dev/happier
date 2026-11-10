@@ -329,6 +329,21 @@ describe('canonical plugin manifest ingestion', () => {
     expect(resolvePluginManifestSetReferencesV2([parsed.manifest])).toEqual({ ok: true });
   });
 
+  it('admits a readonly setup preview alongside the exact Save result and rejects a weakened Save branch', () => {
+    const preview = { type: 'object', additionalProperties: false, properties: {
+      mode: { type: 'string', const: 'preview' }, sourceConfig: AUTOMATION_SOURCE_CONFIG_SCHEMA,
+    }, required: ['mode', 'sourceConfig'] };
+    const readOnly = { op: 'eq', path: 'mode', value: 'preview' };
+    const parse = (save: unknown, readonly: unknown = readOnly, previewResult: unknown = preview) => ingestPluginManifestV2(manifest({
+      contributes: { actions: [automationSetupAction({ readOnly: readonly, resultSchema: { oneOf: [save, previewResult] } })],
+        events: [automationEvent()] },
+    }));
+    expect(parse(automationSetupResultSchema())).toMatchObject({ ok: true });
+    expect(parse({ ...automationSetupResultSchema(), required: ['v'] })).toMatchObject({ ok: false });
+    expect(parse(automationSetupResultSchema(), false)).toMatchObject({ ok: false });
+    expect(parse(automationSetupResultSchema(), readOnly, { ...preview, required: ['sourceConfig'] })).toMatchObject({ ok: false });
+  });
+
   it('rejects an Automation-eligible Event without its setup Action binding', () => {
     expect(ingestPluginManifestV2(manifest({
       contributes: {

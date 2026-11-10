@@ -2382,6 +2382,7 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.github.ui.notifications.subscribed",
   "plugins.github.ui.notifications.title",
   "plugins.github.ui.openCheckOnGithub",
+  "plugins.github.ui.openFileOnGithub",
   "plugins.github.ui.openOnGithub",
   "plugins.github.ui.openResults",
   "plugins.github.ui.openSession",

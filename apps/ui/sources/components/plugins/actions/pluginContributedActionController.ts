@@ -472,6 +472,8 @@ export type PluginExactBoundActionInputRequest = Readonly<{
     connectedAccount?: import('@happier-dev/protocol/connect/qualified-connected-account-persistence').QualifiedConnectedAccountRef;
     /** Event authoring may carry schema-declared, non-presented setup operands. */
     allowSchemaDeclaredDraftFields?: true;
+    /** A contributed setup renderer consumes launch-only fields before producing complete Action input. */
+    allowRendererOnlyDraftFields?: true;
 }>;
 
 export type PluginExactBoundActionInputController = Readonly<{
@@ -1622,7 +1624,8 @@ export function createPluginContributedActionController(params: Readonly<{
         }
         const nonAccountDraft = request.connectedAccount && accountFields[0] ? deletePath(draft, accountFields[0].path) : draft;
         const draftMatchesFields = draftMatchesDeclaredNonSecretFields({ draft: nonAccountDraft, action: resolved.action, inputSchema,
-            allowDeclaredUnhintedFields: request.connectedAccount !== undefined || request.allowSchemaDeclaredDraftFields === true });
+            allowDeclaredUnhintedFields: request.connectedAccount !== undefined || request.allowSchemaDeclaredDraftFields === true,
+            allowUndeclaredFields: request.allowRendererOnlyDraftFields });
         // A draft that is already the Action's complete input, including its one account field (the source's bound
         // account or a native service that field offers), settles below exactly as the form would, without it.
         const completeAccountDraft = request.draft !== undefined && request.connectedAccount === undefined

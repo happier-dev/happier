@@ -316,18 +316,27 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                 ? { resolveConnectedAccountOptions: params.resolveConnectedAccountOptions }
                 : {}),
         });
+        const customSetupSurface = initial.event.setupSurface?.selectedRenderer.availability.state === 'available';
         const selection = await controller.selectExactBoundActionInput({
             action: initial.event.setupAction.identity,
             expectedOccurrenceId: initial.event.setupAction.occurrenceId,
-            ...(seed ? { draft: seed.setupInput, connectedAccount: seed.connectedAccount, allowSchemaDeclaredDraftFields: true } : {}),
+            ...(seed ? {
+                draft: seed.setupInput,
+                connectedAccount: seed.connectedAccount,
+                allowSchemaDeclaredDraftFields: true,
+                ...(customSetupSurface ? { allowRendererOnlyDraftFields: true } : {}),
+            } : {}),
         });
         const settled = selection.kind === 'form'
             ? await (async () => {
                 try {
-                    if (initial.event.setupSurface?.selectedRenderer.availability.state === 'available') {
-                        const initialInput = params.initialSource
-                            ? PluginUiJsonValueV1Schema.safeParse(params.initialSource.sourceConfig)
-                            : seed ? PluginUiJsonValueV1Schema.safeParse(selection.form.getInput()) : null;
+                    if (customSetupSurface) {
+                        const retainedInput = params.initialSource?.sourceConfig;
+                        const initialInput = seed ? PluginUiJsonValueV1Schema.safeParse({
+                            ...(isSetupSurfaceObjectInput(retainedInput) ? retainedInput : {}),
+                            ...seed.setupInput,
+                            ...selection.form.getInput(),
+                        }) : params.initialSource ? PluginUiJsonValueV1Schema.safeParse(retainedInput) : null;
                         if (initialInput && !initialInput.success) {
                             selection.form.cancel();
                             return { kind: 'unavailable', reason: 'invalid_input' } as const;
@@ -356,7 +365,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                             selection.form.cancel();
                             return { kind: 'unavailable', reason: 'invalid_input' } as const;
                         }
-                        selection.form.replaceInput(seed ? { ...selection.form.getInput(), ...candidate } : candidate);
+                        selection.form.replaceInput(candidate);
                         const submitted = await selection.form.submit();
                         if (submitted.kind !== 'settled' || !submitted.outcome.ok) {
                             selection.form.cancel();

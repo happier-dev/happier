@@ -1,6 +1,16 @@
 import { expect, it } from 'vitest';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
+import type { HealthChecksService, HealthCheckSetupPreviewInputV1, HealthCheckSetupPreviewResultV1, HealthCheckSourceConfigV1 } from '@happier-dev/plugin-sdk';
 import { plugin } from './manifest.js';
+
+// The SDK host transport prepares config; preview is exercised with the real CLI host separately.
+type SaveSetup = Parameters<HealthChecksService['setup']>[0];
+function prepareSetup(request: Readonly<{ sourceInstanceId: string; sourceConfig: HealthCheckSetupPreviewInputV1 }>): Promise<HealthCheckSetupPreviewResultV1>;
+function prepareSetup(request: SaveSetup): Promise<HealthCheckSourceConfigV1>;
+async function prepareSetup(request: SaveSetup | Readonly<{ sourceInstanceId: string; sourceConfig: HealthCheckSetupPreviewInputV1 }>): Promise<HealthCheckSourceConfigV1 | HealthCheckSetupPreviewResultV1> {
+    if ('mode' in request.sourceConfig) throw new Error('Unexpected preview in save-only fixture');
+    return request.sourceConfig;
+}
 
 it('saves Inbox by default through the agent setup Action and retains an explicit automatic choice', async () => {
     const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
@@ -10,7 +20,7 @@ it('saves Inbox by default through the agent setup Action and retains an explici
     try {
         // The daemon host service is the SDK boundary; the real registered Action parses and prepares its saved input.
         const unused = async (): Promise<never> => { throw new Error('Unexpected health service operation'); };
-        const services = { healthChecks: { setup: async request => request.sourceConfig,
+        const services = { healthChecks: { setup: prepareSetup,
             listKinds: unused, readSource: unused, manageHeartbeat: unused, read: unused,
         } } satisfies PluginTestServicesFixture;
         expect(await kit.invokeAction('health/setup', draft, { surface: 'agent', services }))
@@ -34,7 +44,7 @@ it('accepts the full Domain checks and chosen cadence through the same agent set
     try {
         // The SDK host service boundary receives the same full saved configuration as the person-authored form.
         const unused = async (): Promise<never> => { throw new Error('Unexpected health service operation'); };
-        const services = { healthChecks: { setup: async request => request.sourceConfig,
+        const services = { healthChecks: { setup: prepareSetup,
             listKinds: unused, readSource: unused, manageHeartbeat: unused, read: unused,
         } } satisfies PluginTestServicesFixture;
         expect(await kit.invokeAction('health/setup', { v: 1, subject, checks }, { surface: 'agent', services }))

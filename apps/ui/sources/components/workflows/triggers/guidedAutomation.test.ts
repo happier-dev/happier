@@ -15,6 +15,7 @@ const {
   buildGuidedAutomationReadBack,
   guidedApprovalProfileId,
   guidedStarterDraft,
+  guidedStarterEventSeed,
 } = await import('./guidedAutomation');
 
 const selection = {
@@ -69,6 +70,19 @@ function blocksOf(request: ReturnType<typeof buildGuidedAutomationRequest>) {
 }
 
 describe('guided automation (four questions)', () => {
+  it('reopens one canonical saved health source from every subject entry and carries Domain configure intent', () => {
+    const domain = { domainId: 'public-domain', targetLinkId: 'serving-target' };
+    const intent = { subject: { kind: 'environment' as const, environmentId: 'production', machineId: 'controller' },
+      controllerMachineId: 'controller', domain };
+    const environment = guidedStarterEventSeed('healthFailed', intent);
+    const service = guidedStarterEventSeed('healthFailed', { subject: {
+      kind: 'service', serviceId: 'systemd:api', machineId: 'watched' } });
+    expect(environment).toMatchObject({ sourceInstanceId: expect.stringMatching(/^health:/),
+      monitoringMachineId: 'controller', setupInput: { subject: { kind: 'environment', environmentId: 'production' }, domain } });
+    expect(service).toMatchObject({ sourceInstanceId: expect.stringMatching(/^health:/),
+      setupInput: { subject: { kind: 'machineService', machineId: 'watched', serviceId: 'systemd:api' } } });
+    expect(environment?.sourceInstanceId).not.toBe(service?.sourceInstanceId);
+  });
   it('reads the exact Event/filter, scope, controller, pending observation, effective profile and destination independently of notification selection', () => {
     const receipt = AutomationTriggerDefinitionInputSchema.parse({ ...healthEventTrigger,
       eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },

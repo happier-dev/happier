@@ -2379,6 +2379,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.github.ui.notifications.subscribed": "Suscrito",
   "plugins.github.ui.notifications.title": "Notificaciones",
   "plugins.github.ui.openCheckOnGithub": "Abrir en GitHub",
+  "plugins.github.ui.openFileOnGithub": "Abrir en GitHub",
   "plugins.github.ui.openOnGithub": "Abrir {item} en GitHub",
   "plugins.github.ui.openResults": "Abrir los resultados de {item}",
   "plugins.github.ui.openSession": "Abrir {session}",

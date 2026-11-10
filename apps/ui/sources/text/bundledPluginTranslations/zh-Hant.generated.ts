@@ -2379,6 +2379,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.github.ui.notifications.subscribed": "已訂閱",
   "plugins.github.ui.notifications.title": "通知",
   "plugins.github.ui.openCheckOnGithub": "在 GitHub 上開啟",
+  "plugins.github.ui.openFileOnGithub": "在 GitHub 上開啟",
   "plugins.github.ui.openOnGithub": "在 GitHub 上開啟 {item}",
   "plugins.github.ui.openResults": "開啟 {item} 的結果",
   "plugins.github.ui.openSession": "開啟 {session}",

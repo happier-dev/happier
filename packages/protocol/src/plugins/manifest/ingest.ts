@@ -21,6 +21,8 @@ import {
   PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
   PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
 } from '../../automations/automationEventHistoryGapResetActionV1.js';
+import { embedProtocolJsonSchema } from '../actions/protocolComposableSchema.js';
+import type { PluginJsonSchemaV2 } from '../contributions/publicTypes.js';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '../../automations/automationEventSetupResultV1.js';
 import { normalizeStrictJsonValue } from '../../json/strictJsonValue.js';
 import { isPortableRelativePath } from '../../filesystem/portablePathSegment.js';
@@ -625,7 +627,8 @@ function readEventAutomationSetupActionDiagnostics(
       source.sourceContractVersion,
       source.sourceConfigSchema,
     );
-    if (hasExactCanonicalJsonSchema(action.resultSchema, expectedResultSchema)) {
+    if (hasExactCanonicalJsonSchema(action.resultSchema, expectedResultSchema)
+      || hasCanonicalSetupResultWithReadonlyPreview(action, expectedResultSchema)) {
       return;
     }
     diagnostics.push({
@@ -635,6 +638,25 @@ function readEventAutomationSetupActionDiagnostics(
     });
   });
   return diagnostics;
+}
+
+/** Preview is disjoint from the strict Save result consumed by Event enrollment. */
+function hasCanonicalSetupResultWithReadonlyPreview(
+  action: ParsedPluginManifestV2['contributes']['actions'][number], expected: PluginJsonSchemaV2,
+): boolean {
+  if (!hasExactCanonicalJsonSchema(action.readOnly, { op: 'eq', path: 'mode', value: 'preview' })) return false;
+  const schema = action.resultSchema;
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return false;
+  const branches = schema.oneOf;
+  if (!Array.isArray(branches) || branches.length !== 2) return false;
+  const saveIndex = branches.findIndex((branch, index) => hasExactCanonicalJsonSchema(branch, embedProtocolJsonSchema(expected, ['oneOf', index])));
+  if (saveIndex < 0) return false;
+  const preview = branches[1 - saveIndex];
+  if (!preview || typeof preview !== 'object' || Array.isArray(preview)
+    || preview.type !== 'object' || preview.additionalProperties !== false
+    || !Array.isArray(preview.required) || !preview.required.includes('mode')) return false;
+  const mode = preview.properties?.mode;
+  return mode !== null && typeof mode === 'object' && !Array.isArray(mode) && mode.const === 'preview';
 }
 
 function hasExactCanonicalJsonSchema(actual: unknown, expected: unknown): boolean {

@@ -25,6 +25,7 @@ const subject = {
   machineId: 'shop-prod',
   serviceId: 'compose:uptime-kuma',
 } as const;
+const destinationSelectionContext = { serverId: 'home', machineId: subject.machineId };
 
 // Only the host's settlement transport is substituted; the real SDK mount, shared tiles/fields
 // and the canonical setup-input schema decide what the setup modal receives.
@@ -49,7 +50,8 @@ async function mount(launchInput: JsonValue, handlers: Parameters<typeof createP
           if (typeof request.action === 'object' && request.action.localId === 'health/setup') {
             if (preview) return preview(request);
             const { mode, ...sourceConfig } = request.input as Record<string, JsonValue>;
-            return { mode: 'preview', sourceConfig: { ...sourceConfig, alerts: sourceConfig.alerts ?? { channels: [], phases: ['open', 'recovered'] } } };
+            return { mode: 'preview', destinationSelectionContext,
+              sourceConfig: { ...sourceConfig, alerts: sourceConfig.alerts ?? { channels: [], phases: ['open', 'recovered'] } } };
           }
           if (!handlers.executeAction) throw new Error('Unexpected Action');
           return handlers.executeAction(request);
@@ -94,7 +96,10 @@ it('prefills first Configure alert defaults without losing the retained automati
     });
   await type('Endpoint', 'https://app.example.test');
   expect((await addButton(page)).state?.disabled ?? false).toBe(true);
-  await act(async () => { finishPreview({ mode: 'preview', sourceConfig: { v: 1, subject, investigation, alerts } }); });
+  expect((await page.getByRole('button', { name: 'Add destination' })).state?.disabled ?? false).toBe(true);
+  await act(async () => { finishPreview({ mode: 'preview', destinationSelectionContext,
+    sourceConfig: { v: 1, subject, investigation, alerts } }); });
+  expect((await page.getByRole('button', { name: 'Add destination' })).state?.disabled ?? false).toBe(false);
   await expect(page.getByRole('radio', { name: 'Failure only' })).resolves.toBeDefined();
   expect((await page.getAllByRole('radio')).find(target => target.name?.startsWith('Start investigation'))).toBeDefined();
   expect(calls).toEqual([expect.objectContaining({ action: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/setup' },
@@ -184,14 +189,16 @@ it('changes a saved alert destination through the host picker and keeps the draf
 });
 
 it('adds an alert destination to explicit Off without discarding the check draft', async () => {
+  const requests: unknown[] = [];
   const channel = { channelId: 'happier.channel.slack/alerts', destination: {
     connectionId: 'production-slack', endpoint: { kind: 'shared', audience: 'shared', id: 'deploys' },
   } };
   const { page, settled } = await mount({ initialInput: { v: 1, subject, alerts: { channels: [], phases: ['open'] } } }, {
-    selectActionInput: async () => ({ kind: 'notificationDestination', channel }),
+    selectActionInput: async request => { requests.push(request); return { kind: 'notificationDestination', channel }; },
   });
   await type('Endpoint', 'https://app.example.test');
   await act(async () => { await page.press(await page.getByRole('button', { name: 'Add destination' })); });
+  expect(requests).toMatchObject([{ request: { target: destinationSelectionContext } }]);
   await act(async () => { await page.press(await addButton(page)); });
   expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
     alerts: { channels: [channel], phases: ['open'] }, checks: [expect.objectContaining({

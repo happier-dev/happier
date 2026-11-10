@@ -23,6 +23,7 @@ export { activateHealthSetupClientActionsV1 as activate } from './actions/health
 
 type Translate = ReturnType<typeof usePluginTranslation>;
 type Check = HealthCheckSetupInputV1['checks'][number];
+type DraftCheck = Omit<Check, 'config'> & Readonly<{ config: unknown }>;
 type DomainCondition = Extract<Check['binding'], { kind: 'domain' }>['condition'];
 type SourceOptions = Pick<HealthCheckSetupInputV1, 'investigation' | 'alerts'> & Pick<HealthCheckSetupDraftV1, 'domain'>;
 const K = 'machineServices.healthSetup';
@@ -89,7 +90,7 @@ function nextCheckId(kind: string, existing: readonly Readonly<{ checkId: string
 }
 
 /** Changing a Domain condition's producer preserves its saved identity and every sibling. */
-function putCheck(existing: readonly Check[], check: Check): Check[] {
+function putCheck(existing: readonly DraftCheck[], check: DraftCheck): DraftCheck[] {
     const binding = check.binding;
     const index = binding.kind === 'domain' ? existing.findIndex(current => current.binding.kind === 'domain'
         && current.binding.domainId === binding.domainId && current.binding.targetLinkId === binding.targetLinkId
@@ -102,7 +103,7 @@ export function buildHealthCheckSetupInput(subject: HealthCheckSubjectV1, existi
     options: SourceOptions = {}) {
     const { domain, ...sourceOptions } = options;
     if (domain && !draft.contributedKind && !isMonitorKind(draft.kind)) {
-        let checks: Check[] = [...existing];
+        let checks: DraftCheck[] = [...existing];
         for (const [localId, condition] of [['http', 'domain_probe_failed'], ['certificate', 'certificate_renewal_failed']] as const) {
             checks = putCheck(checks, { checkId: nextCheckId(localId, checks), kind: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId },
                 binding: { kind: 'domain', ...domain, condition }, config: {}, periodMs: draft.periodMs,
@@ -171,8 +172,9 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const [draft, setDraft] = useState<Draft>(EMPTY);
     const [alertDraft, setAlertDraft] = useState<Readonly<{
         alerts: SourceOptions['alerts']; testContext?: HealthCheckSetupPreviewResultV1['testContext'];
+        destinationSelectionContext?: HealthCheckSetupPreviewResultV1['destinationSelectionContext'];
     }>>({ alerts: props.sourceOptions.alerts });
-    const { alerts, testContext: preparedSource } = alertDraft;
+    const { alerts, testContext: preparedSource, destinationSelectionContext } = alertDraft;
     const setAlerts = (next: SourceOptions['alerts']) => setAlertDraft(current => ({ ...current, alerts: next }));
     const [previewUnavailable, setPreviewUnavailable] = useState(false);
     const [previewAttempt, setPreviewAttempt] = useState(0);
@@ -185,6 +187,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             const prepared = HealthCheckSetupPreviewResultV1ProtocolSchema.parse(value);
             if (retired || props.signal.aborted) return;
             setAlertDraft(current => ({ alerts: current.alerts ?? prepared.sourceConfig.alerts,
+                destinationSelectionContext: prepared.destinationSelectionContext,
                 ...(current.alerts === props.sourceOptions.alerts ? { testContext: prepared.testContext } : {}) }));
             setPreviewUnavailable(false);
         }).catch(() => { if (!retired && !props.signal.aborted) setPreviewUnavailable(true); });
@@ -301,7 +304,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     return h(Stack, { gap: 'large', testID: 'health-setup-form' },
         previewUnavailable ? h(Stack, {}, h(Text, { value: t(`${K}.previewUnavailable`, 'Alert defaults could not be loaded. Your entries are kept here.') }),
             h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'), onPress: () => setPreviewAttempt(value => value + 1) })) : null,
-        h(SavedHealthAlertControls, { alerts, onChange: setAlerts, testContext: preparedSource }),
+        h(SavedHealthAlertControls, { alerts, onChange: setAlerts, testContext: preparedSource, destinationSelectionContext }),
         h(SavedHeartbeatControls, { subject: props.subject, checks: props.existing, signal: props.signal }),
         h(SavedHealthCheckControls, { subject: props.subject, checks: props.existing, signal: props.signal }),
         ...props.existing.flatMap(check => {
@@ -314,7 +317,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         }),
         h(SelectionTiles<SetupKind>, { accessibilityLabel: t(`${K}.kind`, 'Kind of check'), testID: 'health-setup-kind',
             value: draft.contributedKind ? null : draft.kind,
-            onChange: kind => set({ kind, contributedKind: undefined, contributedValidator: undefined }), maximumColumns: 3, minimumColumns: 2,
+            onChange: (kind: SetupKind) => set({ kind, contributedKind: undefined, contributedValidator: undefined }), maximumColumns: 3, minimumColumns: 2,
             options: KINDS.filter(kind => !props.sourceOptions.domain || kind.id === 'http' || isMonitorKind(kind.id))
                 .map(kind => ({ id: kind.id, icon: kind.icon, title: kind.id === 'http' && props.sourceOptions.domain ? 'HTTP and certificate' : kind.title,
                 ...(kind.id === 'http' && props.sourceOptions.domain ? {} : { titleKey: `${K}.kind.${kind.id}` }),

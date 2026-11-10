@@ -1,3 +1,5 @@
+import { resolveDeploymentCreationDefaultsV1 } from '@happier-dev/deployments';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
 import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
@@ -87,6 +89,46 @@ describe('explicit saved heartbeat enrollment', () => {
                 alerts: { channels: [], phases: ['open'] } })).not.toHaveProperty('testContext');
             configured = false;
             expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject, alerts })).not.toHaveProperty('testContext');
+        } finally { await kit.dispose(); }
+    });
+
+    it('uses the Environment P40 preview once and preserves Project Off over Account alert defaults', async () => {
+        const caller = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
+        const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', controllerMachineId: 'controller' });
+        const requests: unknown[] = [];
+        const defaults = resolveDeploymentCreationDefaultsV1({ projectSourceId: environment.projectSourceId, projectOwner: { kind: 'account', accountId: 'owner' },
+            projectDefaults: { projectSourceId: environment.projectSourceId, deploymentDefaults: { alertChannels: [] } },
+            account: { accountId: 'owner', defaults: { alertChannels: [{ channelId: 'account-provider' }] } },
+            target: { kind: 'ownServer', machines: ['controller'] } });
+        // Deployment Actions are the SDK transport boundary; their typed metadata and the real P40 resolver stay intact.
+        const actions = { async execute(action: string, input: unknown) {
+            requests.push({ action, input });
+            if (action === 'deployments.environments.get') return { ok: true, environment, targetLinks: [] };
+            if (action === 'deployments.environments.update') return { ok: true, environmentId: environment.id,
+                revision: environment.revision, creationDefaults: defaults };
+            throw new Error('Preview must not request Domain content or mutate a source');
+        } } as unknown as ActionsService;
+        const host = createSavedHealthChecksHost({ serverId: 'profile-home',
+            resolveAdoptedDefinitionSet() { throw new Error('Preview must not scan adopted sources'); },
+            readObserver: () => null, openDomainArtifact: async () => { throw new Error('Preview must not open Domain artifacts'); },
+            readAccountSettings: async () => { throw new Error('Environment preview must reuse P40 defaults admission'); },
+        });
+        const seed = { plugin: { id: caller.pluginId, version: '0.0.0' }, occurrenceId: 'active', correlationId: 'environment-preview',
+            contribution: { id: 'health/setup', qualifiedId: `${caller.pluginId}/actions/health/setup` }, surface: 'agent',
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            resolveCurrentPluginMaterializationRef: () => caller } satisfies PluginInvocationServicesSeed;
+        const services = host.bind(seed, { actions, http: createUnavailablePluginServices().http });
+        if (!services) throw new Error('Missing health service');
+        const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { healthChecks: services } });
+        try {
+            expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject: { kind: 'environment', environmentId: environment.id } }))
+                .toMatchObject({ mode: 'preview', sourceConfig: { alerts: { channels: [], phases: ['open', 'recovered'] } },
+                    destinationSelectionContext: { serverId: 'profile-home', machineId: 'controller' } });
+            expect(requests).toEqual([
+                { action: 'deployments.environments.get', input: { serverId: 'profile-home', environmentId: environment.id } },
+                { action: 'deployments.environments.update', input: expect.objectContaining({ serverId: 'profile-home',
+                    environmentId: environment.id, mode: 'preview', defaultsFor: 'alerts', expectedRevision: environment.revision }) },
+            ]);
         } finally { await kit.dispose(); }
     });
 

@@ -2290,7 +2290,7 @@ source contracts, pending package and loaded-runtime validation.
 
 The unreleased notification destination selection uses the same finite form
 owner: `selectActionInput({hostAction:{action:'notifications.notify_me',
-projection:'notificationDestination'},channelId?})`. Without `channelId`, the
+projection:'notificationDestination'},channelId?,target?})`. Without `channelId`, the
 form first chooses from the current notification channel options. It then
 opens the Channels-owned input-type picker and returns
 `{kind:'notificationDestination',channel}` or cancellation. The result contains
@@ -2298,7 +2298,12 @@ saved addressing only; provider operations resolve it through the current
 connection owner. Selection never sends, changes a connection or saves the
 subject. Source setup and Account/Project creation preferences borrow this
 same presenter. The mounted Home and Account lifetime remain bound throughout
-selection; retirement closes the form. Explicit Test remains the separately
+selection; retirement closes the form. Source Configure supplies its readonly
+preview's controller address as `target:{serverId,machineId}`, including when
+the observer hosts the form. Selection stays disabled until that address is
+available; the existing preview Retry recovers a failed preparation. An explicit
+target must remain in the mounted Account's Home. Creation preferences use their
+bound host. Explicit Test remains the separately
 confirmed `notifications.test` Action.
 
 The callback's `options.resources` binds the ordinary Resource service to its

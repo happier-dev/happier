@@ -596,8 +596,8 @@ describe('Plugin Event Automation setup orchestration', () => {
         expect(dispatch).not.toHaveBeenCalled();
     });
 
-    it('rejects conflicting seeded accounts without opening or invoking setup', async () => {
-        const event = eligibleEvent();
+    it.each([false, true])('rejects conflicting seeded accounts without opening or invoking setup (custom renderer: %s)', async (customRenderer) => {
+        const event = customRenderer ? eligibleEventWithSetupSurface() : eligibleEvent();
         const base = durablePushSetupParams(event);
         const present = vi.fn<NonNullable<typeof base.present>>(({ form }) => form.cancel());
         const dispatch = vi.fn<PluginContributedActionDispatch>();
@@ -640,9 +640,16 @@ describe('Plugin Event Automation setup orchestration', () => {
             .not.toBe(getPluginEventAutomationEligibleSetupPresentationKey(replacement));
     });
 
-    it.each(['new', 'seeded', 'saved'] as const)('validates custom-surface input through the same setup Action form without opening generic fields (%s)', async (mode) => {
-        const seeded = mode === 'seeded';
-        const event = eligibleEventWithSetupSurface();
+    it.each(['new', 'seeded', 'saved', 'saved-seeded'] as const)('validates custom-surface input through the same setup Action form without opening generic fields (%s)', async (mode) => {
+        const seeded = mode === 'seeded' || mode === 'saved-seeded';
+        const saved = mode === 'saved' || mode === 'saved-seeded';
+        const domainIntent = { domainId: 'public-domain', targetLinkId: 'serving-target' };
+        const original = eligibleEventWithSetupSurface();
+        const event = { ...original, setupAction: { ...original.setupAction, inputHints: {
+            ...original.setupAction.inputHints,
+            fields: original.setupAction.inputHints!.fields.map(field => field.path === 'repository'
+                ? { ...field, defaultValue: 'default/repository' } : field),
+        } } };
         const genericPresenter = vi.fn();
         const presentSetupSurface = vi.fn(async () => ({
             kind: 'completed' as const,
@@ -664,10 +671,10 @@ describe('Plugin Event Automation setup orchestration', () => {
 
         await expect(configurePluginEventAutomationSetup({
             eligibleEvent: event,
-            ...(mode === 'saved' ? { initialSource: { v: 1 as const, sourceInstanceId: 'repository:42',
+            ...(saved ? { initialSource: { v: 1 as const, sourceInstanceId: 'repository:42',
                 sourceContractVersion: 3, sourceConfig: { repositoryId: '42' }, displayLabel: 'acme/widgets' } } : {}),
             ...(seeded ? { initialSetupSeed: { eventRef: event.event.identity,
-                connectedAccount: ACCOUNT, setupInput: { repository: 'initial/repository' } } } : {}),
+                connectedAccount: ACCOUNT, setupInput: { repository: 'initial/repository', domain: domainIntent } } } : {}),
             observationTransport: 'checkpointedPull',
             filter: null,
             maximumObservationAgeMs: null,
@@ -688,8 +695,9 @@ describe('Plugin Event Automation setup orchestration', () => {
             eligibleEvent: event,
             accountLifetime: ACCOUNT_LIFETIME,
             launchInput: { observerMachineId: MACHINE_ID,
-                ...(seeded ? { initialInput: { repository: 'initial/repository', credentialRef: ACCOUNT } }
-                    : mode === 'saved' ? { initialInput: { repositoryId: '42' } } : {}) },
+                ...(seeded ? { initialInput: { ...(saved ? { repositoryId: '42' } : {}),
+                    repository: 'initial/repository', credentialRef: ACCOUNT, domain: domainIntent } }
+                    : saved ? { initialInput: { repositoryId: '42' } } : {}) },
         }));
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
             input: {

@@ -20,6 +20,8 @@ export function draftMatchesDeclaredNonSecretFields(params: Readonly<{
     inputSchema: PluginJsonSchemaV2 | undefined;
     /** Only explicitly admitted authoring seeds carry non-presented setup operands. */
     allowDeclaredUnhintedFields?: boolean;
+    /** Renderer settlement replaces launch input before complete Action admission. */
+    allowUndeclaredFields?: true;
 }>): boolean {
     const schema = params.inputSchema;
     const fields = params.action.inputHints?.fields ?? [];
@@ -59,9 +61,11 @@ export function draftMatchesDeclaredNonSecretFields(params: Readonly<{
             return leaves !== null && matchesDeclaredValue(leaves, value);
         }
         // Declared seed operands can be useful without a rendered field hint.
-        const declared = !params.allowDeclaredUnhintedFields || fields.some(candidate => candidate.path.startsWith(`${path}.`))
+        const hasHintedDescendants = fields.some(candidate => candidate.path.startsWith(`${path}.`));
+        const declared = !params.allowDeclaredUnhintedFields || hasHintedDescendants
             ? null : resolveDeclaredInputLeaves(schema, path, 'conditional-field');
         if (declared) return matchesDeclaredValue(declared, value);
+        if (params.allowUndeclaredFields && !hasHintedDescendants) return true;
         if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
         const entries = Object.entries(value as Readonly<Record<string, unknown>>);
         if (entries.length === 0) return false;

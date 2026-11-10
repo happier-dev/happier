@@ -7,6 +7,9 @@ import type { z } from 'zod/mini';
 import { readApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, readDeploymentReceiptEventPendingObservationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
+import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/protocol/deployments/healthCheckSubjectV1';
+import type { HealthCheckDomainSetupIntentV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { t } from '@/text';
@@ -72,7 +75,7 @@ export function guidedApprovalProfileId(draft: GuidedAutomationDraft): string {
 export type GuidedStarter = 'healthFailed' | 'deploymentFailed' | 'nightly';
 
 const STARTER_EVENT: Readonly<Partial<Record<GuidedStarter, PluginUiOpenAutomationEventRequestV1['eventRef']>>> = {
-  healthFailed: { pluginId: 'happier.machine.services', localId: 'health-check-failed' },
+  healthFailed: HEALTH_CHECK_EVENT_REFS_V1.failed,
   deploymentFailed: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed,
 };
 
@@ -83,6 +86,7 @@ export function guidedStarterEventSeed(
     subject?: TriggerSubject;
     deploymentEnvironment?: DeploymentEnvironmentRefV1;
     controllerMachineId?: string;
+    domain?: HealthCheckDomainSetupIntentV1;
   }>,
 ): PluginUiOpenAutomationEventRequestV1 | undefined {
   const eventRef = starter ? STARTER_EVENT[starter] : undefined;
@@ -93,12 +97,14 @@ export function guidedStarterEventSeed(
     return { eventRef, ...observer, setupInput: { v: 1, serverId, environmentId } };
   }
   if (starter === 'healthFailed' && params.subject?.kind === 'environment') {
-    return { eventRef, ...observer, setupInput: { v: 1,
-      subject: { kind: 'environment', environmentId: params.subject.environmentId } } };
+    const subject = { kind: 'environment' as const, environmentId: params.subject.environmentId };
+    return { eventRef, ...observer, sourceInstanceId: createHealthCheckSourceInstanceIdV1(subject),
+      setupInput: { v: 1, subject, ...(params.domain ? { domain: params.domain } : {}) } };
   }
   if (starter === 'healthFailed' && params.subject?.kind === 'service') {
-    return { eventRef, setupInput: { v: 1, subject: { kind: 'machineService',
-      machineId: params.subject.machineId, serviceId: params.subject.serviceId } } };
+    const subject = { kind: 'machineService' as const,
+      machineId: params.subject.machineId, serviceId: params.subject.serviceId };
+    return { eventRef, sourceInstanceId: createHealthCheckSourceInstanceIdV1(subject), setupInput: { v: 1, subject } };
   }
   return undefined;
 }

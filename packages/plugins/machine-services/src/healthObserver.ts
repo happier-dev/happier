@@ -34,7 +34,8 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
     return {
         observeWhileAdmissionPending: true,
         decode(definition) {
-            if (![HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT].includes(definition.eventRef.localId)) return null;
+            const eventIds: readonly string[] = [HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT];
+            if (!eventIds.includes(definition.eventRef.localId)) return null;
             const parsed = HealthCheckSourceConfigV1ProtocolSchema.safeParse(definition.sourceConfig);
             return parsed.success ? parsed.data : null;
         },

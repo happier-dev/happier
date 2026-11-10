@@ -100,6 +100,16 @@ and configuration. A contributed finite producer resolves its selector from that
 source. Both reads retain ordinary invocation cancellation; an unavailable source
 is a typed refusal rather than permission to use caller-supplied configuration.
 
+In unreleased 0.3 source, `health/setup` also accepts `{ v: 1, mode: 'preview',
+subject, ...draft }`. It prepares alert defaults without saving, enrolling an
+endpoint or sending a notification. Explicit empty alert channels stay Off.
+`healthChecks.setup({ sourceInstanceId, sourceConfig: preview }, { signal })`
+returns `{ mode: 'preview', sourceConfig, destinationSelectionContext?, testContext? }`.
+Destination selection uses the returned controller or service-owner Machine
+target; the editor may run on a different observer. The optional Test context
+identifies an existing saved revision. Saving uses the existing full
+setup input, including explicit checks and cadence.
+
 ## Accepted machine starts in development
 
 In unreleased 0.3 source, only a provisioner whose native start returns before

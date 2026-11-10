@@ -4,6 +4,7 @@ import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/inte
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js';
 import { AutomationEventSourceInstanceIdV1Schema } from '../automations/automationEventJsonBoundsV1.js';
+import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { DeploymentIdentifierV1Schema as id } from './deploymentIdentifiersV1.js';
 import { HealthCheckSubjectV1Schema, type HealthCheckSubjectV1 } from './healthCheckSubjectV1.js';
 import type { AutomationPluginEventTrigger } from '../automations/automationTriggerProjectionV1.js';
@@ -192,6 +193,7 @@ export const HealthCheckSetupPreviewInputV1ProtocolSchema = lazyDefinition(() =>
 /** Only the saved source owner can supply the Test selector; defaults never do. */
 export const HealthCheckSetupPreviewResultV1Schema = lazyZodSchema(() => z.strictObject({
     mode: z.literal('preview'), sourceConfig: HealthCheckSetupDraftV1Schema,
+    destinationSelectionContext: z.optional(MachineTargetV1Schema),
     testContext: z.optional(z.strictObject({ serverId: id, machineId: id,
         sourceInstanceId: AutomationEventSourceInstanceIdV1Schema, expectedSourceRevision: keyword })),
 }));

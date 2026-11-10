@@ -89,6 +89,7 @@ import {
   publishCoherentProjectionOutputs,
   removeRetiredGeneratedOutput,
   writeFileAtomic,
+  type CoherentProjectionOutput,
   type GeneratorMode,
   type ProjectionPublicationLease,
 } from './bundledPlugins/outputs.ts';
@@ -3802,6 +3803,7 @@ export async function publishBundledPluginSemanticProjection(
     options.rootDir, voiceProjection.sources, runtimeFailures, options.mode,
   );
   const { uiOutPath } = resolveGeneratorHostProjectionOutPaths(options.rootDir);
+  const uiTranslationOutputs = options.targetOwnedOnly ? [] : renderBundledPluginTranslationOutputs(pluginPackages, options.rootDir);
   const uiDeclarationOutputs = [];
   if (!options.targetOwnedOnly && existsSync(uiOutPath)) {
     uiDeclarationOutputs.push({ outPath: uiOutPath, out: renderRetainedUiBundledPluginEntriesTs(
@@ -3812,7 +3814,7 @@ export async function publishBundledPluginSemanticProjection(
   if (options.mode === 'check') {
     assertGeneratedOutputMatches(cliManifestOutPath, cliManifestOut);
     for (const output of cliManifestAssetOutputs) assertGeneratedOutputMatches(output.outPath, output.out);
-    for (const output of [...additionalOutputs, ...voiceRuntimeOutputs, ...uiDeclarationOutputs]) {
+    for (const output of [...additionalOutputs, ...voiceRuntimeOutputs, ...uiDeclarationOutputs, ...uiTranslationOutputs]) {
       assertGeneratedOutputMatches(output.outPath, output.out);
     }
     return failures;
@@ -3825,6 +3827,7 @@ export async function publishBundledPluginSemanticProjection(
     ...additionalOutputs,
     ...voiceRuntimeOutputs,
     ...uiDeclarationOutputs,
+    ...uiTranslationOutputs,
   ], requireGeneratorPublicationLease(publicationLease));
   if (options.aggregateOnly) {
     // Serialized manifests cannot settle an unrelated authored-source failure.
@@ -4478,6 +4481,22 @@ export function collectBundledPluginUiTranslations(
   ) as JsonObject;
 }
 
+function renderBundledPluginTranslationOutputs(
+  pluginPackages: readonly BundledTranslationPackage[],
+  rootDir: string,
+): readonly CoherentProjectionOutput[] {
+  const translations = collectBundledPluginUiTranslations(pluginPackages, rootDir);
+  const { uiTranslationsOutPath, uiTranslationKeysOutPath } = resolveGeneratorHostProjectionOutPaths(rootDir);
+  return [
+    { outPath: uiTranslationsOutPath, out: renderBundledPluginTranslationsTs(translations) },
+    ...Object.keys(translations).sort().map(locale => ({
+      outPath: join(resolveBundledPluginTranslationLocaleDirectory(rootDir), `${locale}.generated.ts`),
+      out: renderBundledPluginTranslationsTs(translations, locale),
+    })),
+    { outPath: uiTranslationKeysOutPath, out: renderBundledPluginTranslationKeysTs(translations) },
+  ];
+}
+
 function assertDescriptorConnectedServiceLabelTranslations(
   pluginPackages: readonly BundledPluginPackage[],
   rootDir: string,
@@ -4666,9 +4685,9 @@ async function generateBundledPluginEntries(
   const generatedAgentIds = collectGeneratedAgentIds(bundledAgentDefinitionIds);
   const agentDefinitionsById = bundledAgentDefinitionProjection.agentDefinitionsById;
 
-  const { cliOutPath, cliManifestOutPath, uiOutPath, agentLogoSvgOutPath, agentPresentationOutPath, uiTranslationsOutPath, uiVoiceEntriesOutPath, protocolVoiceSelectionOptionsOutPath,
+  const { cliOutPath, cliManifestOutPath, uiOutPath, agentLogoSvgOutPath, agentPresentationOutPath, uiVoiceEntriesOutPath, protocolVoiceSelectionOptionsOutPath,
     uiBehaviorOverridesOutPath, sessionAgentBehaviorsOutPath, visibleMessageResolversOutPath,
-    uiTranslationKeysOutPath, retiredAgentSettingsOutPath } = resolveGeneratorHostProjectionOutPaths(options.rootDir);
+    retiredAgentSettingsOutPath } = resolveGeneratorHostProjectionOutPaths(options.rootDir);
   const retiredPromptAssetPluginDescriptorsOutPath = resolve(
     options.rootDir,
     'apps/cli/src/prompts/assets/generated/pluginDescriptors.ts',
@@ -4719,7 +4738,7 @@ async function generateBundledPluginEntries(
   const agentUiBehaviorDescriptorSources = collectAgentUiBehaviorDescriptorSources(pluginPackages);
   const sessionAgentBehaviorSources = collectAgentSessionBehaviorSources(pluginPackages);
   const visibleMessageResolverSources = collectVisibleMessageResolverSources(pluginPackages);
-  const bundledPluginUiTranslations = collectBundledPluginUiTranslations(pluginPackages, options.rootDir);
+  const uiTranslationOutputs = renderBundledPluginTranslationOutputs(pluginPackages, options.rootDir);
 
   const cliOut = renderCliBundledPluginEntriesTs({ pluginPackages });
   const cliManifestOut = renderCliBundledPluginManifestEntriesTs({ pluginPackages });
@@ -4761,15 +4780,6 @@ async function generateBundledPluginEntries(
   const uiOut = renderUiBundledPluginEntriesTs({ packageNames, pluginPackages });
   const agentLogoSvgOut = renderBundledBrandAssetsTs({ rootDir: options.rootDir, pluginPackages });
   const agentPresentationOut = renderBundledAgentPresentationTs(pluginPackages);
-  const uiTranslationsOut = renderBundledPluginTranslationsTs(bundledPluginUiTranslations);
-  const uiTranslationLocaleOutputs = Object.keys(bundledPluginUiTranslations).sort().map((locale) => ({
-    outPath: join(resolveBundledPluginTranslationLocaleDirectory(options.rootDir), `${locale}.generated.ts`),
-    out: renderBundledPluginTranslationsTs(bundledPluginUiTranslations, locale),
-  }));
-  uiTranslationLocaleOutputs.push({
-    outPath: uiTranslationKeysOutPath,
-    out: renderBundledPluginTranslationKeysTs(bundledPluginUiTranslations),
-  });
   const uiBehaviorOverridesOut = renderBundledUiBehaviorOverridesTs(agentUiBehaviorDescriptorSources);
   const sessionAgentBehaviorsOut = renderBundledSessionAgentBehaviorsTs(sessionAgentBehaviorSources);
   const visibleMessageResolversOut = renderBundledVisibleMessageResolversTs(visibleMessageResolverSources);
@@ -4822,8 +4832,7 @@ async function generateBundledPluginEntries(
     assertGeneratedOutputMatches(uiOutPath, uiOut);
     assertGeneratedOutputMatches(agentLogoSvgOutPath, agentLogoSvgOut);
     assertGeneratedOutputMatches(agentPresentationOutPath, agentPresentationOut);
-    assertGeneratedOutputMatches(uiTranslationsOutPath, uiTranslationsOut);
-    for (const output of uiTranslationLocaleOutputs) {
+    for (const output of uiTranslationOutputs) {
       assertGeneratedOutputMatches(output.outPath, output.out);
     }
     assertGeneratedOutputMatches(uiBehaviorOverridesOutPath, uiBehaviorOverridesOut);
@@ -4862,8 +4871,7 @@ async function generateBundledPluginEntries(
     { outPath: uiOutPath, out: uiOut },
     { outPath: agentLogoSvgOutPath, out: agentLogoSvgOut },
     { outPath: agentPresentationOutPath, out: agentPresentationOut },
-    { outPath: uiTranslationsOutPath, out: uiTranslationsOut },
-    ...uiTranslationLocaleOutputs,
+    ...uiTranslationOutputs,
     { outPath: uiBehaviorOverridesOutPath, out: uiBehaviorOverridesOut },
     { outPath: sessionAgentBehaviorsOutPath, out: sessionAgentBehaviorsOut },
     { outPath: visibleMessageResolversOutPath, out: visibleMessageResolversOut },

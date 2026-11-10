@@ -1,6 +1,6 @@
 import { definePlugin, HEALTH_CHECK_KINDS_V1, HealthCheckTcpConfigV1ProtocolSchema,
     HealthCheckDnsConfigV1ProtocolSchema, HealthCheckHeartbeatConfigV1ProtocolSchema,
-    type HealthCheckKindContributionV1, type HealthCheckKindV1 } from '@happier-dev/plugin-sdk';
+    type HealthCheckKindContributionV1, type HealthCheckKindV1, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginWebhookHeartbeatManageInputV1ProtocolSchema, PluginWebhookHeartbeatManageResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import { systemdRuntime } from './systemd.js';
 import { healthCatalogActions } from './healthCatalog.js';
@@ -71,7 +71,7 @@ export const plugin = definePlugin({
         ] },
         resultSchema: { oneOf: [embedProtocolJsonSchema(HealthCheckSetupPreviewResultV1ProtocolSchema.jsonSchema, ['oneOf', 0]),
             embedProtocolJsonSchema(createPluginEventAutomationSetupResultV1JsonSchema(1, HealthCheckSourceConfigV1ProtocolSchema.jsonSchema), ['oneOf', 1])] },
-        async run(input, context) {
+        async run(input: unknown, context: PluginInvocationContext) {
             const preview = HealthCheckSetupPreviewInputV1ProtocolSchema.safeParse(input);
             if (preview.success) return context.services.healthChecks.setup({
                 sourceInstanceId: createHealthCheckSourceInstanceIdV1(preview.data.subject), sourceConfig: preview.data,
@@ -94,7 +94,7 @@ export const plugin = definePlugin({
             body: 'Rotation or revocation stops the old address accepting pings. After rotating, reveal the replacement address and update your job.' },
         inputSchema: PluginWebhookHeartbeatManageInputV1ProtocolSchema,
         resultSchema: PluginWebhookHeartbeatManageResultV1ProtocolSchema,
-        async run(input, context) {
+        async run(input: unknown, context: PluginInvocationContext) {
             return context.services.healthChecks.manageHeartbeat(PluginWebhookHeartbeatManageInputV1ProtocolSchema.parse(input),
                 { signal: context.signal });
         },
