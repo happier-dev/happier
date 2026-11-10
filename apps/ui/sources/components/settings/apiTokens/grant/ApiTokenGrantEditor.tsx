@@ -276,7 +276,7 @@ const ApiTokenGrantAccessSection = React.memo(function ApiTokenGrantAccessSectio
  * each time (the protocol's absent `deployApproval`). Shown while the grant is that exact grant, and
  * after an edit widened it, where Automatic stays visible but unavailable and says why it went off.
  */
-function ApiTokenGrantDeployApprovalRow(props: GrantPartProps) {
+export function ApiTokenGrantDeployApprovalRow(props: GrantPartProps) {
     const narrow = isApiTokenDeploymentGrantV1(props.value);
     const options: ReadonlyArray<SegmentedChoiceOption<'automatic' | 'ask'>> = [
         {

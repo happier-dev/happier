@@ -33,7 +33,7 @@ import { buildApiTokenCreateRestorePath } from './apiTokenCreateResume';
 import { ApiTokenExpiryChoiceItem } from './ApiTokenExpiryChoiceItem';
 import { ApiTokenRevealBody, ApiTokenRevealDone } from './ApiTokenReveal';
 import { resolveApiTokenOperationErrorMessageKey } from './apiTokenSettingsPresentation';
-import { ApiTokenGrantEditor, ApiTokenGrantPickerDone, useApiTokenGrantPicker } from './grant/ApiTokenGrantEditor';
+import { ApiTokenGrantDeployApprovalRow, ApiTokenGrantEditor, ApiTokenGrantPickerDone, useApiTokenGrantPicker } from './grant/ApiTokenGrantEditor';
 import { API_TOKEN_LIMITED_GRANT_START_V1, areApiTokenGrantsEqual, isApiTokenGrantDraftSendable } from './grant/apiTokenGrantDraft';
 import { useApiTokenSettingsControllerState } from './useApiTokenSettingsControllerState';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
@@ -121,12 +121,14 @@ export function ApiTokenCreateModal(props: Readonly<{
     revealAccessory?: React.ReactNode;
     /** A domain's wording for the reveal (an embed's key): the band title, warning and Copy. */
     revealCopy?: ApiTokenRevealCopy;
+    /** An exact Environment grant preset; only its saved deployment choice remains editable. */
+    deploymentTitle?: string;
 }> & CustomModalInjectedProps) {
     if (props.mode === 'editAccess') return <ApiTokenEditAccessContent {...props} />;
     return <ApiTokenCreateContent {...props} />;
 }
 
-function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsController; revealAccessory?: React.ReactNode; revealCopy?: ApiTokenRevealCopy }> & CustomModalInjectedProps) {
+function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsController; revealAccessory?: React.ReactNode; revealCopy?: ApiTokenRevealCopy; deploymentTitle?: string }> & CustomModalInjectedProps) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -144,8 +146,10 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
     const grantPicker = useApiTokenGrantPicker();
     const pickerOpen = onAccessStage && grantPicker.picker !== null;
     const labelReady = draft.label.trim().length > 0;
+    const deployment = props.deploymentTitle !== undefined;
+    const deploymentReady = !deployment || state.encryptionAvailability === 'plain';
     const canSubmit = labelReady && !state.createPending && !state.recoveryTokenId
-        && (!limited || isApiTokenGrantDraftSendable(grant));
+        && deploymentReady && (!limited || isApiTokenGrantDraftSendable(grant));
 
     React.useEffect(() => {
         if (!reveal) return;
@@ -154,13 +158,13 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
 
     const setDraft = props.controller.setCreateDraft;
     const advance = React.useCallback(() => {
-        if (!labelReady) return;
+        if (!labelReady || !deploymentReady) return;
         if (limited && stage === 'basics') {
             setStage('access');
             return;
         }
         void props.controller.createToken();
-    }, [labelReady, limited, props.controller, stage]);
+    }, [deploymentReady, labelReady, limited, props.controller, stage]);
 
     const footer = React.useMemo(() => (
         <View style={styles.footer}>
@@ -183,7 +187,7 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
                             size="normal"
                             title={t('settingsApiTokens.create.continue')}
                             testID="settings-api-tokens-create-continue"
-                            disabled={!labelReady || !!state.recoveryTokenId}
+                            disabled={!labelReady || !deploymentReady || !!state.recoveryTokenId}
                             onPress={() => setStage('access')}
                         />
                     ) : (
@@ -199,7 +203,7 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
                 </>
             )}
         </View>
-    ), [canSubmit, grantPicker.close, labelReady, limited, onAccessStage, pickerOpen, props.controller.createToken, props.onClose, reducedMotion, reveal, state.createPending, state.recoveryTokenId, styles.footer]);
+    ), [canSubmit, deploymentReady, grantPicker.close, labelReady, limited, onAccessStage, pickerOpen, props.controller.createToken, props.onClose, reducedMotion, reveal, state.createPending, state.recoveryTokenId, styles.footer]);
 
     useModalCardChrome(props.setChrome, React.useMemo(() => ({
         kind: 'card' as const,
@@ -246,7 +250,9 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
                     </View>
                 ) : onAccessStage ? (
                     <View style={styles.stack}>
-                        <ApiTokenGrantEditor
+                        {deployment ? <ItemGroup title={props.deploymentTitle} description={t('projects.deployments.overviewStatus.ciAuthority')}>
+                            <ApiTokenGrantDeployApprovalRow value={grant} onChange={(next) => setDraft({ ...draft, grant: next })} disabled={state.createPending} />
+                        </ItemGroup> : <ApiTokenGrantEditor
                             testID="settings-api-tokens-grant-editor"
                             value={grant}
                             onChange={(next) => setDraft({ ...draft, grant: next })}
@@ -255,7 +261,7 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
                             disabled={state.createPending}
                             label={draft.label}
                             expiresAt={resolveApiTokenExpiryInstant(draft.expiryPreset, Date.now())}
-                        />
+                        />}
                         {state.createError ? (
                             <Text accessibilityLiveRegion="assertive" style={[styles.error, styles.note]} testID="settings-api-tokens-create-error">
                                 {t(resolveApiTokenOperationErrorMessageKey(state.createError))}
@@ -287,7 +293,7 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
                                 mode="info"
                                 showChevron={false}
                             />
-                            <SegmentedChoiceItem
+                            {!deployment ? <SegmentedChoiceItem
                                 title={t('settingsApiTokens.create.access')}
                                 testIDPrefix="settings-api-tokens-access"
                                 options={[
@@ -301,14 +307,14 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
                                     access,
                                     ...(access === 'limited' && !draft.grant ? { grant: API_TOKEN_LIMITED_GRANT_START_V1 } : {}),
                                 })}
-                            />
+                            /> : null}
                             <ApiTokenExpiryChoiceItem
                                 value={draft.expiryPreset}
                                 disabled={state.createPending}
                                 onChange={(expiryPreset) => setDraft({ ...draft, expiryPreset })}
                             />
                         </ItemGroup>
-                        <ItemGroup>
+                        {!deployment ? <ItemGroup>
                             {state.encryptionAvailability === 'ready' ? (
                                 <Item
                                     title={t('settingsApiTokens.encryption.choice')}
@@ -337,7 +343,16 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
                                 />}
                                 showChevron={false}
                             />
-                        </ItemGroup>
+                        </ItemGroup> : null}
+                        {deployment && !deploymentReady ? (
+                            <ItemGroup><Item testID="settings-api-tokens-deployment-client-required"
+                                title={state.encryptionAvailability === 'unchecked' || state.encryptionAvailability === 'checking'
+                                    ? t('common.loading') : state.encryptionAvailability === 'unreadable' ? t('common.error') : t('projects.deployments.overviewStatus.ciClientRequired')}
+                                subtitle={state.encryptionAvailability === 'unchecked' || state.encryptionAvailability === 'checking' || state.encryptionAvailability === 'unreadable' ? undefined : 'client_required'}
+                                showChevron={false} mode="info" />
+                                <RoundButton size="normal" display="inverted" title={t('common.retry')} action={props.controller.refreshEncryptionAvailability} />
+                            </ItemGroup>
+                        ) : null}
                         {!limited ? (
                             <View style={[styles.guidanceRow, styles.note]}>
                                 <Text style={styles.guidanceText}>{t('settingsApiTokens.create.actionSettingsPrefix')}</Text>

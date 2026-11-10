@@ -8,6 +8,7 @@ import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { encodeBase64 } from '@/encryption/base64';
 import { randomUUID } from '@/platform/randomUUID';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -236,6 +237,7 @@ const lastKnownTokensByScope = new WeakMap<ActiveServerAccountScopeLifetime, rea
 
 export function createApiTokenSettingsController(
     dependencies: ApiTokenSettingsControllerDependencies = defaultDependencies,
+    targetLifetime?: ActiveServerAccountScopeLifetime,
 ): ApiTokenSettingsController {
     let state = INITIAL_STATE;
     let retired = false;
@@ -269,16 +271,19 @@ export function createApiTokenSettingsController(
         if (!retired) publish(INITIAL_STATE);
     };
 
+    const targetRetirement = targetLifetime?.onRetire(dropScopeState);
+
     const captureLifetime = (): ActiveServerAccountScopeLifetime | null => {
         const lifetime = dependencies.captureActiveAccountScopeLifetime();
-        if (!lifetime?.isCurrent()) {
+        if (!lifetime?.isCurrent() || targetLifetime && (!targetLifetime.isCurrent()
+            || !areServerAccountScopesEqual(lifetime.scope, targetLifetime.scope))) {
             dropScopeState();
             return null;
         }
         if (activeLifetime !== lifetime) {
             retirement?.dispose();
             activeLifetime = lifetime;
-            retirement = lifetime.onRetire(dropScopeState);
+            retirement = lifetime === targetLifetime ? null : lifetime.onRetire(dropScopeState);
         }
         return lifetime;
     };
@@ -744,6 +749,7 @@ export function createApiTokenSettingsController(
         },
         retire() {
             if (retired) return;
+            targetRetirement?.dispose();
             if (creation) creation.cancelled = true;
             creation = null;
             activeRequest?.abort();

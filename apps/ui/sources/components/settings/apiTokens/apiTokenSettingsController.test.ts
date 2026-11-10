@@ -91,6 +91,22 @@ function createHarness(results: readonly (ActionExecuteResult | Promise<ActionEx
 describe('createApiTokenSettingsController', () => {
     beforeEach(() => { uuid.next = TOKEN_A.tokenId; });
 
+    it('keeps an Environment token creator bound to its originating Home lifetime', async () => {
+        const origin = createLifetime();
+        let active = origin;
+        const execute = vi.fn<ApiTokenSettingsExecute>(async () => ok({ tokens: [TOKEN_A] }));
+        const controller = createApiTokenSettingsController({ execute, now: () => NOW,
+            captureActiveAccountScopeLifetime: () => active }, origin);
+        await controller.refresh();
+        expect(controller.getState().tokens).toEqual([TOKEN_A]);
+        origin.retire();
+        active = createLifetime('account-b');
+        await controller.refresh();
+        expect(controller.getState().tokens).toEqual([]);
+        expect(execute).toHaveBeenCalledTimes(1);
+        controller.retire();
+    });
+
     it('adopts an approved creation into the existing show-once lifecycle without minting again', async () => {
         const harness = createHarness([]);
         const token = `hap_v1_${TOKEN_A.tokenId}_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;

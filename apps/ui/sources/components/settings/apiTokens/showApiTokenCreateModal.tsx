@@ -14,6 +14,20 @@ export function showApiTokenCreateModal(
     onHostUnmount?: () => void,
     options?: Readonly<{ revealAccessory?: ReactNode; revealCopy?: ApiTokenRevealCopy }>,
 ): string {
+    return modal.show({
+        component: ApiTokenCreateModal,
+        props: { controller, ...options },
+        closeOnBackdrop: true,
+        ...createApiTokenModalLifecycle(controller, modal, onHostUnmount),
+    });
+}
+
+/** Domain-specific token sheets retain the same one-time reveal dismissal and cleanup. */
+export function createApiTokenModalLifecycle(
+    controller: ApiTokenSettingsController,
+    modal: Pick<IModal, 'confirm'>,
+    onHostUnmount?: () => void,
+): Readonly<{ onDismissRequest(reason: CustomModalDismissReason): Promise<boolean>; onHostUnmount(): void }> {
     if (!controller.getState().reveal) void controller.refreshEncryptionAvailability();
     const confirmRevealDismiss = async (): Promise<boolean> => {
         try {
@@ -30,10 +44,7 @@ export function showApiTokenCreateModal(
             return true;
         }
     };
-    return modal.show({
-        component: ApiTokenCreateModal,
-        props: { controller, ...options },
-        closeOnBackdrop: true,
+    return {
         onDismissRequest: async (reason: CustomModalDismissReason) => await controller.requestRevealDismiss(
             confirmRevealDismiss,
             reason,
@@ -42,7 +53,7 @@ export function showApiTokenCreateModal(
             controller.clearReveal();
             onHostUnmount?.();
         },
-    });
+    };
 }
 
 /**
