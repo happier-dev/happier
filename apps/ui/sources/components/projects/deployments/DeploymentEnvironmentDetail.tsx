@@ -12,6 +12,8 @@ import type {
 } from '@happier-dev/deployments';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentDomainServingUrlV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -57,7 +59,7 @@ import { DeploymentSecretBindingsNotice } from './DeploymentSecretBindingsNotice
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import type { DeploymentContentV1, DeploymentReceiptFailureV1, DeploymentReviewRevisionV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentContentV1, DeploymentReceiptFailureV1, DeploymentReviewRevisionV1, DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
 
 import {
   deploymentDefinitionLabel,
@@ -83,17 +85,21 @@ import {
 import type { createDeploymentActions } from './deploymentActions';
 import { DeploymentEnvironmentAgentActions } from './DeploymentEnvironmentAgentActions';
 import { DeploymentEnvironmentSettingsPanel, type DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
+import { useStoredDefinitionDocument } from './StoredDefinitionEditor';
 import { DeploymentDomainsPanel, type DeploymentDomainEditing } from './DeploymentDomainsPanel';
 import { DeploymentPermissionsPanel } from './DeploymentPermissionsPanel';
 import { DeploymentStepStrip } from './DeploymentStepStrip';
 import { DeploymentTabState } from './DeploymentTabState';
 import { DeploymentVariablesPanel } from './DeploymentVariablesPanel';
 import { DeploymentDataCard } from './DeploymentDataCard';
-import { DEPLOYMENT_DATABASE_CATALOG_FILTER, showDeploymentAddSheet } from './DeploymentDatabasePage';
+import { DEPLOYMENT_DATABASE_CATALOG_FILTER, showDeploymentAddSheet, showDeploymentTemplateUpdateSheet,
+  showDeploymentAppSourcesSheet } from './DeploymentDatabasePage';
+import { describeRegistrySourceFailure } from '@/registries/describeRegistrySourceStatus';
 import { showDeploymentDispositionSheet } from './DeploymentDispositionSheet';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { showDeploymentLinkMachineSheet } from './DeploymentLinkMachineSheet';
-import { showDeploymentPlatformTargetSheet, useDeploymentPlatformTargetTitles, type DeploymentPlatformLinkActions } from './DeploymentPlatformTargetSheet';
+import { showDeploymentPlatformTargetSheet, useDeploymentPlatformTargets, type DeploymentPlatformLinkActions } from './DeploymentPlatformTargetSheet';
+import { DeploymentSourceMethodChoice } from './DeploymentSourceMethodChoice';
 import { showDeploymentRestoreSheet } from './DeploymentRestoreSheet';
 import { deploymentRestoreOperands, retainedBackupFromSummary } from './deploymentRestore';
 import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
@@ -123,11 +129,10 @@ import { useMachineServicesList } from '@/components/machines/services/useMachin
 import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { showServiceCommandSheet } from '@/components/machines/services/command/ServiceCommandSheet';
 import type { MachineServiceRowV1 } from '@happier-dev/protocol';
-import { SharedSavedSecretValueItem } from '@/components/secrets/SharedSavedSecretValueItem';
+import { DeploymentAdminLogin } from './DeploymentAdminLogin';
 import type { EnvironmentCompanionId } from '@/components/appShell/rightSidebar/detailNavigationItems';
 import { EnvironmentLogsCompanion } from './EnvironmentLogsCompanion';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
-import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecretCatalog';
 
 type EnvironmentTab = DeploymentEnvironmentTabV1;
 const noEnvironmentName = () => null;
@@ -213,7 +218,11 @@ export const DeploymentEnvironmentDetail = React.memo(
     );
     // One stable handler for every receipt row; each row binds its own id, so a parent render redraws none of them.
     const openReceipt = useEventCallback(props.onOpenReceipt);
+    const openAdminAddress = useEventCallback((url: string) => {
+      void requestOpenExternalUrl(url, { serverId: props.serverId, expectedAccountId: props.accountId });
+    });
     const detail = environment.snapshot.value;
+    const definitionDocument = useStoredDefinitionDocument(props.environmentId, detail?.content.definition);
     const projectSource = useProjectSource(props.lifetime ?? null, detail?.environment.projectSourceId ?? null);
     // "Point at another service" offers this Environment's declared exports (L-C variables/refpick).
     const serviceExports = detail?.content.ownServer?.serviceExports;
@@ -252,7 +261,17 @@ export const DeploymentEnvironmentDetail = React.memo(
     );
     const machineNames = useMachineDisplayNamesById(namedMachineIds);
     // A platform Environment's header names its platform (lab d4), as the rail row does.
-    const platformTitle = useDeploymentPlatformTargetTitles(props.lifetime ?? null, runtime?.source.kind === 'plugin');
+    const platforms = useDeploymentPlatformTargets(runtime?.source.kind === 'plugin' && props.demand.mounted && props.demand.visible
+      ? props.lifetime ?? null : null);
+    const platformRef = runtime?.source.kind === 'plugin' ? runtime.source.contribution : null;
+    const platform = platforms.state.status === 'ready' && platformRef
+      ? platforms.state.targets.find(target => target.pluginId === platformRef.pluginId
+        && target.targetId === platformRef.localId) : undefined;
+    const [selectedMethod, setSourceMethod] = React.useState<Readonly<{ targetLinkId: string; value: DeploymentSourceMethodV1 }> | null>(null);
+    const sourceMethod = platform?.sourceMethods.includes('upload')
+      ? selectedMethod?.targetLinkId === runtime?.id && platform.sourceMethods.includes(selectedMethod.value)
+        ? selectedMethod.value : platform.sourceMethods[0]
+      : undefined;
     // Its Triggers run where it is deployed (OPS-AUTOMATIONS-1102 D2), or on its controller before anything is.
     const triggerMachineId = machineIds[0] ?? controllerMachineId;
     const triggerSubject = React.useMemo(() => triggerMachineId
@@ -382,10 +401,16 @@ export const DeploymentEnvironmentDetail = React.memo(
       machineNames[machineId] ?? t('projects.deployments.aMachine');
     const activeReceipt = active.snapshot.value;
     const services = activeReceipt ? deploymentServices(activeReceipt.content) : NO_SERVICES;
+    const primaryService = detail.content.definition.kind === 'repository'
+      ? detail.content.definition.compose?.primaryService : detail.content.definition.primaryService;
+    const adminDomain = primaryService ? domains.result.items.find(item =>
+      (item.domain.state === 'active' || item.domain.state === 'warning')
+      && item.content.target.service === primaryService) : undefined;
+    const adminServingUrl = adminDomain ? readDeploymentDomainServingUrlV1(adminDomain.content) : null;
     // Where a name is only a fact or a clause, an unknown Machine drops out instead of reading "a machine".
     const knownMachine = (machineId: string | undefined) => (machineId ? machineNames[machineId] ?? null : null);
     const definition = deploymentDefinitionLabel(detail.content);
-    const platformName = runtime?.source.kind === 'plugin' ? platformTitle(runtime.source) : null;
+    const platformName = platform?.title ?? null;
     const meta: PageHeaderMetaFact[] = [
       ...(domainHost ? [{ key: 'domain', text: domainHost, icon: 'globe' as const }] : []),
       ...(platformName ? [{ key: 'platform', text: platformName }] : []),
@@ -406,7 +431,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     const { deploy, review, environmentId } = props;
     const pressDeploy = async () => {
       if (!deploy || availability.kind !== 'ready') return;
-      await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId }));
+      await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(sourceMethod ? { sourceMethod } : {}) }));
     };
     const liveSha =
       active.snapshot.value?.content.sourceIntent?.kind === 'repository'
@@ -414,7 +439,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         : null;
     const pressRedeploy = async () => {
       if (!deploy || availability.kind !== 'ready' || !liveSha) return;
-      await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, sha: liveSha }));
+      await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, sha: liveSha, ...(sourceMethod ? { sourceMethod } : {}) }));
     };
     const deployBlocked =
       deploying ||
@@ -469,15 +494,16 @@ export const DeploymentEnvironmentDetail = React.memo(
     const settledTeardowns = (history.snapshot.value?.items ?? [])
       .filter((receipt) => receipt.operation === 'teardown' && receipt.state === 'succeeded')
       .map((receipt) => receipt.id);
+    const knownHistory = history.snapshot.status === 'ready' ? history.snapshot.value : null;
+    const hasNoDeploymentHistory = (targetLinkId: string | null) => knownHistory !== null && !knownHistory.hasNextPage
+      && knownHistory.coverage !== 'partial' && !knownHistory.items.some(receipt => receipt.operation !== 'teardown'
+        && (!targetLinkId || receipt.targetLinkId === targetLinkId));
     const openDisposition = (targetLinkId: string | null) => {
       const links = disposition.review.retainedTargets;
       const subject = targetLinkId ? links.find((link) => link.id === targetLinkId) ?? null : null;
       const running = subject ? subject.activeDeploymentId !== null : links.some((link) => link.activeDeploymentId !== null);
       const machines = subject ? subject.machines : machineIds;
-      const knownHistory = history.snapshot.status === 'ready' ? history.snapshot.value : null;
-      const neverDeployed = !running && knownHistory !== null && !knownHistory.hasNextPage
-        && knownHistory.coverage !== 'partial' && !knownHistory.items.some(receipt => receipt.operation !== 'teardown'
-          && (!targetLinkId || receipt.targetLinkId === targetLinkId));
+      const neverDeployed = !running && hasNoDeploymentHistory(targetLinkId);
       const { onDeleted } = props;
       showDeploymentDispositionSheet({
         subject: targetLinkId ? { kind: 'target', targetLinkId } : { kind: 'environment' },
@@ -560,6 +586,13 @@ export const DeploymentEnvironmentDetail = React.memo(
         onNavigate: (destination) => openTab(destination.tab),
         ...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {}) });
     } : null;
+    const templateRef = detail.content.template?.templateRef;
+    const openTemplateUpdate = lifetime && templateRef && detail.environment.capabilities.manage
+      && detail.environment.capabilities.manageBindings ? () => showDeploymentTemplateUpdateSheet({
+        detail, lifetime, review: props.review, machineName, catalogFilters: {}, template: templateRef,
+        onNavigate: destination => openTab(destination.tab),
+        ...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {}),
+      }) : null;
     const openRestore = restoreAction && retainedBackup && restoreOperands ? () => {
       showDeploymentRestoreSheet({
         name: detail.content.name,
@@ -611,10 +644,11 @@ export const DeploymentEnvironmentDetail = React.memo(
       latest,
       health: overview ? detail.healthAggregate ?? null : null,
       servingState: overview ? activeReceipt?.deployment.state ?? null : null,
-      catalogUpdate: overview && environment.catalogUpdate.upstream?.state === 'update_available',
+      catalogUpdate: overview && Boolean(templateRef && (environment.catalogUpdate.upstream
+        && environment.catalogUpdate.upstream.state !== 'current' || environment.catalogUpdate.error)),
     });
     const deployWhenFinished = ready && deploy && availability.kind === 'ready' ? () => {
-      void press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, whenBusy: 'supersede' }));
+      void press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, whenBusy: 'supersede', ...(sourceMethod ? { sourceMethod } : {}) }));
     } : null;
     const attentionNotice = (() => {
       switch (attention?.kind) {
@@ -707,16 +741,27 @@ export const DeploymentEnvironmentDetail = React.memo(
             />
           );
         }
-        case 'catalogUpdate':
-          // A newer catalog release (P1 item 12); no Action applies it yet, so the notice only informs (§7).
+        case 'catalogUpdate': {
+          const upstream = environment.catalogUpdate.upstream;
+          const updateAvailable = upstream?.state === 'update_available';
           return (
             <AttentionBanner
               testID="project-deployments.environment.attention.catalogUpdate"
               tone="neutral"
-              title={t('projects.deployments.overviewStatus.catalogUpdateTitle')}
-              description={t('projects.deployments.overviewStatus.catalogUpdateBody')}
+              title={t(updateAvailable ? 'projects.deployments.overviewStatus.catalogUpdateTitle'
+                : 'projects.deployments.overviewStatus.catalogSourceUnavailableTitle')}
+              description={updateAvailable ? t('projects.deployments.overviewStatus.catalogUpdateBody')
+                : upstream?.state === 'removed_from_source' ? t('projects.deployments.overviewStatus.catalogSourceRemovedBody')
+                  : describeRegistrySourceFailure(upstream?.state === 'unchecked' ? upstream.reason : environment.catalogUpdate.status,
+                    environment.catalogUpdate.sourceTitle)}
+              {...(updateAvailable ? openTemplateUpdate ? { action: {
+                label: t('projects.deployments.overviewStatus.catalogUpdateReview'), onPress: openTemplateUpdate,
+              } } : {} : templateRef ? { action: { label: t('capabilities.registries.select.manage'),
+                onPress: () => showDeploymentAppSourcesSheet(templateRef.sourceId) },
+                secondaryAction: { label: t('common.retry'), onPress: () => { void environment.catalogUpdate.refresh(); } } } : {})}
             />
           );
+        }
         case 'runningUnverified':
           // The receipt's own notice, where the person looks first (lab d1 `unverified`).
           return servingNotice ? (
@@ -780,6 +825,11 @@ export const DeploymentEnvironmentDetail = React.memo(
               {deploymentAttentionLeaves(attention, 'secretWithdrawn') ? (
                 <DeploymentSecretBindingsNotice bindings={detail.content.bindings} scope={props.lifetime?.scope ?? null} />
               ) : null}
+              {sourceMethod && platform && runtime ? <ItemGroup header="none">
+                <DeploymentSourceMethodChoice methods={platform.sourceMethods} value={sourceMethod}
+                  testID="project-deployments.environment.sourceMethod" disabled={!ready || deploying || reviewPending}
+                  onChange={(value) => setSourceMethod({ targetLinkId: runtime.id, value })} />
+              </ItemGroup> : null}
               {/* The hero (lab d1 `dk-now`): what serves now, how it got there, then the four facts that say how it is.
                   Flat, so its glyph, name and facts start on the section headings' edge rather than a card's inner one. */}
               <ItemGroupDefaultSurfaceProvider value="flat">
@@ -879,6 +929,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                 <View style={styles.agentActions}>
                   <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id}
                     controllerMachineId={detail.environment.controllerMachineId}
+                    preparation={props.lifetime && detail.content.definition.kind === 'repository'
+                      ? { lifetime: props.lifetime, projectSourceId: detail.environment.projectSourceId } : undefined}
                     compact={props.phone} emphasis={ready ? 'secondary' : 'primary'} />
                 </View>
               </ItemGroup>
@@ -926,10 +978,15 @@ export const DeploymentEnvironmentDetail = React.memo(
                     onOpenLogs={logsOffered ? openLogs : null}
                   />
                   {props.lifetime ? (
-                    <EnvironmentAdminLogin
+                    <DeploymentAdminLogin
                       template={detail.content.template ?? null}
                       bindings={detail.content.bindings}
                       scope={props.lifetime.scope}
+                      images={activeReceipt?.content.images ?? []}
+                      active={props.demand.mounted && props.demand.visible}
+                      servingUrl={adminServingUrl}
+                      onOpenDomains={() => openTab('domains')}
+                      onOpenServing={openAdminAddress}
                     />
                   ) : null}
                 </ItemGroup>
@@ -945,6 +1002,13 @@ export const DeploymentEnvironmentDetail = React.memo(
                     environmentId: detail.environment.id }}
                   deploymentSourceName={projectSource.source?.source.name}
                   controllerMachineId={detail.environment.controllerMachineId} />
+              ) : null}
+              {detail.environment.purpose !== 'preview' ? (
+                <ItemGroup header="none">
+                  <Item testID="project-deployments.environment.overview.previews"
+                    title={t('projects.deployments.settingsSections.previewEditor.configure')}
+                    onPress={() => openTab('settings', 'previews')} />
+                </ItemGroup>
               ) : null}
               {recentReceipts.length > 0 ? (
                 <ItemGroup
@@ -1011,11 +1075,14 @@ export const DeploymentEnvironmentDetail = React.memo(
               detail={detail}
               machineName={machineName}
               onOpenController={() => openTab('settings', 'controller')}
+              onOpenPreviews={() => openTab('settings', 'previews')}
               editing={environmentEditing}
             />
           ) : (
             <DeploymentEnvironmentSettingsPanel
               detail={detail}
+              definitionDocument={definitionDocument}
+              phone={props.phone}
               controller={props.controller}
               demand={props.demand}
               machineName={machineName}
@@ -1023,6 +1090,8 @@ export const DeploymentEnvironmentDetail = React.memo(
               focusSection={settingsSection}
               onUnlink={disposition.canDelete ? openDisposition : null}
               onLink={openLink}
+              onChangeMachine={runtime?.source.kind === 'host' && runtime.state === 'configured'
+                && !activeId && hasNoDeploymentHistory(runtime.id) ? openLink : null}
               onAddPlatform={openPlatform}
               retainedBackup={openRestore ? retainedBackup : null}
               onRestore={openRestore}
@@ -1538,7 +1607,6 @@ function DeployMoreMenu(
       items={items}
       matchTriggerWidth={false}
       placement="bottom"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={t('projects.deployments.moreWaysToDeploy')}
       onSelect={(id) => {
         if (id === 'redeploy') props.onRedeploy();
@@ -1632,7 +1700,6 @@ function EnvironmentMenu(
       items={items}
       matchTriggerWidth={false}
       placement="bottom"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={t('common.more')}
       onSelect={(id) => {
         if (id === 'history') props.onOpenHistory?.();
@@ -1856,7 +1923,6 @@ function EnvironmentServiceRow(
             items={items}
             matchTriggerWidth={false}
             placement="bottom"
-            popoverPhonePresentation="sheet"
             popoverAccessibilityLabel={t('common.more')}
             onSelect={(id) => {
               if (id === 'logs') openLogs?.();
@@ -1881,34 +1947,3 @@ function EnvironmentServiceRow(
   );
 }
 
-/**
- * A catalog app's generated login (P1 §3 "Admin login"): the template's password variable, read through the one
- * shared Saved Secret leaf (Reveal/Copy = `secrets.shared.reveal`). Mounted only where the template names one.
- */
-function EnvironmentAdminLogin(
-  props: Readonly<{
-    template: DeploymentEnvironmentDetailV1['content']['template'] | null;
-    bindings: DeploymentEnvironmentDetailV1['content']['bindings'];
-    scope: ServerAccountScopeLifetime['scope'];
-  }>,
-) {
-  const key = props.template?.loginFields?.password ?? null;
-  const binding = key ? props.bindings.find((row) => row.name === key && row.source.kind === 'secret') : undefined;
-  const ref = binding && binding.source.kind === 'secret' ? binding.source.ref : null;
-  return ref ? <EnvironmentAdminLoginRow refId={ref} scope={props.scope} /> : null;
-}
-
-function EnvironmentAdminLoginRow(props: Readonly<{ refId: string; scope: ServerAccountScopeLifetime['scope'] }>) {
-  const refs = React.useMemo(() => [props.refId], [props.refId]);
-  const catalog = useSavedSecretCatalogEntries({ scope: props.scope, refs });
-  const entry = catalog.find((candidate) => candidate.ref === props.refId);
-  return entry ? (
-    <SharedSavedSecretValueItem
-      testID="project-deployments.environment.services.login"
-      title={t('projects.deployments.adminPassword')}
-      scope={props.scope}
-      entry={entry}
-      active
-    />
-  ) : null;
-}

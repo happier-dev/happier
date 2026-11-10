@@ -1586,6 +1586,14 @@ normal target-link owner in one transaction. A refused first link rolls back the
 Environment too, and replay does not create a second link. The separate link
 Action remains available for changes to an existing Environment.
 
+Before the first deployment, Settings can change the Machine of a configured
+own-server runtime link through that same Link Action. The Home admits replacement
+only when the existing teardown owner proves there is no native custody to release,
+or the existing member-drain proof authorizes removal, and retains the predecessor
+link. A failed deployment without a serving pointer still requires cleanup proof.
+This development-source first-placement change does not move deployed application
+data between Machines.
+
 The public source port materializes the receipt's immutable commit through the
 SCM backend's optional `exportCommit` operation and the existing manifest/blob
 staging owner. Git object bytes, rather than HEAD/index/dirty workspace bytes,
@@ -2614,8 +2622,9 @@ The development-source public `deployments.backups.restore` Action exposes these
 standalone phases as `mode: 'prepare'` and `mode: 'confirm'`. Both are effectful
 Environment-scoped writes with their own default Ask policy; a person confirms
 the irreversible operation, and scoped agent policy can explicitly allow it.
-Preparation selects the capture receipt's exact `restoreBackupId`, observes the
-current serving database, and takes the required safety backup before returning
+Preparation selects `source: {kind: 'repository', snapshotId, backupOperationId?,
+origin?}` or an opaque `source: {kind: 'upload', transferId}`, observes the
+current destination, and takes the required safety backup before returning
 nonsecret evidence in its existing Action operation. Confirmation names that
 `prepareOperationId`; the installed host reads the succeeded preparation under
 the same requester and Machine, checks that its operands match, and gives the
@@ -2624,6 +2633,37 @@ confirmations for that preparation instead of swapping the database again.
 If the daemon no longer retains the preparation, the caller must prepare again.
 If a confirmation changes the prepared operands, start a new preparation rather
 than reusing the rejected operation.
+When that destination has meaningful data and its selected managed provisioner
+supports a native snapshot, preparation also retains the provisioner's exact
+snapshot offer. UI and agent approval share its coverage, billing source and
+price when supplied, and observed running/stopped/unknown consistency. Snapshot
+is selected by default for an eligible offer; a root-disk-only offer explicitly
+excludes attached volumes and does not imply application quiescence. Confirmation
+binds that retained offer as private `snapshotReview` and the selected `snapshot`
+boolean; the clear admission projection omits the offer's native resource facts.
+The existing signed child transport invokes the managed controller's qualified
+snapshot role before native data replacement.
+
+A failed, refused, unsupported or unknown snapshot stops the parent at its existing
+`review_required` observation. Its receipt retains the typed snapshot outcome and
+no data replacement begins. Repeating the same confirmation returns that held
+outcome. Continuing changes only `snapshot` to `false` on the original public
+input, goes through normal fresh approval, and resumes the same restore receipt;
+other changed operands cannot reuse it. Successful or uncertain cloud effects
+remain visible in the final result even when the person continues. Stop closes
+the review; reopening Restore prepares a new review through the existing settings
+entry. No second snapshot registry or continuation token is introduced.
+
+The local-backup picker streams the chosen file through the existing encrypted
+finite upload transport. The public restore input carries only its opaque
+transfer ID. Uploaded PostgreSQL backups bind an exact service and database name;
+the name is prefilled only from an actual retained capture or entered by the
+person. Volume uploads choose a configured service and logical volume. Native
+preparation validates the chosen destination and reports source format, byte
+count and digest without publishing a daemon file path or inventing a backup
+timestamp. The retained upload survives a held snapshot review under the finite
+transfer owner's existing lifetime.
+
 Standalone restore shares the rollback path's serving-generation runtime and
 restore producers, and leaves deployment receipts and the active code pointer
 unchanged. Its signed native admission admits the Source/deployer once and scopes

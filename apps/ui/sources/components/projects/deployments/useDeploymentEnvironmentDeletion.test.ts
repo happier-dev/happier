@@ -51,6 +51,28 @@ async function setup() {
 }
 
 describe('Environment deletion client over the Action owner', () => {
+    it('replaces the selected first runtime link through the same confirmed Link Action', async () => {
+        const f = await setup();
+        const inputs: unknown[] = [];
+        await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.targets.link',
+            machineId: f.detail.environment.controllerMachineId, installationId: 'installation-controller', tokenEpoch: 0,
+            requesterInvocation: 'required', execute: input => {
+                inputs.push(input);
+                return { ok: true, environmentId: f.detail.environment.id, revision: f.detail.environment.revision + 1,
+                    targetLinkId: 'replacement-link', targetLinkRevision: 1 };
+            } });
+        const hook = await renderHook(() => useDeploymentEnvironmentDeletion({ environmentId: f.detail.environment.id,
+            lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions: f.actions,
+            controller: null, demand: shown }));
+        await act(async () => { expect(await hook.getCurrent().link({ machineId: 'replacement-machine',
+            installationId: 'replacement-installation' }, { confirmed: true })).toEqual({ kind: 'linked', targetLinkId: 'replacement-link' }); });
+        const selected = f.detail.targetLinks.find(row => row.targetLink.id === f.detail.environment.runtimeTargetLinkId)!.targetLink;
+        expect(inputs).toEqual([expect.objectContaining({ environmentId: f.detail.environment.id,
+            expectedRevision: f.detail.environment.revision, replacesLinkId: selected.id,
+            expectedTargetLinkRevision: selected.revision,
+            machines: [{ machineId: 'replacement-machine', installationId: 'replacement-installation' }] })]);
+    });
+
     it('deletes a never-deployed Compose Environment through its confirmed signed requester without interactive review', async () => {
         const f = await setup();
         delete f.detail.targetLinks[0]!.targetLink.activeDeploymentId;

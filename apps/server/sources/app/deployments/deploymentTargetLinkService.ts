@@ -11,6 +11,19 @@ import { deploymentIntentDigest, loadDeploymentEnvironmentInTx, lockDeploymentEn
 import { publishDeploymentChangesInTx } from './deploymentPublication';
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
 import { hasDeploymentMemberDrainInTx } from './deploymentMembershipService';
+import { hasCompleteTeardownInTx } from './deploymentDispositionService';
+
+/** Plugin daemon roles use the selected scalar installation; native workloads use their member rows. */
+export function readDeploymentTargetRuntimeInstallations(row: Readonly<{
+    sourceKind: string;
+    machineId: string | null;
+    installationId: string | null;
+    machines: readonly Readonly<{ machineId: string; installationId: string }>[];
+}>): readonly Readonly<{ machineId: string; installationId: string }>[] {
+    return row.sourceKind === 'plugin'
+        ? row.machineId && row.installationId ? [{ machineId: row.machineId, installationId: row.installationId }] : []
+        : row.machines;
+}
 
 export function projectDeploymentTargetHeader(row: Prisma.DeploymentTargetLinkGetPayload<{ include: { machines: true } }>) {
     return DeploymentTargetLinkHeaderV1Schema.parse({
@@ -106,7 +119,9 @@ export async function linkDeploymentTargetForAdmittedEnvironmentInTx(tx: Tx, act
         if (!plugin && previous.sourceKind === 'host') {
             const removed = previous.machines.filter(member => !input.machines.some(next => next.machineId === member.machineId
                 && next.installationId === member.installationId));
-            if (previous.hostTargetId !== input.targetId || removed.length > 0 && !await hasDeploymentMemberDrainInTx(tx, {
+            if (previous.hostTargetId !== input.targetId || removed.length > 0
+                && !await hasCompleteTeardownInTx(tx, previous, [], loaded.row.runtimeTargetLinkId)
+                && !await hasDeploymentMemberDrainInTx(tx, {
                 environmentId: input.environmentId, targetLinkId: previous.id, targetLinkRevision: previous.revision,
                 deploymentId: input.drainedDeploymentId, members: removed,
             })) return deploymentFailure('deployment_conflict');

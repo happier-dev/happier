@@ -37,6 +37,60 @@ describe('current runtime membership replacement', () => {
         env: { HAPPIER_SERVER_IDENTITY_ID: serverId, AUTH_REQUIRED_LOGIN_PROVIDERS: '' } }); }, 180_000);
     afterAll(async () => { await harness?.close(); });
 
+    it('replaces a never-deployed own-server first link without inventing a drain receipt, retaining its predecessor', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
+            { serverId, requestKey: crypto.randomUUID(), name: 'First placement' }));
+        if (!source.ok) throw new Error(source.error);
+        const machines = await Promise.all(['First', 'Replacement'].map(host => db.machine.create({ data: {
+            id: crypto.randomUUID(), accountId: owner.id, installationId: crypto.randomUUID(),
+            metadata: encodePlainMachineStoredContent({ host, platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+        } })));
+        const content = async (kind: string) => {
+            const created = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'First placement' })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!created.ok) throw new Error(created.error);
+            return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
+            createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: machines[0]!.id, ...await content('deployment-environment.v1') } });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const send = (payload: Record<string, unknown>) => app.inject({ method: 'POST',
+                url: `/v1/deployments/environments/${environment.id}/targets`, headers: { 'x-test-user-id': owner.id }, payload });
+            const base = { serverId, environmentId: environment.id, targetId: 'own-server', role: 'runtime',
+                ...await content('deployment-target-link.v1') };
+            const first = await send({ ...base, expectedRevision: environment.revision, requestKey: crypto.randomUUID(),
+                machines: [{ machineId: machines[0]!.id, installationId: machines[0]!.installationId }] });
+            expect(first.statusCode, first.body).toBe(200);
+            const replacement = { ...base, expectedRevision: first.json().revision, requestKey: crypto.randomUUID(),
+                replacesLinkId: first.json().targetLinkId, expectedTargetLinkRevision: first.json().targetLinkRevision,
+                machines: [{ machineId: machines[1]!.id, installationId: machines[1]!.installationId }] };
+            const changed = await send(replacement);
+            expect(changed.statusCode, changed.body).toBe(200);
+            expect((await send(replacement)).json()).toEqual(changed.json());
+            expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, changed.json().targetLinkId)))
+                .toMatchObject({ predecessorTargetLinkId: first.json().targetLinkId, machines: [machines[1]!.id] });
+            expect(await db.deployment.count({ where: { environmentId: environment.id } })).toBe(0);
+            expect(await db.deploymentTargetLink.findUnique({ where: { id: first.json().targetLinkId } })).not.toBeNull();
+            // A failed attempt may already own native resources even without a
+            // serving pointer; only the existing teardown owner can release them.
+            await db.deployment.create({ data: { environmentId: environment.id, targetLinkId: changed.json().targetLinkId,
+                operation: 'deploy', state: 'failed', requestKey: crypto.randomUUID(), requestedByAccountId: owner.id,
+                actionOperationId: crypto.randomUUID(), ...await content('deployment-receipt.v1') } });
+            const attempted = await send({ ...replacement, expectedRevision: changed.json().revision,
+                replacesLinkId: changed.json().targetLinkId, expectedTargetLinkRevision: changed.json().targetLinkRevision,
+                requestKey: crypto.randomUUID(), machines: [{ machineId: machines[0]!.id, installationId: machines[0]!.installationId }] });
+            expect(attempted.statusCode, attempted.body).toBe(409);
+            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).runtimeTargetLinkId)
+                .toBe(changed.json().targetLinkId);
+        });
+    });
+
     it('replaces preview child DATA provider content in place while preserving the captured teardown link identity', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, {

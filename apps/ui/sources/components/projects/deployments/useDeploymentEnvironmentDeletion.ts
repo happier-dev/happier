@@ -117,11 +117,13 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
                 : readDeploymentActionResult(result, 'refused');
         }, operation);
     }
-    /** The first runtime link: Happier's own server arm on one Machine; the Action owner authors its content. */
+    /** Link or replace Happier's own server arm; the Action owner authors its content. */
     function link(machine: DeploymentLinkMachine, operation?: UiActionOperation) {
         return run(async (actions, value, invoked) => {
+            const previous = value.targetLinks.find(item => item.targetLink.id === value.environment.runtimeTargetLinkId)?.targetLink;
             const result = await actions.link({ environmentId: value.environment.id, expectedRevision: value.environment.revision,
                 targetId: 'own-server', role: 'runtime', machines: [{ machineId: machine.machineId, installationId: machine.installationId }],
+                ...(previous ? { replacesLinkId: previous.id, expectedTargetLinkRevision: previous.revision } : {}),
                 ...deploymentManagedRetention(machine.retention ?? 'alwaysOn'),
                 requestKey: operation?.actionRequestId ?? randomUUID() }, invoked);
             return result.ok ? { kind: 'linked', targetLinkId: result.targetLinkId } : readDeploymentActionResult(result);
