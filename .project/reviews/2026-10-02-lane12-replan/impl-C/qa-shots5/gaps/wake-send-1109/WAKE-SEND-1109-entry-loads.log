@@ -1,21 +1,0 @@
-HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=entry-loads
-HSTACK_PLACEMENT_EXCLUDED target=mac3-linux reason=not-in-command-pool class=entry-loads
-HSTACK_PLACEMENT_EXCLUDED target=windows1-linux reason=not-in-command-pool class=entry-loads
-[preferred-execution] selected nl3 (load=0.387272, active=20, effective=0.543522, fresh)
-Forcing synchronization cycle for session sync_PHTlkBkPwgfMKBJLMzSaHdFKGO1Ff8tEu                                                                                pnpm 12.14.0 ready
-[preferred-execution] admitted on nl3
-{"graph":"daemon-entry-preparation","entry":"apps/cli/scripts/build-owned/generateBundledPluginEntries.ts","basis":"current-source","status":"passed","elapsedMs":55632.302282000004,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-{"graph":"daemon","entry":"apps/cli/src/daemon/startDaemon.ts","basis":"current-source","status":"passed","elapsedMs":104165.12659500001,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-{"graph":"cli","entry":"apps/cli/src/index.ts","basis":"current-source","status":"passed","elapsedMs":22566.255375999986,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-{"graph":"voice-inference-worker","entry":"apps/cli/src/daemon/voiceInference/forkedWorker/workerEntry.ts","basis":"current-source","status":"passed","elapsedMs":70238.25972899998,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-{"graph":"server","entry":"apps/server/sources/flavors/light/main.ts","basis":"current-source","status":"passed","elapsedMs":89225.78816500003,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-{"graph":"ui-catalog","entry":"apps/ui/sources/agents/catalog/catalog.test.ts","basis":"current-source","status":"passed","elapsedMs":34795.31195199996,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-{"graph":"source-plugin-ui-producer","entry":"apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs","basis":"current-source","status":"passed","elapsedMs":948.9176399999997,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-{"graph":"stack-browser-start","entry":"apps/stack/scripts/repo_local.mjs","basis":"current-source","status":"passed","elapsedMs":345.5241360000218,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-{"graph":"protocol-service-placement-actions","entry":"packages/protocol/src/actions/specs/projectServicePlacement.ts","basis":"current-source","status":"passed","elapsedMs":21989.569889000035,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-{"graph":"protocol-managed-credential-delivery","entry":"packages/protocol/src/machines/managed/credentialDeliveryV1.ts","basis":"current-source","status":"passed","elapsedMs":20860.473086000013,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-{"graph":"protocol-service-placement","entry":"packages/protocol/src/workspaces/projectServicePlacementV1.ts","basis":"current-source","status":"passed","elapsedMs":21156.54420100001,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-{"graph":"protocol-import-cycles","entry":"apps/cli/scripts/importCycleGuard.mjs","basis":"current-source","status":"passed","elapsedMs":4517.583105000027,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-{"graph":"sdk-browser","entry":"packages/sdk/scripts/validateBrowserConsumer.mjs","basis":"current-source","status":"passed","elapsedMs":28335.016250999994,"exitCode":0,"signal":null,"firstFailingModule":null,"loadError":null}
-[preferred-execution] custody_signal {"at":"2026-11-09T20:09:46Z","execution_id":"native-Ohp1TU-7-1794254470","initiating_execution_id":"native-Ohp1TU-7-1794254470","reason":"completed","signal":"TERM","target_kind":"pid","target_id":4034304,"members":["4034304:70417505"],"syscall_result":0}
-[preferred-execution] reclaimed historical temporary root /home/happier/.happier/dev-targets/nl3/tmp/hstack-5HVkLQ (106496 allocated bytes)
