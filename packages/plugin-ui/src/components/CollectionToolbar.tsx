@@ -178,6 +178,8 @@ function FilterFunnel(props: Readonly<{ refine: NonNullable<CollectionToolbarPro
       onOpenChange={setOpen}
       trigger={refine.label}
       triggerIcon="filter"
+      // Secondary ink, like the field's own search glyph: the toolbar's primary ("+") alone draws in full ink.
+      triggerTextTone="secondary"
       {...(props.inField ? {} : { triggerAppearance: 'well' as const, triggerCount: refine.activeCount })}
       triggerAccessibilityLabel={named}
       placement="bottom"
@@ -465,6 +467,8 @@ function MoreMenu(
       onOpenChange={setOpen}
       trigger={label}
       triggerIcon="more"
+      // Secondary ink: on the same glass as "+", the primary is told apart by its full ink, not by a fill.
+      triggerTextTone="secondary"
       {...(folded ? { triggerAppearance: 'well' as const } : {})}
       triggerAccessibilityLabel={label}
       items={items}

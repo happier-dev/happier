@@ -9,6 +9,7 @@ import { HAPPIER_PRESS_FEEDBACK_V1 } from '../presentation/interaction/pressFeed
 import { happierFocusRingStyle } from '../presentation/interaction/focusVisible.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { useHappierPrecisePointer } from '../presentation/interaction/precisePointer.js';
+import { useHappierMaterialColorResolver } from '../presentation/layout/Surface.js';
 import { Button } from './Button.js';
 import { Icon } from './Icon.js';
 import { Row, Stack } from './Layout.js';
@@ -182,10 +183,14 @@ function SearchShortcut(props: Readonly<{ testID?: string }>) {
   return <CollectionKeyCap label={SEARCH_FOCUS_KEY} {...(props.testID === undefined ? {} : { testID: props.testID })} />;
 }
 
-/** One key, as a bordered control face (lab `.kbd`): the outline and field of the host's controls. */
+/**
+ * One key, as a bordered control face (lab `.kbd`): the outline and field of the host's controls, painted through
+ * the material it stands on (the search field's glass), never an opaque chip of its own.
+ */
 export function CollectionKeyCap(props: Readonly<{ label: string; testID?: string }>) {
   const theme = usePluginTheme();
   const palette = useOptionalHappierUiPalette(theme) ?? resolveHappierUiPalette(theme);
+  const paintColor = useHappierMaterialColorResolver();
   return (
     <View testID={props.testID} style={[keyCapStyle, {
       // A caption-line square, plus its two border edges, keeps a single key legible.
@@ -193,7 +198,7 @@ export function CollectionKeyCap(props: Readonly<{ label: string; testID?: strin
       paddingHorizontal: theme.spacing.xsmall,
       borderRadius: theme.radii.small,
       borderColor: palette.controlBorder,
-      backgroundColor: palette.fieldBackground,
+      backgroundColor: paintColor(palette.fieldBackground),
     }]}>
       <HappierText variant="meta" tone="muted">{props.label}</HappierText>
     </View>

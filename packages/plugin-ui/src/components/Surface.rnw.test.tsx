@@ -14,6 +14,10 @@ import { HappierBadge, HappierBanner } from '../presentation/content/Foundation.
 import { HappierSelect } from '../presentation/form/Fields.js';
 import { HappierSelectionTiles } from '../presentation/form/SelectionTiles.js';
 import { resolveHappierButtonChrome } from '../presentation/interaction/buttonChrome.js';
+import { IconButton } from './Button.js';
+import { Icon } from './Icon.js';
+import { Menu } from './Overlay.js';
+import { CollectionKeyCap } from './listCollectionHeader.js';
 
 function mountSurface(
   children: React.ReactElement,
@@ -109,6 +113,33 @@ describe('Surface and Card', () => {
     const color = (id: string) => getComputedStyle(mount.container.querySelector<HTMLElement>(`[data-testid="${id}"]`)!).backgroundColor;
     expect(color('secondary-material')).toBe(resolveRenderedColor('backgroundColor', '#11223380'));
     expect(color('primary-material')).toBe(resolveRenderedColor('backgroundColor', context.theme.colors.accent));
+    mount.unmount();
+  });
+  it('stands toolbar icon buttons and the search key cap on the containing glass, like the field beside them', () => {
+    const glass = 'rgba(235, 230, 225, 0.1)';
+    const host: PluginUiPresentationHost = {
+      renderMarkdown: () => null, renderCodeBlock: () => null, renderPopover: () => null, renderIcon: () => null,
+      // The platform paint boundary: the host's glass owner returns the concrete translucent fill.
+      resolveMaterialColor: () => glass,
+    };
+    const context = createSurfaceContext();
+    const mount = mountSurface(<PluginUiPresentationHostProviderInternal host={host}>
+      <HappierMaterialRoleProvider role="content" resolveMaterialColor={host.resolveMaterialColor}>
+        <Menu open={false} onOpenChange={() => undefined} trigger="More" triggerIcon="more" triggerAppearance="well"
+          triggerAccessibilityLabel="More" testID="well-more" items={[{ id: 'a', label: 'A' }]} onSelect={() => undefined} />
+        <IconButton testID="well-add" appearance="well" accessibilityLabel="New task" icon={<Icon name="add" />} onPress={() => {}} />
+        <CollectionKeyCap testID="key-cap" label="/" />
+      </HappierMaterialRoleProvider>
+    </PluginUiPresentationHostProviderInternal>, context);
+    const drawn = (id: string) => {
+      const control = mount.container.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+      // The one painted box: a button's drawn square inside its (never painted) press frame, or the key cap itself.
+      return [...control.querySelectorAll<HTMLElement>('*'), control].find((node) => getComputedStyle(node).backgroundColor !== 'rgba(0, 0, 0, 0)')!;
+    };
+    const resolvedGlass = resolveRenderedColor('backgroundColor', glass);
+    expect(getComputedStyle(drawn('well-more')).backgroundColor).toBe(resolvedGlass);
+    expect(getComputedStyle(drawn('well-add')).backgroundColor).toBe(resolvedGlass);
+    expect(getComputedStyle(drawn('key-cap')).backgroundColor).toBe(resolvedGlass);
     mount.unmount();
   });
   it('uses the floating override for menus rather than the card override', () => {

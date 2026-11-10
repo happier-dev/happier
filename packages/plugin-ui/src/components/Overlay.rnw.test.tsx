@@ -81,7 +81,7 @@ function findRimmedAncestor(target: HTMLElement | null): HTMLElement | null {
 }
 
 function resolveRenderedColor(
-  property: 'backgroundColor' | 'borderTopColor',
+  property: 'backgroundColor' | 'borderTopColor' | 'color',
   value: string,
 ): string {
   const probe = document.createElement('div');
@@ -264,6 +264,28 @@ describe('controlled overlay presentation', () => {
     // A well is a circle with no outline: the fill is its own edge.
     expect(parseFloat(well.borderTopLeftRadius)).toBe(parseFloat(well.width) / 2);
     expect(well.borderTopWidth).toBe('0px');
+    mount.unmount();
+  });
+
+  it('inks an icon trigger\'s glyph in its trigger tone, so a toolbar\'s primary reads by ink rather than by fill', () => {
+    const context = createSurfaceContext();
+    const host: PluginUiPresentationHost = {
+      ...createPresentationHost(() => null),
+      renderIcon: (input) => <span data-icon={input.name} style={{ color: input.color }} />,
+    };
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <PluginUiPresentationHostProviderInternal host={host}>
+          <Menu open={false} onOpenChange={() => undefined} trigger="More" triggerIcon="more" triggerAppearance="well"
+            triggerTextTone="secondary" triggerAccessibilityLabel="More" items={[{ id: 'a', label: 'A' }]} onSelect={() => undefined} />
+          <Menu open={false} onOpenChange={() => undefined} trigger="New" triggerIcon="add" triggerAppearance="well"
+            triggerAccessibilityLabel="New" items={[{ id: 'a', label: 'A' }]} onSelect={() => undefined} />
+        </PluginUiPresentationHostProviderInternal>
+      </PluginUiProvider>,
+    );
+    const ink = (name: string) => getComputedStyle(mount.container.querySelector<HTMLElement>(`[data-icon="${name}"]`)!).color;
+    expect(ink('more')).toBe(resolveRenderedColor('color', context.theme.colors.secondaryText));
+    expect(ink('add')).toBe(resolveRenderedColor('color', context.theme.colors.text));
     mount.unmount();
   });
 

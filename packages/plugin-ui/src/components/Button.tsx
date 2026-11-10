@@ -17,6 +17,7 @@ import {
 import { HappierSpinner, iconMatchedSpinnerSize } from '../presentation/feedback/Spinner.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { HAPPIER_ICON_BUTTON_SIZE, HAPPIER_ICON_BUTTON_WELL_SIZE, resolveHappierIconButtonChrome } from '../presentation/interaction/iconButtonChrome.js';
+import { useHappierMaterialColorResolver } from '../presentation/layout/Surface.js';
 import { PluginUiLeadingGlyphInkContext } from './Icon.js';
 
 /** A phone state's action fills its column; set by the shared state owner, never a public Button prop. */
@@ -286,6 +287,19 @@ export type IconButtonProps = Readonly<{
   onPress: () => unknown;
 }>;
 
+/**
+ * An icon button's fills (a well's rest, and every button's hover, press and open state): the control fill painted
+ * through the containing material, so it stands on glass like the segmented control and search field beside it
+ * when glass is on, and is the theme's control fill when it is off. IconButton and an icon Menu/Popover trigger
+ * share it.
+ */
+export function usePluginIconButtonColors() {
+  const theme = usePluginTheme();
+  const paintColor = useHappierMaterialColorResolver();
+  const control = paintColor(theme.colors.control);
+  return { background: control, border: theme.colors.border, hover: control, pressed: control, selected: control, focus: theme.colors.focus };
+}
+
 /** The public icon-only adapter over the same press/pending owner as core. */
 export function IconButton({
   accessibilityLabel,
@@ -306,12 +320,10 @@ export function IconButton({
   );
   const well = appearance === 'well';
   const size = well ? HAPPIER_ICON_BUTTON_WELL_SIZE : HAPPIER_ICON_BUTTON_SIZE;
+  const colors = usePluginIconButtonColors();
   const chrome = (state: HappierPressableStyleState) => resolveHappierIconButtonChrome({
     size, variant: well ? 'well' : 'plain', selected: state.selected, hovered: state.hovered,
-    pressed: state.pressed, focused: state.focused, disabled: state.disabled && !state.busy,
-    colors: { background: theme.colors.control, border: theme.colors.border,
-      hover: theme.colors.control, pressed: theme.colors.control,
-      selected: theme.colors.control, focus: theme.colors.focus },
+    pressed: state.pressed, focused: state.focused, disabled: state.disabled && !state.busy, colors,
   });
   const focusBinding = usePluginUiFocusTargetBindingInternal(focusTarget);
   return (
