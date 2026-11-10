@@ -42,7 +42,7 @@ type Host = Readonly<{
     resolveRequesterIdentity: import('../readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver;
     acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
     executeSourceReadAction?: ExecuteScmSourceReadAction;
-    readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
+    readEnvironment(request: Readonly<{ environmentId: string; targetLinkId?: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
     readReceipt(request: Readonly<{ environmentId: string; deploymentId: string; context: ActionExecutorContext }>): Promise<DeploymentReceiptDetailV1>;
     readPreparedDeploymentContent(request: Readonly<{ input: ReturnType<typeof DeploymentDeployInputV1Schema.parse>; context: ActionExecutorContext }>):
         Promise<Readonly<{ ok: true; content: DeploymentContentV1 }> | ActionExecuteFailure>;
@@ -267,9 +267,10 @@ export function createContributedDeploymentTargetForHost(host: Host) {
     }>): Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure> {
         try {
             if (request.input.serverId !== host.serverId) return failure('server_scope_mismatch');
-            const environment = await host.readEnvironment({ environmentId: request.input.environmentId, context: request.context });
             const receipt = await host.readReceipt({ environmentId: request.input.environmentId,
                 deploymentId: request.input.deploymentId, context: request.context });
+            const environment = await host.readEnvironment({ environmentId: request.input.environmentId,
+                targetLinkId: receipt.deployment.targetLinkId, context: request.context });
             const row = environment.targetLinks.find(item => item.targetLink.id === receipt.deployment.targetLinkId);
             const targetFailure = row && readDeploymentObservationTargetFailure(row.targetLink.targetKind);
             if (targetFailure) return targetFailure;

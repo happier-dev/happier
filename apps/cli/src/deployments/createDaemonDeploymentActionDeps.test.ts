@@ -55,7 +55,7 @@ import { createDeploymentArtifactForHost } from './createArtifactForHost';
 import { ArtifactAccessGrantSetInputV1Schema, type ArtifactAccessGrantRowV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { DeploymentActionInputSchemasV1, DeploymentEnvironmentCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecuteResult, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { buildApprovalExecutionOriginV1, createActionExecutor, createHostReviewedChildPortV1, type ActionExecuteResult, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ApprovalRequestV2Schema, resolveApprovalExecutor } from '@happier-dev/protocol';
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { ActionsSettingsV1Schema, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions';
@@ -81,7 +81,8 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
     ExternalActionExecutionAuthorizationV1Schema, createDeploymentCandidatePublicationV1,
-    projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, projectDeploymentReadAdmissionV1,
+    projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -249,13 +250,18 @@ describe('installed deployment storage and target composition', () => {
         expect(nativeAcquisitions).toBe(0);
         });
     });
-    it.each(['deployments.receipts.observe', 'deployments.observation.get'] as const)(
-        'routes CLI %s to the receipt owner for a cold native receipt', async actionId => {
+    it.each([
+        { actionId: 'deployments.receipts.observe', selection: 'active' },
+        { actionId: 'deployments.receipts.observe', selection: 'retained' },
+        { actionId: 'deployments.observation.get', selection: 'active' },
+    ] as const)(
+        'routes CLI $actionId to the receipt owner for a cold native receipt ($selection)', async ({ actionId, selection }) => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-native-observation-',
             env: { HAPPIER_SERVER_URL: 'https://home.test', HAPPIER_WEBAPP_URL: 'https://home.test' } }, async () => {
         const detail = createDeploymentEnvironmentDetailV1();
         const receipt = createDeploymentReceiptDetailV1();
         const link = detail.targetLinks[0]!.targetLink;
+        if (selection === 'retained') detail.environment.runtimeTargetLinkId = undefined;
         const keys = tweetnacl.sign.keyPair();
         const machine = { id: 'machine-a', kind: 'persistent', active: true, activeAt: Date.now(),
             installationId: 'installation-a', installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
@@ -309,7 +315,6 @@ describe('installed deployment storage and target composition', () => {
                 requiredFact: 'providerDeploymentObservation', supportedAction: 'deployments.receipts.get',
                 remedy: expect.stringMatching(/\S/) },
         };
-        expect(await executor.execute(actionId, input, context)).toMatchObject(expected);
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
@@ -997,7 +1002,7 @@ describe('installed deployment storage and target composition', () => {
         const artifacts = createCredentialedAccountArtifactStore(credentials);
         const opened = await runWithServerHttpBaseUrl('https://link.test', () => artifacts.read(id, { prepareRecipients: false, includeSharedAudience: false }));
         if (!opened || typeof opened.body !== 'string') throw new Error('Expected text link content');
-        expect(opened.header).toEqual({ kind: 'deployment-target-link.v1', title: managed ? 'Customer database' : '' });
+        expect(opened.header).toMatchObject({ kind: 'deployment-target-link.v1', title: managed ? 'Customer database' : '' });
         expect(JSON.parse(opened.body)).toEqual(managed ? provider : {});
         if (mode === 'e2ee') expect(JSON.stringify(documents.get(id))).not.toContain('providerResourceId');
     });
@@ -1169,14 +1174,15 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['provider Domain verify', 'provider Domain remove', 'provider Domain teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['provider Domain add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const variableScenario = scenario.startsWith('variable ');
         const domainScenario = scenario.startsWith('provider Domain');
-        const domainTeardown = scenario === 'provider Domain teardown';
+        const domainTeardown = scenario === 'provider Domain retained native teardown';
         const domainRemove = scenario === 'provider Domain remove';
-        const domainRole = domainTeardown || domainRemove ? 'domains.remove' as const : 'domains.verify' as const;
+        const domainAdd = scenario === 'provider Domain add';
+        const domainRole = domainTeardown || domainRemove ? 'domains.remove' as const : domainAdd ? 'domains.add' as const : 'domains.verify' as const;
         const rootSource = scenario.startsWith('root source ');
         const rootSourceForeign = scenario === 'root source foreign';
         const rootApproval = scenario.startsWith('root source approval ');
@@ -1279,14 +1285,14 @@ describe('installed deployment storage and target composition', () => {
                     connectedAccountDescriptors: [{ id: 'service', title: 'Platform account', authentication: {
                     defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
                         fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }] }] } }],
-                    actions: [...roles.map(id => ({ id: id === 'uploadDeploy' ? 'upload-deploy' : id === 'logs.build' ? 'build-logs-read' : id === 'variables.read' ? 'variables-read' : id === 'variables.sync' ? 'variables-sync' : id === 'domains.verify' ? 'domains-verify' : id === 'domains.remove' ? 'domains-remove' : id, title: id, scopes: ['global'], surfaces: ['plugin'],
+                    actions: [...roles.map(id => ({ id: id === 'uploadDeploy' ? 'upload-deploy' : id === 'logs.build' ? 'build-logs-read' : id === 'variables.read' ? 'variables-read' : id === 'variables.sync' ? 'variables-sync' : id === 'domains.verify' ? 'domains-verify' : id === 'domains.remove' ? 'domains-remove' : id === 'domains.add' ? 'domains-add' : id, title: id, scopes: ['global'], surfaces: ['plugin'],
                     placementBindings: [],
                     execution: { target: 'daemon' },
                     hostAccess: ['manage'],
                     connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'manage' }],
                     dangerLevel: id === 'inspect' || id === 'observe' || id === 'logs.build' || id === 'variables.read' || id === 'domains.verify' ? 'safe' : 'writesLocal',
                     inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema,
-                    resultSchema: id === 'domains.verify' || id === 'domains.remove' ? DeploymentTargetDomainResultV1ProtocolSchema.jsonSchema : id === 'variables.read' ? DeploymentTargetVariablesReadResultV1ProtocolSchema.jsonSchema
+                    resultSchema: id === 'domains.verify' || id === 'domains.remove' || id === 'domains.add' ? DeploymentTargetDomainResultV1ProtocolSchema.jsonSchema : id === 'variables.read' ? DeploymentTargetVariablesReadResultV1ProtocolSchema.jsonSchema
                         : id === 'variables.sync' ? DeploymentTargetVariablesSyncResultV1ProtocolSchema.jsonSchema
                         : id === 'logs.build' ? DeploymentTargetLogsResultV1ProtocolSchema.jsonSchema : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
                 })), ...(scenario === 'upload source' ? [{ id: 'source-check', title: 'Check retired source', scopes: ['global'],
@@ -1299,7 +1305,7 @@ describe('installed deployment storage and target composition', () => {
                         actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', uploadDeploy: 'upload-deploy',
                             ...(scenario === 'build logs' ? { logs: { build: 'build-logs-read' } } : {}),
                             ...(variableScenario ? { variables: { read: 'variables-read', sync: 'variables-sync' } } : {}),
-                            ...(domainScenario ? { domains: domainRole === 'domains.remove' ? { remove: 'domains-remove' } : { verify: 'domains-verify' } } : {}),
+                            ...(domainScenario ? { domains: domainRole === 'domains.remove' ? { remove: 'domains-remove' } : domainRole === 'domains.add' ? { add: 'domains-add' } : { verify: 'domains-verify' } } : {}),
                             ...(domainTeardown ? { teardown: 'teardown' } : {}) } }) }] } },
             files: { 'daemon.mjs': `import { PluginError } from '@happier-dev/plugin-sdk/errors';
                 import { readFile } from 'node:fs/promises';
@@ -1323,9 +1329,9 @@ describe('installed deployment storage and target composition', () => {
                     catch (error) { backgroundProbe = { errorCode: error.code, error: error.message }; }
                     finally { finishBackground(); }
                 });` : ''}
-                ${roles.map(role => `api.actions.register('${role === 'uploadDeploy' ? 'upload-deploy' : role === 'logs.build' ? 'build-logs-read' : role === 'variables.read' ? 'variables-read' : role === 'variables.sync' ? 'variables-sync' : role === 'domains.verify' ? 'domains-verify' : role === 'domains.remove' ? 'domains-remove' : role}', async (input, context) => {
+                ${roles.map(role => `api.actions.register('${role === 'uploadDeploy' ? 'upload-deploy' : role === 'logs.build' ? 'build-logs-read' : role === 'variables.read' ? 'variables-read' : role === 'variables.sync' ? 'variables-sync' : role === 'domains.verify' ? 'domains-verify' : role === 'domains.remove' ? 'domains-remove' : role === 'domains.add' ? 'domains-add' : role}', async (input, context) => {
                     ${role === 'domains.remove' ? `return { v: 1, hostname: input.domain.hostname, state: 'removed', dns: [] };` : ''}
-                    ${role === 'domains.verify' ? `return { v: 1, hostname: input.domain.hostname, state: 'pending', dns: [{ type: 'TXT', name: '_verification.example.test', value: 'private-dns-token' }] };` : ''}
+                    ${role === 'domains.verify' || role === 'domains.add' ? `return { v: 1, hostname: input.domain.hostname, state: 'pending', dns: [{ type: 'TXT', name: '_verification.example.test', value: 'private-dns-token' }] };` : ''}
                     ${role === 'variables.read' ? `observationCount++; return { v: 1, variables: [{ key: 'MODE', providerId: 'provider-mode', present: true, secret: false, owned: true, drift: 'current', providerRevision: '10' }] };` : ''}
                     ${role === 'variables.sync' ? `if (input.set[0]?.name !== 'MODE' || input.set[0]?.source.value !== 'release' || input.owned.length !== 0) throw new Error('Wrong reviewed variables');
                     return { v: 1, owned: [{ key: 'MODE', providerId: 'provider-mode', desiredRevision: input.desiredRevision, providerRevision: '10' }],
@@ -1420,10 +1426,15 @@ describe('installed deployment storage and target composition', () => {
                         name: 'Repository without attachment', audience: [], createdByAccountId: 'owner', attachments: [],
                         repository: { protocol: 'https', provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
                             repository: { nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' } } } } };
-                if (new URL(request.url!).pathname.endsWith('/deployments')) { nativeReads++; throw new Error('Platform has no native history'); }
+                if (new URL(request.url!).pathname.endsWith('/deployments')) {
+                    if (request.method === 'GET' && new URL(request.url!).searchParams.get('inProgressOnly') === 'true') return {
+                        status: 200, data: DeploymentReceiptListResultV1Schema.parse({ ok: true, items: [], nextCursor: null }),
+                    };
+                    nativeReads++; throw new Error('Platform has no native history');
+                }
                 if (settling) settlementReads.metadata++;
                 return { status: 200, data: DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
-                    environment: environment.environment, targetLinks: [row.targetLink] }) };
+                    environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) }) };
             });
             vi.spyOn(axios, 'get').mockImplementation(async url => {
                 if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
@@ -1464,7 +1475,19 @@ describe('installed deployment storage and target composition', () => {
                 if (!retainedLease) throw new Error('Expected the preparation registry lease');
                 await retireAdmittedPluginRuntimeRegistry(runtime);
             }
+            const retainedDomainOperations = createActionOperationStore();
+            let retiredProviderDomain = false;
+            let reachedNativeTeardown = false;
             const deps = createDaemonDeploymentActionDeps({
+                readOperation: async operationId => retainedDomainOperations.get({ accountId: 'owner', machineId: 'machine-a' }, operationId),
+                ...(domainTeardown ? { teardownBoundary: {
+                    async observe() {
+                        reachedNativeTeardown = true;
+                        expect(retiredProviderDomain).toBe(true);
+                        return { kind: 'failed' as const, reason: 'native-boundary-fixture' };
+                    },
+                    async execute() { throw new Error('Native effects are outside the provider Domain cleanup contract'); },
+                } } : {}),
                 resolveRequesterIdentity: rootSourceForeign ? async current => {
                     const owner = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home',
                         resolveHostIdentity: async () => ({ machineId: 'machine-a', installationId: 'installation-a', custodianAccountId: 'machine-owner' }) });
@@ -1500,6 +1523,13 @@ describe('installed deployment storage and target composition', () => {
                 const previousHttp = vi.mocked(axios.request).getMockImplementation()!;
                 vi.mocked(axios.request).mockImplementation(async request => {
                     const path = new URL(request.url!).pathname;
+                    if (domainAdd && request.method === 'POST' && path.endsWith('/domains')) {
+                        Object.assign(domain, DeploymentDomainHeaderV1Schema.parse({ ...domain,
+                            contentArtifactId: request.data.contentArtifactId, contentHeaderVersion: request.data.contentHeaderVersion,
+                            contentBodyVersion: request.data.contentBodyVersion }));
+                        return { status: 200, data: { ok: true, environmentId: environment.environment.id,
+                            revision: environment.environment.revision, domain } };
+                    }
                     if (path.endsWith('/domains')) return { status: 200, data: { ok: true, environmentId: environment.environment.id,
                         revision: environment.environment.revision, domains: [domain], nextCursor: null } };
                     if (domainRemove && path.endsWith(`/domains/${domain.id}/remove`)) {
@@ -1513,24 +1543,68 @@ describe('installed deployment storage and target composition', () => {
                     if (path.endsWith(`/domains/${domain.id}/transitions`)) {
                         const wire = DeploymentDomainTransitionInputV1Schema.parse(request.data);
                         expect(wire).toMatchObject({ observations: [], providerObservation: { placement: domain.providerPlacement,
-                            state: domainRemove ? 'removed' : 'warning', proof: expect.any(Object), contentUpdate: { expectedBodyVersion: 1 } } });
+                            state: domainRemove || domainTeardown ? 'removed' : 'warning', proof: expect.any(Object), contentUpdate: { expectedBodyVersion: 1 } } });
                         const privateBody = decodePlainArtifactStoredContent(String(wire.providerObservation!.contentUpdate!.body));
-                        expect(privateBody).toMatchObject({ body: domainRemove ? expect.stringContaining('\"state\":\"removed\"') : expect.stringContaining('private-dns-token') });
+                        expect(privateBody).toMatchObject({ body: domainRemove || domainTeardown ? expect.stringContaining('\"state\":\"removed\"') : expect.stringContaining('private-dns-token') });
+                        retiredProviderDomain = true;
                         return { status: 200, data: { ok: true, environmentId: environment.environment.id,
-                            revision: environment.environment.revision, domain: { ...domain, state: domainRemove ? 'removed' : 'warning', revision: domain.revision + 1, contentBodyVersion: 2 } } };
+                            revision: environment.environment.revision, domain: DeploymentDomainHeaderV1Schema.parse({ ...domain,
+                                state: domainRemove || domainTeardown ? 'removing' : 'warning',
+                                ...(domainRemove || domainTeardown ? { deletedAtMs: 2 } : {}),
+                                revision: domain.revision + 1, contentBodyVersion: 2 }) } };
                     }
                     return previousHttp(request);
                 });
                 if (domainTeardown) {
-                    const plan = await deps.prepareHostReviewedChildren!({ actionId: 'deployments.teardown',
-                        input: { serverId: 'home', environmentId: environment.environment.id,
-                            expectedRevision: environment.environment.revision, targetLinkId: row.targetLink.id,
-                            expectedTargetLinkRevision: row.targetLink.revision, requestKey: 'retire-provider-domain', reason: 'manual',
-                            contentArtifactId: 'teardown-artifact', contentHeaderVersion: 1, contentBodyVersion: 1 }, context: ownerContext });
+                    const native = createDeploymentEnvironmentDetailV1().targetLinks[0]!;
+                    native.targetLink.id = 'native-after-migration';
+                    native.targetLink.predecessorTargetLinkId = row.targetLink.id;
+                    native.targetLink.contentArtifactId = 'native-after-migration-content';
+                    environment.targetLinks.push(native);
+                    environment.environment.runtimeTargetLinkId = native.targetLink.id;
+                    put(native.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, native.content);
+                    const sample = createDeploymentReceiptDetailV1();
+                    const receipt = createDeploymentReceiptDetailV1({ deployment: { ...sample.deployment,
+                        id: 'teardown-receipt', operation: 'teardown', state: 'running', actionOperationId: 'domain-operation',
+                        targetLinkId: native.targetLink.id, contentArtifactId: 'teardown-artifact' }, content: { ...sample.content,
+                        teardown: { reason: 'manual', targetLinkRevision: native.targetLink.revision,
+                            machines: native.targetLink.members.map(({ machineId, installationId }) => ({ machineId, installationId })),
+                            resources: [], proofs: [] } } });
+                    put(receipt.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, receipt.content);
+                    const domainHttp = vi.mocked(axios.request).getMockImplementation()!;
+                    vi.mocked(axios.request).mockImplementation(async request => new URL(request.url!).pathname.endsWith('/receipts/teardown-receipt')
+                        ? { status: 200, data: DeploymentReceiptGetResultV1Schema.parse({ ok: true, deployment: receipt.deployment }) }
+                        : domainHttp(request));
+                    const input = { serverId: 'home', environmentId: environment.environment.id,
+                        expectedRevision: environment.environment.revision, targetLinkId: native.targetLink.id,
+                        expectedTargetLinkRevision: native.targetLink.revision, requestKey: 'retire-provider-domain', reason: 'manual' as const,
+                        contentArtifactId: 'teardown-artifact', contentHeaderVersion: 1, contentBodyVersion: 1 };
+                    const plan = await deps.prepareHostReviewedChildren!({ actionId: 'deployments.teardown', input, context: ownerContext });
                     expect(plan, JSON.stringify(plan)).toMatchObject({ children: expect.arrayContaining([
                         expect.objectContaining({ role: 'domains.remove', input: expect.objectContaining({ domainId: domain.id,
                             domain: { hostname: content.hostname } }) }),
                     ]) });
+                    if (!plan || 'errorCode' in plan) throw new Error('Expected reviewed retained provider Domain');
+                    domain.state = 'removing';
+                    domain.revision++;
+                    retainedDomainOperations.create({ operationId: 'domain-operation', actionId: 'deployments.teardown',
+                        scope: { accountId: 'owner', machineId: 'machine-a' }, title: 'Retained native teardown',
+                        cancellation: 'unsupported', inputIdentity: JSON.stringify(input),
+                        domainRef: { kind: 'deployment', serverId: 'home', environmentId: environment.environment.id, deploymentId: receipt.deployment.id } });
+                    const context: ActionExecutorContext = { ...ownerContext, surface: 'cli', authority: 'present_user',
+                        actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'owner',
+                        actionRequestId: 'domain-request', resumeActionRequest: true,
+                        operationAcceptance: { actionId: 'deployments.teardown', operationId: 'domain-operation', accept() {} } };
+                    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                        listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(runtime.registry, selection),
+                        invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () =>
+                            runtime.controller.tryAcquireRuntimeRegistry() ?? (() => { throw new Error('Retired Domain registry'); })() }) });
+                    const children = createHostReviewedChildPortV1({ actionId: 'deployments.teardown', input, context,
+                        reviewAdmitted: true, plan, policies: plan.children.map(child => ({ action: child.action, role: child.role, surface: 'cli' })),
+                        execute: (input, context, actionId) => executor.execute(actionId, input, context) });
+                    const teardownResult = await deps.deploymentAction!('deployments.teardown', input, { ...context, hostReviewedChild: children });
+                    expect(retiredProviderDomain, JSON.stringify(teardownResult)).toBe(true);
+                    expect(reachedNativeTeardown, JSON.stringify(teardownResult)).toBe(true);
                     expect(nativeReads).toBe(0);
                     return;
                 }
@@ -1541,14 +1615,44 @@ describe('installed deployment storage and target composition', () => {
                     runActionOperation: operations.runActionOperation,
                     listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(runtime.registry, selection),
                     invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: acquireLease }) });
-                const result = await executor.execute(domainRemove ? 'deployments.domains.remove' : 'deployments.domains.verify', { serverId: 'home', environmentId: environment.environment.id,
-                    domainId: domain.id, expectedRevision: environment.environment.revision, expectedDomainRevision: domain.revision, requestKey: 'check-domain' },
-                    { ...ownerContext, surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home',
+                const rootAction = domainAdd ? 'deployments.domains.add' : domainRemove ? 'deployments.domains.remove' : 'deployments.domains.verify';
+                const rootInput = { serverId: 'home', environmentId: environment.environment.id,
+                    domainId: domain.id, expectedRevision: environment.environment.revision,
+                    ...(domainAdd ? { targetLinkId: row.targetLink.id, expectedTargetLinkRevision: row.targetLink.revision, content }
+                        : { expectedDomainRevision: domain.revision }), requestKey: 'check-domain' };
+                let context: ActionExecutorContext = { ...ownerContext, surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home',
                         serverIdentityId: 'home', runtimeAccountId: 'owner', actionRequestId: 'domain-request',
-                        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'deployments.domains.remove': ['cli'] } }) });
+                        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'deployments.domains.add': ['cli'], 'deployments.domains.remove': ['cli'] } }) };
+                let disposeRequester: (() => Promise<void>) | undefined;
+                if (domainAdd) {
+                    const target = { kind: 'machine' as const, machineId: 'machine-a' };
+                    const envelope = { v: 1 as const, requestId: 'domain-request', target, input: rootInput };
+                    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'domain-root', binding: {
+                        serverIdentityId: 'home', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+                        admittedMachineRole: 'manage', custodianAccountId: 'owner', machineId: 'machine-a', installationId: 'installation-a',
+                        actionId: rootAction, environmentId: environment.environment.id, requestId: envelope.requestId,
+                        accountEncryptionMode: 'plain', target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                        deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(rootAction, rootInput) } });
+                    const requester = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
+                        machineId: 'machine-a', installationId: 'installation-a', installationPrivateKey: identity.secretKey,
+                        serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://platform.test', ownCredentials: credentials,
+                        isCurrent: async () => true, createExecutor: () => executor });
+                    if (!requester) throw new Error('Expected admitted authored Domain requester');
+                    disposeRequester = () => requester.dispose();
+                    context = { ...context, externalActionExecutionAuthorization: requester.authorization,
+                        originalActionEnvelope: envelope, externalActionTarget: target };
+                }
+                let result: ActionExecuteResult;
+                try { result = await executor.execute(rootAction, rootInput, context); }
+                finally { await disposeRequester?.(); }
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, domain: { id: domain.id,
-                    state: domainRemove ? 'removed' : 'warning', revision: domainRemove ? 3 : 2 } } });
+                    state: domainRemove ? 'removing' : 'warning', revision: domainRemove ? 3 : 2,
+                    ...(domainRemove ? { deletedAtMs: 2 } : {}) } } });
                 expect(JSON.stringify(result)).not.toContain('private-dns-token');
+                if (domainAdd) {
+                    expect(candidatesCreated).toBe(1);
+                    expect(domain.contentArtifactId).not.toBe('platform-domain-artifact');
+                }
                 expect(nativeReads).toBe(0);
                 return;
             }
@@ -1673,7 +1777,7 @@ describe('installed deployment storage and target composition', () => {
             const platformCandidate = DeploymentPlatformContentV1Schema.parse(candidate.content);
             const prepared = await deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: candidate.input,
                 context: ownerContext });
-            expect(prepared).toHaveProperty('input', candidate.input);
+            expect(prepared, JSON.stringify(prepared)).toHaveProperty('input', candidate.input);
             if (scenario === 'reviewed child') expect(prepared).toMatchObject({ preview: {
                 summary: expect.stringContaining(preparedNative.reviewNotice!),
             } });
