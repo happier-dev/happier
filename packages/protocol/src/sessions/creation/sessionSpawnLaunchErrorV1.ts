@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, SCOPED_RPC_SOCKET_CONNECTION_PHASES } from '../../rpc/errors.js';
 import { utf8ByteLength } from '../../bugs/reports/utf8.js';

@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 import { AcpCatalogRecordV1Schema, StoredAcpCatalogRecordV1Schema, StoredAcpCatalogContentV1Schema } from "./catalogSchemasV1.js";
 import type { AcpCatalogRecordV1, AcpCatalogContentV1, StoredAcpCatalogContentV1, AcpCatalogDiagnosticV1 } from "./catalogSchemasV1.js";
 export { AcpCatalogRecordV1Schema, StoredAcpCatalogRecordV1Schema, AcpCatalogContentV1Schema, StoredAcpCatalogContentV1Schema, AcpCatalogMigrationContentV1Schema, AcpCatalogRowFailureV1Schema, AcpCatalogRowReadResponseV1Schema, AcpCatalogRowMutationV1Schema, AcpCatalogRowMutationResponseV1Schema, AccountEncryptionMigrateAcpCatalogDirectiveV1Schema, AccountEncryptionMigrateAcpCatalogResultV1Schema } from "./catalogSchemasV1.js";

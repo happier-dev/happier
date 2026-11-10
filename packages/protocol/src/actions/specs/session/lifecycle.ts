@@ -8,7 +8,7 @@ import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
 import { SessionForkRpcParamsSchema } from '../../../sessions/fork.js';
 import { SessionResumeRequestV1Schema } from '../../../sessions/control/sessionResumeRequestV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { SessionOpenDestinationSchema } from '../../sessionOpenDestination.js';
 import { type ActionInputHints } from '../../metadata.js';
 import type { ExternalActionTargetV1 } from '../../externalActionApi.js';

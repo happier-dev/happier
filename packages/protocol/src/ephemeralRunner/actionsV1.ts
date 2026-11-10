@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { RunnerActivationCreateRequestV1Schema } from './activation.js';
 import { RunnerActivationProjectionV1Schema } from './projection.js';

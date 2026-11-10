@@ -4,7 +4,7 @@ export { DiscussionAttachmentReadInputV1Schema, DiscussionAttachmentReadResultV1
 export type { DiscussionAttachmentReadInputV1, DiscussionAttachmentReadResultV1 } from './attachments.js';
 import { DiscussionSettingsV1Schema, DiscussionSettingsResponseV1Schema } from './settings.js';
 import { DiscussionSecondOpinionStartInputV1Schema, DiscussionSecondOpinionStartResultV1Schema } from './secondOpinionActions.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { refineDiscussionAccountActor } from './accountActorConsistency.js';
 import { DiscussionCandidatesListInputV1Schema, DiscussionCandidatesListResultV1Schema } from './candidates.js';
 export { DiscussionCandidatesListInputV1Schema, DiscussionCandidatesListResultV1Schema,

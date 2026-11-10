@@ -1,6 +1,6 @@
 import { FILESYSTEM_ACTION_IDS, FILESYSTEM_MUTATION_ACTION_IDS, FILESYSTEM_TRANSFER_ACTION_IDS } from './filesystemActionIdsV1.js';
 export { FILESYSTEM_ACTION_IDS, FILESYSTEM_EFFECT_ACTION_IDS, FILESYSTEM_MUTATION_ACTION_IDS, FILESYSTEM_TRANSFER_ACTION_IDS, FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { TransferEndpointCandidateSchema } from '../machines/transfer/transferStream.js';
 import { WorkspaceSyncEntryExpectationV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';

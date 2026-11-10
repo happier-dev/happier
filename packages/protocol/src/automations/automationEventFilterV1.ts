@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 
 export const MAX_AUTOMATION_EVENT_FILTER_CLAUSES = 32;

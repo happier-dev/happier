@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 
 /** One parked request retains observation; revision requests consume native changes. */

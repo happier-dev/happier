@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import semver from 'semver';
 
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';

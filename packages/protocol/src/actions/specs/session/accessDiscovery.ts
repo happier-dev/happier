@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import {
   SessionAccessCandidatesInspectRequestV1Schema, SessionAccessCandidatesInspectResponseV1Schema,

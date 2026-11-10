@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { ExecutionRunStatusSchema } from './listRequest.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';

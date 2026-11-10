@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { RegistryProvenanceV1Schema } from '../../registries/registryItemsV1.js';
 import { RegistryUpstreamV1Schema } from '../../registries/registryUpstreamV1.js';

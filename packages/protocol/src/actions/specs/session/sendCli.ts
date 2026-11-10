@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { parseAgentPermissionIntentV1Alias } from '../../../runtime/permissionIntentV1.js';
 import { actionCliDerivedDefault, type ActionCliBindContext, type ActionCliProjection } from '../../actionCliProjection.js';

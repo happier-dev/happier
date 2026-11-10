@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import semver from 'semver';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ArtifactRevisionV1Schema } from '../../artifacts/artifactRevisionV1.js';

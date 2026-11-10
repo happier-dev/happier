@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const TeamIdentityErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'home_forbidden',

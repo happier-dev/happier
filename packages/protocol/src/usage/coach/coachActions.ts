@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { UsageQuerySchema } from '../../inputs/usageQuery.js';
 import { SettingsDeclarationMutationReversalV1Schema, SettingsDeclarationValueV1Schema } from '../../actions/settingsDeclarationActionFamily.js';

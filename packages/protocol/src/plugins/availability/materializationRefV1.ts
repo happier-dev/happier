@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import type { PluginJsonSchemaV2 } from '../contributions/publicTypes.js';
 import { PluginIdJsonSchema, PluginIdSchema } from '../pluginId.js';

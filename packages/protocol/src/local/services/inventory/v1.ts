@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { localServiceListenerGroupKey } from './listeners.js';
 import {
   DaemonLocalServiceLauncherSnapshotRequestV1Schema,

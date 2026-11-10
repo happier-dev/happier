@@ -61,7 +61,7 @@ import * as scm from '../scm/index.js';
 import * as branches from '../scm/branches.js';
 import * as stash from '../scm/stash.js';
 import * as worktrees from '../scm/worktrees.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { SessionTargetV1Schema } from './sessionTargetV1.js';
 import { ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema } from '../scm/entriesHistoryV1.js';

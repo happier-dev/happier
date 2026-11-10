@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { AnchoredListPositionV1Schema, resolveAnchoredListMoveV1 } from '../actions/anchoredListOrderV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';

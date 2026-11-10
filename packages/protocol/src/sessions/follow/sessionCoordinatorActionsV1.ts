@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ActionApprovalRequestCreatedResultSchema } from '../../actions/actionExecutionResult.js';
 import { FollowRuleSetActionInputV1Schema } from './actions.js';

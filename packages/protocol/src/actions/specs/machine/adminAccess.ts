@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { MachineAdminAccessMutationV1Schema, MachineAdminAccessMutationResultV1Schema,
   MachineAdminAccessInspectResultV1Schema } from '../../../machines/adminAccessV1.js';

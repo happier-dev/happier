@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginContributionLocalIdSchema, parseQualifiedPluginContributionKey, buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '../contributionIdentity.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';

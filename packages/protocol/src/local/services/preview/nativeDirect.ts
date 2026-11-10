@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { IrohEndpointDescriptorV1Schema } from '../../../connectivity/iroh/endpointDescriptorV1.js';
 import { IrohPeerInitiatorV2Schema, SignedDirectRouteGrantV2Schema } from '../../../machines/peer/mediation/directRouteGrantV2.js';
 import { LocalServicePreviewAccessUrlV1Schema, LocalServicePreviewDirectBindingV1Schema, LocalServicePreviewInitialPathV1Schema, LocalServicePreviewNativeDirectDescriptorV1Schema } from './v1.js';

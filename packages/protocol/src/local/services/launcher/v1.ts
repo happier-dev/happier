@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { BrowserViewTargetV1Schema } from '../../../browser/target/v1.js';
 import { LocalServiceInventoryConfidenceV1Schema } from '../inventory/v1.js';

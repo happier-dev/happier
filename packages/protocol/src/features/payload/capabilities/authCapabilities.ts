@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 const AuthMethodActionSchema = lazyZodSchema(() => z.object({
   id: z.enum(['login', 'provision', 'connect']),

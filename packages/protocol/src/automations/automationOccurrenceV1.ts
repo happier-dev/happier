@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { hmac } from '@noble/hashes/hmac';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { sha256 } from '@noble/hashes/sha2';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { AutomationOccurrenceKeyV1Schema, AutomationOccurrenceEvidenceEqualityTagV1Schema,
   type AutomationOccurrenceKeyV1, type AutomationOccurrenceEvidenceEqualityTagV1 } from './automationOccurrenceKeyV1.js';

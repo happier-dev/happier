@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 
 export type HomeDomainHttpRequestV1 = Readonly<{

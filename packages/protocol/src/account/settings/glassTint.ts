@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 
 export const DEFAULT_GLASS_TINT_INTENSITY = 12;
 export const GlassTintIntensitySchema = z.number().check(z.int(), z.minimum(0), z.maximum(100));

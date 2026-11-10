@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ScmPullRequestWorkEvidenceSchema, ScmPullRequestSummarySchema, type ScmPullRequestSummary, type ScmPullRequestWorkEvidence } from '../scm/pullRequests.js';
 import { UsageAnalyticsContributionSchema, type UsageAnalyticsContribution } from './usageAnalyticsContracts.js';

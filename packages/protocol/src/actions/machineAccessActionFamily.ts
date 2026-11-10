@@ -1,7 +1,7 @@
 import { getActionSpec } from './actionSpecs.js';
 import { bindHomeDomainHttpRequestV1 } from './homeDomainHttpBinding.js';
 import type { MachineAccessHttpActionId } from './specs/machine/access.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** Transport comes exclusively from the declared Action row, with Home consumed by the host. */
 export function bindMachineAccessActionHttpRequestV1(actionId: Exclude<MachineAccessHttpActionId, 'machines.access.prepareKeys'>, input: unknown) {

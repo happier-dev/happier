@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { BrowserPermissionKindV1Schema } from '../permissions/v1.js';
 import { BrowserProfileStorageModeV1Schema } from '../profile/v1.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 const EndpointIdSchema = z.string().check(z.trim(), z.minLength(1));
 const HttpUrlSchema = z.string().check(z.trim(), z.url(), z.refine((value) => {

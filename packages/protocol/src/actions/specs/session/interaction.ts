@@ -4,7 +4,7 @@ import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from '../de
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
 import { SessionNeedsYouRaiseInputV1Schema, SessionNeedsYouRaiseOutputV1Schema } from '../../../sessions/permissions/questionV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { NativePermissionChoiceAnswerV1Schema, SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondPayloadV1Schema } from '../../../sessions/permissions/respondRpcParamsV1.js';
 import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '../../../connect/sessionConnectedServiceAuthSwitch.js';
 import { SessionPermissionRemoteGrantRevokeInputV1Schema, SessionPermissionRemoteGrantRevokeOutputV1Schema, SessionPermissionRemoteGrantsListInputV1Schema, SessionPermissionRemoteGrantsListOutputV1Schema, SessionPermissionRemotePendingListInputV1Schema, SessionPermissionRemotePendingListOutputV1Schema, SessionPermissionRemoteRespondInputV1Schema, SessionPermissionRemoteRespondOutputV1Schema, SessionUserActionRemoteAnswerInputV1Schema, SessionUserActionRemoteAnswerOutputV1Schema } from '../../../sessions/permissions/v1.js';

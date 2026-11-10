@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { isMap, parseDocument } from 'yaml';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../../json/storedReadSchema.js';

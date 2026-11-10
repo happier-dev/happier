@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { AccountStoredContentProtocolVersionSchema } from './accountStoredContentCompatibilityV1.js';
 import { SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION } from '../sessions/organization/constants.js';

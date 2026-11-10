@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { BrowserRecordingOutcomeReasonV1Schema } from '../../browser/recording/v1.js';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';

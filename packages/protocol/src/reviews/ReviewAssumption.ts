@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const ReviewAssumptionSchema = lazyZodSchema(() => z.looseObject({
   id: z.string().check(z.minLength(1)),

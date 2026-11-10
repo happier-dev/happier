@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { getActionContextualDefaults, getActionSpec } from './actionSpecs.js';
 import { RuntimeActionIdV1Schema } from './actionIds.js';
 import { resolveRuntimeActionExecutionFamily } from './executor/dispatch.js';

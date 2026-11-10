@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 
 const base64UrlSha256 = z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u), z.refine((value) => {

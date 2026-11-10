@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { EntityDragScopeV1Schema, EntityDragSessionAddressV1Schema } from '../plugins/ui/entityDragDrop.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { WorkflowDefinitionEditOpV1Schema } from '../workflows/workflowDefinitionEditV1.js';

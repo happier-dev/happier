@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** Canonical origin only: no credentials, path, query, fragment or trailing slash. */
 export const CanonicalHttpOriginSchema = lazyZodSchema(() => z.string().check(z.superRefine((value, ctx) => {

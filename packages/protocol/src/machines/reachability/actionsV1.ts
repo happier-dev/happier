@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { AccessProviderSelectionV1Schema } from '../../plugins/contributions/accessProviders.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';

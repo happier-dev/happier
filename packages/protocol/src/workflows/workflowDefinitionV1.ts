@@ -1,8 +1,8 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { WorkflowApprovedOperationV1Schema } from '../actions/approvedOperationV1.js';
 export { WorkflowApprovedOperationV1Schema, type WorkflowApprovedOperationV1 } from '../actions/approvedOperationV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 import { workflowDefinitionDisplayTitleV1 } from './workflowStepLabel.js';
 

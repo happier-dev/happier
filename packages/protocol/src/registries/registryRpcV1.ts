@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { RegistryKindV1Schema,RegistryFormatV1Schema } from './registrySourcesV1.js';
 import { RegistryItemV1Schema,RegistrySkillContentRefV1Schema } from './registryItemsV1.js';

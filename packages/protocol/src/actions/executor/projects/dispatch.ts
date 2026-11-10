@@ -15,7 +15,7 @@ import type { ActionExecuteResult, ActionExecutorContext, AdmittedClientActionCo
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecutorDeps } from '../types.js';
 import { clientActionUnavailable } from '../../clientDispatchV1.js';
-import type { z } from 'zod/mini';
+import type { z } from '../../../zodRuntimePolicy.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput, type AdmittedActionInputById } from '../../actionSpecs.js';
 import type { ProjectWorkspaceUpdateInputV1Schema, ProjectWorkspaceForgetInputV1Schema } from '../../../projects/projectWorkspaceActionsV1.js';
 

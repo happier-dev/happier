@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ScmComparisonSchema, ScmComparisonSourceSchema, type ScmComparison } from './comparison.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { buildScmChangeKeys, buildScmReviewScopeId } from './comparisonOccurrences.js';

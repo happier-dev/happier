@@ -1,5 +1,5 @@
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { PluginUiArtifactDigestV1Schema } from './artifactIntegrity.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';

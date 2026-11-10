@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import {
   TEAM_CREDENTIAL_EXTERNAL_PROVIDER_API_BASE_PATH_V1,

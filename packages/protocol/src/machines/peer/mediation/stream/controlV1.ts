@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../../zodRuntimePolicy.js';
 import type { MachineLiveStreamCaptureSourceKindV1 } from './captureV1.js';
 import { BrowserInputEventV1Schema } from '../../../../browser/input/v1.js';
 import { MachineLiveStreamKeyModifierV1Schema } from './inputModifiersV1.js';

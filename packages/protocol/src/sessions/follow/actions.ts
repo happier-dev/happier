@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ACTION_ID_FAMILIES_V1 } from '../../actions/actionIds.js';
 import { GetSessionFollowResponseSchema, SetSessionFollowResponseSchema, RemoveSessionFollowResponseSchema, GetOtherAccountFollowResponseV1Schema, SetOtherAccountFollowResponseV1Schema, GetSessionAutoFollowPreferencesRequestSchema, SetSessionAutoFollowPreferencesRequestSchema, SessionAutoFollowPreferencesResponseSchema } from './api.js';

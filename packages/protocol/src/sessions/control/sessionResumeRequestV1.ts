@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
 import { BackendTargetRefV2Schema, normalizeBackendTargetRefV2InputToV2, type BackendTargetRefV2Input } from '../../backends/targets/backendTargetRefV2.js';

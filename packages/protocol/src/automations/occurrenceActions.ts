@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AutomationV3RunMutationResponseSchema, AutomationV3RunReplyHandoffRedeliverRequestSchema } from './automationApiV3.js';
 import { AUTOMATION_OCCURRENCE_ACTION_IDS, type AutomationOccurrenceActionId } from './occurrenceActionIds.js';

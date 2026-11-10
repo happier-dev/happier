@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { githubRegistryAdapterV1 } from './github.js';
 import type { RegistrySkillFormatAdapterV1 } from './registryFormatAdapterV1.js';
 import { RegistryFetchErrorV1 } from '../registryListV1.js';

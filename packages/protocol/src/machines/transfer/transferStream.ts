@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { readCanonicalPaddedBase64DecodedLength } from '../../crypto/base64.js';
 

@@ -23,7 +23,7 @@ import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '../../plugi
 import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1.js';
 import type { WorkflowDefinitionV1, WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
 import type { WorkflowActionExecuteArgs } from './types.js';
-import type { z } from 'zod/mini';
+import type { z } from '../../zodRuntimePolicy.js';
 import type { ArtifactCallerAccessV1 } from '../../artifacts/artifactAccessV1.js';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, type ArtifactListSelectionOptionsV1 } from '../../artifacts/artifactListSelectionV1.js';
 import type { ArtifactKindCoverageV1 } from '../../artifacts/artifactKindV1.js';

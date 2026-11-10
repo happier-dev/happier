@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 const LEGACY_DIRECT_PEER_ROUTE_KINDS_V1 = [
   'loopback_direct',

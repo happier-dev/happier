@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { AcpConfigOptionOverridesV1Schema, normalizeCodexBackendMode } from '../sessions/metadata/metadataOverridesV1.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';

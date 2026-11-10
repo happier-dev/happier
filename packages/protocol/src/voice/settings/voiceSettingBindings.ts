@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { resolveVoiceProviderLanguagePreference } from '../../plugins/contributions/voiceProviders.js';
 import { SettingsDeclarationValueV1Schema } from '../../actions/settingsDeclarationActionFamily.js';
 import type { SettingDomainValueV1 } from '../../actions/settings/settingsOwnerActions.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const E2eScenarioTierSchema = z.enum(['smoke', 'extended']);
 export const E2eProviderLaneScopeSchema = z.enum(['acp-only', 'declared-scenarios']);

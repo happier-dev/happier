@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MACHINE_GUARD_ACTION_IDS } from '../../machines/guard/actionIdsV1.js';
 import { MachineGuardGetInputV1Schema, MachineGuardViewV1Schema } from '../../machines/guard/guardRpcV1.js';

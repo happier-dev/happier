@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 // BCP-47 subset: a 2–3 letter primary language subtag, then an OPTIONAL script
 // subtag (titlecase, `[A-Z][a-z]{3}`, e.g. `Hans`/`Hant`) and an OPTIONAL region

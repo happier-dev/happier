@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
-import { z as zMini } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
+import { z as zMini } from '../zodRuntimePolicy.js';
 import { SessionAuthoringTerminalV1Schema } from './authoring/creationFieldsV1.js';
 import { OperationUpdateRequiredV1Schema } from '../compat/operationUpdateRequiredV1.js';
 import { SessionAccessErrorCodeV1Schema } from './access/sessionAccessOperationsV1.js';

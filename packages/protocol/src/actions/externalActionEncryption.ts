@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { projectExternalActionBrowserSessionIdV1 } from './executor/browser.js';
 import { projectWorkspaceSyncAdmissionInputV1 } from '../workspaces/workspaceSyncAdmissionV1.js';
 import { MachineServiceLogsResourceContinuationV1Schema, MachineServiceLogsGenerationV1Schema } from '../daemon/machineServiceLogsResource.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { AccountApiTokenCredentialV1Schema, AccountApiTokenEncryptionAccessV1Schema, AccountApiTokenSummaryV1Schema } from '../auth/accountApiTokens.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';

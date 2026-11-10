@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { WorkBoardArtifactTransportV1, WorkBoardArtifactV1 } from '../boards/workBoardArtifactV1.js';
 import type { ArtifactCoarseKindV1 } from '../artifacts/artifactKindV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';

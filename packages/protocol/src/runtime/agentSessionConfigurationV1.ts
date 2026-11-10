@@ -1,5 +1,5 @@
-import * as zMini from 'zod/mini';
-import { z } from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { withStrictJsonInput } from '../json/strictJsonValue.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';

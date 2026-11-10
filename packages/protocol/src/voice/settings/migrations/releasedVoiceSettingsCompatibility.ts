@@ -1,6 +1,6 @@
 import { SecretStringV1Schema } from '../../../crypto/settingsSecretStringSchemasV1.js';
 import type { VoiceProviderSettingsJsonValueV1 } from '../../realtime/providerSettings.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../../json/storedReadSchema.js';
 
 import { VoiceLocalDirectSchema } from '../localDirect.js';

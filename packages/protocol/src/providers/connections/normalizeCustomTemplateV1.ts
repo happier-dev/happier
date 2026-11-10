@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import type { ProviderWireProtocol } from '../capabilities/v1.js';
 import { BundledProviderCatalogParserV1Schema, type BundledProviderCatalogParserV1 } from '../catalog/descriptorV1.js';

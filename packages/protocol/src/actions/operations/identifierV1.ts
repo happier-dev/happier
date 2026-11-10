@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 
 const ACTION_OPERATION_IDENTIFIER_MAX_LENGTH_V1 = 2_000;

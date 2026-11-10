@@ -24,7 +24,7 @@ import {
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '../../automations/automationEventSetupResultV1.js';
 import { normalizeStrictJsonValue } from '../../json/strictJsonValue.js';
 import { isPortableRelativePath } from '../../filesystem/portablePathSegment.js';
-import type { core } from 'zod/mini';
+import type { core } from '../../zodRuntimePolicy.js';
 import { dropEmptyRetiredContributionFamilies, skipInvalidPluginContributions } from './contributionAdmission.js';
 
 export type PluginManifestIngestionDiagnostic = Readonly<{

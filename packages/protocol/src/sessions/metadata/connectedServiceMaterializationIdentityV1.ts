@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_METADATA_KEY =
   'connectedServiceMaterializationIdentityV1' as const;

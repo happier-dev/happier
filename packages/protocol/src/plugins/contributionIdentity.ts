@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { buildQualifiedPluginContributionKey } from './contributionKey.js';
 export { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from './contributionKey.js';
 

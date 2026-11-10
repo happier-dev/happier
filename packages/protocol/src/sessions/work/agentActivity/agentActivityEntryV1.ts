@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { AgentActivityKindV1Schema } from './agentActivityKindV1.js';
 import { AgentActivityStatusV1Schema, type AgentActivityStatusV1 } from './agentActivityStatusV1.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { PeerRouteNonceProofV1Schema } from './directRouteGrantNonceV1.js';
 import { SignedDirectRouteGrantV1Schema } from './directRouteGrantV1.js';

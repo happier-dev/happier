@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /** Browser delivery hint only; the host realm carry remains the identity/admission authority. */
 export const ENTITY_DRAG_DELIVERY_MIME_V1 = 'application/x-happier-entity-carry';

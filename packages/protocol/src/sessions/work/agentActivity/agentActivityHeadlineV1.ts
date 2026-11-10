@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { SessionAgentActivityEntryV1Schema, type SessionAgentActivityEntryV1 } from './agentActivityEntryV1.js';
 

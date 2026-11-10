@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { readSessionRunnerRestartIdentityGuardV1, RestartSessionRunnerRequestV1Schema, SessionRunnerRestartModeV1Schema, type RestartSessionRunnerResultV1 } from './sessionRunnerRestartV1.js';
 
 import { SessionProviderBindingSecurityChangeConfirmationV1Schema, type SessionProviderBindingSecurityChangeConfirmationV1 } from '../../providers/sessions/bindingMetadataV1.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /** A server decision projected for presentation; mutation authority is always rechecked. */
 export const SessionAccessCapabilitiesV1Schema = lazyZodSchema(() => z.strictObject({

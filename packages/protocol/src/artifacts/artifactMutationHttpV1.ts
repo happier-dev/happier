@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ArtifactCreateIdV1Schema } from './artifactIdV1.js';
 import { ApprovalArtifactQueryHintsV1Schema } from '../approvals/approvalArtifactKindV1.js';
 import { ArtifactBlobWriteV1Schema } from './artifactBinaryV1.js';

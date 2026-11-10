@@ -4,7 +4,7 @@ import type { ActionSpecSurfaceBindings, PreNormalizedActionSpec } from '../defi
 import { SessionStoredTranscriptRoleSchema, SessionTranscriptGetPublicInputSchema, SessionTranscriptGetExternalShareableInputV1Schema, SessionTranscriptGetInputSchema, SessionTranscriptGetExternalShareableResultV1Schema, SessionTranscriptGetResultSchema } from './transcript.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { SessionListQueryV1Schema } from '../../../sessions/listing/query.js';
 import { QualifiedProjectKeyV1Schema } from '../../../workspaces/workspaceRefV1.js';
 import { SESSION_LIST_AWARENESS_VIEW_V1, SessionActivityActionResultV1Schema, SessionActivityViewV1Schema, SessionListActionResultV1Schema, SessionListViewV1Schema } from '../../../sessions/awareness/action.js';

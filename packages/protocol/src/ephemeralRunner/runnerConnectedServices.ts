@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { ConnectedAccountServiceKeySchema } from '../connect/connectedServiceBindings.js';
 import {

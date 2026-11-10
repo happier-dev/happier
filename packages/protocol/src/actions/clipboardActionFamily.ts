@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 export { CLIPBOARD_ACTION_IDS } from './clipboardActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 export const ClipboardWriteInputSchema = z.strictObject({ text: z.string() });

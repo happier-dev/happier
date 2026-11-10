@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';

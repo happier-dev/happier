@@ -1,6 +1,6 @@
 import { PLUGIN_EXECUTION_ORIGIN_ACTION_IDS } from './pluginExecutionOriginActionIdsV1.js';
 export { PLUGIN_EXECUTION_ORIGIN_ACTION_IDS } from './pluginExecutionOriginActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';

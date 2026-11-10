@@ -2,7 +2,7 @@ import { maxCodeUnits } from '../../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { AgentRuntimeJsonValueV1Schema } from '../../runtime/agentSessionV1.js';
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';

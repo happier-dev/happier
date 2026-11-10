@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 const MarketplaceSourceUrlV1Schema = lazyZodSchema(() => z.pipe(z.string().check(z.trim(), z.minLength(1)), z.transform((value, context) => {
   try {

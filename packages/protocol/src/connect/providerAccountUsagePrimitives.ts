@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { sha256 } from '@noble/hashes/sha2';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ProviderAccountSubscriptionV1Schema } from './accountSubscription.js';
 
 import { encodeBase64 } from '../crypto/base64.js';

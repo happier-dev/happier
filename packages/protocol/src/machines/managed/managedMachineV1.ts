@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 export { classifyManagedMachineAllocationV1, type ManagedMachineAllocationPresentationV1 } from './managedAllocationPresentationV1.js';
 import { ManagedMachineBirthSourceV1Schema } from './birthSourceV1.js';
 import { lazyDefinition } from '../../lazyZodSchema.js';

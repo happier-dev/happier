@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /** Execution placement intent; only the target daemon resolves managed paths. */
 export const SessionDirectoryIntentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [

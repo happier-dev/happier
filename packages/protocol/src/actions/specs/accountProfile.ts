@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import {
   AccountNameUpdateRequestV1Schema, AccountNameUpdateResponseV1Schema,
   AccountUsernameUpdateRequestV1Schema, AccountUsernameUpdateResponseV1Schema,

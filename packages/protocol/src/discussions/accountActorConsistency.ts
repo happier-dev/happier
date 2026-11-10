@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import type { DiscussionProducerV1 } from './content.js';
 
 /** Shared wire invariant for stored and executor-opened Discussion messages. */

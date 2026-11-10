@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { actionInputServerId } from './definition.js';
 import { SessionImageMediaReferenceV1Schema } from '../../sessions/media/imageReferenceV1.js';

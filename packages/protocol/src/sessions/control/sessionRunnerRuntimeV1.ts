@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionRunnerRestartDisabledReasonSchema, projectSessionRunnerReadFailureV1, type RestartSessionRunnerResultV1 } from './sessionRunnerRestartV1.js';
 

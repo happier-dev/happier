@@ -1,7 +1,7 @@
 import { PLUGIN_PERMISSION_INPUT_FIELDS } from './pluginPermissionsInputHints.js';
 import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from './definition.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { PluginPermissionGrantActionInputSchemasV1, PluginPermissionGrantActionOutputSchemasV1, type PluginPermissionGrantActionIdV1 } from '../../plugins/permissions/actions.js';
 import { PluginPermissionSubjectV1Schema } from '../../plugins/permissions/grants.js';
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';

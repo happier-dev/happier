@@ -2,7 +2,7 @@ import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { APP_UPDATE_ACTION_IDS } from './appUpdateActionIdsV1.js';
 export { APP_UPDATE_ACTION_IDS } from './appUpdateActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { UpdateItemStateSchema, UpdateItemActionVerbSchema } from './updatesActionFamily.js';
 export type AppUpdateActionId = typeof APP_UPDATE_ACTION_IDS[number];

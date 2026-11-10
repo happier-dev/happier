@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 export const SharingPendingQueueV2CapabilitiesSchema = lazyZodSchema(() => z.object({
   deliveryState: z._default(z.optional(z.boolean()), false),

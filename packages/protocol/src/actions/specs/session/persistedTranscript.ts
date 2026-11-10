@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { SessionMessageV1Schema } from '../../../sessions/messages/sessionMessagesPageV1.js';
 import { StrictSessionStoredMessageContentEnvelopeSchema } from '../../../sessions/messages/sessionStoredMessageContent.js';
 import { SessionSharedMetadataV1Schema } from '../../../sessions/metadata/sessionMetadataSchemasV1.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { RegistryItemPointerV1Schema } from '../../../registries/registryItemsV1.js';
 import { AcpBackendDefinitionV1Schema } from '../settingsV1.js';

@@ -1,4 +1,4 @@
-import type { output as ZodOutput, ZodMiniType as ZodTypeAny } from 'zod/mini';
+import type { output as ZodOutput, ZodMiniType as ZodTypeAny } from '../../zodRuntimePolicy.js';
 
 import type { SettingDefinition, SettingDefinitionMap } from './settingDefinition.js';
 

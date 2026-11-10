@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { SavedSecretPasskeySourceV1Schema } from './savedSecretPasskeySourceV1.js';
 export { SavedSecretPasskeySourceV1Schema, type SavedSecretPasskeySourceV1 } from './savedSecretPasskeySourceV1.js';
 export { parseSavedSecretPasskeyImportV1, type SavedSecretPasskeyImportResultV1 } from './savedSecretPasskeyImportV1.js';

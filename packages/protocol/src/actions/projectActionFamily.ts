@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema, lazyDefinition } from '../lazyZodSchema.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
 import { ProjectExecutionChoiceV1Schema } from '../workspaces/projectWorkerPreferencesV1.js';

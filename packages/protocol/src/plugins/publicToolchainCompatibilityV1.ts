@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 const NonEmptyVersionSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const AuthoringDependencySchema = lazyZodSchema(() => z.strictObject({

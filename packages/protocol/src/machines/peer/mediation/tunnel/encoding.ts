@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../../zodRuntimePolicy.js';
 
 export const PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 = 'binary_frame_v2' as const;
 

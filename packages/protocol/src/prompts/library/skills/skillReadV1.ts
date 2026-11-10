@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SkillRevisionV1Schema, SkillProvenanceV1Schema, PluginSkillProvenanceV1Schema } from './skillLibraryItemV1.js';
 import { SkillCostV1Schema } from './skillCostV1.js';

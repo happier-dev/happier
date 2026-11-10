@@ -1,6 +1,6 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ArtifactCreateIdV1Schema } from './artifactIdV1.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';

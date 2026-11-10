@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const AuthProviderIdSchema = lazyZodSchema(() => z.string().check(z.minLength(1)));
 export type AuthProviderId = z.infer<typeof AuthProviderIdSchema>;

@@ -1,4 +1,4 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../../zodRuntimePolicy.js';
 import { DEFAULT_AGENT_ID } from '../../agents/defaultAgent.js';
 import { AGENT_PERMISSION_INTENTS_V1 as PERMISSION_INTENTS, parseAgentPermissionIntentV1Alias as parsePermissionIntentAlias } from '../../runtime/permissionIntentV1.js';
 import { BackendTargetKeyV2Schema } from '../../backends/targets/backendTargetRefV2.js';
@@ -6,7 +6,7 @@ import { PluginContributionIdentityV1Schema } from '../../plugins/contributionId
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 import { ProviderConnectionIdSchema } from '../../providers/ids.js';
 import { ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingsV2 } from '../../connect/connectedServiceBindings.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { projectNativeJsonValueForTransport, type JsonValue } from '../../json/strictJsonValue.js';

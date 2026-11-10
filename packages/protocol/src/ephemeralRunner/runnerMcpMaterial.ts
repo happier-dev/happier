@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { resolveSessionCapabilitiesV1, projectMcpServerMaterializationV1, type ResolvedMcpServerV1 } from '../reach/resolveSessionCapabilitiesV1.js';
 import { SessionMcpSelectionV1Schema } from '../mcp/servers/sessionSelectionV1.js';

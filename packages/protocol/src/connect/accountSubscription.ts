@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { isConnectedServiceQuotaObservationFresh } from './quotaObservationTime.js';
 
 export const ProviderAccountSubscriptionMonthlyPriceV1Schema = lazyZodSchema(() => z.strictObject({

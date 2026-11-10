@@ -1,5 +1,5 @@
 /** Protocol-internal Mini projection of the neutral composable schema. */
-import * as mini from 'zod/mini';
+import * as mini from '../../zodRuntimePolicy.js';
 import { createProtocolComposableSchema, createProtocolStoredReadSchema, embedProtocolJsonSchema, normalizePluginJsonSchema, projectProtocolStoredReadJsonSchema, ProtocolValidationError, type ProtocolComposableSchema, type ProtocolJsonValue } from './protocolComposableSchema.js';
 import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';

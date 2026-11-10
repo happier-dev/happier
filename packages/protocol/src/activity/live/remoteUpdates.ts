@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { PUSH_NOTIFICATION_BUNDLED_SOUND_FILES } from '../../push/pushNotificationActions.js';
 import { SessionAwarenessPresentationStateV1Schema } from '../../sessions/awareness/presentationV1.js';

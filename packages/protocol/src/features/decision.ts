@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { FEATURE_ID_ENUM } from './featureIds.js';
 
 export const FeatureStateSchema = lazyZodSchema(() => z.enum(['enabled', 'disabled', 'unsupported', 'unknown']));

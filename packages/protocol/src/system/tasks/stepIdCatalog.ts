@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /**
  * Canonical system-task step ids (progress/prompt namespaces).

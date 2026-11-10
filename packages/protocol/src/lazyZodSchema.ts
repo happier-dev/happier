@@ -1,5 +1,5 @@
 import './zodRuntimePolicy.js';
-import { core, globalRegistry, lazy } from 'zod/mini';
+import { core, globalRegistry, lazy } from './zodRuntimePolicy.js';
 
 const PARSE_METHODS = new Set(['parse', 'safeParse', 'parseAsync', 'safeParseAsync']);
 type DefinitionLifetime = {

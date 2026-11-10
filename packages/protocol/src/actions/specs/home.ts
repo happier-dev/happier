@@ -52,7 +52,7 @@ import {
   HomeReachabilityV1Schema,
 } from '../../home/governance/reachability.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { homeDomainActionRow, homeDomainApprovalField as approvalField } from './homeDomainRow.js';
 import { HomePublicProfileModerationInputV1Schema, HomePublicProfileModerationResultV1Schema } from '../../home/governance/publicProfiles.js';

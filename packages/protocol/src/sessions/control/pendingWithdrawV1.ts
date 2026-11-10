@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PendingMessageWithdrawOutcomeV1Schema } from '../pending/pendingActivationAuthorizationV1.js';
 

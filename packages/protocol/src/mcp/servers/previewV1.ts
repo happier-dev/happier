@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { McpDetectedProviderV1Schema } from './daemonRpcV1.js';
 import type { ResolveSessionCapabilitiesV1Result, ResolvedMcpServerV1 } from '../../reach/resolveSessionCapabilitiesV1.js';

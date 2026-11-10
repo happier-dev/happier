@@ -16,7 +16,7 @@ import type { ActionInputFieldHint, ActionInputOption } from './actionInputHints
 import { readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
 import { normalizeUiSurfaceCapabilityRequestV1 } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import { SessionSurfaceItemV1Schema, type SessionSurfaceItemV1 } from '../sessions/board/item.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { readWidgetActionSurfaceV1 } from '../widgets/actionsV1.js';
 import { unwrapActionInputSchema } from './actionInputSchemaPath.js';
 import { isSettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';

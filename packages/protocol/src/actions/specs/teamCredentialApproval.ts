@@ -4,7 +4,7 @@ import { TeamSummaryV1Schema, TeamsPageV1Schema } from '../../teams/projections.
 import type { ActionExecutorContext, ActionExecutorDeps } from '../executor/types.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { normalizeConnectedServiceSelectionInput, resolveFanoutConnectedServicesSelections } from '../../connect/normalizeConnectedServiceSelectionInput.js';
 
 export type TeamCredentialSourceRef = Readonly<{ resourceId: string; teamId?: string }>;

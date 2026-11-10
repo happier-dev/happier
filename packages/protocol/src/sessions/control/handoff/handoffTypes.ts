@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 export const SessionHandoffStorageModeSchema = lazyZodSchema(() => z.enum(['direct', 'persisted']));
 export type SessionHandoffStorageMode = z.infer<typeof SessionHandoffStorageModeSchema>;

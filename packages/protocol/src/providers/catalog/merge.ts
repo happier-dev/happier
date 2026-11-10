@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import type { ProviderModelDescriptorV1 } from '../../models/descriptor.js';
 import { ProviderModelDescriptorV1Schema, resolveModelDisplayName } from '../../models/descriptor.js';

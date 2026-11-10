@@ -6,7 +6,7 @@ import { readRecord } from '../../inputs/inputRecords.js';
 import { readRegistryAgentCliLocatorV1 } from './registries.js';
 import { AgentsAcpBackendsInstallFromRegistryInputV1Schema, AgentsAcpBackendsInstallFromRegistryOutputV1Schema } from '../../acp/catalog/registry/registryInstallActionV1.js';
 import { AgentsAcpBackendsDeleteInputV1Schema, AgentsAcpBackendsDeleteOutputV1Schema, AgentsAcpBackendsGetInputV1Schema, AgentsAcpBackendsGetOutputV1Schema, AgentsAcpBackendsUpsertInputV1Schema, AgentsAcpBackendsUpsertOutputV1Schema } from '../../acp/catalog/catalogMutationsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { AGENT_SIGN_IN_STATUS_RPC_METHOD, MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStartOutputSchema, MachinesAgentsSignInStatusInputSchema, AgentSignInStatusResponseSchema, MachinesAgentsSignInCancelInputSchema, MachinesAgentsSignInCancelOutputSchema } from '../../daemon/agentSignIn.js';
 import { MachinesAgentsListInputSchema, MachinesAgentsListOutputSchema } from '../../capabilities/machineAgentInventory.js';
 import { AgentAcquireJobIntentSchema, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallCancelResponseSchema } from '../../daemon/agentInstallJobs.js';

@@ -6,8 +6,8 @@ export { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS, resolveIdleCompactionPreference, t
 import { backfillClaudeUnifiedTerminalResponseLocations } from '../../agents/claude/settingsPolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { normalizeScmBackendQualifiedId } from '../../scm/backendIdentity.js';
-import * as z from 'zod/mini';
-import { z as classicZ } from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
+import { z as classicZ } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { GlassSurfaceMaterialsSchema, GlassSurfaceMaterialsStoredSchema } from './glassSurfaceMaterials.js';
 import { DEFAULT_GLASS_TINT_INTENSITY, GlassTintIntensitySchema } from './glassTint.js';

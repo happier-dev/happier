@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { RuntimeActionIdV1Schema, isBrowserExtensionActionIdV1, isBrowserProfileActionIdV1, type RuntimeActionIdV1 } from '../actionIds.js';
 import type { PreNormalizedActionSpec, PreNormalizedActionSurfaces } from '../actionSpecs.js';

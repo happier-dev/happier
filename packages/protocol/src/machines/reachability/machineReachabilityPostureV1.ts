@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachinePublicSshV1Schema, MachineFirewallTransitionFactsV1Schema } from '../setup/machineFirewallV1.js';
 import {

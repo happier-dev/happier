@@ -1,4 +1,4 @@
-import type { z } from 'zod/mini';
+import type { z } from '../../zodRuntimePolicy.js';
 import type { DaemonProviderConnectionEndpointViewV1Schema, DaemonProviderConnectionViewV1 } from '../../rpc/providers.js';
 import type { PluginLocalizedStringV2 } from '../../plugins/contributions/publicTypes.js';
 import { createProviderErrorV1 } from '../errors.js';

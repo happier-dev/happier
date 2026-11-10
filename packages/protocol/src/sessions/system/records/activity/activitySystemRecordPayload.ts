@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../../../zodRuntimePolicy.js';
 
 import { SessionBackgroundTaskRecordV1Schema } from '../../../work/backgroundTask/backgroundTaskRecordV1.js';
 import { SessionWorkflowRunSnapshotV1Schema } from '../../../work/workflow/sessionWorkflowRunSnapshotV1.js';

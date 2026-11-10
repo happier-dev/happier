@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { ComposerRefV1Schema } from '../plugins/ui/composerRef.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginUpdatePolicyV1Schema } from '../marketplace/pluginUpdatePolicyV1.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';

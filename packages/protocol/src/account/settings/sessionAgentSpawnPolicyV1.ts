@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SESSION_PERMISSION_MODES } from '../../sessions/metadata/sessionPermissionModes.js';
 

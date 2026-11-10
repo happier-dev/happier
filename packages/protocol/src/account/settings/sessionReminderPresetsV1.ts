@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 const MinuteOfDaySchema = lazyZodSchema(() => z.number().check(z.int(), z.minimum(0), z.maximum(24 * 60 - 1)));
 const WeekdaySchema = lazyZodSchema(() => z.number().check(z.int(), z.minimum(0), z.maximum(6)));

@@ -4,13 +4,49 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build, transform } from 'esbuild';
-import { createRequire } from 'node:module';
+import { createRequire, findPackageJSON } from 'node:module';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { createWorkspaceSourceResolver, readCliSourceEntries, readWorkspacePackages, resolveWorkspaceSource, workspaceSourceCompilerPaths } from '../sourceRuntimeEntries.mjs';
 
+import { initialize, resolve as resolveSourceImport } from '../sourceRuntimeEntries.mjs';
+
 describe('CLI source entry ownership', () => {
+  it('keeps source module-format lookup from parsing the publication export map', async () => {
+    const source = new URL('../../protocol/src/zodRuntimePolicy.ts', import.meta.url);
+    const scope = JSON.parse(await readFile(findPackageJSON(source), 'utf8'));
+    const published = JSON.parse(await readFile(new URL('../../protocol/package.json', import.meta.url), 'utf8'));
+    expect(Object.keys(scope.exports ?? {}), 'publication exports parsed per source format lookup').toHaveLength(0);
+    expect(scope.type).toBe(published.type);
+  });
+
+  it('resolves authored workspace exports without repeating Node package-scope resolution per import', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'happier-source-resolution-cost-'));
+    try {
+      const owner = join(fixture, 'packages/example');
+      await mkdir(owner, { recursive: true });
+      await writeFile(join(owner, 'package.json'), JSON.stringify({
+        name: '@happier-dev/example',
+        exports: { './value': { 'happier-source': './value.ts', default: './dist/value.js' } },
+      }));
+      await writeFile(join(owner, 'value.ts'), 'export const value = 42;');
+      await initialize(fixture);
+      let delegated = 0;
+      const nextResolve = (specifier) => { delegated++; return { url: specifier }; };
+      for (const entry of ['cold.ts', 'warm.ts']) {
+        const result = resolveSourceImport('@happier-dev/example/value', {
+          conditions: ['node', 'import'], parentURL: pathToFileURL(join(owner, entry)).href,
+        }, nextResolve);
+        expect(result.url).toBe(pathToFileURL(join(owner, 'value.ts')).href);
+        expect(result.shortCircuit).toBe(true);
+      }
+      expect(delegated, 'authored workspace targets need zero generic package-scope resolutions').toBe(0);
+      resolveSourceImport('node:fs', { conditions: ['node', 'import'] }, nextResolve);
+      expect(delegated).toBe(1);
+    } finally { await rm(fixture, { recursive: true, force: true }); }
+  });
+
   it('keeps source-tool registration out of the CJS daemon runtime graph', async () => {
     const result = await build({
       entryPoints: [fileURLToPath(new URL('../sourceRuntimeEntries.mjs', import.meta.url))],

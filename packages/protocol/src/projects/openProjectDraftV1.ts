@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { DraftFieldV1Schema } from '../drafts/sessionDrafts.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { AccountDisplayProfileV1Schema } from '../../account/accountDisplayProfileV1.js';
 import { AccountStatusV1Schema, HomeRoleV1Schema } from './roles.js';

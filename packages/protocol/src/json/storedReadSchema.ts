@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../zodRuntimePolicy.js';
 
 import { getResolvedLazyDefinitionSource, lazyDefinition } from '../lazyZodSchema.js';
 

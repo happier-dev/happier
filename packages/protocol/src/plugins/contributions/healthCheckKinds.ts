@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema, lazyDefinition } from '../../lazyZodSchema.js';
 import { HealthCheckResultV1ProtocolSchema } from '../../deployments/healthCheckV1.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';

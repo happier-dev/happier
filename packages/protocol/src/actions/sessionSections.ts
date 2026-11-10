@@ -1,5 +1,5 @@
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { projectSessionSectionV1, compareSessionSectionOrderV1, resolveSessionSectionCreatePlacementV1, SessionSectionV1Schema, SessionSectionDisplayV1Schema,
   type SessionFolderAssignment, type SessionOrganizationFolder, type SessionOrganizationOpenedDisplayStateV1 } from '../sessions/organization/folders.js';

@@ -16,7 +16,7 @@ import { readHostReviewedChildOperationV1, isHostAdmittedReviewedChildPolicyV1 }
 import type { ActionExecutorContext } from '../../actions/executor/types.js';
 import type { CurrentIntentMismatchV1 } from '../../actions/executor/approvalReview.js';
 import type { JsonValue as StrictJsonValue } from '../../json/strictJsonValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { isPluginError, isPluginErrorData } from '../errors.js';
 import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 import type {

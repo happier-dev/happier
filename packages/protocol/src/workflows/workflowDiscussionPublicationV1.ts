@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { DiscussionWorkflowProducerV1Schema, type DiscussionWorkflowProducerV1, type DiscussionMessageContentV1 } from '../discussions/content.js';
 import { WorkflowDiscussionOriginV1Schema } from './workflowDestinationsV1.js';
 import { SessionMessageDiscussionReplyReturnV1Schema } from '../sessions/messages/sessionMessageReplyV1.js';

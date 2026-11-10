@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const AutomationReplyHandoffStateV1Schema = lazyZodSchema(() => z.enum([
   'none',

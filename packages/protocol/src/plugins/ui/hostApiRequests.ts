@@ -1,7 +1,7 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { AutomationEventSourceInstanceIdV1Schema } from '../../automations/automationEventJsonBoundsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { SessionIdentityAdditionsV1Schema } from '../../sessions/identity/sessionBotV1.js';
 import { SessionPromptStackV1Schema } from '../../sessions/context/sessionContextV1.js';
 import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';

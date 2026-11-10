@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 export * from './loginsV1.js';
 export * from './importCookiesV1.js';
 export * from './importPasskeysV1.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { BrowserHttpUrlV1Schema } from '../url.js';
 import { LocalServicePreviewServiceTargetV1Schema, refineLocalServicePreviewServiceBindingV1 } from '../../local/services/preview/v1.js';

@@ -1,5 +1,5 @@
 import { AgentModelOptionOverrideRuleSchema, type AgentModelOptionOverrideRule } from '../models/descriptor.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import type { AgentModelsProbeObservation } from './agentProbeObservation.js';
 import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
 

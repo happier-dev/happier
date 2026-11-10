@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1 =
   'machine-session-terminal-capture-v1' as const;

@@ -1,5 +1,5 @@
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { TEAM_CREDENTIAL_ACTION_IDS_V1, TEAM_CREDENTIAL_HOME_ACTION_IDS_V1,
   type TeamCredentialActionIdV1, type TeamCredentialHomeActionIdV1 } from './actionIdsV1.js';
 export { TEAM_CREDENTIAL_ACTION_IDS_V1, TEAM_CREDENTIAL_HOME_ACTION_IDS_V1,

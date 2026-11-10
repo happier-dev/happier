@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
 
 import { AccountDisplayProfileV1Schema } from '../../account/accountDisplayProfileV1.js';

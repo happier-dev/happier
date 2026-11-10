@@ -1,7 +1,7 @@
 import { SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND } from '../../runtime/input/imageInputV1.js';
 import { SessionAttachmentHandleV1Schema, type SessionAttachmentHandleV1 } from '../../transfers/sessions/sessionAttachmentHandleV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { readSessionAttachmentEnvelopeRecordsV1 } from '../../runtime/input/structuredInputV1.js';
 
 /** Presentation of an upload; parsing it does not authorize reading its path. */

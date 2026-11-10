@@ -4,7 +4,7 @@ import { projectNativeJsonValueForTransport } from '../../json/strictJsonValue.j
 import { MCP_SERVER_ACTION_INPUT_SCHEMAS_V1 as inputs, MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 as outputs,
   type McpServerActionIdV1 } from '../../mcp/servers/actionSchemasV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { ValueRefV1 } from '../../valueRefs/valueRefV1.js';
 import { parseMcpServerImportV1, type ImportedMcpServerDraftV1 } from '../../mcp/servers/import/parseMcpServerImportV1.js';
 import { prepareDetectedMcpServerImportV1 } from '../../mcp/servers/import/mcpServerImportV1.js';

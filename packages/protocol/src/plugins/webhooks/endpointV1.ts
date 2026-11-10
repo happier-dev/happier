@@ -2,7 +2,7 @@ import { PLUGIN_WEBHOOK_ACTION_IDS_V1, PLUGIN_WEBHOOK_PLUGIN_SURFACE_ACTION_IDS_
 export { PLUGIN_WEBHOOK_ACTION_IDS_V1, PLUGIN_WEBHOOK_PLUGIN_SURFACE_ACTION_IDS_V1 } from './endpointActionIdsV1.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema } from '../../deployments/deploymentIdentifiersV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { encodeBase64 } from '../../crypto/base64.js';
 import { isLoopbackHostname } from '../../server/urls/loopbackHostname.js';

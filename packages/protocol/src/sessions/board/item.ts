@@ -1,6 +1,6 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { WidgetSnapshotDocumentV1Schema, WidgetSnapshotMetadataV1Schema } from './declarative/snapshot.js';
 import { WidgetInstanceV1Schema as InstanceSchema } from '../../widgets/widgetInstanceV1.js';

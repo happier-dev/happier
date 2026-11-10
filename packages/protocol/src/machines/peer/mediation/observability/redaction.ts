@@ -1,4 +1,4 @@
-import type { z } from 'zod/mini';
+import type { z } from '../../../../zodRuntimePolicy.js';
 
 import { isUnsafeTelemetryDataKey } from '../../../../common/sensitiveKeys.js';
 

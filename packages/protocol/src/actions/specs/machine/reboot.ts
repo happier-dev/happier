@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { ManagedActivityReasonV1Schema } from '../../../machines/managed/activityDecisionV1.js';
 import { ActionOperationIdentifierV1Schema } from '../../operations/identifierV1.js';

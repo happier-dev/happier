@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const ArtifactRevisionV1Schema = lazyZodSchema(() => z.strictObject({
   headerVersion: z.number().check(z.int(), z.positive()), bodyVersion: z.number().check(z.int(), z.positive()),

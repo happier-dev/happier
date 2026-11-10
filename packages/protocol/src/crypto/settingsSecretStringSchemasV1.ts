@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { appendSavedSecretReferencePathV1 } from '../account/settings/savedSecretReferenceV1.js';
 
 export const EncryptedStringV1Schema = lazyZodSchema(() => z.object({

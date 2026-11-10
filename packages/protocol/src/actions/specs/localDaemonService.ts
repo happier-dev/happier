@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { LOCAL_DAEMON_SERVICE_ACTION_IDS } from './localDaemonServiceActionIdsV1.js';
 export { LOCAL_DAEMON_SERVICE_ACTION_IDS } from './localDaemonServiceActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { SystemTaskResultSchema } from '../../system/tasks/spec.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';

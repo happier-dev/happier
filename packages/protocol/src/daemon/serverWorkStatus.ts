@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const DaemonServerWorkCountersV1Schema = lazyZodSchema(() => z.looseObject({
     accepted: z._default(z.number().check(z.int(), z.nonnegative()), 0),

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { RemoteHostRecordV1Schema, type RemoteHostRecordV1 } from './remoteHostSchemasV1.js';
 import { SharedSavedSecretCreateInputV1Schema, SavedSecretCatalogReferenceCensusV1Schema } from '../account/settings/savedSecretResourceActionsV1.js';

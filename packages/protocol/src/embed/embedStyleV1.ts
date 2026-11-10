@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const EmbedRadiusStepV1Schema = lazyZodSchema(() => z.enum(['sm', 'md', 'lg', 'xl', 'xxl', 'modalCard']));
 export type EmbedRadiusStepV1 = z.infer<typeof EmbedRadiusStepV1Schema>;

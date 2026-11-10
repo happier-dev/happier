@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { BinaryBlobContentKindV1Schema, BinaryBlobReferenceV1Schema, BinaryBlobStoredContentV1Schema } from '../storage/binaryBlobV1.js';
 import { DiscussionIdSchema, DiscussionMessageIdSchema } from './references.js';

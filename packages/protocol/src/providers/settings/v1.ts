@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { ProviderConnectionV1Schema, type ProviderConnectionV1 } from '../connections/v1.js';
 import { ProviderConnectionTombstoneV1Schema } from '../connections/tombstoneV1.js';

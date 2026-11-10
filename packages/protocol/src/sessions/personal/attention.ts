@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import type { ViewerReadStateV1 } from './readState.js';
 import { isSessionActionConfirmationRequest } from '../metadata/sessionActionConfirmationsV1.js';

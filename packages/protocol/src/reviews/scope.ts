@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { ScmBackendIdSchema } from '../scm/backendIdentity.js';
 import { ScmEntryKindSchema, ScmRepoModeSchema } from '../scm/workingSnapshot.js';

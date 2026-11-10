@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 const ExternalApiKeyIdV1Schema = lazyZodSchema(() => z.string().check(z.uuid()));
 const ExternalApiKeySecretV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)));

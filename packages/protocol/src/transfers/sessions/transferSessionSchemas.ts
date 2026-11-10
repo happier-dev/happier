@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { readCanonicalPaddedBase64DecodedLength } from '../../crypto/base64.js';
 import { TransferChunkEnvelopeSchema, type TransferChunkEnvelope } from '../../machines/transfer/transferStream.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';

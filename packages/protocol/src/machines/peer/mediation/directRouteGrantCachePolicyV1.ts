@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 export const DIRECT_ROUTE_GRANT_TTL_MS = Object.freeze({
   boundedTransferSingle: 10 * 60_000,

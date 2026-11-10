@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 const LINE_CONTENT_HASH_PREFIX = 'lh1:';
 const LineContentHashV1Schema = lazyZodSchema(() => z.templateLiteral([

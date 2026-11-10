@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { PluginDeclarativeDocumentStructureV1Schema } from '../plugins/contributions/ui/declarativeDocumentAuthoringV1.js';

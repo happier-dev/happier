@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 export { readDiscussionCandidatesV1, bindDiscussionCandidatePeopleReadV1,
   projectDiscussionCandidateSessionQueryV1 } from './discussionCandidates.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';

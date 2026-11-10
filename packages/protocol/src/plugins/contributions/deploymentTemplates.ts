@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { DeploymentDomainHealthCheckV1Schema } from '../../deployments/deploymentDomainHealthCheckV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { DeploymentComposeSelectorsV1Schema, DeploymentComposePublicFilesV1Schema } from '../../deployments/storedAppInputV1.js';

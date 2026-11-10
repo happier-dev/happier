@@ -5,7 +5,7 @@ import { PassthroughEmptyObjectSchema } from './common.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { DAEMON_ADMIN_RPC_SURFACES, DAEMON_ADMIN_INPUT_HINTS } from './common.js';
 import type { PreNormalizedActionSpec } from './definition.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { BUG_REPORT_DEFAULT_ISSUE_OWNER, BUG_REPORT_DEFAULT_ISSUE_REPO } from '../../bugs/reports/types.js';
 

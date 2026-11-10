@@ -1,4 +1,4 @@
-import type { z } from 'zod/mini';
+import type { z } from '../../zodRuntimePolicy.js';
 import type { SessionBotV1 } from '../identity/sessionBotV1.js';
 import type { SessionBotFaceV1 } from '../identity/sessionBotFaceV1.js';
 import type { BotTemplateDraftRefV1Schema } from '../../bots/templates/botTemplateV1.js';

@@ -23,7 +23,7 @@ import type { ProviderContributionV1 } from '../providers/contributions/v1.js';
 import { listLegacyAiLaunchProfileUnpromotedCredentialEnvironmentVariableNamesV1, requiresLegacyAiLaunchProfileProviderSourcePreparationV1 } from '../providers/migrations/legacyProfilesV1.js';
 import { LaunchProfileIdV2Schema } from './v2/profileId.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../json/strictJsonValue.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 
 export type AiLaunchProfileSourceV1 = Readonly<{

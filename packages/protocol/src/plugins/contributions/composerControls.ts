@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { MAX_INTERACTION_TRANSIENT_CHOICES_V1 } from '../interactions/transientV1.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';

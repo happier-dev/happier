@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { VoiceAssistantActionSchema, type VoiceAssistantAction } from './actions.js';
 import { normalizeVoiceSpeechTextChunk, resolveVoiceSpeechSegmentLength, speechTextEndAtOrBefore, toSpeechText, type VoiceSpeechTextState } from './speechText.js';

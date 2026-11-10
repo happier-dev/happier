@@ -1,8 +1,8 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import {
   AutomationReplyHandoffStateV1Schema,

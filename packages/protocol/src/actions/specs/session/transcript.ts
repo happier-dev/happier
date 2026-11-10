@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { ConversationTurnOriginV1Schema } from '../../../messages/structured/conversationTurnOriginV1.js';
 import { ExternalShareableTranscriptPageV1Schema } from '../../../sessions/messages/sessionExternalShareableTranscriptV1.js';
 

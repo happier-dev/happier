@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { AutomationEventSourceStatusV1Schema, AutomationEventSourceCatalogStatusStateV1Schema, UNSIGNED_DECIMAL_BIGINT_SCHEMA } from './automationEventSourceStatusV1.js';
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationColumnBoundsV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';

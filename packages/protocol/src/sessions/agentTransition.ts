@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { AcpConfigOptionOverridesV1Schema } from './metadata/metadataOverridesV1.js';
 import { isSessionAgentTransitionDividerLocalId } from './agentTransitionDivider.js';

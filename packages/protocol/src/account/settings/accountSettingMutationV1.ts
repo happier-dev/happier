@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { migrateAccountSettingsFeaturePreferences } from './featurePreferenceMigration.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import {

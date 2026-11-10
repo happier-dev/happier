@@ -1,4 +1,4 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import {
@@ -15,7 +15,7 @@ import {
   CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD,
 } from './methods.js';
 
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { deploymentChildEffectActionIdForRootV1 } from '../deployments/deploymentActionIdsV1.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { ActionRequiredAuthoritySchema, type ActionRequiredAuthority } from '../actions/metadata.js';

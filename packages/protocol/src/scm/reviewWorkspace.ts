@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { ScmOperationErrorCodeSchema } from './operationError.js';
 import { ScmHostingProviderKindSchema } from './pullRequests.js';

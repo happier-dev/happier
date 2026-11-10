@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { AccountStoredContentCompatibilityServerRequirementsV1Schema } from '../../../clientCompatibility/accountStoredContentCompatibilityV1.js';
 import { MachineOperationProtocolCapabilityV1Schema, MachineSessionSpawnProtocolCapabilityV1Schema } from '../../../machines/operationProtocolCapabilitiesV1.js';
 

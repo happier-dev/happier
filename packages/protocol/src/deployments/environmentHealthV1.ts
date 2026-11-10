@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { HealthCheckStatusV1Schema } from './healthCheckV1.js';
 import { DeploymentIdentifierV1Schema as id } from './deploymentIdentifiersV1.js';
 

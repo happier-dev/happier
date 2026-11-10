@@ -1,4 +1,4 @@
-import type { z } from 'zod/mini';
+import type { z } from '../zodRuntimePolicy.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import {
   PackedProviderAccountUsagePageProjectionV1Schema, ProviderAccountUsagePageProjectionContentV1Schema,

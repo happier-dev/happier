@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { SessionMetadataPublisherPreconditionV1Schema } from '../../metadata/sessionMetadataSchemasV1.js';
 
 import {

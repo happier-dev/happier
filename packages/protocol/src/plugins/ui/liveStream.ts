@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 const FORBIDDEN_DESCRIPTOR_VALUE_KEYS = new Set([
   'apikey',

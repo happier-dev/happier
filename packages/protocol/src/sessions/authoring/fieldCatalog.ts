@@ -1,5 +1,5 @@
 import { SessionInitialAccessDraftV1Schema } from '../access/sessionInitialAccessDraftV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 

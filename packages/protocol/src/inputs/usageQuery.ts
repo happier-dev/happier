@@ -1,5 +1,5 @@
 import { USAGE_ANALYTICS_COST_MODES } from '../usage/usageVocabularyV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';

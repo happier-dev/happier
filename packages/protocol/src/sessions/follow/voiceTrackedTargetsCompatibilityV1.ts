@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionFollowErrorCodeV1Schema } from './api.js';
 import { VoiceTrackedSessionAddressV1Schema } from './voiceTrackedSessionAddressV1.js';

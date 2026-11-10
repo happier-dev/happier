@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 const NormalizedCoordinateSchema = z.number().check(z.minimum(0), z.maximum(1));
 const PositiveSizeSchema = z.number().check(z.positive());

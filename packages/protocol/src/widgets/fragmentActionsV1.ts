@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { WidgetDefinitionAccountV1Schema } from './definitionActionsV1.js';
 import { WidgetLayoutFragmentDraftV1Schema, WidgetLayoutFragmentPatchV1Schema, WidgetLayoutFragmentV1Schema } from './widgetLayoutFragmentV1.js';
 import { WidgetLayoutFragmentSummaryV1Schema, type WidgetLayoutFragmentArtifactPortV1 } from './widgetLayoutFragmentArtifactV1.js';

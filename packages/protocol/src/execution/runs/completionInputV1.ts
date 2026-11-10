@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const EXECUTION_RUN_COMPLETION_SUMMARY_MAX_LENGTH = 8_000;
 

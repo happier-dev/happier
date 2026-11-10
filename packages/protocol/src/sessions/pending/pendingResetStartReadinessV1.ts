@@ -2,7 +2,7 @@ import type { ProviderAccountUsageSnapshotV1 } from '../../connect/providerAccou
 import { readProviderAccountUsageWindowComparabilityReason, resolveProviderAccountUsagePaceWindow } from '../../connect/deriveProviderAccountUsagePace.js';
 import { isConnectedServiceQuotaObservationFresh } from '../../connect/quotaObservationTime.js';
 import type { PendingResetStartBindingV1 } from './pendingRequestedActionV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 
 export const PendingResetStartWaitingReasonV1Schema = lazyZodSchema(() => z.enum([

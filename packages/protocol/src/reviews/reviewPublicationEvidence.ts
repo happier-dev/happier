@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** Host receipts from the existing review comment publication owner. */
 export const ReviewPublicationMaterializationSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [

@@ -1,6 +1,6 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { ManagedResourceDependencyV1Schema, type ManagedResourceDependencyV1 } from '../../machines/managed/managedDependencyV1.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 import { preparePluginContributionPointDeclarationsV1 } from '../contributions/targetedContributions.js';

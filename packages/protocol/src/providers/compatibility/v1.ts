@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { ConnectedServiceIdSchema } from '../../connect/connectedServiceBindings.js';
 import { ProviderCredentialFormatKindV1Schema } from '../credentials/v1.js';

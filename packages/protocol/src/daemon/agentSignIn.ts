@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ConnectedAccountAttemptResponseSchema, ConnectedAccountDaemonCommandSchema, type ConnectedAccountAttemptResponse } from '../connect/connectedAccountDaemonRpcV1.js';
 import { DaemonTerminalLaunchIntentSchema } from './terminal.js';
 import { DaemonTerminalCloseResponseSchema } from './terminal.js';

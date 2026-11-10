@@ -1,7 +1,7 @@
 import { MACHINE_POOL_ACTION_IDS_V1 } from './actionIdsV1.js';
 export { MACHINE_POOL_ACTION_IDS_V1 } from './actionIdsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import {
   MachinePoolCreateInputV1Schema,

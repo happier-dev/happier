@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ManagedDefaultsV1Schema, ManagedSessionDefaultsV1Schema } from './managedDefaults.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import {
   TeamAuthenticationPolicyV1Schema,

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SpawnConfigOptionValueSchema } from '../../actions/sessionSpawnConfigOptions.js';
 import { ConnectedServiceAuthGroupPolicyV2Schema } from '../../connect/connectedServiceSchemas.js';

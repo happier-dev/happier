@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { WidgetPublicSnapshotPresentationV1Schema } from './widgetPublicSnapshotV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { InputFieldHintSchema, InputPathSchema } from '../inputs/inputFields.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/jsonSchema.js';

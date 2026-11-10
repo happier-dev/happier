@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from "zod/mini";
+import { z } from "../../zodRuntimePolicy.js";
 
 import { TeamIdSchema } from "../membership.js";
 import { IdentityConnectionTestDiagnosticsV1Schema } from "../../identity/testDiagnostics.js";

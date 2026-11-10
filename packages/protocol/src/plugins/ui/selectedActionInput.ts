@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { pluginJsonValuesEqual } from '../contributions/jsonSchemaValues.js';
 import type { PluginUiJsonValueV1 } from '../contributions/ui/json.js';

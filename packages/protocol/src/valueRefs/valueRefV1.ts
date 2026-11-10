@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { appendSavedSecretReferencePathV1 } from '../account/settings/savedSecretReferenceV1.js';
 

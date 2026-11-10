@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { VoiceLocalSttSchema } from './localStt.js';
 import { VoiceLocalTtsSchema } from './localTts.js';

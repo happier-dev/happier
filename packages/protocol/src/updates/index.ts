@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { PushTokensRemoteAlertProjectionV2Schema } from '../push/pushTokenRegistration.js';
 import { SessionSystemRecordInvalidationV1Schema } from '../sessions/board/changeHint.js';
 import { MachineKindFromLegacyProjectionSchema } from '../machines/machineKind.js';

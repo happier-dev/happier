@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { RoleActionIdV1 } from './roleActionIdsV1.js';
 import { RoleArtifactV1Schema } from './roleArtifactV1.js';
 import { RoleInstructionsOverrideV1Schema, RoleOverrideV1Schema } from './rolesV1.js';

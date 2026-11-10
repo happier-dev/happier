@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { DeploymentStageLogsReadInputV1Schema } from '../deployments/deploymentReadsV1.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';

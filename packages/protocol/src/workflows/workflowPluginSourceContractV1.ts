@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { WorkflowDefinitionV1Schema } from './workflowV1.js';
 import { WorkflowDefinitionRefV1StringSchema, parseWorkflowDefinitionRefV1, formatWorkflowDefinitionRefV1 } from './workflowDefinitionRefV1.js';
 import type { PluginWorkflowContributionV1 } from '../plugins/contributions/workflowDeclarationV1.js';

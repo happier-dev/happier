@@ -5,7 +5,7 @@ import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { ConnectedServiceBindingsV2Schema } from '../../connect/connectedServiceBindings.js';
 import { SessionTeamCredentialBindingIntentV1Schema } from '../../teams/credentials/sessionBindingIntentV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { SessionManagerV1Schema, SessionManagedSessionsV1Schema } from '../follow/sessionManagerV1.js';
 import { SessionEffectiveAccessV1Schema, type SessionEffectiveAccessV1 } from '../access/sessionEffectiveAccessV1.js';
 import { SessionAccessAccountSummaryV1Schema } from '../access/sessionAccessPrincipalV1.js';

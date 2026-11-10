@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { PluginDescriptorBaseV1Schema } from '../plugins/contributions/_descriptors.js';
 import { InstallableSourceSchema } from './sourceKind.js';

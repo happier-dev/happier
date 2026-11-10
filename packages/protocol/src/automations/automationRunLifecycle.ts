@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { AutomationOccurredAtV1Schema } from './automationOccurredAtV1.js';
 import { ExecutionRunOutputObservationSchema } from '../reviews/reviewNarration.js';
 

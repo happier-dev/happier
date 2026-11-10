@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionControlErrorSchema, SessionControlEnvelopeErrorSchema, SessionControlEnvelopeSuccessSchema } from '../../sessions/control/contract.js';
 

@@ -1,5 +1,5 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';

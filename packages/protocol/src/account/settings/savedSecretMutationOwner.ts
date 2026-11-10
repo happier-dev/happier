@@ -68,7 +68,7 @@ import { readLaunchProfileArtifactForReferenceCensusV1, LaunchProfileArtifactRef
 import type { ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
 import type { ProfileCatalogRecordV1 } from '../../profiles/profileCatalogV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { canShareSavedSecretResourceContentV1, type SavedSecretResourceContentV1 } from './savedSecretResourceContentSchemaV1.js';
 import { readRemoteHostCatalogRecordV1, type RemoteHostRecordV1 } from '../../remoteHosts/remoteHostRecordV1.js';
 import { AcpCatalogRecordV1Schema, listAcpCatalogSavedSecretRefsV1, rewriteAcpCatalogSavedSecretRefsV1, type AcpCatalogRecordV1 } from '../../acp/catalog/catalogRowsV1.js';

@@ -1,4 +1,4 @@
-import type { z } from 'zod/mini';
+import type { z } from '../zodRuntimePolicy.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaInput, type ProtocolSchemaOutput } from '../plugins/actions/protocolComposableSchema.js';
 

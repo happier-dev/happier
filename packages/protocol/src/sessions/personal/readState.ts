@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /**
  * One Account's private view frontier for one Session (Lane 09B, L09B-I1/I2).

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { AcpBackendAuthoringInputV1Schema, AgentsAcpBackendsUpsertInputV1Schema } from '../../acp/catalog/catalogMutationsV1.js';
 import { AcpBackendLaunchV1Schema } from '../../acp/catalog/settingsV1.js';

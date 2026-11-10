@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema, type StructuredQuestionAnswerDetailsV1, type StructuredQuestionAnswersV1 } from '../../tools/structuredQuestionAnswersV1.js';
 
 import { NativePermissionChoiceAnswerV1Schema, SessionPermissionRespondPayloadV1Schema,

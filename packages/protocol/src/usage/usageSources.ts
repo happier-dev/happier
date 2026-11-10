@@ -1,6 +1,6 @@
 import { USAGE_SOURCE_ACTION_IDS } from './usageSourcesActionIdsV1.js';
 export { USAGE_SOURCE_ACTION_IDS } from './usageSourcesActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';

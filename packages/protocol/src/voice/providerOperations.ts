@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** Existing Voice diagnostic-code boundary, shared by provider and host ingress. */
 export function normalizeVoiceFailureCode(value: unknown): string | null {

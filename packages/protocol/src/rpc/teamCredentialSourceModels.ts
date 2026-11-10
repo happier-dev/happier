@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../connect/connectedServiceUxDiagnostics.js';
 import { ProviderErrorV1Schema } from '../providers/errors.js';
 import { ProviderBrokerApplicationBindingV1Schema } from '../providers/brokerRouteGrantV1.js';

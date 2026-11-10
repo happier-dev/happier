@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../../zodRuntimePolicy.js';
 
 export const SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE = 'activity' as const;
 

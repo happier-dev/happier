@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { QualifiedSessionSpaceTagV1Schema } from '../../collections/spaces/collectionSpacesV1.js';
 
 import {

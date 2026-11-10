@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { SessionPermissionAnsweringClientCategoryV1Schema } from '../permissions/respondRpcParamsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { ActionIdSchema } from '../../actions/actionIds.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';

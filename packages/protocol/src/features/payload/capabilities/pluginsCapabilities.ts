@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { PluginUiArtifactHostingCapabilityV1ReadSchema } from '../../../plugins/availability/v1.js';
 

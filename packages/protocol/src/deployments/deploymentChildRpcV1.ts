@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import type { ExternalActionExecutionAuthorizationBindingV1, ReviewedActionChildHttpProofV1 } from '../actions/externalActionApi.js';
 import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';

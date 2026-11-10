@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { ProjectOpenDraftDocumentV2Schema } from '../projects/openProjectDraftV1.js';
 import { DocPassageRefV1Schema } from '../artifacts/artifactCollaborationV1.js';

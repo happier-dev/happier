@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { SessionRunnerRuntimeStateV1 } from './sessionRunnerRuntimeV1.js';
 import { isMachineRpcTimeoutError, isRpcMethodNotFoundResult, readRpcErrorCode, RPC_ERROR_CODES, MACHINE_RPC_TIMEOUT_ERROR_CODE } from '../../rpc/errors.js';
 

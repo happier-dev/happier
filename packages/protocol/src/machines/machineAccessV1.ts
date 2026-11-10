@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { MachinePresenceTransitionsV1Schema } from './machinePresenceTransitionsV1.js';
 export { MachinePresenceTransitionsV1Schema, MachinePresenceReadInputV1Schema,
   type MachinePresenceTransitionsV1 } from './machinePresenceTransitionsV1.js';

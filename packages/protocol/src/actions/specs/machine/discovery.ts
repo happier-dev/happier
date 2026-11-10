@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 import { MachinePresenceReadInputV1Schema, MachinePresenceReadResultV1Schema } from '../../../machines/machineAccessV1.js';

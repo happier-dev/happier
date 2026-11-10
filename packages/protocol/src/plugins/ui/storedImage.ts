@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { SessionImageMediaReferenceV1Schema } from '../../sessions/media/imageReferenceV1.js';
 
 /** Native Session-image facts; the Session reader verifies declared scope and file integrity. */

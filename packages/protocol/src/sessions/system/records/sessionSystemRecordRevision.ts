@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { decodeBase64, encodeBase64 } from '../../../crypto/base64.js';
 
 export const SESSION_SYSTEM_RECORD_VERSION_MAX = 2_147_483_647;

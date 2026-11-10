@@ -1,5 +1,5 @@
 import { createRecordingResultSchemas } from '../../recording/results.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { BrowserRecordingOutcomeReasonV1Schema, DaemonBrowserRecordingUnavailableReasonV1Schema,
   DaemonBrowserRecordingCleanupResultV1Schema } from '../../browser/recording/v1.js';

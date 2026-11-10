@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V1 = 1 as const;
 export const ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V2 = 2 as const;

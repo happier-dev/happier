@@ -4,7 +4,7 @@ import { BOT_TEMPLATE_ACTION_IDS_V1, BotTemplateActionInputSchemasV1, BotTemplat
   BotTemplateInstantiateAgentAuthoringInputV1Schema,
   type BotTemplateActionIdV1 } from '../../bots/templates/botTemplateActionsV1.js';
 import type { PreNormalizedActionSpec } from './definition.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { BotTemplateSetupReviewSelectionsV1Schema, projectBotTemplateSetupSelectionsForReviewV1 } from '../../bots/templates/templateSetupSelectionsV1.js';
 import { projectSessionSpawnNewObservationInput, SessionSpawnNewInputHints } from './session/lifecycle.js';

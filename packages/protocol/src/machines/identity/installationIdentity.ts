@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { isWorkspaceSyncRelationshipWriteActionId } from '../../actions/actionIds.js';
 import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import {

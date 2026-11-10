@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const PluginHostedWebRuntimeModeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({

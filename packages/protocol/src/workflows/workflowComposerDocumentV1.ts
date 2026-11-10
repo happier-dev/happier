@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { MENTION_BOUNDS, MENTION_KIND_V1, MentionRefV1Schema, buildMentionRefForKindV1, readMentionRefOpaqueForKindV1 } from '../runtime/input/mentionRefV1.js';
 import { PortableComposerAttachmentV1Schema } from '../runtime/input/composerAttachmentV1.js';

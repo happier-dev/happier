@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { PeerMediationObservabilityEventKindV1Schema } from '../../../machines/peer/mediation/observability/v1.js';
 import { PeerFlowKindV1Schema } from '../../../machines/peer/mediation/flowKind.js';

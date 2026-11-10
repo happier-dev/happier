@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ArtifactRevisionV1Schema } from '../artifacts/artifactActionsV1.js';
 import { PromptDocArtifactRefV1Schema } from '../prompts/library/promptArtifactRefsV1.js';
 import { MemoryTopicSummaryV1Schema } from '../prompts/library/memoryDocV1.js';

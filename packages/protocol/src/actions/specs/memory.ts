@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { ExternalSessionsRpcErrorCodeSchema } from '../../sessions/external/rpcErrorCodes.js';
 import { MemorySearchQueryV1Schema, MemorySearchScopeSchema, MemoryDocumentSearchCoverageV1Schema, MemorySearchResultHitV1Schema, MemorySearchResultV1Schema } from '../../memory/memorySearch.js';
 import { MemoryWindowV1Schema, MemoryWindowRequestV1Schema } from '../../memory/memoryWindow.js';

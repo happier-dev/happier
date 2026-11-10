@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import type { SessionBotV1, SessionBotFaceV1 } from '../sessions/identity/sessionBotV1.js';
 import type { ActionExecutorContext } from './executor/types.js';
 import type { AdmittedActionInputById } from './actionSpecs.js';

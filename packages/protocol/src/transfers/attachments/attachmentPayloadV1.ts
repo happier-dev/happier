@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { BinaryBlobReferenceV1Schema } from '../../storage/binaryBlobV1.js';
 import { AttachmentNameV1Schema, AttachmentRelativePathV1Schema } from './attachmentPathV1.js';

@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { isPersonalSavedSecretReadActionIdV1 } from '../../account/settings/personalSavedSecretActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { SavedSecretExternalSourceV1Schema } from '../../account/settings/savedSecretResourceContentSchemaV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1 as inputs, PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 as outputs,

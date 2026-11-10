@@ -3,7 +3,7 @@ export { AccessProviderRefV1Schema, AccessCredentialPurposeRefV1Schema, AccessPr
   AccessProviderRefProtocolV1Schema, AccessProviderSelectionProtocolV1Schema, accessProviderRefsEqualV1,
   SharedSavedSecretReferenceSelectionProtocolV1Schema,
   type AccessProviderRefV1, type AccessCredentialPurposeRefV1, type AccessProviderSelectionV1 } from './accessProviderSelection.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { HomeHostAccessMethodV1Schema } from '../../home/governance/reachability.js';
 import { MachineRecipeReferenceV1Schema } from '../../machines/setup/machineRecipeV1.js';

@@ -1,7 +1,7 @@
 import { ACCOUNT_SETTING_DEFINITIONS, accountSettingsParse, type AccountSettingKey } from '../../account/settings/accountSettings.js';
 import { SettingsDeclarationActionInputSchemasV1, SettingsDeclarationValueV1Schema, type SettingsDeclarationActionIdV1, type SettingsDeclarationTargetKindV1 } from '../settingsDeclarationActionFamily.js';
 import { BUILT_IN_SETTINGS_METADATA_V1 } from './builtInSettingsMetadata.js';
-import type { z } from 'zod/mini';
+import type { z } from '../../zodRuntimePolicy.js';
 import type { TeamSettingBindingV1 } from './settingsOwnerActions.js';
 import { readPortableAccountSettingBindingV1 } from './accountSettingBindings.js';
 import { applyAtmosphereLayoutDefault, recordAtmospherePictureSelection, type HomeAtmosphere } from '../../account/settings/homeAtmosphere.js';

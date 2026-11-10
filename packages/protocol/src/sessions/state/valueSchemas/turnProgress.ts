@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { HostIdSchema } from '../../../runtime/agentSessionScalarsV1.js';

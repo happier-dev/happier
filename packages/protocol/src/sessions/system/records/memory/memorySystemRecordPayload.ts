@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../../../zodRuntimePolicy.js';
 
 import { SessionSummaryShardV1Schema } from '../../../../messages/structured/sessionSummaryShardV1.js';
 import { SessionSynopsisV1Schema } from '../../../../messages/structured/sessionSynopsisV1.js';

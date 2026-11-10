@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { getAccountScopedBlobCiphertextBase64LengthV1 } from '../../crypto/accountScopedCipherEnvelope.js';
 import { AccountSettingsPersistedObjectSchema } from './accountSettingsPersistedObject.js';

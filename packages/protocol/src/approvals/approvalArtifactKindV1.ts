@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ApprovalRequestV2StatusSchema } from './approvalRequestStatus.js';
 
 /** Approval Artifact identities shared by their writers, readers, and generic content admission. */

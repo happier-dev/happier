@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id } from './deploymentIdentifiersV1.js';
 import { ActionOperationAddressV1Schema } from '../actions/operations/addressV1.js';

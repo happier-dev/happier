@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentRuntimeContentCasV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import { DeploymentPendingDeployV1Schema } from './storedAppInputV1.js';

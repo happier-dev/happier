@@ -1,6 +1,6 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { MAX_PLUGIN_IDENTIFIER_BYTES } from '../plugins/pluginId.js';
 

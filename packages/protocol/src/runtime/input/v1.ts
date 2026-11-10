@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { HappierStructuredInputV1Schema } from './structuredInputV1.js';
 

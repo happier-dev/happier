@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { WorkflowMaterializedLeafV1 } from './workflowDefinitionV1.js';
 import type { WorkflowBlock, WorkflowDefinitionV1, WorkflowLeafV1, WorkflowStepExecutionSelection } from './workflowV1.js';
 import { listWorkflowBlockOrdinalsV1, workflowBlockReferenceLabel } from './workflowStepLabel.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { listWorkflowAcceptedLeafSelectionsV1 } from './workflowStepSelectionV1.js';
 import { ActionSessionAddressV1Schema } from '../actions/sessionTargetV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';

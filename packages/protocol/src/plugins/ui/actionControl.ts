@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ActionExecuteResultSchema } from '../../actions/actionExecutionResult.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';

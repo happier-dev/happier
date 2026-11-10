@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { ExecutionRunIntentSchema } from '../../execution/runs/runPrimitives.js';
 import { ProviderAgentTargetKeySchema, ProviderModelIdSchema } from '../../providers/ids.js';
 

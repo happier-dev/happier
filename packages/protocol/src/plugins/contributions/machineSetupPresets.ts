@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachineSetupV1Schema } from '../../machines/managed/machineSetupV1.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';

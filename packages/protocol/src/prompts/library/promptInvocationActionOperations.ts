@@ -1,6 +1,6 @@
 import { isPromptInvocationAvailable, PromptInvocationEntryV1Schema, PromptInvocationsV1Schema, validatePromptInvocationTokenV1, type PromptInvocationEntryV1 } from './promptInvocationsV1.js';
 import { readPromptLibraryCatalogRecordV1, type PromptLibraryStackActionPortV1 } from './promptLibraryCatalogV1.js';
-import type { z } from 'zod/mini';
+import type { z } from '../../zodRuntimePolicy.js';
 import type { PromptInvocationCreateInputSchema, PromptInvocationCreateOutputSchema, PromptInvocationUpdateInputSchema,
   PromptInvocationUpdateOutputSchema, PromptInvocationDeleteInputSchema, PromptInvocationDeleteOutputSchema } from '../../actions/promptInvocationCreateActionSpecs.js';
 import { readPromptDocInLibrary, type PromptLibraryArtifactStore, type PromptLibraryStoredArtifact } from './promptLibraryActionOperations.js';

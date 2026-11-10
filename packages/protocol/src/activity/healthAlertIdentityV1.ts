@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { MachineServiceIdentityV1Schema, machineServiceIdentityTupleV1 } from '../local/services/serviceIdentityV1.js';
 import { HealthCheckSubjectV1Schema } from '../deployments/healthCheckSubjectV1.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema, lazyDefinition } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { SecretStringV1Schema } from '../crypto/settingsSecretStringSchemasV1.js';
 

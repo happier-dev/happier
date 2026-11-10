@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 export const EncryptionStoragePolicySchema = lazyZodSchema(() => z.enum(['required_e2ee', 'optional', 'plaintext_only']));
 export type EncryptionStoragePolicy = z.infer<typeof EncryptionStoragePolicySchema>;

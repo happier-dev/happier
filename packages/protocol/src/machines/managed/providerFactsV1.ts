@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 import { lazyDefinition } from '../../lazyZodSchema.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';

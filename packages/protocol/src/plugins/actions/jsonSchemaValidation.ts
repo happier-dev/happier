@@ -9,7 +9,7 @@
  * and keep AJV out of their module graph.
  */
 import type { ErrorObject } from 'ajv';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
 
 import { compileProtocolJsonSchema } from './jsonSchemaCompiler.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { estimateTokensV1 } from '../../../capabilities/estimateTokensV1.js';
 import { readStoredSkillFrontmatterV1, splitSkillMarkdownV1 } from './skillLibraryItemV1.js';

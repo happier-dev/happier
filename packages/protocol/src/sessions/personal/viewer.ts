@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionFollowFactsV1Schema, type SessionFollowFactsV1 } from '../follow/accountFollow.js';
 import { SessionPersonalAttentionProjectionV1Schema, type SessionPersonalAttentionProjectionV1 } from './attention.js';

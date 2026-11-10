@@ -1,5 +1,5 @@
 import tweetnacl from 'tweetnacl';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import {
   AccountPasswordChangeRequestV1Schema,

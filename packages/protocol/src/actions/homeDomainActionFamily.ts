@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AccountUsernameUpdateErrorV1Schema } from '../account/profile.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { PublicProfilePreparedRequestV1Schema, PublicProfileMutationResultV1Schema,
   type PublicProfilePreparedRequestV1 } from '../account/publicProfilePublication.js';
 import { ACTION_ID_FAMILIES_V1 } from './actionIds.js';

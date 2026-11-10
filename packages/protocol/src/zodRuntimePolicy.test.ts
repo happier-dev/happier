@@ -10,6 +10,19 @@ import { lazyZodSchema } from './lazyZodSchema.js';
  * so cyclic-input support is off, exactly as under `zod/mini`.
  */
 describe('zod runtime policy', () => {
+  it('resolves Mini once for a source schema graph instead of once per schema module', async () => {
+    const { build } = await import('esbuild');
+    const bundle = await build({
+      entryPoints: [new URL('./account/encryptionMode.ts', import.meta.url).pathname,
+        new URL('./daemon/executionRuns.ts', import.meta.url).pathname],
+      outdir: 'unused', bundle: true, platform: 'node', format: 'esm',
+      packages: 'external', write: false, metafile: true, logLevel: 'silent',
+    });
+    const miniResolutions = Object.values(bundle.metafile!.inputs)
+      .filter(input => input.imports.some(dependency => dependency.path === 'zod/mini'));
+    expect(miniResolutions).toHaveLength(1);
+  });
+
   it.each(['node', 'browser'] as const)('keeps unreached definitions cold in a tree-shaken %s consumer bundle', async (platform) => {
     const { build } = await import('esbuild');
     const { runInNewContext } = await import('node:vm');

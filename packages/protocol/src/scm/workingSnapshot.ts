@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { ScmBackendIdSchema } from './backendIdentity.js';
 import { ScmDefaultBranchPushPolicySchema } from './defaultBranchPushPolicy.js';

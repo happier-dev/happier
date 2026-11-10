@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { listVoiceActionBlockSpecs, resolveVoiceClientToolNameAlias } from '../actions/actionSpecs.js';
 import { resolveActionCatalogSurfaceProjection } from '../actions/actionCatalog.js';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';

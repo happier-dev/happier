@@ -1,6 +1,6 @@
 import type { ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
 import { ProviderAccountUsageRecordIdSchema } from './providerAccountUsagePrimitives.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { isConnectedServiceQuotaObservationFresh } from './quotaObservationTime.js';
 import type { ConnectedServiceQuotaMeterV1 } from './connectedServiceSchemas.js';

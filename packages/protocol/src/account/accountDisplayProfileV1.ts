@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** One person label across hosts. An Account identity is never a display name. */
 export function resolveAccountDisplayLabelV1(profile: Readonly<{ name?: string | null; username?: string | null }>): string | null {

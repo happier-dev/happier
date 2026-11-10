@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { EXECUTION_RUN_COMPLETION_SUMMARY_MAX_LENGTH, ExecutionRunCompletionV1Schema } from '../../execution/runs/completionInputV1.js';
 import { ExecutionRunTerminalStatusSchema } from '../../execution/runs/waitForTerminal.js';

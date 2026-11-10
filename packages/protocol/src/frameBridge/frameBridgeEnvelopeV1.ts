@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const FrameBridgeIdentityV1Schema = lazyZodSchema(() => z.strictObject({
   instanceId: z.string().check(z.trim(), z.minLength(1)),

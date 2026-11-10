@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../../../zodRuntimePolicy.js';
 
 export const PeerTcpTunnelSubstreamCapsV2Schema = z.object({
   maxConcurrentSubstreams: z.optional(z.number().check(z.int(), z.positive())),

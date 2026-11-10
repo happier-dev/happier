@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { normalizeWorkspaceRootPathV1, isAbsoluteWorkspaceRootPathV1 } from '../workspaces/workspaceRefResolutionV1.js';
 

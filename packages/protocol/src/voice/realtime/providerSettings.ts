@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SavedSecretSlotBindingsV1Schema } from '../../providers/settings/v1.js';
 import {

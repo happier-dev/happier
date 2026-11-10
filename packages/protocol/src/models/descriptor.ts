@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { CapabilitySupportSchema } from '../providers/capabilities/v1.js';
 import { ProviderModelIdSchema } from '../providers/ids.js';

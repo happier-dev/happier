@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PublicCoverageV1Schema, PublicPeriodV1Schema, PublicUsageFactsV1Schema } from './publicProfile.js';
 import { UsageAgentCalendarSchema } from '../usage/usageAgentCalendar.js';

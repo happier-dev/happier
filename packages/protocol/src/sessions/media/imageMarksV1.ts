@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 
 export const ImageMarkColorV1Schema = lazyZodSchema(() => z.enum(['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'ink']));

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '../../control/runtimeIssueV1.js';
 
 import {

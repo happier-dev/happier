@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { selectTeamCredentialSourcesForApproval } from './teamCredentialApproval.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { ReviewFindingsApplyInputV1Schema, ReviewFindingsApplyResultV1Schema } from '../../reviews/reviewApplyV1.js';
 import { reviewStartCompletion, reviewWalkthroughCompletion } from './executionRunCompletion.js';
 import { ReviewStartInputSchema } from '../../reviews/reviewStart.js';

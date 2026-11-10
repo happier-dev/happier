@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { SKILL_ACTION_INPUT_SCHEMAS_V1 as inputs, SKILL_ACTION_OUTPUT_SCHEMAS_V1 as outputs, SkillFileInputV1Schema, SkillFileChangeV1Schema,
   SkillInstallSourceV1Schema, SkillUpdateCandidateV1Schema, type SkillLibraryActionIdV1, type SkillFileInputV1 } from '../../prompts/library/skills/skillActionSchemasV1.js';

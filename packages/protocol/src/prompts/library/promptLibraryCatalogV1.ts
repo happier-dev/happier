@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
 import type { AccountSettingsHistoryLegacyRoleArtifactTransferV1 } from '../../account/settings/accountSettingsApiV2.js';
 import { LEGACY_ROLE_GUIDANCE_SETTINGS_ROOTS_V1 } from '../../account/settings/rolesV1Migration.js';

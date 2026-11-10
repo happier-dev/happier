@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ComputerTargetRequestV1Schema, ComputerTargetV1Schema, ComputerSourceIdentityV1Schema } from './v1.js';
 import { RecordingSessionFieldsV1Schema, validateRecordingSessionV1, BrowserRecordingSessionMediaTargetV1Schema,

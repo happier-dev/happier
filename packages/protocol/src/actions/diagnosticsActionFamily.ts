@@ -1,6 +1,6 @@
 import { DIAGNOSTICS_ACTION_IDS } from './diagnosticsActionIdsV1.js';
 export { DIAGNOSTICS_ACTION_IDS } from './diagnosticsActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 export type DiagnosticsActionId = typeof DIAGNOSTICS_ACTION_IDS[number];
 export const DiagnosticsActionIdSchema = lazyZodSchema(() => z.enum(DIAGNOSTICS_ACTION_IDS));

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { ProviderAccountUsageQuotaScopeV1Schema } from './providerAccountUsageQuotaScopeV1.js';
 import {

@@ -1,4 +1,4 @@
-import { z, type output as ZodOutput, ZodMiniType as ZodTypeAny } from 'zod/mini';
+import { z, type output as ZodOutput, ZodMiniType as ZodTypeAny } from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 
 import type { SessionAuthoringFieldDefinitionMap } from './fieldDefinition.js';

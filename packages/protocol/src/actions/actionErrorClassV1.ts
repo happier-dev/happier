@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** Closed names only: arbitrary exception names can contain private input. */
 export const ActionErrorClassV1Schema = lazyZodSchema(() => z.enum([

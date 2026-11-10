@@ -1,7 +1,7 @@
 import type { PluginAgentSkillsCapabilityV2 } from '../../../plugins/contributions/v2.js';
 import type { CapabilityItemStateV1 } from '../../../reach/resolveSessionCapabilitiesV1.js';
 import type { SkillLibraryItemV1 } from './skillLibraryItemV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 
 export type NativeSkillScanV1 = Readonly<{

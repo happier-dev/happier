@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const ServerRetentionDomainPolicyV2Schema = z.discriminatedUnion('mode', [
   z.strictObject({ mode: z.literal('keep_forever') }),

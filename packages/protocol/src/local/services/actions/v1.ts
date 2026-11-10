@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { ProjectNativeRefV1Schema } from '../../../workspaces/projectSetup/projectManifestV1.js';
 import { WorkspaceRefV1WriteSchema } from '../../../workspaces/workspaceRefV1.js';
 import { ProjectExecutionChoiceV1Schema } from '../../../workspaces/projectWorkerPreferencesV1.js';

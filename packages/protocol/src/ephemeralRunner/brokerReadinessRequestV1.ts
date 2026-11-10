@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { IrohEndpointIdV1Schema } from '../connectivity/iroh/endpointDescriptorV1.js';
 import { encodeBase64 } from '../crypto/base64.js';

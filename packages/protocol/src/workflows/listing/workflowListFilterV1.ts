@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { compileEntityListFilterV1, createEntityListFilterStoredReadSchemaV1, ExtensionSelectionV1Schema, matchEntityFilterKnownV1 } from '../../collections/filter/entityListFilterV1.js';

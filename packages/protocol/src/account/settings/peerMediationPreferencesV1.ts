@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const PeerDirectPreferenceV1Schema = lazyZodSchema(() => z.enum(['inherit', 'enabled', 'disabled']));
 export type PeerDirectPreferenceV1 = z.infer<typeof PeerDirectPreferenceV1Schema>;

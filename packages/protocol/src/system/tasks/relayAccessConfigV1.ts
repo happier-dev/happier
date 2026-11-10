@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { AccessProviderSelectionV1Schema, type AccessProviderSelectionV1 } from '../../plugins/contributions/accessProviders.js';
 import { isExactBaseCredentialKey } from '../../common/sensitiveKeys.js';

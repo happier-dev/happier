@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 import type { ActionCompletionDeclaration, ActionCompletionRun, ExecutionRunTerminalObservation } from '../actionCompletion.js';

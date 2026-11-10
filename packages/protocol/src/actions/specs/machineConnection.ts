@@ -4,7 +4,7 @@ export { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_IN
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { DaemonExecutionRunListResponseSchema } from '../../daemon/executionRuns.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { SCOPED_RPC_SOCKET_CONNECTION_PHASES } from '../../rpc/errors.js';

@@ -1,7 +1,7 @@
 // Captured from b1ba6bf48ffff8b9dc97f59198795ac90c6df11c:packages/protocol/src/sessions/creation/sessionSpawnNewResultV1.ts.
 // Exact pre-observation closed result reader; only relative import paths change.
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { OperationUpdateRequiredV1Schema } from '../../../compat/operationUpdateRequiredV1.js';
 import { ProviderErrorV1Schema } from '../../../providers/errors.js';
 import { TerminalHostUnavailableSpawnErrorDetailSchema } from '../../spawnSession.js';

@@ -1,4 +1,4 @@
-import type { z } from 'zod/mini';
+import type { z } from '../zodRuntimePolicy.js';
 
 import { isSessionAccessActionId, type SessionAccessActionId } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';

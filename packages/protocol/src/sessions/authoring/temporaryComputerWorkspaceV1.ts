@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /** Exact creator-authored workspace policy for a Temporary Computer endpoint. */
 export const TemporaryComputerWorkspaceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [

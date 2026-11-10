@@ -1,7 +1,7 @@
 import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 export { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { TodoCreateInputV1Schema, TodoItemPatchV1Schema, TodoItemV1Schema, TodoStateV1Schema } from '../todos/todoSessionLinkV1.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';

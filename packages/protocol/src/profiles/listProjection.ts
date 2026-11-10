@@ -6,7 +6,7 @@ import { isProfileCompatibleWithAgent } from './profileCompatibility.js';
 import { isLaunchProfileV2, type AiLaunchProfile } from './read.js';
 import { AIBackendProfileSchema } from './backendProfileSchema.js';
 import { LaunchProfileV2Schema } from './v2/schema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ProfileRecordIdV1Schema } from './profileRecordSchemaV1.js';
 

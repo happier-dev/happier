@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** A current sibling anchor; null names the start/end of the current list. */
 export const AnchoredListPositionV1Schema = lazyZodSchema(() => z.strictObject({

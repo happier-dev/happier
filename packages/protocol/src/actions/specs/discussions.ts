@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { defineActionSpecs } from './definition.js';
 import type { ApprovalPresentationContext, PreNormalizedActionSpec } from './definition.js';

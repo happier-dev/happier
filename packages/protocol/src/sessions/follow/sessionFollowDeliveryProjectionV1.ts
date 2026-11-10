@@ -3,7 +3,7 @@ import type { SessionMessageAcceptedTurnV1 } from '../messages/sessionMessageDel
 import type { SessionMessageReplyOutcomeV1 } from '../messages/sessionMessageReplyV1.js';
 import type { SessionReceiverDeliveryDecisionV1 } from './sessionReceiverDeliveryV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /** Presentation only; neither status nor reason grants delivery or ACK authority. */
 export const FollowDeliveryProjectionV1Schema = lazyZodSchema(() => z.strictObject({

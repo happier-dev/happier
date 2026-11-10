@@ -1,6 +1,6 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { PluginEventAutomationDeclarationV1Schema } from '../../automations/automationEventDeclarationV1.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';

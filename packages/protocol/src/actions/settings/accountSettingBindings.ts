@@ -3,7 +3,7 @@ import { GlassTintIntensitySchema } from '../../account/settings/glassTint.js';
 import type { SettingDomainValueV1 } from './settingsOwnerActions.js';
 import { normalizeActionsSettingsV1, setActionApprovalOverride, type ActionSurfaceKey } from '../actionSettings.js';
 import { accountNotificationStorageBinding } from './notificationPreferenceMutations.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { DEFAULT_AGENT_ID } from '../../agents/defaultAgent.js';
 import { readDirectConnectionsEnabled, withDirectConnectionsEnabled, readMachineDirectConnectionChoice, withMachineDirectConnectionChoice } from '../../account/settings/peerMediationPreferencesV1.js';
 import { MachineRetentionDefaultsV1Schema, updateMachineRetentionCategoryPreferenceV1, type MachineRetentionCategoryV1 } from '../../account/settings/machineRetentionDefaultsV1.js';

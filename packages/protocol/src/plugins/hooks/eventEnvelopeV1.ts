@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { HookCategoryV1Schema } from '../../hooks/hookCategories.js';
 import { HookIdV1Schema } from '../../hooks/hookIds.js';

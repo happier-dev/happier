@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const BrowserInputTargetV1Schema = z.literal('page');
 export type BrowserInputTargetV1 = z.infer<typeof BrowserInputTargetV1Schema>;

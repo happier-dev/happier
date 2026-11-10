@@ -1,7 +1,7 @@
 import { UsageSessionFactRecordV1Schema } from '../../../usage/usageWorkEvidence.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import type { UsageSessionFactRecordV1 } from '../../../usage/usageWorkEvidence.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import {
   ActivitySessionSystemRecordRawPayloadSchema,

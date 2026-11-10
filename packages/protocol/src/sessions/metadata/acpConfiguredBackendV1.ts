@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export function createAcpConfiguredBackendV1Schema(zod: typeof z) {
   return zod.looseObject({

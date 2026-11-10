@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { SessionMessageRoleSchema } from './sessionMessageRole.js';
 import { SessionMessageAttentionImpactSchema, SESSION_MESSAGE_USER_ATTENTION_IMPACT } from './transcriptRawRecordV1.js';
 import { SessionTranscriptObservationProvenanceV1Schema } from './transcriptObservationV1.js';

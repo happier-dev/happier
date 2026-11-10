@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { diffArrays } from 'diff';
 import { applyHunks, type HunkLine } from './hunks.js';

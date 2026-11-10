@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { FEATURES_RESPONSE_MAX_UTF8_BYTES_V1 } from '../features/payload/responseLimits.js';
 import { AuthProviderIdSchema } from './providers.js';

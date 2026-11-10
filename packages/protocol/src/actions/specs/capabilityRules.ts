@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ReachRuleDraftV1Schema, ReachRuleV1Schema } from '../../reach/reachRuleV1.js';
 import { McpServerCatalogMutationResponseV1Schema } from '../../mcp/servers/catalogSchemasV1.js';

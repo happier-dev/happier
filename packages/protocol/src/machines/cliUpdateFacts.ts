@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 // Compatibility class (docs/compatibility.md#sdk-protocol-evolution): a read projection that a
 // machine publishes about itself — additive-open/drop. Unknown properties are stripped; known

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** Host-stamped values that a session-bound Action tool may omit from model input. */
 export const ActionContextualDefaultsSchema = lazyZodSchema(() => z.strictObject({

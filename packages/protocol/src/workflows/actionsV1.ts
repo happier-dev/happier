@@ -1,6 +1,6 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { WorkflowDestinationsV1Schema } from './workflowDestinationsV1.js';
 import { SessionManagedCreationV1Schema } from '../sessions/creation/sessionCreationCorrespondenceV1.js';
 import {

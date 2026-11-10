@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import type { ScmCapabilities } from './workingSnapshot.js';
 import type { ScmOperationOutcome } from './operationOutcome.js';
 

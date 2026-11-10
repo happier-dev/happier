@@ -1,5 +1,5 @@
 import { ExternalActionAuthorizationRefusalPhaseSchema } from './externalActionAuthorizationRefusalPhase.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { ApiTokenGrantDenialReasonV1Schema } from '../auth/apiTokenGrant.js';

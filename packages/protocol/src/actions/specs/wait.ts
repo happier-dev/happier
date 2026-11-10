@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import type { ActionCliProjection } from '../actionCliProjection.js';
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';

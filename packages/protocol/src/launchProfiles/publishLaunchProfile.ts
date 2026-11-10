@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import type { ArtifactSharingResourceV1 } from '../artifacts/artifactSharingV1.js';
 import { artifactSavedByFromActionContextV1, type ArtifactSavedByV1 } from '../artifacts/artifactBinaryV1.js';

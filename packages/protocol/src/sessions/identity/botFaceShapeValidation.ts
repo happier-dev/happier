@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import {
   BOT_FACE_FIELD_EXTENT, BOT_FACE_UNIT, BOT_FACE_MOUTHS, botFaceArtBounds,

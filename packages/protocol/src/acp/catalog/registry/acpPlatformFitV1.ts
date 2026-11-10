@@ -1,5 +1,5 @@
 import type { AcpBackendLaunchV1 } from '../settingsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { PinnedArchivePlatformSchema, type PinnedArchiveInstallableAsset } from '../../../installables/sourceKind.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import type { AcpRegistryAgentV1, RegistryAgentDistributionV1 } from '../../../registries/registryItemsV1.js';

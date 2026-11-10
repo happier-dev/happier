@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { normalizeSimulatorDeviceResourceVisibleCapabilitiesV1, SimulatorDeviceResourceV1Schema, SimulatorPlatformV1Schema } from '../../../devices/simulator/v1.js';
 import { normalizeBackedSimulatorSidebandKindsV1 } from '../../../devices/simulator/actionBuilders.js';

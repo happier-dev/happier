@@ -4,7 +4,7 @@ import { completeActionResult } from '../resultProjection.js';
 import { normalizeId } from '../inputReading.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
-import type { z } from 'zod/mini';
+import type { z } from '../../../zodRuntimePolicy.js';
 
 
 

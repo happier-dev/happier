@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { decodeBase64 } from '../../crypto/base64.js';
 import { ED25519_PUBLIC_KEY_BYTES, ED25519_SECRET_KEY_BYTES, ED25519_SIGNATURE_BYTES, isValidEd25519PublicKey } from '../../crypto/ed25519.js';

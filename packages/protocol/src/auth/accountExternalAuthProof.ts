@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** Shared opaque proof carrier for purpose-bound OAuth and mTLS reauthentication. */
 export const AccountExternalAuthProofV1Schema = lazyZodSchema(() => z.strictObject({

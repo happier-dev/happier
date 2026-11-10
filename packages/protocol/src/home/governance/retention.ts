@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /**
  * Retention dry run (plan `2026-09-26-home-owner-console` §3.6): one sweep of the Home's effective

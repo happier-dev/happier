@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { SessionBoardTabIdSchema } from '../sessions/board/ids.js';
 import type { WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
 

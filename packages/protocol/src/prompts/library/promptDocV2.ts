@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { HAPPIER_GUIDE_MARKDOWN, HAPPIER_GUIDE_TITLE } from './happierGuideInstructionsV1.js';
 import { ArtifactOrganizationHeaderV1Schema } from '../../artifacts/artifactOrganizationV1.js';
 import { ArtifactSavedByV1Schema } from '../../artifacts/artifactBinaryV1.js';

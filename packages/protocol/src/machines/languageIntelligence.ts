@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { WorkspaceFileEditSetFileSchema, WorkspaceFileEditPositionSchema, WorkspaceFileEditRangeSchema, DaemonWorkspaceFileReplaceApplyResponseSchema } from './workspaceFiles.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** Shared structural literals: the renderer and writable floor measure the same seed. */
 export const HAPPIER_REPLAY_SEED_FRAME = Object.freeze({

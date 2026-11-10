@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 const NonEmptyStringSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const UniqueNonEmptyStringsSchema = lazyZodSchema(() => z.array(NonEmptyStringSchema).check(z.minLength(1), z.refine((values) => new Set(values).size === values.length, 'Entries must be unique.')));

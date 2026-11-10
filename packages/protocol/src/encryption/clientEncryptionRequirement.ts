@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import type { AccountEncryptionMode } from '../features/payload/capabilities/encryptionCapabilities.js';
 import type { SessionEncryptionMode } from './storagePolicyDecisions.js';

@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import type { PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 import {

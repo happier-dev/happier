@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { MachineServiceLogsReadInputV1Schema } from '../local/services/nativeLogsV1.js';
 import { MachineServicesListInputV1Schema } from '../actions/specs/machine/services.js';

@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 export { readSessionInputPromptUserTextV1 } from '../../prompts/systemPromptBaseV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { BrowserContextMessagePayloadV1Schema, type BrowserContextMessagePayloadV1 } from '../../browser/context/v1.js';
 
 import { SessionIdSchema } from '../idsV1.js';

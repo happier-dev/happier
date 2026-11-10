@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { UPDATES_ACTION_IDS } from './updatesActionIdsV1.js';
 export { UPDATES_ACTION_IDS } from './updatesActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { InstallableCapabilityIdSchema } from '../installables/descriptor.js';

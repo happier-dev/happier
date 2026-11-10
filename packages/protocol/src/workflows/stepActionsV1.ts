@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from '../actions/actionSpecs.js';
 import { WorkflowDiscussionRoundProjectInputV1Schema, WorkflowDiscussionRoundProjectResultV1Schema } from './workflowDiscussionRoundV1.js';

@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { SESSION_TERMINAL_ACTION_IDS } from './sessionTerminalActionIdsV1.js';
 export { SESSION_TERMINAL_ACTION_IDS } from './sessionTerminalActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { SessionTerminalTargetV1Schema, SessionTerminalWorkspaceV1Schema } from '../terminal/workspace.js';
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from './actionSpecs.js';
 export type SessionTerminalActionId = typeof SESSION_TERMINAL_ACTION_IDS[number];

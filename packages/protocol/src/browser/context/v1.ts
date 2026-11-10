@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { RuntimeActionIdV1Schema } from '../../actions/actionIds.js';
 import { BrowserSemanticAdapterKindV1Schema } from '../adapters/kinds.js';

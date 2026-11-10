@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { actionCliDerivedDefault, type ActionCliBindContext, type ActionCliProjection } from '../../actionCliProjection.js';
 import type { ActionInputHints } from '../../metadata.js';

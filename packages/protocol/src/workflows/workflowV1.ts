@@ -1,6 +1,6 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { ConnectedServiceBindingsV2IngressSchema } from '../connect/connectedServiceBindings.js';
 import { ExecutionRunResultContractV1Schema } from '../execution/runs/resultContractV1.js';

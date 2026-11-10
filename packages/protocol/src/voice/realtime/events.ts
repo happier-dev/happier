@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 const REALTIME_ID_MAX_LENGTH = 256;
 const TRANSCRIPT_TEXT_MAX_LENGTH = 256 * 1024;

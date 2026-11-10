@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
 import { DaemonWorkspaceFileSearchResponseSchema, type DaemonWorkspaceFileSearchRequest, type DaemonWorkspaceFileSearchResponse } from './workspaceFiles.js';

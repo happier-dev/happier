@@ -2,7 +2,7 @@ import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { MACHINE_ACCESS_ACTION_IDS, MACHINE_ACCESS_HTTP_ACTION_IDS } from './accessActionIdsV1.js';
 export { MACHINE_ACCESS_ACTION_IDS, MACHINE_WORK_SUMMARY_ACTION_IDS } from './accessActionIdsV1.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import {
   MachineAccessGrantsListInputV1Schema, MachineAccessGrantsListResultV1Schema,
   MachineAccessGrantSetInputV1Schema, MachineAccessGrantRemoveInputV1Schema,

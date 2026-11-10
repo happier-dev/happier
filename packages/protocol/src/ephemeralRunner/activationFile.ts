@@ -1,5 +1,5 @@
 import tweetnacl from 'tweetnacl';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { HomeConnectionDescriptorV1Schema } from '../auth/accountDirectory.js';
 import { decodeCanonicalBase64UrlFixedLength } from '../machines/peer/mediation/strictBase64Url.js';

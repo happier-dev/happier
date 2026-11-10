@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { REGISTRY_INPUT_FIELDS } from './registryInputHints.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { REGISTRY_ACTION_INPUT_SCHEMAS_V1 as inputs,REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 as outputs,type RegistryActionIdV1 } from '../../registries/registryActionsV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';

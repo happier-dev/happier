@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema, lazyDefinition } from '../lazyZodSchema.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionInputForgeEvidenceV1Schema } from '../sessions/messages/sessionInputForgeEvidenceV1.js';

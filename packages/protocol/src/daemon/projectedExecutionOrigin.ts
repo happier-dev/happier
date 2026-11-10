@@ -1,4 +1,4 @@
-import type { z } from 'zod/mini';
+import type { z } from '../zodRuntimePolicy.js';
 import { getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '../machines/administration/pluginMachineExecutionOriginV1.js';
 import { pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '../plugins/runtime/sourceCustody.js';
 

@@ -2,7 +2,7 @@ import type { SessionAwarenessProjectionV1 } from './projectionV1.js';
 import { isSessionAwarenessContentReadableV1 } from './availability.js';
 import type { SessionManagedSessionsV1 } from '../follow/sessionManagerV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { SessionPersonalAttentionReasonV1 } from '../personal/attention.js';
 
 export type SessionAwarenessPresentationFactsV1 = Readonly<{

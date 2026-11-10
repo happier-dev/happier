@@ -1,11 +1,11 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 export { buildPluginBrowserProjectionEntryId, normalizePluginBrowserProjection, EMPTY_PLUGIN_BROWSER_PROJECTION,
   type PluginBrowserProjectionEntry, type PluginBrowserTargetProjection, type PluginBrowserActionProjectionEntry,
   type PluginBrowserActionProjection, type PluginBrowserProjectionModel } from './browserProjection.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginActionFailureResponseV1Schema } from '../plugins/actions/failureResponse.js';
 import { PluginUiResourceLinkV1Schema } from '../plugins/contributions/ui/resourceLinks.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { PluginProjectionSourceV2Schema, PluginProjectionBrandAssetV2Schema } from './pluginCatalogPresentation.js';
 export { PluginProjectionSourceV2Schema, PluginProjectionBrandAssetV2Schema,
   type PluginProjectionSourceV2, type PluginProjectionBrandAssetV2 } from './pluginCatalogPresentation.js';

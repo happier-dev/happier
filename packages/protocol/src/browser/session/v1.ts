@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const BrowserSessionStateV1Schema = z.enum(['active', 'closing', 'closed', 'failed']);
 export type BrowserSessionStateV1 = z.infer<typeof BrowserSessionStateV1Schema>;

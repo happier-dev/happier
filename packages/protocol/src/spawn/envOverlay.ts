@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 const SESSION_ENV_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/u;
 

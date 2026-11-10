@@ -1,6 +1,6 @@
 import { REGISTRY_ACTION_IDS_V1 } from './registryActionIdsV1.js';
 export { REGISTRY_ACTION_IDS_V1 } from './registryActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { RegistryKindV1Schema, RegistrySourceDescriptorV1Schema, RegistryFormatV1Schema, RegistrySourceTokenV1Schema } from './registrySourcesV1.js';
 import { RegistryItemV1Schema } from './registryItemsV1.js';

@@ -11,7 +11,7 @@ import { MachinePresetActionIdV1Schema, type MachinePresetActionInputSchemasV1 }
 import type { ActionExecuteResult, ActionExecutorContext } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecutorDeps } from '../types.js';
-import type { z } from 'zod/mini';
+import type { z } from '../../../zodRuntimePolicy.js';
 
 
 

@@ -1,6 +1,6 @@
 import { EXECUTION_RUN_KIND_BY_INTENT } from '../execution/runs/startRequest.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 import { sameStrictJsonValue, projectNativeJsonValueForTransport, StrictJsonValueSchema, type JsonValue } from '../json/strictJsonValue.js';

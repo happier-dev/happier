@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { ProviderConnectionDisplaySnapshotV1Schema } from './sessions/bindingMetadataV1.js';
 import { SessionModelSelectionV1Schema } from './selection/v1.js';

@@ -1,8 +1,8 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { DeploymentBackupRunInputV1Schema } from '../../deployments/deploymentBackupActionsV1.js';
 import { WorkflowDefinitionSavedByV1Schema } from '../workflowDefinitionV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { WorkflowDestinationsV1Schema } from '../workflowDestinationsV1.js';
 import { AutomationTriggerDefinitionInputSchema, AutomationTriggerDefinitionSchema } from '../../automations/automationTriggerDefinition.js';
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';

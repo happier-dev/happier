@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { REGISTRY_FORMAT_KINDS_V1, RegistryKindV1Schema, RegistryPackageContentPathV1Schema } from '../../registries/registrySourcesV1.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';

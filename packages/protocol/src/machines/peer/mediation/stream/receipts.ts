@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../../zodRuntimePolicy.js';
 
 import { PEER_MEDIATION_RECEIPTS } from '../receipts.js';
 import { MachineLiveStreamRouteKindV1Schema } from './v1.js';

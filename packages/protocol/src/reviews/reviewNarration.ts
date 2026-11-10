@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ScmDiffSummaryRefineInputSchema } from '../scm/diffSummaryResult.js';
 import { ReviewLaunchFailureSchema } from './reviewLaunchFailure.js';
 import { ScmComparisonSchema } from '../scm/comparison.js';

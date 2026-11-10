@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /** Account preference: one closed table, not a second material mode. */
 export const GlassSurfaceMaterialSchema = lazyZodSchema(() => z.strictObject({

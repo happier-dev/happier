@@ -4,7 +4,7 @@ import { redactObservationInputPaths } from './observationRedaction.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 as inputs, CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 as outputs,
   isConnectedServiceConfigurationMachineRequiredV1 } from '../../connect/configurationActionsV1.js';
 import { projectConnectedAccountAuthenticationObservation } from '../../connect/authenticationActionsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 } from '../../connect/qualifiedConnectedAccountPersistence.js';
 
 const common = {

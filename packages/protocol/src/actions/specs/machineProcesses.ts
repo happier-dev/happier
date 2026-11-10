@@ -2,7 +2,7 @@ import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { MACHINE_PROCESS_INPUT_FIELDS } from './machineProcessesInputHints.js';
 import { MACHINE_PROCESSES_ACTION_IDS } from './machineProcessesActionIdsV1.js';
 export { MACHINE_PROCESSES_ACTION_IDS } from './machineProcessesActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { subsetNarrowing, type ApprovalNarrowing } from '../../approvals/approvalNarrowing.js';
 import {

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { getWidgetSizeFootprintV1, WIDGET_SIZE_POLICY_V1 } from '../../widgets/widgetPresentationV1.js';
 
 import { SessionBoardErrorCodeSchema, type SessionBoardErrorCode } from './errors.js';

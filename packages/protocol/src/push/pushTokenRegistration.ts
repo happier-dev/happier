@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { DeviceRemoteAlertPolicyV1Schema } from '../account/settings/accountRemoteAlertPolicy.js';
 
 export const PushTokenRegisterRequestSchema = z.object({

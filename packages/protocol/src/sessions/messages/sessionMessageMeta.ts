@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { SessionHostOnboardingPresentationV1Schema } from '../creation/hostOnboardingPresentationV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { createClaudePredecessorMessageMetaShape } from '../../agents/claude/predecessorMessageMeta.js';
 
 import { createSentFromSchema } from '../../sentFrom.js';

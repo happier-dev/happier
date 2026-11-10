@@ -5,7 +5,7 @@ import { ProjectContextUpdateInputV1Schema, ProjectContextUpdateOutputV1Schema }
 import { ProjectVisibilitySetInputV1Schema, ProjectVisibilitySetOutputV1Schema } from '../../projects/projectVisibilityV1.js';
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../../projects/projectOrganizationV1.js';
 import { ProjectWorkspaceUpdateInputV1Schema, ProjectWorkspaceUpdateOutputV1Schema, ProjectWorkspaceForgetInputV1Schema, ProjectWorkspaceForgetOutputV1Schema } from '../../projects/projectWorkspaceActionsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import { actionInputServerId } from './definition.js';

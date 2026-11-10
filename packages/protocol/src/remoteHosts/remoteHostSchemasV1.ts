@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyDefinition } from '../lazyZodSchema.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { SecretStringV1Schema, listSecretStringCarrierPathsV1 } from '../crypto/settingsSecretStringSchemasV1.js';

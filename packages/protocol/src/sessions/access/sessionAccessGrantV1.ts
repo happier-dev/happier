@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import {
   AccountPrincipalRefV1Schema, GroupPrincipalRefV1Schema, TeamPrincipalRefV1Schema,
 } from '../../teams/principal.js';

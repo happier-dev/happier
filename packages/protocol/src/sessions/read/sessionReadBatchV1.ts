@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { AnyClientUpgradeRequiredV1Schema, type AnyClientUpgradeRequiredV1 } from '../../clientCompatibility/upgradeRequiredV1.js';
 import { OperationUpdateRequiredV1Schema, type OperationUpdateRequiredV1 } from '../../compat/operationUpdateRequiredV1.js';

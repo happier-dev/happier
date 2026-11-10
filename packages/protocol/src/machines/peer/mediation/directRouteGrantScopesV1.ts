@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { VoiceMediaApplicationKindV1Schema } from './voiceMediaV1.js';
 import { LocalServicePreviewDirectBindingV1Schema } from '../../../local/services/preview/v1.js';

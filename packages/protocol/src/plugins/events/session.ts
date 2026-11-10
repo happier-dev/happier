@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const SESSION_PROVIDER_HOOK_EVENT_ID_V1 = '@happier/session/provider-hook' as const;
 export const SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1 = '@happier/session/provider-transcript' as const;

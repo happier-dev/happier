@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { MessageActionReferenceV1ProtocolSchema } from '../sessions/messages/messageActionReferenceV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';

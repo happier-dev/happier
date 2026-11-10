@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { AccountDisplayProfileV1Schema } from '../../account/accountDisplayProfileV1.js';
 import { SessionMessageRoleSchema } from './sessionMessageRole.js';

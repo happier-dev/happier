@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 const ArtifactStoredJsonContentEnvelopeSchema = lazyZodSchema(() => z.discriminatedUnion('t', [

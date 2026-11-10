@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { AccountDisplayProfileV1BaseSchema, readAccountNameFromLegacyProfileV1 } from '../../account/accountDisplayProfileV1.js';
 
 /** An authorized Session projection's neutral Account identity, never a social profile. */

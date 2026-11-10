@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentEnvironmentContentCasV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';

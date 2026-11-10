@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 
 export { USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS } from './usageSessionFactKinds.js';

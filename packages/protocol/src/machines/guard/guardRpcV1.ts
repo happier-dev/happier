@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachineGuardPolicyV1Schema } from './guardPolicyV1.js';
 import { MachineGuardStateV1Schema } from './guardStateV1.js';

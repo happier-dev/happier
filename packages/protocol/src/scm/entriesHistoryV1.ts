@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../zodRuntimePolicy.js';
 import { ScmRequestBaseSchema } from './requestBase.js';
 import { ScmCommitOidSchema } from './commitPublication.js';
 import { ScmOperationErrorCodeSchema } from './operationError.js';

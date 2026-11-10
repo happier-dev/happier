@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { PrincipalRefV1 } from '../../teams/principal.js';
 import { SessionGrantIntentV1Schema, SessionGrantMutationV1Schema } from './sessionAccessGrantV1.js';
 

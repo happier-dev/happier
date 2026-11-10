@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import * as z from 'zod/mini';
+import * as z from '../zodRuntimePolicy.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { DEFAULT_AGENT_ID } from '../agents/defaultAgent.js';
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';

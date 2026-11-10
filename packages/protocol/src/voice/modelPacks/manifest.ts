@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { assertModelPackFilePathPortable } from './pathSafety.js';
 
 const Sha256HexSchema = lazyZodSchema(() => z.string().check(z.regex(/^[0-9a-f]{64}$/i)));

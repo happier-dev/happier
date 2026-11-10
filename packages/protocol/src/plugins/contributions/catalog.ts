@@ -1,5 +1,5 @@
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
-import type { z } from 'zod/mini';
+import type { z } from '../../zodRuntimePolicy.js';
 export { AccessProviderRefV1Schema, type AccessProviderRefV1 } from './accessProviders.js';
 
 import {

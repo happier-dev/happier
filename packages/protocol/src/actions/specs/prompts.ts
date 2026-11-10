@@ -6,7 +6,7 @@ import { PromptBundleUpdateActionInputV1Schema } from '../../prompts/library/pro
 import { PromptLibrarySaveOrganizationFieldsV1, isPromptLibrarySaveFolderAssignmentV1 } from '../../prompts/library/promptFolderActionSchemasV1.js';
 import { PromptLibraryStackUpdateInputV1Schema, PromptLibraryStackUpdateResultV1Schema } from '../../prompts/library/promptStacksV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { PromptAssetInstallModeV1Schema, PromptAssetScopeV1Schema } from '../../prompts/library/promptAssetsV1.js';
 import { StrictJsonValueSchema, projectNativeJsonValueForTransport } from '../../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';

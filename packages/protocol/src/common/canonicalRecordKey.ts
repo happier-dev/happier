@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 // Callers supply a maximum only when their owning contract requires one.
 export function canonicalBoundedStringSchema(max?: number) {

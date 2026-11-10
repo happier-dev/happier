@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AgentIdV1Schema } from '../agents/agentIdV1.js';
 import { UsageNightHoursV1Schema } from '../usage/usageWorkIntervals.js';

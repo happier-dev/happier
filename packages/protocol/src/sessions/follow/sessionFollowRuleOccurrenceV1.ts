@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 export { readOpenedSessionFollowOriginalV1, captureSemanticSessionFollowRuleSourceEvidenceV1,
   readSessionFollowSemanticSourceEventV1, readVerifiedSessionFollowHumanInputOriginalV1, isPotentialSessionFollowHumanInputV1 } from './sessionFollowOriginalV1.js';
 export type { SessionFollowOriginalOccurrenceV1, SessionFollowOriginalReadV1 } from './sessionFollowOriginalV1.js';

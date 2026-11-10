@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2';
 import { utf8ToBytes } from '@noble/hashes/utils';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { encodeBase64 } from '../crypto/base64.js';
 

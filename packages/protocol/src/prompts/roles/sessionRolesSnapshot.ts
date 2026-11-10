@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { migrateRetainedSessionWorkContextV1 } from '../../sessions/context/sessionContextV1.js';
 import { RoleInstructionsOverrideV1Schema, ResolvedRolesSnapshotV1Schema, type ResolvedRolesSnapshotV1 } from './rolesV1.js';

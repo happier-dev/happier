@@ -1,7 +1,7 @@
 import { SETTINGS_DECLARATION_ACTION_IDS_V1 } from './settingsDeclarationActionIdsV1.js';
 export { SETTINGS_DECLARATION_ACTION_IDS_V1 } from './settingsDeclarationActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import { VoiceCredentialSlotIdSchema } from '../plugins/contributions/voiceProviders.js';

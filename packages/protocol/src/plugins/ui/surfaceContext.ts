@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginUiPageNavigationProjectionV1Schema } from './pageNavigation.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 import {

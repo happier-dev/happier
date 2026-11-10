@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
 import { normalizeProviderPublicHeaders } from './safety/headers.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MACHINE_PRESET_ACTION_IDS_V1, type MachinePresetActionIdV1 } from './machinePresetActionIdsV1.js';
 import {

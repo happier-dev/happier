@@ -5,7 +5,7 @@ import { normalizePredecessorVoiceProviderIdV1 } from '../providerContributionId
 import {
   VoiceProviderIdSchema as QualifiedVoiceProviderIdSchema,
 } from '../realtime/index.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import {

@@ -1,5 +1,5 @@
 import { forEachJsonSchemaChild, zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
-import type { core } from 'zod/mini';
+import type { core } from '../../zodRuntimePolicy.js';
 
 import { PluginManifestV2Schema } from './v2.js';
 

@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { ExternalSessionAttachRequestSchema, ExternalSessionAttachResponseSchema, ExternalSessionBackgroundFollowActionInputV1Schema, ExternalSessionDetachRequestSchema, ExternalSessionDetachResponseSchema, ExternalSessionFollowPolicySetRequestSchema, ExternalSessionLinkEnsureRequestSchema, ExternalSessionLinkEnsureResponseSchema, ExternalSessionCandidateDeleteRequestSchema, ExternalSessionCandidateDeleteResponseSchema, ExternalSessionsCandidatesListRequestSchema, ExternalSessionsCandidatesListResponseSchema, ExternalSessionStatusGetRequestSchema, ExternalSessionStatusActionInputV1Schema, ExternalSessionTranscriptPageRequestSchema, ExternalSessionTranscriptPageResponseSchema, ExternalSessionTranscriptReadAfterRequestSchema, ExternalSessionTranscriptReadAfterResponseSchema, ExternalSessionViewerFollowActionInputV1Schema, ExternalSessionViewerFollowActionResultV1Schema, ExternalSessionViewerUnfollowActionInputV1Schema, ExternalSessionViewerUnfollowActionResultV1Schema } from '../../../sessions/external/daemonRpcV1.js';
 import { ExternalSessionTranscriptRefreshReadAfterRequestV1Schema, ExternalSessionTranscriptRefreshReadAfterResponseV1Schema } from '../../../sessions/external/secureRefreshV1.js';
 import { ExternalSessionTakeoverInputV1Schema, ExternalSessionTakeoverResultV1Schema } from '../../../sessions/external/takeoverV1.js';

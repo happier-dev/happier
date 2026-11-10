@@ -7,7 +7,7 @@ import { sealPublicShareDataKeyV1, openPublicShareDataKeyV1 } from '../../crypto
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { computeContentPublicKeyFingerprint } from '../../machines/identity/contentPublicKeyFingerprint.js';
 import { prepareResourceRecipientKeyEnvelopesV1 } from '../../teams/resourceRecipientKeyPreparationV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { buildStoredContentPublicShareUrlV1, generateStoredContentPublicShareMaterialV1,
   StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareCreateResponseV1Schema,

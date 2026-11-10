@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DiscussionAddressV1Schema, DiscussionMessageIdSchema, DiscussionMessageRefV1Schema } from '../discussions/references.js';
 import type { DiscussionOpenedMessageV1 } from '../discussions/actions.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { createPortablePathCollisionRegistry } from '../../filesystem/portablePathSegment.js';
 import { PluginUiArtifactFileV1Schema, PluginUiArtifactRelativePathV1Schema } from '../contributions/ui/artifacts.js';

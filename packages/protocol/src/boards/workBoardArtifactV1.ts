@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { WidgetGridSizeV1Schema, WidgetSizeFootprintV1Schema, getWidgetSizeFootprintV1 } from '../widgets/widgetPresentationV1.js';
 import {

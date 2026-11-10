@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { MAX_INTERACTION_TRANSIENT_CHOICES_V1, MAX_INTERACTION_TRANSIENT_QUESTIONS_V1 } from '../plugins/interactions/transientV1Limits.js';
 
 const STRUCTURED_QUESTION_ANSWERS_V1_LIMITS = Object.freeze({

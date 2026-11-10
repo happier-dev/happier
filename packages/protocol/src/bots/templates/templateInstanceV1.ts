@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { BotTemplateDraftRefV1Schema, BotTemplateReleaseSourceV1Schema, BotTemplateVersionV1Schema } from './botTemplateV1.js';

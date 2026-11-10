@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { CoordinationMessageRefV1Schema } from '../../discussions/references.js';
 import type { PromptDocArtifactRefV1 } from './promptArtifactRefsV1.js';

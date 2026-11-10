@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 import { lazyDefinition } from '../../lazyZodSchema.js';
 
 /** Content-free projection; live inventory and owner references stay host-internal. */

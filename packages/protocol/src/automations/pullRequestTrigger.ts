@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** The private PR selector shared by comment and failed-check triggers. */
 export const AutomationPullRequestTriggerSchema = lazyZodSchema(() => z.strictObject({

@@ -121,7 +121,7 @@ import { deriveManagedDeleteApprovalSubjectKeyV1 } from '../approvals/approvalAr
 import { executeApprovalObservationAction } from './executor/approvalObservation.js';
 import { isApprovalArtifactKindV1 } from '../approvals/approvalArtifactKindV1.js';
 import { ScmDiffSummaryModelSelectorSchema } from '../scm/diffSummary.js';
-import * as z from 'zod/mini';
+import * as z from '../zodRuntimePolicy.js';
 import { actionStartTargetUnavailableV1 } from './executor/actionStartDiagnostics.js';
 import { resolveInputOptions, resolveTypedInputFieldOptions, normalizeResolvedOptions, tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions, buildAgentInventorySelectionArgs } from '../inputs/inputOptions.js';
 import { ProjectPagesListInputV1Schema } from './projectActionFamily.js';

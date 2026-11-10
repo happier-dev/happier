@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { UsageTimingBoundsV1Schema } from '../../usage/usageTimingV1.js';
 
 import { SessionIdSchema, SidechainIdSchema } from '../idsV1.js';

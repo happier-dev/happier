@@ -6,7 +6,7 @@ import type { PluginProjectedMachineRecipeEntryV1 } from '../daemon/contribution
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { MachineRecipeReferenceV1Schema, type MachineRecipeReferenceV1 } from '../machines/setup/machineRecipeV1.js';
 import { buildQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { MachineSetupToolchainSoftwareChoiceV1Schema,
   projectMachineSetupToolchainSoftwareOptionsV1 } from '../plugins/contributions/projectNativeAdapters.js';
 import type { InputOption } from './inputFields.js';

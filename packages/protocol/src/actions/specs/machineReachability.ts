@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '../../machines/reachability/actionIdsV1.js';

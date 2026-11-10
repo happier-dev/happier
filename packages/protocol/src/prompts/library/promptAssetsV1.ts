@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export { PromptAssetScopeV1Schema, PromptAssetInstallModeV1Schema,
   type PromptAssetScopeV1, type PromptAssetInstallModeV1 } from './promptAssetDescriptorsV1.js';

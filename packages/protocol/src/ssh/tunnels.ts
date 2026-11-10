@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const NativeSshTunnelPurposeSchema = lazyZodSchema(() => z.enum(['server-http', 'server-websocket', 'relay-runtime']));
 export type NativeSshTunnelPurpose = z.infer<typeof NativeSshTunnelPurposeSchema>;

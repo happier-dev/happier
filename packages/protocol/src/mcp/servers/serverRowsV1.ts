@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 import { McpServerCatalogV1Schema, StoredMcpServerCatalogContentV1Schema } from "./catalogSchemasV1.js";
 import type { McpServerCatalogV1, McpServerCatalogContentV1, StoredMcpServerCatalogContentV1, McpServerCatalogDiagnosticV1, McpServerCatalogOpenResultV1 } from "./catalogSchemasV1.js";
 export { McpServerCatalogV1Schema, StoredMcpServerCatalogV1Schema, McpServerCatalogContentV1Schema, StoredMcpServerCatalogContentV1Schema, McpServerCatalogMigrationContentV1Schema, McpServerCatalogDiagnosticV1Schema, McpServerCatalogRowFailureV1Schema, McpServerCatalogRowReadResponseV1Schema, McpServerCatalogRowMutationV1Schema, McpServerCatalogRowMutationResponseV1Schema, AccountEncryptionMigrateMcpServerCatalogDirectiveV1Schema, AccountEncryptionMigrateMcpServerCatalogResultV1Schema } from "./catalogSchemasV1.js";

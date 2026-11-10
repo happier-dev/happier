@@ -1,4 +1,4 @@
-import type { z } from 'zod/mini';
+import type { z } from '../../zodRuntimePolicy.js';
 import type { PromptArtifactRefV1 } from '../../prompts/library/promptArtifactRefsV1.js';
 import { WIDGET_SURFACE_ARTIFACT_KIND_V1 } from '../../widgets/widgetSurfaceArtifactV1.js';
 import { SourceAttachmentV1Schema } from './projectSourceV1.js';

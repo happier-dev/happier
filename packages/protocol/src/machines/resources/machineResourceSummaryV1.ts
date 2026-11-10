@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 import { lazyDefinition } from '../../lazyZodSchema.js';
 import type { MachineVitalsSnapshotV1 } from '../vitals/machineVitalsRpcV1.js';
 import { MachineMemoryPressureSourceV1Schema, MachineVitalsHostFactsV1Schema, type MachineVitalsHostFactsV1 } from '../vitals/machineVitalsSampleV1.js';

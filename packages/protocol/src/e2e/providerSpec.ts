@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const E2eProviderProtocolSchema = z.enum(['acp', 'claude', 'codex']);
 

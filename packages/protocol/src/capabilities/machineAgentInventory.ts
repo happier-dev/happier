@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import type { CapabilitiesDetectRequest } from './index.js';
 import type { PluginProjectionV2 } from '../daemon/contributionRegistryProjection.js';

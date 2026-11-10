@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { ACCOUNT_SETTING_DEFINITIONS, type AccountSettings } from '../../account/settings/accountSettings.js';
 import { InstallableAutoUpdateModeSchema } from '../../installables/descriptor.js';
 import { applyInstallablePolicyOverride } from '../../installables/policy.js';

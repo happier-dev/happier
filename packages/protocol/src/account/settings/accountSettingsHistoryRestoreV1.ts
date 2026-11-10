@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { removeTransferredProfileSourcesV1 } from '../../profiles/read.js';
 import { SavedSecretSchema } from '../../profiles/backendProfileSchema.js';

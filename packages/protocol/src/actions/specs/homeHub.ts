@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { HomeHubLayoutV1Schema, HomeHubLayoutIntentSchema } from '../../home/homeHubLayoutV1.js';
 import { WidgetInstanceV1Schema } from '../../widgets/widgetInstanceV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';

@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { MACHINE_TERMINAL_ACTION_IDS, isMachineTerminalOpenOrRestartActionIdV1 } from './machineTerminalActionIdsV1.js';
 export { MACHINE_TERMINAL_ACTION_IDS } from './machineTerminalActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import {
   DaemonTerminalEnsureRequestSchema, DaemonTerminalEnsureResponseSchema,

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { BrowserAdapterCapabilitiesV1Schema } from '../adapters/v1.js';
 import { BrowserCommandKindV1Schema } from '../control/v1.js';

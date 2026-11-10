@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 export const ACCOUNT_SETTING_MAX_STRING_BYTES = 64 * 1024;
 export const ACCOUNT_SETTING_MAX_COLLECTION_ENTRIES = 256;

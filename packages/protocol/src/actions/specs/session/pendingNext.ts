@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
 
 export const SessionPendingNextInputSchema = lazyZodSchema(() => z.strictObject({}));

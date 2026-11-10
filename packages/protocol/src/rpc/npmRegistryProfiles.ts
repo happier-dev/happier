@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const NpmRegistryProfileIdV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.regex(/^[a-z0-9][a-z0-9._-]*$/u)));
 export const NpmRegistryProfileRevisionV1Schema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));

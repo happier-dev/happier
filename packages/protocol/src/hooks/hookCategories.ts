@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const HOOK_CATEGORY_V1_VALUES = ['integration', 'lifecycle', 'augmentation', 'decision'] as const;
 

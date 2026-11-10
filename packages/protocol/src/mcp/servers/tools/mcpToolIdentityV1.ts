@@ -4,7 +4,7 @@ import type { McpToolDecisionV1 } from './resolveMcpToolDecisionV1.js';
 import { McpToolAnnotationsV1Schema } from '../settingsV1.js';
 import { McpToolDecisionV1Schema } from './resolveMcpToolDecisionV1.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 export type McpToolIdentityV1 = Readonly<{ server: string; tool: string }>;
 export type ResolvedMcpToolIdentityV1 = McpToolIdentityV1 & Readonly<{
   item: Readonly<{ serverId: string; plugin?: Readonly<{ pluginId: string; localId: string }> }>;

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ProviderAccountUsageRecordIdSchema, ProviderAccountUsageSnapshotV1Schema, type ProviderAccountUsageHistoryWitnessV1, type ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
 import { ProviderAccountSubscriptionV1Schema } from './accountSubscription.js';

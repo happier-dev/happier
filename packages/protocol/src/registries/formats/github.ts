@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { readSkillFrontmatterV1 } from '../../prompts/library/skills/skillLibraryItemV1.js';
 import { RegistryFetchErrorV1, type RegistryListPageV1 } from '../registryListV1.js';
 import type { RegistrySourceV1 } from '../registrySourcesV1.js';

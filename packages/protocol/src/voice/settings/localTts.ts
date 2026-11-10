@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { KOKORO_DEFAULT_TTS_PACK_ID } from '../modelPacks/catalog.js';
 import { LocalNeuralExecutionSchema } from '../../daemon/voiceInference.js';
 

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const SCM_OPERATION_ERROR_CODES = {
   CHANGE_MOVED_ON: 'CHANGE_MOVED_ON',

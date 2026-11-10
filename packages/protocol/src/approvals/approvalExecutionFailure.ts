@@ -1,6 +1,6 @@
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import { ActionFailureCauseV1Schema, AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
-import * as z from 'zod/mini';
+import * as z from '../zodRuntimePolicy.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actions/actionSpecs.js';
 import { ActionIdSchema, WorkflowActionIdV1Schema, isPluginDevLoopActionIdV1 } from '../actions/actionIds.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';

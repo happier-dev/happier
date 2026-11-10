@@ -27,7 +27,7 @@ import { isMachineTerminalActionId, MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS } from
 import type { ActionExecuteResult, ActionExecutorContext } from '../types.js';
 import type { ActionApprovalScopeV1 } from '../../actionSettings.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
-import type { z } from 'zod/mini';
+import type { z } from '../../../zodRuntimePolicy.js';
 import type { AdmittedActionInputById } from '../../actionSpecs.js';
 
 export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'actionId' | 'deps' | 'parsed' | 'ctx'> & Readonly<{

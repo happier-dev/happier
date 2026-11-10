@@ -1,4 +1,4 @@
-import type { z } from 'zod/mini';
+import type { z } from '../../zodRuntimePolicy.js';
 import type { SettingsDeclarationValueV1Schema } from '../settingsDeclarationActionFamily.js';
 import type { ActionExecutorContext } from '../executor/types.js';
 import type { ActionExecuteResult } from '../actionExecutionResult.js';

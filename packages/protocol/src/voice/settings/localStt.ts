@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { LocalNeuralExecutionSchema } from '../../daemon/voiceInference.js';
 import { getDefaultModelPackId } from '../modelPacks/catalog.js';
 

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { sanitizeBugReportUrl } from '../bugs/reports/sanitize.js';
 import { MachineVitalsSampleV1Schema } from '../machines/vitals/machineVitalsSampleV1.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { LITELLM_BUNDLED_SNAPSHOT } from './usageModelPriceSnapshot.js';
 import { canonicalUsageModelPriceId, UsageModelPriceCatalogSchema, UsageModelPriceEntrySchema, type UsageModelPriceCatalog, type UsageModelPriceProvenance, type UsageModelPriceRates, type UsageModelPriceOverridesV1 } from './usageModelPriceSchemas.js';
 export * from './usageModelPriceSchemas.js';

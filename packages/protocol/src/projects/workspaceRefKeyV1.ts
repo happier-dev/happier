@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../zodRuntimePolicy.js';
 import { lazyDefinition } from '../lazyZodSchema.js';
 
 const IdSchema = lazyDefinition(() => z.string().check(z.minLength(1), z.refine(value => value === value.trim())));

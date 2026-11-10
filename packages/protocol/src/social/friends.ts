@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ImageRefSchema } from '../common/imageRef.js';
 import { ProfileBadgeSchema } from '../common/profileBadge.js';
 import { AccountRecipientEnvelopeReadinessSchema } from '../account/encryptionMode.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { VoiceProviderContribution } from '../../plugins/contributions/voiceProviders.js';
 import { VoiceProviderSettingsJsonValueV1Schema } from '../realtime/providerSettings.js';
 import type { VoiceReadinessRequirement, VoiceReadinessRole, VoiceRuntimePlatform } from '../realtime/capabilities.js';

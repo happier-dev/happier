@@ -2,7 +2,7 @@ import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { VOICE_BRIEF_REQUEST_ACTION_ID_V1, VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionIdsV1.js';
 export { VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { SessionVoicePreferenceV1Schema } from '../sessions/instructions/sessionVoicePreferenceV1.js';
 import { VoiceAttemptPresentationSchema } from '../voice/attemptPresentation.js';

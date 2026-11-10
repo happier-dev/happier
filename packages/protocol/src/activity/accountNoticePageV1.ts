@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { PluginUiSubPathV1Schema } from '../plugins/ui/semanticCommands.js';

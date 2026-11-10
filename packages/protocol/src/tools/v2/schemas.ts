@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { KnownCanonicalToolNameV2 } from './names.js';
 import { ToolHappyMetaV2Schema, ToolHappierMetaSchema } from './meta.js';
 import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema } from '../structuredQuestionAnswersV1.js';

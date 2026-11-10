@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const VoiceSpeechDiagnosticsSettingsV1Schema = lazyZodSchema(() => z.strictObject({
   v: z._default(z.literal(1), 1),

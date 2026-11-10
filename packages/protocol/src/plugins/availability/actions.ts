@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
-import * as mini from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
+import * as mini from '../../zodRuntimePolicy.js';
 import { ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
 import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";

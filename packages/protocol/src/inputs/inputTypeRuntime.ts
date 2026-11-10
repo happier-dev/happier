@@ -1,5 +1,5 @@
 import type { PublicActionInputById } from '../actions/actionSpecs.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../plugins/actions/jsonSchemaValidation.js';
 import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues.js';
 import { normalizeStrictJsonValue, type JsonValue } from '../json/strictJsonValue.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { SessionDirectoryV1Schema } from './sessionDirectoryV1.js';
 import { SessionWorkspaceLocationV1Schema } from './sessionWorkspaceLocationV1.js';

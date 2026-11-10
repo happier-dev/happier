@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { KeyChallengeV2IssueResponseSchema } from './keyChallenge.js';
 import { NativeAuthOneTimeBearerV1Schema } from './nativeAuthOneTimeOperation.js';
 import { VERIFIED_EMAIL_MAX_SCALARS } from './verifiedEmail.js';

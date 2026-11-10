@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ScmOperationOutcomeSchema } from './operationOutcome.js';
 import { ScmCommitPublicationSchema } from './commitPublication.js';
 import { ScmRepositoryProvisioningFailureResponseSchema } from './repositoryProvisioning.js';

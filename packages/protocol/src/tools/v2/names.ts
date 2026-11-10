@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const KNOWN_CANONICAL_TOOL_NAMES_V2 = [
   'Bash',

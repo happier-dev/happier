@@ -5,7 +5,7 @@ import { RestartSessionRunnerResultV1Schema } from '../../../sessions/control/se
 import { SessionRunnerRuntimeRefreshActionInputV1Schema } from '../../../sessions/control/sessionRunnerRestartV2.js';
 import { SessionPendingWithdrawInputV1Schema, SessionPendingWithdrawResultV1Schema } from '../../../sessions/control/pendingWithdrawV1.js';
 import { SessionPendingMarkHandledInputV1Schema, SessionPendingDeliveryRecoveryInputV1Schema, SessionPendingDeliveryRecoveryResultV1Schema, SessionPendingSendAsNewResultV1Schema } from '../../../sessions/control/pendingDeliveryRecoveryV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { SessionPendingActionSetInputV1Schema, SessionPendingActionSetResultV1Schema, PendingResetStartSetInputV1Schema, PendingResetStartCancelInputV1Schema, PendingResetStartSetResultV1Schema, PendingResetStartCancelResultV1Schema } from '../../../sessions/pending/pendingRequestedActionV1.js';
 import { SessionUsageLimitCheckNowRequestV1Schema, SessionUsageLimitConsumeResetCreditRequestV1Schema, SessionUsageLimitWaitResumeCancelRequestV1Schema, SessionUsageLimitWaitResumeEnableRequestV1Schema } from '../../../sessions/work/state/sessionWorkStateRpc.js';
 import { SessionTerminalComposerClearRequestV1Schema, SessionTerminalComposerClearResultV1Schema } from '../../../sessions/control/terminalComposerClearV1.js';

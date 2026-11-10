@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ProviderLocalIdSchema, ProviderConnectionIdSchema } from '../ids.js';
 import { ProviderWireProtocolSchema, ProviderCompatibilityCapabilitiesV1Schema, ProviderCompatibilityOverridesV1Schema } from '../capabilities/v1.js';

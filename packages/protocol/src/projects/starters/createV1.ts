@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ScmRepositoryCloneInputSchema } from '../../scm/repositoryClone.js';
 import { ScmRepositoryProvisioningRemediationSchema } from '../../scm/repositoryProvisioning.js';

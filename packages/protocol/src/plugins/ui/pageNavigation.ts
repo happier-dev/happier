@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
 import { PluginUiIconTokenV1Schema } from '../contributions/ui/tokens.js';

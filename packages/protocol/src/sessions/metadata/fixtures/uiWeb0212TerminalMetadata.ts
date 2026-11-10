@@ -1,7 +1,7 @@
 // Historical terminal schema from ui-web-v0.2.12 (a357c65536ba89669422977d6f7daf9aa0d17e73).
 // Its windowsRemoteSessionLaunchMode constant is inlined verbatim from that same tag.
 // Test-only released reader: do not update it when the current schema evolves.
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 const WINDOWS_REMOTE_SESSION_LAUNCH_MODES = ['hidden', 'windows_terminal', 'console'] as const;
 
 /**

@@ -7,7 +7,7 @@ import { UsageRecapPrivateComposeInputSchema, UsageRecapPublicComposeInputSchema
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { UsageCalendarExportInputSchema } from '../../usage/usageCalendarExport.js';
 import { UsageModelPriceCatalogSchema } from '../../usage/usageModelPriceSchemas.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import type { InputFieldHint } from '../../inputs/inputFields.js';
 

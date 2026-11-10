@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { SessionTargetV1Schema } from '../actions/sessionTargetV1.js';
 import { ScmCommitOidSchema } from './commitPublication.js';

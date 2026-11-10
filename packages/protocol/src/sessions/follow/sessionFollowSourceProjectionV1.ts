@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionStoredMessageContentSchema } from '../messages/sessionStoredMessageContent.js';
 import { SessionMessageAccountActorV1Schema } from '../messages/sessionMessageAccountActorV1.js';

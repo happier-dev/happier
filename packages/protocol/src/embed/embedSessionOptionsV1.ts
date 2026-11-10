@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { SessionOwnerMetadataV1Schema } from '../sessions/metadata/sessionMetadataSchemasV1.js';
 import { isApiTokenGrantActionAllowedV1, type ApiTokenGrantV1 } from '../auth/apiTokenGrant.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const SessionContinuationResumePromptModeV1Schema = lazyZodSchema(() => z.enum(['standard', 'off', 'custom']));
 export type SessionContinuationResumePromptModeV1 =

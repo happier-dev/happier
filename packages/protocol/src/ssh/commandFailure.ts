@@ -1,5 +1,5 @@
 import type { ManagedBootstrapFailureDetailsV1 } from '../actions/operations/v1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { formatHomeAuthorityMismatchFacts, readHomeAuthorityMismatchFacts, splitHomeAuthorityMismatchSuffix,
     type HomeAuthorityMismatchFacts, type HomeAuthorityMismatchFailureDetailsV1 } from './homeAuthorityMismatch.js';

@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { PromptInvocationAvailabilityV1Schema, PromptInvocationBehaviorV1Schema, PromptInvocationTargetV1Schema } from '../prompts/library/promptInvocationsV1.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { PromptLibraryRowMutationV1Schema } from '../prompts/library/promptLibrarySchemasV1.js';

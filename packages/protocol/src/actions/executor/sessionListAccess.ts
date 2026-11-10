@@ -7,7 +7,7 @@ import { readActionCallerLedSubtreeSessionIds, readActionCallerLedSubtreeSession
 import { readSessionManagerSessionIdV1 } from '../../sessions/follow/sessionManagerV1.js';
 import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { AgentStartContextV1 } from '../../account/settings/admitAgentStartV1.js';
 import { isWorkflowSessionScopeTargetV1 } from '../../workflows/workflowSessionScopeV1.js';
 import { resolveActionWorkflowSessionScopeV1 } from './workflowSessionScope.js';

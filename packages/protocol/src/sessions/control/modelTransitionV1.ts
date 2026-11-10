@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 import { SessionModelSelectionV2Schema } from '../../providers/selection/v2.js';

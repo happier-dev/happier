@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 const HTTP_ORIGIN_PROTOCOLS = new Set(['http:', 'https:']);
 

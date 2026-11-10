@@ -3,7 +3,7 @@ import { createRecordingActionSpecFamily } from './recording.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { BROWSER_EXTENSION_ACTION_INPUT_SCHEMAS, BROWSER_EXTENSION_ACTION_OUTPUT_SCHEMAS } from '../browserExtensionActions.js';
 import { BrowserProfileLoginsImportV1Schema, BrowserProfileLoginsImportResultV1Schema } from '../../browser/profile/loginsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { BrowserProfileV1Schema } from '../../browser/profile/v1.js';
 import { isPortableRelativePath } from '../../filesystem/portablePathSegment.js';
 

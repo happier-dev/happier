@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { UsersSearchQueryV1Schema } from '../social/friends.js';
 import { SessionListQueryV1Schema } from '../sessions/listing/query.js';

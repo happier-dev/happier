@@ -1,7 +1,7 @@
 import { ConnectedServiceUsageNotificationV1Schema, MachineVitalsNotificationV1Schema, type ConnectedServiceUsageNotificationV1, type MachineVitalsNotificationV1 } from './usageNotificationFactsV1.js';
 export { ConnectedServiceUsageNotificationV1Schema, MachineVitalsNotificationV1Schema, type ConnectedServiceUsageNotificationV1, type MachineVitalsNotificationV1 } from './usageNotificationFactsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { WorkflowRunIdV1Schema } from '../workflows/workflowIdsV1.js';
 import { SessionGuardStateV1Schema, SessionGuardMemoryObservationV1Schema } from '../machines/guard/sessionGuardStateV1.js';

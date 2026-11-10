@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { UsageWorkPermissionFact, UsageWorkIntervalFact } from './usageWorkIntervals.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';

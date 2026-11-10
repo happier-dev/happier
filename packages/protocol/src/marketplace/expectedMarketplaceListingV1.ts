@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { NpmRegistryProfileIdV1Schema } from '../rpc/npmRegistryProfiles.js';
 import { COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 } from './marketplaceSourceRegistryV1.js';

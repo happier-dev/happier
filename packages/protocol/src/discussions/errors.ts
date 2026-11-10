@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { MachineAccessRefusalCodeV1Schema } from '../machines/machineAccessV1.js';
 
 /** Identifier-only refusal facts; these codes grant no publication authority. */

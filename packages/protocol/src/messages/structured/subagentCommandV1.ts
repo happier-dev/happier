@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 const AgentTeamDeleteSubagentCommandV1Schema = z.looseObject({
   kind: z.literal('agent_team_delete'),

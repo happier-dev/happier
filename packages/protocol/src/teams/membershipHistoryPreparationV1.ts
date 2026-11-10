@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { TEAM_MEMBERSHIP_HISTORY_ACTION_IDS_V1 } from './actionsV1.js';
 import { TeamIdSchema, TeamGroupIdSchema, TeamMembershipIdSchema } from './membership.js';
 import { SessionDataKeyEnvelopeRecipientAccountIdV1Schema, SessionDataKeyRecipientUnavailableReasonV1Schema } from '../sessions/encryption/sessionDataKeyEnvelopes.js';

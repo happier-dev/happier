@@ -1,5 +1,5 @@
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 } from '../../connect/qualifiedConnectedAccountPersistence.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /** A person-supplied app; null asks discovery to remove the current issuer's registration. */
 export const McpOAuthClientRegistrationV1Schema = z.nullable(z.strictObject({

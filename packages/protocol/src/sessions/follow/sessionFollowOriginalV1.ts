@@ -16,7 +16,7 @@ import { isAuthoritativeHumanSessionFollowMessageV1 } from './sessionFollowUpdat
 import { SessionIdSchema } from '../idsV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 
 type WithoutPublisher<Occurrence> = Occurrence extends unknown ? Omit<Occurrence, 'sourcePublisher'> : never;

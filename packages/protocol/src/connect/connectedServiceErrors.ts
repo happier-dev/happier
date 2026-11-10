@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const CONNECTED_SERVICE_ERROR_CODES = {
     credentialNotFound: 'connect_credential_not_found',

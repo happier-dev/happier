@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ScmRemotePolicyFields, validateScmRemoteLeaseAuthority, type ScmRemotePolicy } from './remotePolicy.js';
 
 export type ScmRemoteRequestNormalizationResult =

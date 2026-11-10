@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { VoiceDictationLanguageSchema } from '../recognitionLanguage.js';
 import { getDefaultModelPackId } from '../modelPacks/catalog.js';
 

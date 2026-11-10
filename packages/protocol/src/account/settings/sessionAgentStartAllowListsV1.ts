@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { BackendTargetKeyV2Schema } from '../../backends/targets/backendTargetRefV2.js';
 

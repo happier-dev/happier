@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../../zodRuntimePolicy.js';
 
 import { MachineLiveStreamStartRequestV1Schema } from './v1.js';
 import { MachineLiveStreamSourceAdmissionV1Schema } from './sourceAdmissionV1.js';

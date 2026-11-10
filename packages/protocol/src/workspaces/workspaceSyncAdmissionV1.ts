@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { computeSha256HexDigest } from '../crypto/canonicalDigest.js';
 import { SocketRpcMachineAdmissionContextV1Schema } from '../machines/machineAccessV1.js';

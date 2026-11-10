@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { InputOptionsConsumerV1Schema } from '../../inputs/inputOptionsConsumer.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { DaemonProviderModelProjectionResponseV1Schema } from '../../rpc/providers.js';
 import { PluginProjectedMachineRecipeEntryV1Schema } from '../../daemon/machineSetupProjection.js';
 import { ActionInputOptionSchema } from '../actionInputHints.js';

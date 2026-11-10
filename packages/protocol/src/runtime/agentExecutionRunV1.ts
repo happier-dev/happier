@@ -1,6 +1,6 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
 import { AgentUsageObservedPayloadV1Schema, type AgentUsageObservedPayloadV1 } from './agentUsageObservedPayloadV1.js';
 

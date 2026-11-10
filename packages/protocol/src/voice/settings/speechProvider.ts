@@ -1,5 +1,5 @@
 import { VoiceProviderIdSchema } from '../realtime/index.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /**
  * Speech-provider ids are an open, validated domain. Runtime admission is owned

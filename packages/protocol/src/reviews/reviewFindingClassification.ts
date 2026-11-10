@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const ReviewFindingSeveritySchema = lazyZodSchema(() => z.enum(['blocker', 'high', 'medium', 'low', 'nit']));
 export type ReviewFindingSeverity = z.infer<typeof ReviewFindingSeveritySchema>;

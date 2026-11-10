@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { PluginUiFallbackRefV1Schema } from '../contributions/ui/actions.js';
 

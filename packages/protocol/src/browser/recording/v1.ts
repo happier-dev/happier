@@ -1,6 +1,6 @@
 import { createRecordingResultSchemas } from '../../recording/results.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import {
   BrowserRenderEngineKindV1Schema,

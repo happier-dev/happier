@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const ContextSelectionV1Schema = lazyZodSchema(() => z.looseObject({
   machineId: z.optional(z.nullable(z.string())),

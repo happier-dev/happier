@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const PluginSourceKindV1Schema = lazyZodSchema(() => z.enum(['bundled', 'path', 'marketplace', 'package', 'archive']));
 export type PluginSourceKindV1 = z.infer<typeof PluginSourceKindV1Schema>;

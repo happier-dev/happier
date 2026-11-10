@@ -2,7 +2,7 @@ import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { WORKSPACE_ACTION_IDS } from './workspaceActionIdsV1.js';
 export { WORKSPACE_ACTION_IDS } from './workspaceActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from './actionSpecs.js';
 import { actionInputServerId } from './specs/definition.js';
 import { FindOptionsSchema } from './findActionSpecs.js';

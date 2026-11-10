@@ -1,6 +1,6 @@
 import { maxCodeUnits } from '../../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z, z as zodMiniCore0, ZodMiniType as ZodType, ZodMiniType as ZodTypeAny } from 'zod/mini';
+import { z, z as zodMiniCore0, ZodMiniType as ZodType, ZodMiniType as ZodTypeAny } from '../../zodRuntimePolicy.js';
 
 import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 import {

@@ -15,7 +15,7 @@ import type { ActionId, RuntimeActionIdV1 } from './actionIds.js';
 import type { RUNTIME_ACTION_INPUT_SCHEMAS, RUNTIME_ACTION_OUTPUT_SCHEMAS } from './specs/index.js';
 import type { ACTION_ID_FAMILIES_V1 } from './actionIds.js';
 
-    import type { z } from 'zod/mini';
+    import type { z } from '../zodRuntimePolicy.js';
     import type { JsonValue } from '../json/strictJsonValue.js';
     import type { PluginJsonValueV2 } from '../plugins/contributions/jsonSchema.js';
     type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2)

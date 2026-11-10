@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import type { AgentModelOption, ProviderModelDescriptorV1 } from '../../models/descriptor.js';
 import type { AgentProviderRequirementsV1 } from '../compatibility/v1.js';

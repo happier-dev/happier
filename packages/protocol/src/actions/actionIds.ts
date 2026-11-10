@@ -65,7 +65,7 @@ export {
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DEPLOYMENT_ACTION_IDS_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS } from './specs/machineConnectionActionIdsV1.js';
 import { LOCAL_DAEMON_SERVICE_ACTION_IDS } from './specs/localDaemonServiceActionIdsV1.js';
 import { USAGE_ACTION_IDS, USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';

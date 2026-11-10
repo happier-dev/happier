@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { containsUnsafeDiagnosticText, isUnsafeDiagnosticHeaderName } from './diagnosticPrivacy.js';
 
 export const ProviderAccountUsageDiagnosticV1Schema = z.strictObject({

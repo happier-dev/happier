@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { RunnerPublicKeySchema, RunnerResourceIdSchema } from './activation.js';
 

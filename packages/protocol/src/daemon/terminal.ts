@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
 import { SpawnFailureV1Schema } from '../machines/processes/spawnFailureV1.js';
 import { TerminalGuardStateV1Schema } from '../machines/guard/terminalGuardStateV1.js';

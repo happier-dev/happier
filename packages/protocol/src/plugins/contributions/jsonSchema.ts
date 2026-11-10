@@ -5,7 +5,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
  * lets protocol roots use the canonical schema constructors without a module
  * initialization cycle through contribution identity.
  */
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /** Shared portable declaration rule: every object remains closed, including union arms. */
 export function isRecursivelyClosedPluginJsonSchemaV2(schema: PluginJsonSchemaV2): boolean {

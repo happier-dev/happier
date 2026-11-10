@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 
 const scalar = lazyZodSchema(() => z.nullable(z.union([z.string(), z.number()])));

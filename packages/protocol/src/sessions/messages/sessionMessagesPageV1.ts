@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { MessageActionReferenceV1Schema } from './messageActionReferenceV1.js';
 import { SessionMessageAccountActorV1Schema } from './sessionMessageAccountActorV1.js';
 import { SessionInputAdmissionReceiptV1Schema } from './sessionInputAdmission.js';

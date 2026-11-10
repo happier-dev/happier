@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ProviderModelDescriptorV1Schema } from '../models/descriptor.js';
 import { ProbedCatalogOptionSchema } from './probedCatalogOption.js';
 import { SpawnFailureV1Schema } from '../machines/processes/spawnFailureV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
 
 /** Native preflight observations, distinct from the public inventory projection. */

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { WorkspaceSyncSourceExecutionV1Schema, SocketRpcMachineAdmissionContextV1Schema } from '../../rpc/socket.js';
 import { RPC_METHODS } from '../../rpc/methods.js';

@@ -1,4 +1,4 @@
-import type { z } from 'zod/mini';
+import type { z } from '../../zodRuntimePolicy.js';
 import {
     CLAUDE_REMOTE_DEBUG_CATEGORIES,
     CLAUDE_SETTING_SOURCES_V2,

@@ -4,7 +4,7 @@ import type { AccountApiTokensCreateActionInputV1Schema, AccountApiTokensUpdateA
 import type { AccountEmailChangeRequestV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordRemoveRequestV1Schema } from '../../../auth/accountSecurity.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
-import type { z } from 'zod/mini';
+import type { z } from '../../../zodRuntimePolicy.js';
 import type { AdmittedActionInputById } from '../../actionSpecs.js';
 
 

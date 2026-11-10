@@ -2,7 +2,7 @@ import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ApprovalQueueListResultV1Schema, ApprovalRequestGetResultV1Schema } from '../../approvals/approvalRequestPublicRead.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { ActionIdSchema } from '../actionIds.js';
 import { PluginInvocableActionIdSchema } from '../pluginActionSurface.js';
 import { ApprovalRequestCreatedBySchema, ApprovalRequestOriginV1Schema, ApprovalRequestV2StatusSchema } from '../../approvals/approvalRequestV1.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import {
   ACCOUNT_DIRECTORY_MAX_LABEL_UTF8_BYTES,

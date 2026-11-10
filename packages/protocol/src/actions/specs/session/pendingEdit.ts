@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { PendingLocalIdSchema } from '../../../sessions/pending/pendingLocalId.js';
 import { SessionIdSchema } from '../../../sessions/idsV1.js';

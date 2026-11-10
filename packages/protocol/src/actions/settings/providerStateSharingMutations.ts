@@ -1,5 +1,5 @@
 import type { AccountSettings } from '../../account/settings/accountSettings.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const AgentProviderStateSharingChangeV1Schema = z.strictObject({
     agentId: z.string().check(z.trim(), z.minLength(1)),

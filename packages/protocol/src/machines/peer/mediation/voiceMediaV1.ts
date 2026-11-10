@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { sha256 } from '@noble/hashes/sha2';
 
 import { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.js';

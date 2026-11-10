@@ -3,7 +3,7 @@ import type { PreNormalizedActionSpec } from './definition.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginUpdatePolicyV1Schema } from '../../marketplace/pluginUpdatePolicyV1.js';
 import { ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { type ActionCliBindContext } from '../actionCliProjection.js';
 import { type PluginDevLoopActionIdV1 } from '../actionIds.js';
 import { PluginPublishInspectActionInputSchema, PluginPublishPrepareActionInputSchema, PluginPublishActionInputSchema,

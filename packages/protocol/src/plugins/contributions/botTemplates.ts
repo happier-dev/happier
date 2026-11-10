@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { isPortableRelativePath } from '../../filesystem/portablePathSegment.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';

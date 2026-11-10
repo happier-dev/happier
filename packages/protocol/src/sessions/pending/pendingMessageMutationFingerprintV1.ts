@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /**
  * A bounded equality tag asserted by the authenticated Pending mutation caller.

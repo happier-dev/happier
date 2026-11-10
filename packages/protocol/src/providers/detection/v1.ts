@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
 import { canonicalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';

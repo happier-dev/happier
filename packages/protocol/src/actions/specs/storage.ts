@@ -2,7 +2,7 @@ import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { STORAGE_OPERATION_INPUT_FIELDS } from './storageInputHints.js';
 import { MACHINE_STORAGE_ACTION_IDS } from './storageActionIdsV1.js';
 export { MACHINE_STORAGE_ACTION_IDS } from './storageActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import {
   HappierStorageSummaryV1Schema, MachineStorageCategoryListInputV1Schema, MachineStorageCategoryListResultV1Schema,

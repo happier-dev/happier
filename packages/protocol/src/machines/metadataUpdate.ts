@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { AnyClientUpgradeRequiredV1Schema } from '../clientCompatibility/upgradeRequiredV1.js';
 import { MachineEncodedWriteBasisV1Schema } from './machineContentKeyTransitionV1.js';

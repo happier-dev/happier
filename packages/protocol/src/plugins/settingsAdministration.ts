@@ -1,7 +1,7 @@
 import { PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1 } from './settingsAdministrationActionIdsV1.js';
 export { PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1 } from './settingsAdministrationActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { SERVER_IDENTITY_ID_PATTERN } from '../features/payload/capabilities/serverIdentityCapabilities.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';

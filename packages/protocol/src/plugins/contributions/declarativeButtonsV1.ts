@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginNoticePageV1Schema } from '../../activity/accountNoticePageV1.js';
 import { PluginActionInvocationBindingV1Schema } from '../actions/invocationBindingV1.js';

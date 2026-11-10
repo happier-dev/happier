@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { PluginAgentVendorResumeSupportV2 } from '../plugins/contributions/v2.js';
 import { SessionRunnerRuntimeStateV1Schema } from '../sessions/control/sessionRunnerRuntimeV1.js';

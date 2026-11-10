@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /** Canonical manifest family vocabulary, shared by declarations and cold registry selectors. */
 export const PluginContributionFamilyV2Schema = z.enum([

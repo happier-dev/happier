@@ -1,7 +1,7 @@
 import { MANAGED_GITHUB_APP_ACTION_IDS_V1 } from './githubAppsActionIdsV1.js';
 export { MANAGED_GITHUB_APP_ACTION_IDS_V1 } from './githubAppsActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const ManagedGitHubAppOwnerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('home') }),

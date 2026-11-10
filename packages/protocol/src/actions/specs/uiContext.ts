@@ -2,7 +2,7 @@ import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PetChooseInputV1Schema, PetChooseResultV1Schema } from '../../pets/selection.js';
 import { AccountHomeContinuationInputV1Schema, AccountHomeContinuationResultV1Schema } from '../accountHomeContinuationV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { CurrentUiContextSnapshotV1Schema } from '../../plugins/ui/currentUiContext.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { EmptyObjectSchema, OptionalSessionIdInputSchema } from './common.js';

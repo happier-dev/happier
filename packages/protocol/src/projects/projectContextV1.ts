@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PromptStackEntryAuthoringV1Schema, PromptStackSetEnabledIntentV1Schema, applyPromptStackIntentV1, type PromptStackEntryV1, type PromptStackMutationV1 } from '../prompts/library/promptStacksV1.js';
 import { ProjectAccountOrganizationKeyV1Schema, ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema, type ProjectAccountOrganizationV1 } from './projectAccountRowsV1.js';

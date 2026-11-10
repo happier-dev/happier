@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';

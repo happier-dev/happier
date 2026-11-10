@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionDirectoryIntentV1Schema, type SessionDirectoryIntentV1 } from '../sessions/creation/sessionDirectoryIntentV1.js';
 import { SessionExecutionTargetV1Schema } from '../sessions/creation/sessionExecutionTargetV1.js';

@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 import { lazyDefinition } from '../../lazyZodSchema.js';
 import { MachineAdministratorUsernameV1Schema, MachineAdminAccessFieldV1, type MachineAdminAccessV1, type MachineAdminAccessMutationV1 } from '../adminAccessV1.js';
 import { agentIsolationMetadataFieldV1, type MachineAgentIsolationPolicyV1, type MachineAgentIsolationPreviewInputV1, type MachineAgentIsolationSetInputV1 } from '../agentIsolationV1.js';

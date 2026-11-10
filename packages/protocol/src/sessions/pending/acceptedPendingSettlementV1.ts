@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { UsageTimingBoundsV1Schema } from '../../usage/usageTimingV1.js';
 
 import { SessionMessageAcceptedDeliveryContentV1Schema, SessionMessageAcceptedTurnV1Schema, SessionMessageDeliveryResolutionV1Schema } from '../messages/sessionMessageDeliveryResolutionV1.js';

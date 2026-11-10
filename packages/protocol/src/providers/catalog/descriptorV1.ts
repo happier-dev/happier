@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { ProviderLocalIdSchema } from '../ids.js';
 import { ProviderOriginRelativePathSchema } from '../originRelativePathSchema.js';

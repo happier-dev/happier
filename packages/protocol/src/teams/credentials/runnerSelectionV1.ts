@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { ProviderBrokerApplicationBindingV1Schema } from '../../providers/brokerRouteGrantV1.js';
 import { RunnerConsentDisplayFactsV1Schema, RunnerCredentialSelectionBindingV1Schema } from '../../ephemeralRunner/review.js';

@@ -1,6 +1,6 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { ExecutionRunIdSchema, SessionIdSchema } from '../idsV1.js';
 import { SessionDiscussionParticipantV1Schema } from './sessionDiscussionParticipantV1.js';

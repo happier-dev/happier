@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ScmOperationErrorCodeSchema, type ScmOperationErrorCode } from './operationError.js';
 import { ScmOperationStateSchema } from './operationState.js';
 import type { ScmCommitPublication } from './commitPublication.js';

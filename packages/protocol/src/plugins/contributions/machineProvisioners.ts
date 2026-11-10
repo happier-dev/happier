@@ -1,9 +1,9 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { HomeApplicationOriginV1Schema } from '../../auth/accountDirectory.js';
 import { isNormalizedPluginJsonSchema, isRecursivelyClosedPluginJsonSchemaV2 as isClosedSchema } from './jsonSchema.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
-import * as mini from 'zod/mini';
+import * as mini from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '../../actions/externalActionLimits.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';

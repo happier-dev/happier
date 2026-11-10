@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
 import { EntityDragItemV1Schema, EntityDropOutcomeV1Schema, EntityDropAdmissionV1Schema } from './entityDragDrop.js';
 

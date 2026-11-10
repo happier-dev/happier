@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginCollectionFiniteNumberV1Schema } from './collectionContributionV1.js';
 import { PluginCollectionOpaqueCursorV1Schema } from './collectionOpaqueCursorV1.js';

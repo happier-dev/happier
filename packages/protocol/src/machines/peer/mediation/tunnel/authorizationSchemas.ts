@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../../zodRuntimePolicy.js';
 import { ProviderBrokerSourceApplicationBindingV1Schema, ProviderBrokerRouteGrantPayloadV1Schema } from '../../../../providers/brokerRouteGrantV1.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../../../../auth/authToken.js';
 import { TeamCredentialSourceBindingV1Schema } from '../../../../teams/credentials/sourceBindingV1.js';

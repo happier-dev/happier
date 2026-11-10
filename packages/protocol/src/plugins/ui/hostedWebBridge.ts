@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import * as zMini from 'zod/mini';
-import { z } from 'zod/mini';
+import * as zMini from '../../zodRuntimePolicy.js';
+import { z } from '../../zodRuntimePolicy.js';
 import {
   FrameBridgeEnvelopeBaseV1Schema,
   FrameBridgeHostToFrameEnvelopeBaseV1Schema,

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export type AgentRuntimeTranscriptSourceFacetV1 = Readonly<{
   supported: true;

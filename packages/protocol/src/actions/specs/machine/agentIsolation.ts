@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { MACHINE_AGENT_ISOLATION_ACTION_IDS } from './agentIsolationActionIdsV1.js';
 export { MACHINE_AGENT_ISOLATION_ACTION_IDS } from './agentIsolationActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { MachineAgentIsolationPreviewInputV1Schema, MachineAgentIsolationPreviewResultV1Schema,
   MachineAgentIsolationSetInputV1Schema, MachineAgentIsolationSetResultV1Schema,

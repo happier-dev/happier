@@ -1,7 +1,7 @@
 import { DISCUSSION_ACTION_IDS_V1 } from './idsV1.js';
 export { DISCUSSION_ACTION_IDS_V1 } from './idsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const DiscussionActionIdV1Schema = lazyZodSchema(() => z.enum(DISCUSSION_ACTION_IDS_V1));
 export type DiscussionActionIdV1 = z.infer<typeof DiscussionActionIdV1Schema>;

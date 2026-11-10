@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { sameStrictJsonValue } from '../../../json/strictJsonValue.js';
 import { SessionSurfaceDeclarativeDocumentV1Schema } from './authoring.js';
 import { freezePluginDeclarativeDataNodeV1, isPluginDeclarativeDataNodeV1, type PluginDeclarativeDataNodeV1 } from '../../../plugins/contributions/ui/declarativeDataV1.js';

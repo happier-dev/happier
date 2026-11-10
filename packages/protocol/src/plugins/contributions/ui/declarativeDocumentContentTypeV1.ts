@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 /** The exact Resource media type that can carry a V1 declarative document. */
 export const PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 =

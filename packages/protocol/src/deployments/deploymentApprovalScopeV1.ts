@@ -3,7 +3,7 @@ import type { ActionEnvironmentApprovalScopeAdmissionV1 } from '../actions/actio
 import { readActionFailureEnvelope } from '../actions/executor/actionFailureEnvelope.js';
 import { artifactSavedByFromActionContextV1 } from '../artifacts/artifactBinaryV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
 import { DeploymentActionFailureV1Schema } from './deploymentActionsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';

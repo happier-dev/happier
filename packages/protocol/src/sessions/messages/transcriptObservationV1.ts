@@ -1,6 +1,6 @@
 import { UsageTimingBoundsV1Schema } from '../../usage/usageTimingV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';

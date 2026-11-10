@@ -1,4 +1,4 @@
-import type { z } from 'zod/mini';
+import type { z } from '../../zodRuntimePolicy.js';
 import { SkillsRulesSetInputV1Schema, type SkillsRulesSetOutputV1Schema } from '../../actions/specs/capabilityRules.js';
 import { applyReachRulesChangeV1, type ReachRulesWriteContextV1 } from '../../reach/reachRulesChangeV1.js';
 import type { ReachRuleV1, SkillRuleV1 } from '../../reach/reachRuleV1.js';

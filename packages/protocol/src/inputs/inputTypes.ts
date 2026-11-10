@@ -2,7 +2,7 @@ import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKe
   type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 
 export const HostInputTypeReferenceV1Schema = lazyZodSchema(() => z.union([

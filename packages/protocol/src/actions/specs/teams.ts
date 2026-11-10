@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import type { z } from 'zod/mini';
+import type { z } from '../../zodRuntimePolicy.js';
 
 import type { TeamIdentityActionIdV1 } from '../../teams/actionsV1.js';
 import type { TeamDirectoryActionIdV1 } from '../../teams/directory/v1.js';

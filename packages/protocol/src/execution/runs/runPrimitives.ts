@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { NativePermissionChoicesV1Schema } from '../../sessions/permissions/nativeChoicesV1.js';
 
 /** Display-only proof of supported instruction delivery; Home is the portable identity. */

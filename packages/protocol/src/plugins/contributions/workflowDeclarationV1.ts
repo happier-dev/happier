@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';

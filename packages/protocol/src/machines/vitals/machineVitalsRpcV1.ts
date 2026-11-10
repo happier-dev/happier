@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachineResourceAttentionV1Schema } from '../resources/machineResourceSummaryV1.js';
 import { MachineVitalsSampleV1Schema } from './machineVitalsSampleV1.js';

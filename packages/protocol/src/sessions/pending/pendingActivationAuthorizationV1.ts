@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { ManagedWakeTargetV1Schema } from '../../machines/managed/managedIntentV1.js';
 import { SessionInputMachineTargetV1Schema } from '../messages/sessionInputAdmission.js';
 import { SpawnSessionErrorCodeSchema } from '../spawnSession.js';

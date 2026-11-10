@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 export { buildChangesReadRequest, CHANGES_AFTER_CURSOR_HTTP_HEADER } from './readRequest.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { SessionIdSchema } from '../sessions/idsV1.js';
 import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';

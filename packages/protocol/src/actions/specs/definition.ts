@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { ActionSessionTargetDeclarationV1Schema } from '../sessionTargetV1.js';
 import { ActionPromptingSchema } from '../metadata.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { ApprovalNarrowing } from '../../approvals/approvalNarrowing.js';
 import type { ActionCompletionDeclaration } from '../actionCompletion.js';
 import { ActionOperationDeclarationV1Schema, ActionOperationReentryPolicyV1Schema } from '../operations/v1.js';

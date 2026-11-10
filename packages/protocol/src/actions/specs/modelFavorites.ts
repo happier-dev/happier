@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ModelFavoriteMutationV1Schema } from '../../providers/modelFavoritesV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 
 

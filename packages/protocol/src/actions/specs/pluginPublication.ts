@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginBrandV2Schema } from '../../plugins/manifest/v2.js';
 import { PluginPackagedResourceContributionV2Schema } from '../../plugins/contributions/v2.js';

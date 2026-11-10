@@ -1,6 +1,6 @@
 import { getProfileDefaultBackendTarget } from '../../profiles/profileCompatibility.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { buildBackendTargetKeyV2, readBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
 import { AIBackendProfileSchema, type AIBackendProfile } from '../../profiles/backendProfileSchema.js';

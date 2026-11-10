@@ -1,7 +1,7 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 export * from './managedInstallationV1.js';
 export { waitForMachineSetupOperationV1 } from '../setup/waitForMachineSetupOperationV1.js';
-import * as mini from 'zod/mini';
+import * as mini from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';

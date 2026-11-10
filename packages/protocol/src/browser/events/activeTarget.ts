@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { BROWSER_AUTOMATION_TARGET_LABEL_MAX_LENGTH, redactBrowserAutomationTargetLabel } from '../automation/redaction.js';
 
 /** Visible element rectangle in page-viewport coordinates; x/y are its centre. */

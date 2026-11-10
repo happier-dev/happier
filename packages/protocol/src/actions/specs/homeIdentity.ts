@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import type { HomeIdentityActionIdV1 } from '../../teams/identity/actionIds.js';
 import * as home from '../../home/identity.js';

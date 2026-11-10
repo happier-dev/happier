@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 import { lazyDefinition } from '../../lazyZodSchema.js';
 import { RetentionV1Schema, ReusableRetentionV1Schema, type RetentionV1 } from '../../machines/managed/managedMachineV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';

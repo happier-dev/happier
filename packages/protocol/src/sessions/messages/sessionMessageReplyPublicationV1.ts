@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { DISCUSSION_ERROR_CODES_V1 } from '../../discussions/errors.js';
 import { MachineAccessRefusalCodeV1Schema } from '../../machines/machineAccessV1.js';

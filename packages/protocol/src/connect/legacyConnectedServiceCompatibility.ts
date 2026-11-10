@@ -6,7 +6,7 @@
  * metadata until their supported records/peers retire; current plugins supply
  * normalized facts through the qualified account owner.
  */
-import * as z from 'zod/mini';
+import * as z from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 import {

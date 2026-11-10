@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const CODEX_BACKEND_MODES = ['acp', 'appServer'] as const;
 export type CodexBackendMode = (typeof CODEX_BACKEND_MODES)[number];

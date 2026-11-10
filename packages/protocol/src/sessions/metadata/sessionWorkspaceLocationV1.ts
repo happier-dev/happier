@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const SESSION_WORKSPACE_LOCATION_METADATA_KEY = 'sessionWorkspaceLocationV1' as const;
 

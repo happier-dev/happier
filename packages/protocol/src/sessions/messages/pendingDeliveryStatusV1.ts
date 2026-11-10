@@ -1,6 +1,6 @@
 import type { PendingDeliveryBlockedReason } from './pendingDeliveryBlockedReason.js';
 import { normalizePendingDeliveryBlockedReason } from './pendingDeliveryBlockedReason.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 
 /** Read-only custody eligibility; recovery mutations still check current server state. */

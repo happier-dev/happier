@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { WorkBoardIntentV1Schema, WorkBoardV1StrictSchema } from './workBoardV1.js';
 

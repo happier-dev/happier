@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { areSessionMcpSelectionsEquivalent, SessionMcpSelectionAuthoringV1Schema, SessionMcpSelectionV1Schema } from '../mcp/servers/sessionSelectionV1.js';

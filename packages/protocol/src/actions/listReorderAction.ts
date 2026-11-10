@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { EntityDragScopeV1Schema } from '../plugins/ui/entityDragDrop.js';
 import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '../messages/structured/participantMessageV1.js';
 import { AnchoredListPositionV1Schema } from './anchoredListOrderV1.js';

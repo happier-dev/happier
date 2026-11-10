@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { PeerFlowKindV1Schema } from './flowKind.js';
 import { AuthorizedPeerEndpointRouteKindV1Schema } from './routeKind.js';

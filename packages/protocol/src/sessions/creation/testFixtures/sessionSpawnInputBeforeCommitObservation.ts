@@ -1,9 +1,9 @@
 // Captured from cfddd9895706bbf8dbb0d6142be2912e60300996:packages/protocol/src/sessions/creation/sessionSpawnNewInputV2.ts.
 // Exact pre-observation input reader through SessionSpawnNewInputV2Schema;
 // only relative import paths change for this fixture directory.
-import * as zMini from 'zod/mini';
+import * as zMini from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { SessionSpawnNewSelectionV2BaseSchema } from '.././sessionSpawnNewSelectionV2.js';
 import {
   AgentSessionStartupInstructionsV1Schema,

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { AutomationEventAdmitUnresolvedStatusV1Schema } from '../../automations/automationEventAdmitStatusV1.js';
 import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';

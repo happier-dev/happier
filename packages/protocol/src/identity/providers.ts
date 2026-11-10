@@ -1,7 +1,7 @@
 import { MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 } from './providersActionIdsV1.js';
 export { MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 } from './providersActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { IdentityConnectionTestDiagnosticsV1Schema } from './testDiagnostics.js';
 

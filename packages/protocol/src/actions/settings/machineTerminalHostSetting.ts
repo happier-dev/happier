@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { ACCOUNT_SETTING_DEFINITIONS } from '../../account/settings/accountSettings.js';
 import { buildMachineTerminalSettingsPatch, resolveTerminalHost } from './accountSettingBindings.js';
 

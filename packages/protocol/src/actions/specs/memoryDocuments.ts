@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { MemoryActionInputSchemasV1 as inputs, MemoryActionOutputSchemasV1 as outputs } from '../../prompts/library/memoryActionsV1.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from '../actionSpecs.js';
-import type { z } from 'zod/mini';
+import type { z } from '../../zodRuntimePolicy.js';
 import { actionInputServerId } from './definition.js';
 
 function memoryInputServerId(input: z.output<(typeof inputs)[keyof typeof inputs]>) {

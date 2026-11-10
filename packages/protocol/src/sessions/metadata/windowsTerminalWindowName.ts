@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME = 'happier';
 

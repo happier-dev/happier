@@ -3,7 +3,7 @@ import { SessionRecapActionResultV1Schema, type SessionRecapActionResultV1 } fro
 export { resolveSessionRecap, resolveSessionRecapState, SessionRecapSchema, SessionRecapStateSchema,
   SessionRecapActionResultV1Schema, type SessionRecap, type SessionRecapState, type SessionRecapSynopsis,
   type SessionRecapWorkerUpdate, type SessionRecapActionResultV1 } from './recap.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { QualifiedProjectKeyV1Schema, type QualifiedProjectKeyV1 } from '../../workspaces/workspaceRefV1.js';
 import { SessionListResultSchema, SessionSummarySchema, SessionListMetadataUpgradeRequiredCountSchema, SessionListBotFilterUnavailableCountSchema } from '../control/listResult.js';
 

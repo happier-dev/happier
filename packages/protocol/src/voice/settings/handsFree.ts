@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { MAX_VOICE_TIMER_DELAY_MS } from './timing.js';
 
 const LEGACY_HANDS_FREE_ENDPOINTING_DEFAULTS = {

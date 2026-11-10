@@ -1,7 +1,7 @@
 import type { ConnectedMetadataCleanupV1 } from "./connectedAccountPresentationSchemasV1.js";
 export { ConnectedMetadataCleanupV1Schema } from "./connectedAccountPresentationSchemasV1.js";
 export type { ConnectedMetadataCleanupV1 } from "./connectedAccountPresentationSchemasV1.js";
-import * as z from 'zod/mini';
+import * as z from '../zodRuntimePolicy.js';
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import { transferredAccountSettingsSourceNeedsCleanupV1 } from '../account/settings/accountSettingsLegacyCleanup.js';
 import { type ConnectedPresentationRecordV1, type ConnectedAcknowledgementsRecordV1, type ConnectedPresentationCatalogSnapshotV1, type ConnectedAcknowledgementsCatalogSnapshotV1, type LegacyConnectedMetadataInventoryV1, type ConnectedPresentationRowReadResponseV1Schema, type ConnectedAcknowledgementsRowReadResponseV1Schema, type ConnectedMetadataRowMutationResponseV1Schema, openConnectedPresentationContentV1, openConnectedAcknowledgementsContentV1, readLegacyConnectedMetadataV1, CONNECTED_PRESENTATION_SOURCE_ROOTS_V1, CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1, type ConnectedMetadataDiagnosticV1 } from './connectedAccountPresentationRowsV1.js';

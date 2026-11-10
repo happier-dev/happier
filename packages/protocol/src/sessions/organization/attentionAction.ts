@@ -1,6 +1,6 @@
 export { SESSION_ATTENTION_SET_ACTION_ID } from './attentionActionIdsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SESSION_ORGANIZATION_MAX_ID_LENGTH } from './constants.js';
 import {

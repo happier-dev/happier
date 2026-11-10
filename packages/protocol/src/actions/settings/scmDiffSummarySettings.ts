@@ -7,7 +7,7 @@ import type { SettingDomainValueV1 } from './settingsOwnerActions.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 import { ConnectedServiceBindingsV2Schema } from '../../connect/connectedServiceBindings.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { resolveLlmTaskRunnerV1, type LlmTaskRunnerCandidateV1, type LlmTaskRunnerUnavailableAgentV1 } from '../../llm/tasks/llmTaskRunnerSelection.js';
 import { isLlmTaskRunnerAutoV1, LlmTaskRunnerChoiceV1Schema, type LlmTaskRunnerChoiceV1, type LlmTaskRunnerConfigV1 } from '../../llm/tasks/llmTaskRunnerConfigV1.js';

@@ -3,7 +3,7 @@ import { PLUGIN_SESSION_HOOK_STATUS_INPUT_FIELDS, PLUGIN_SESSION_HOOK_INSTALL_IN
 import { requirePluginBindingCaller } from './pluginPermissions.js';
 import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from './definition.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
 import { PLUGIN_SESSION_HOOK_STATUS_INVENTORY_DEFAULT_LIMIT, PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_ROWS, PluginSessionHookInstallActionInputV1Schema, PluginSessionHookInstallInputV1Schema, PluginSessionHookInstallResponseV1Schema, PluginSessionHookInstallationMutationActionInputV1Schema, PluginSessionHookInstallationMutationInputV1Schema, PluginSessionHookStatusActionInputV1Schema, PluginSessionHookStatusInputV1Schema, PluginSessionHookStatusResponseV1Schema, PluginSessionHookToggleResponseV1Schema, PluginSessionHookUninstallResponseV1Schema } from '../../sessions/external/hookManagementV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';

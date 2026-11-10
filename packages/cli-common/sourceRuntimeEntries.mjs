@@ -33,7 +33,9 @@ function resolveSourceImport(specifier, context, nextResolve) {
   const sourceContext = context.conditions.includes(SOURCE_CONDITION) ? context
     : { ...context, conditions: [...context.conditions, SOURCE_CONDITION] };
   if (specifier.startsWith('@happier-dev/') || nodeWorkspacePackages.has(packageNameOfSpecifier(specifier))) {
-    return nextResolve(pathToFileURL(resolveWorkspaceSource(nodeWorkspacePackages, specifier)).href, sourceContext);
+    // This owner already selected the exact authored file. Re-entering Node's
+    // package resolver repeats package-scope export-map parsing for no decision.
+    return { url: pathToFileURL(resolveWorkspaceSource(nodeWorkspacePackages, specifier)).href, shortCircuit: true };
   }
   return nextResolve(specifier, sourceContext);
 }

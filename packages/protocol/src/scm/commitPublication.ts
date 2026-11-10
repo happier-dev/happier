@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ScmBranchSourceRefSchema } from './remoteNormalization.js';
 import { ScmSelectedMutationPathSchema } from './selectedMutationPath.js';
 

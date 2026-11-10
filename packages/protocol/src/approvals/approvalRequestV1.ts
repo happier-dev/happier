@@ -1,10 +1,10 @@
 import { isWorkspaceSyncRelationshipWriteActionId } from '../actions/actionIds.js';
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
 import { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema } from './approvalRequestStatus.js';
 export { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema, isApprovalRequestV2InFlightStatus, isApprovalRequestV2TerminalStatus, type ApprovalRequestStatus } from './approvalRequestStatus.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 

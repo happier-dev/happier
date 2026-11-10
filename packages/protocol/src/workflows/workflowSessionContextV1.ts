@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { SessionWorkStateItemV1Schema, SessionWorkStateGoalCapabilitiesV1Schema } from '../sessions/work/state/sessionWorkStateV1.js';
 import { SessionTurnInitiatorV1Schema } from '../sessions/turns/sessionTurnMutationV1.js';
 

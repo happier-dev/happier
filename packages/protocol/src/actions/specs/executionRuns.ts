@@ -11,7 +11,7 @@ import { EXECUTION_RUN_ACTION_PERMISSION_INPUTS, EXECUTION_RUN_ACTION_PERMISSION
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../rpc/methods.js';
 import { EXECUTION_RUN_GET_CLI_PROJECTION, EXECUTION_RUN_LIST_CLI_PROJECTION, EXECUTION_RUN_START_CLI_PROJECTION, EXECUTION_RUN_STOP_CLI_PROJECTION, EXECUTION_RUN_STREAM_CANCEL_CLI_PROJECTION, EXECUTION_RUN_STREAM_READ_CLI_PROJECTION, EXECUTION_RUN_STREAM_START_CLI_PROJECTION, EXECUTION_RUN_WAIT_CLI_PROJECTION } from './executionRunCli.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { ExecutionRunWaitConditionSchema } from '../../execution/runs/waitForTerminal.js';
 import { ExecutionRunOutputObservationSchema } from '../../reviews/reviewNarration.js';
 import { BackendTargetKeySchema } from '../../backends/targets/backendTargetRef.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { MachineAdministrationTargetV1Schema } from '../account/settings/machineAdministrationSelectionsV1.js';
 import { NpmRegistryProfileIdV1Schema, NpmRegistryProfileInputV1Schema,

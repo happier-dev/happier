@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { MACHINE_RESOURCES_ACTION_IDS } from './machineResourcesActionIdsV1.js';
 export { MACHINE_RESOURCES_ACTION_IDS } from './machineResourcesActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachineResourcesPolicyMutationV1Schema, MachineResourcesPolicyGetResultV1Schema, MachineResourcesPolicyMutationResultV1Schema } from '../../machines/resources/machineResourcesPolicyV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { ExecutionRunIdSchema, SessionIdSchema } from '../sessions/idsV1.js';
 import { asProtocolZod } from './actions/internalProtocolZodAdapter.js';

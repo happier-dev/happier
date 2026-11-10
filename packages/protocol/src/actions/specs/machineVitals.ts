@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { MACHINE_VITALS_ACTION_IDS } from './machineVitalsActionIdsV1.js';
 export { MACHINE_VITALS_ACTION_IDS } from './machineVitalsActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachineVitalsGetInputV1Schema, MachineVitalsHistoryGetInputV1Schema, MachineVitalsSnapshotV1Schema } from '../../machines/vitals/machineVitalsRpcV1.js';
 import { MachineVitalsHistoryV1Schema } from '../../machines/vitals/machineVitalsHistoryV1.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const SubagentGroupKindV1Schema = lazyZodSchema(() => z.enum(['team', 'pool', 'workflow', 'custom']));
 export type SubagentGroupKindV1 = z.infer<typeof SubagentGroupKindV1Schema>;

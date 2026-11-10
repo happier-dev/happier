@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 
 import { normalizeStrictJsonValue } from '../../json/strictJsonValue.js';
 import { ProjectManifestV1Schema, ProjectManifestV1StoredSchema } from './projectManifestV1.js';

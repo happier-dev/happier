@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionAgentActivityHeadlineV1Schema } from './agentActivity/agentActivityHeadlineV1.js';
 import { SessionWorkflowActivityHeadlineV1Schema } from './workflow/sessionWorkflowActivityHeadlineV1.js';

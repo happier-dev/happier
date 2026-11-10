@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { AutomationPullRequestTriggerSchema } from './pullRequestTrigger.js';
 export { AutomationPullRequestTriggerSchema } from './pullRequestTrigger.js';
 export type { AutomationPullRequestTrigger } from './pullRequestTrigger.js';

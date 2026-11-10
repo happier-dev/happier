@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { FollowPolicyV1Schema } from '../../../sessions/follow/sessionFollowPolicyV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { SessionFollowActionInputSchemasV1, SessionFollowActionOutputSchemasV1 } from '../../../sessions/follow/actions.js';
 import { SESSION_FOLLOW_HTTP_PATHS_V1 } from '../../../sessions/follow/api.js';
 import { SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1 } from '../../../sessions/follow/sessionFollowSourcesApi.js';

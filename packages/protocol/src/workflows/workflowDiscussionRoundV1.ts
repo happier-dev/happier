@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ExecutableParticipantSelectionV1Schema } from '../discussions/executableParticipants.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';

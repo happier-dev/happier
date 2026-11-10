@@ -3,7 +3,7 @@ import { VoiceLocalDirectSchema } from './localDirect.js';
 import type { VoiceProviderSettingsProjection, VoiceSettingsRegistryEntry } from './providerRegistry.js';
 import type { SessionVoiceDeclarationV1 } from '../../sessions/instructions/sessionVoicePreferenceV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const BUILT_IN_LOCAL_NEURAL_VOICE_PROVIDER_ID = 'happier.voice.builtin/local-neural';
 /** Only the existing Kokoro voice is Session-selectable; engine/model/speed remain Account settings. */

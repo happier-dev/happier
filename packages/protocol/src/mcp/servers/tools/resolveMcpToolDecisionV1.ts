@@ -1,6 +1,6 @@
 import type { AgentPermissionIntentV1 } from '../../../runtime/permissionIntentV1.js';
 import type { McpServerToolPolicyV1, McpServerToolsSnapshotV1, McpToolAnnotationsV1 } from '../settingsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolUnion } from '../../../plugins/actions/protocolComposableSchema.js';
 import { asProtocolZod } from '../../../plugins/actions/internalProtocolZodAdapter.js';

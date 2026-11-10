@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { defineProtocolString } from '../../plugins/actions/protocolComposableSchema.js';
 import { SessionIndexedIdentifierMaxLengthV1 } from '../idsV1.js';

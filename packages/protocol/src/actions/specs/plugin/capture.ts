@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { defineActionSpecs } from '../definition.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 

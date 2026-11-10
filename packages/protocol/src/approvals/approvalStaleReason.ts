@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../zodRuntimePolicy.js';
 
 /** Failed authority/custody facts only: no ids, policy values or credential content. */
 export const ApprovalStaleReasonSchema = z.enum([

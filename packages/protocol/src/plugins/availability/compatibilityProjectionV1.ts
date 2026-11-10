@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { PluginManifestV2Schema } from '../manifest/v2.js';

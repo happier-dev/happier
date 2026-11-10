@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { TriageEntryRefV1Schema } from '../tasks/entryRefV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';

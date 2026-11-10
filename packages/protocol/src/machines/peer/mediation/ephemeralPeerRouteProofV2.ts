@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha2';
 import tweetnacl from 'tweetnacl';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { verifyEd25519Signature } from '../../../crypto/ed25519.js';
 
 import {

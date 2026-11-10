@@ -1,7 +1,7 @@
 import { HOME_GOVERNANCE_ACTION_IDS_V1 } from './actionIdsV1.js';
 export { HOME_GOVERNANCE_ACTION_IDS_V1 } from './actionIdsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export type HomeGovernanceActionIdV1 = typeof HOME_GOVERNANCE_ACTION_IDS_V1[number];
 

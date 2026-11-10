@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { canonicalBoundedRecordKeySchema } from '../../common/canonicalRecordKey.js';
 import { ConnectedAccountPurposeIdSchema } from '../../connect/connectedAccountPurposes.js';

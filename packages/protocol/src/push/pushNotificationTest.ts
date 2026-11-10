@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** One explicit plumbing test, never an assertion of phone receipt or display. */
 export const PushNotificationTestResultSchema = z.strictObject({

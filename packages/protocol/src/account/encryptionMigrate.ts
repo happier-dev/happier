@@ -1,13 +1,13 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { AccountEncryptionMigrateDiscussionsDirectiveV1Schema } from '../discussions/accountEncryptionMigration.js';
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { AccountEncryptionMigrateConnectedConfigurationsDirectiveV1Schema, AccountEncryptionMigrateConnectedPurposesDirectiveV1Schema,
   AccountEncryptionMigrateConnectedConfigurationsResultV1Schema, AccountEncryptionMigrateConnectedPurposesResultV1Schema,
   type AccountEncryptionMigrateConnectedConfigurationsDirectiveV1, type AccountEncryptionMigrateConnectedPurposesDirectiveV1,
 } from '../connect/connectedAccountCatalogSchemasV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ArtifactBlobAccountEncryptionStageV1Schema } from '../artifacts/artifactBinaryV1.js';
 import { classifyAccountJsonKvKey } from './accountJsonKv.js';
 import { AuthoringMemoryContentV1Schema, AuthoringMemoryKeyV1Schema, AuthoringMemoryRowV1Schema, assertAuthoringMemoryValueForKeyV1 } from './authoringMemory.js';

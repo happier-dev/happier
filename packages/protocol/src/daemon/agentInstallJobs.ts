@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 // Development install-job operation, independent of the package version. Every
 // envelope is closed: caller-supplied commands and consent extensions are rejected.

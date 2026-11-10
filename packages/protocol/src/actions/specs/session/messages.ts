@@ -6,7 +6,7 @@ import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionIdSchema } from '../../../sessions/idsV1.js';
 import { RawIngressStructuredInputV1Schema } from '../../../runtime/input/structuredInputV1.js';
 import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1 } from '../../../discussions/actions.js';
 import { SubagentLaunchV1Schema } from '../../../messages/structured/subagentLaunchV1.js';
 import { SubagentCommandV1Schema } from '../../../messages/structured/subagentCommandV1.js';

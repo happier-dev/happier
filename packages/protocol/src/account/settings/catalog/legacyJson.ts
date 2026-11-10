@@ -1,5 +1,5 @@
 import { maxCodeUnits } from '../../../strings/maxCodeUnits.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
 import { defineStoredReadProjection } from '../../../json/storedReadSchema.js';

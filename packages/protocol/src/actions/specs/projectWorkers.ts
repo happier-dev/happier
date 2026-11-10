@@ -1,7 +1,7 @@
 import { lazyActionSpecArray , type ActionSpecArrayConcat } from '../lazyActionSpecValue.js';
 import { PROJECT_WORKER_ACTION_IDS_V1, isProjectWorkerCopyInspectActionIdV1 } from './projectWorkersActionIdsV1.js';
 export { PROJECT_WORKER_ACTION_IDS_V1 } from './projectWorkersActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachineFinitePolicyGetResultV1Schema, MachineFinitePolicyMutationResultV1Schema,

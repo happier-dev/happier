@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { AccountEncryptionCurrentnessResponseSchema } from '../encryptionMode.js';
 import { ProfileReferenceGuardRevisionV1Schema } from '../../profiles/profileRecordSchemaV1.js';
 import { ProfileRecordIdV1Schema } from '../../profiles/v2/profileId.js';

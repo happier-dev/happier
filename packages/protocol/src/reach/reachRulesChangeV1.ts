@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { ActionExecutorContext } from '../actions/actionExecutor.js';
 import { isAgentOrUnresolvedSurface } from '../actions/actionApprovalSurface.js';

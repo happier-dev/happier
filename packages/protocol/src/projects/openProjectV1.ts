@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import type { ActionExecuteFailure } from '../actions/executor/types.js';

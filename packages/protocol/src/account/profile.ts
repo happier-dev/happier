@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { readAccountNameFromLegacyProfileV1 } from './accountDisplayProfileV1.js';
 
 export const AccountNameUpdateRequestV1Schema = lazyZodSchema(() => z.strictObject({

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { McpRegistryServerV1Schema, RegistryItemV1Schema, type McpRegistryInputV1, type RegistryItemSummaryV1 } from '../registryItemsV1.js';
 import { RegistryFetchErrorV1 } from '../registryListV1.js';
 import type { RegistrySourceV1 } from '../registrySourcesV1.js';

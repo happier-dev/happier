@@ -5,7 +5,7 @@ import {
 import { resolveApiTokenDeploymentGrantV1 } from '../../auth/apiTokenGrant.js';
 import type { WorkflowApprovedOperationNativeAccountV1 } from './workflowRunActions.js';
 import type { ActionExecutorContext } from './types.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { projectNativeJsonValueForTransport, StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 
 export type ApiTokenDeploymentAuthoringHost = Readonly<{

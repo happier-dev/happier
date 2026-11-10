@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from './zodRuntimePolicy.js';
 
 export const SENT_FROM_VALUES = [
     'unknown',

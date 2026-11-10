@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { RunnerClaimPayloadV1Schema } from './endpoint.js';

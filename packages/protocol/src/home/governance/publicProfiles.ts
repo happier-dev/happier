@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PublicProfileUnavailableReasonV1Schema } from '../../account/publicProfilePublication.js';
 import { HomeAccountTargetInputV1Schema } from './accounts.js';

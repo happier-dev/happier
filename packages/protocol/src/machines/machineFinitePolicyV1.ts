@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { getMachineMetadataFieldV1, readMachineMetadataFieldV1, mutateMachineMetadataFieldV1,
   type MachineMetadataFieldPortV1, type MachineMetadataFieldReadV1 } from './machineMetadataFieldV1.js';
 

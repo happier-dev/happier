@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { ActionOperationSnapshotV1Schema } from '../actions/operations/v1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';

@@ -1,5 +1,5 @@
 import type { JsonValue } from '../json/strictJsonValue.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import type { WorkflowRunAcceptedContextV1, WorkflowRunStartRequestV1 } from './actionsV1.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { DaemonTerminalLaunchIntentSchema } from '../daemon/terminal.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
 

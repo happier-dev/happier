@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 import type { AutomationDefinitionDetail, AutomationDefinitionPatchRequest } from '../../automations/automationApiV3.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import {

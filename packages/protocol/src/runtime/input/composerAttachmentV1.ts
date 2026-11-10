@@ -1,5 +1,5 @@
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { asProtocolZod, projectZodProtocolSchema } from "../../plugins/actions/internalProtocolZodAdapter.js";
 import { defineProtocolString } from '../../plugins/actions/protocolComposableSchema.js';
 

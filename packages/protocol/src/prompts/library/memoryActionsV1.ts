@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PromptDocArtifactRefV1Schema } from './promptArtifactRefsV1.js';
 import { MemoryDocArtifactHeaderV1Schema, MemoryDocIndexV1Schema, MemoryTopicReadV1Schema, MemoryDecisionV1Schema } from './memoryDocV1.js';

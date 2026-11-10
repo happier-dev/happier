@@ -1,7 +1,7 @@
 import { SCOPE_ACTION_IDS } from './scopeActionIdsV1.js';
 export { SCOPE_ACTION_IDS } from './scopeActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { SessionListFilterFieldsV1Schema } from '../sessions/listFilter/sessionListFilterV1.js';
 import { FileChangesScopeSchema } from '../scm/fileChangesScope.js';

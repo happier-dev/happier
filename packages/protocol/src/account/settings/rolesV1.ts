@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { RoleOverrideCatalogV1Schema } from '../../prompts/roles/roleOverrideRecordV1.js';
 import { ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES, withAccountSettingBounds } from './catalog/accountSettingBounds.js';

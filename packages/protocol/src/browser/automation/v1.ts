@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { BrowserActiveTargetV1Schema } from '../events/activeTarget.js';
 import { SecretFillScopeV1Schema } from '../../computer/v1.js';
 import {

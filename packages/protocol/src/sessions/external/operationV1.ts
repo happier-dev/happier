@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionIdSchema } from '../idsV1.js';
 import { SpawnSessionTerminalSchema } from '../spawnSession.js';

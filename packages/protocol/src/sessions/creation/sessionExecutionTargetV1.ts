@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SESSION_ORGANIZATION_MAX_ID_LENGTH } from '../organization/constants.js';
 

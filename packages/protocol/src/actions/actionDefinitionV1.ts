@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { ActionUiPlacementSchema } from './actionUiPlacements.js';
 import { ActionApprovalSchema } from './actionApprovalMetadata.js';

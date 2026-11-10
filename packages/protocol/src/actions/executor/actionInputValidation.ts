@@ -1,4 +1,4 @@
-import { z, type core } from 'zod/mini';
+import { z, type core } from '../../zodRuntimePolicy.js';
 import type { ErrorObject } from 'ajv';
 import type { PluginJsonSchemaValidator } from '../../plugins/actions/protocolComposableSchema.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';

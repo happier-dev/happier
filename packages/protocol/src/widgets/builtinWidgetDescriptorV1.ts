@@ -3,7 +3,7 @@ import { readWidgetInputTargetV1, type WidgetInputDescriptorV1 } from './widgetI
 import type { WidgetDefinitionRefV1, WidgetInstanceV1 } from './widgetInstanceV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import type { WidgetSizeDeclarationV1 } from './widgetPresentationV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 import { lazyDefinition } from '../lazyZodSchema.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/jsonSchema.js';

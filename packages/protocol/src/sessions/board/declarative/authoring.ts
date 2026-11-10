@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { isPluginDeclarativeDataNodeV1 } from '../../../plugins/contributions/ui/declarativeDataV1.js';
 import { PluginDeclarativeDocumentV1Schema } from '../../../plugins/contributions/ui/declarativeDocumentAuthoringV1.js';
 import { preflightPluginDeclarativeDocumentV1 } from '../../../plugins/contributions/ui/declarativeDocumentPreflightV1.js';

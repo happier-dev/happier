@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { PushNotificationTestResultSchema } from '../push/pushNotificationTest.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { redactObservationInputPaths } from './specs/observationRedaction.js';
 import { WebhookNotificationChannelV1Schema } from '../account/settings/notificationChannels.js';

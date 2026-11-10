@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 function dedupeStrings(values: ReadonlyArray<string>): string[] {
   const seen = new Set<string>();

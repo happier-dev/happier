@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { MachineGuardActivityFilterV1Schema, MachineGuardActivityListV1Schema, MachineGuardActivityRangeV1Schema } from '../../machines/guard/activityV1.js';

@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 
 const identifier = z.string().check(z.trim(), z.minLength(1));

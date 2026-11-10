@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, HappierStructuredInputV1Schema as HappierStructuredInputV1EnvelopeSchema, RawIngressStructuredInputV1Schema, hasAdmittedComposerAttachmentSelectionV1, readAttachmentEnvelopeLocalImagePaths, readHappierStructuredInputV1FromMeta, readIngressComposerAttachmentSelectionV1, sanitizeHappierStructuredInputV1, sanitizeSessionStructuredInputMeta, type HappierStructuredInputV1 as HappierStructuredInputV1Envelope } from '../runtime/input/structuredInputV1.js';
 import { ComposerContentHandleV1Schema, type ComposerContentHandleV1 } from '../runtime/input/composerContentV1.js';

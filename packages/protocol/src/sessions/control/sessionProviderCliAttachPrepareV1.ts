@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { createHerdrTerminalMetadataSchema } from '../metadata/terminalMetadata.js';
 
 const ProviderSessionIdSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.refine(value => value.trim().length > 0)));

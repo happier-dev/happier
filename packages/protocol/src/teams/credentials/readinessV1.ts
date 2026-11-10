@@ -1,7 +1,7 @@
 import { TeamCredentialResourceReadinessV1Schema, type TeamCredentialResourceReadinessV1 } from './resourceReadinessV1.js';
 export { TeamCredentialResourceReadinessV1Schema, type TeamCredentialResourceReadinessV1 } from './resourceReadinessV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { IrohEndpointDescriptorV1Schema } from '../../connectivity/iroh/endpointDescriptorV1.js';
 import { RunnerCredentialSelectionBindingV1Schema } from '../../ephemeralRunner/review.js';

@@ -1,7 +1,7 @@
 import { ARTIFACT_ACCESS_ACTION_IDS_V1 } from './artifactAccessActionIdsV1.js';
 export { ARTIFACT_ACCESS_ACTION_IDS_V1 } from './artifactAccessActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ArtifactCoarseKindV1Schema } from './artifactKindV1.js';
 import { BotTemplateVersionV1Schema } from '../bots/templates/templateVersionV1.js';
 

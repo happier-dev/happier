@@ -1,6 +1,6 @@
 import { UsageSessionFactRecordV1Schema } from '../../../usage/usageWorkEvidence.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../../json/storedReadSchema.js';
 import { SessionBoardLayoutV1Schema } from '../../board/layout.js';
 import { SessionSurfaceItemV1Schema } from '../../board/item.js';

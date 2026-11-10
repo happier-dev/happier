@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 // Canonical envelope for JSON-like content that may be plaintext or opaque ciphertext.
 //

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { resolveValueRefPlaintextV1, type ValueRefV1 } from '../../valueRefs/valueRefV1.js';

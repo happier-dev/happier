@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { PLUGIN_COLLECTION_LIMITS_V1 } from '../../../plugins/data/collectionLimitsV1.js';
 

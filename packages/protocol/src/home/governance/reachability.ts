@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /**
  * How this Home is reached (plan `2026-09-26-home-owner-console` §3.2, decision B, AM-2).

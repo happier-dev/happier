@@ -2,7 +2,7 @@ import { maxCodeUnits } from '../../strings/maxCodeUnits.js';
 import { deriveActionInputHints } from '../../actions/schemaInputHints.js';
 export { PluginActionInvocationBindingV1Schema, type PluginActionInvocationBindingV1 } from './invocationBindingV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { InputOptionValueSchema } from '../../inputs/inputFields.js';
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 

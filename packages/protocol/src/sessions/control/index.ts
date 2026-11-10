@@ -8,7 +8,7 @@ export * from './terminalComposerClearV1.js';
 export * from './pendingInputInterruptAndRunV1.js';
 export * from './exactTurnCancellationV1.js';
 export * from './machineSessionTerminalV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 
 /** The scoped RPC route supplies the target Session. */

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { isActionOutcomeUnknownErrorCodeV1 } from '../actions/actionExecutionResult.js';
 import { QualifiedProjectKeyV1Schema } from '../workspaces/workspaceRefV1.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { RunnerResourceIdSchema, RunnerSha256CommitmentSchema } from './activation.js';
 import { RunnerMachineContentKeyBindingV1Schema } from './machineContentKeyBindingSchema.js';

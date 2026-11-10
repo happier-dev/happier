@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { normalizeStoredApprovalProfilesV1, type ApprovalProfileV1 } from './approvalProfiles.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { ActionIdSchema, normalizeLegacyActionId, type ActionId } from './actionIds.js';
 import {

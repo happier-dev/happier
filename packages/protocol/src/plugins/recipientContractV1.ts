@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { bytesToHex } from '@noble/hashes/utils';
 import { asProtocolZod } from "./actions/internalProtocolZodAdapter.js";
 import { sha256 } from '@noble/hashes/sha2';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from './contributionIdentity.js';
 import { PluginIdSchema } from './pluginId.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DiscussionIdSchema as DiscussionIdProtocolSchema, SessionIdSchema } from '../sessions/idsV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';

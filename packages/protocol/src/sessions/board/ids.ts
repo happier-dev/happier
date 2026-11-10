@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { SessionSystemRecordLocalIdSchema } from '../system/records/sessionSystemRecordAddress.js';
 
 // SSR record identity includes namespace/localId, not kind. The layout owns

@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 import { lazyDefinition } from '../../lazyZodSchema.js';
 import { ActionOperationGetV1RequestSchema } from '../../actions/operations/v1.js';
 import { ManagedRefusalCodeV1Schema } from './providerFactsV1.js';

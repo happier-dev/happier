@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { FollowSourceRefV1Schema } from './sessionDeliveryMuteV1.js';
 
 /** No implicit truncation: callers may choose a page size, otherwise all admitted rows are returned. */

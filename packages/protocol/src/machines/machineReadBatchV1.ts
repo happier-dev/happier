@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { MachinePublishedRowWireV1Schema, type MachinePublishedRowV1 } from './machineContentKeyTransitionV1.js';
 

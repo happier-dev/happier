@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { ACTION_ID_FAMILIES_V1 } from '../../actions/actionIds.js';
 import { RPC_METHODS } from '../../rpc/methods.js';

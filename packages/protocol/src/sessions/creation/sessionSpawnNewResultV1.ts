@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { OperationUpdateRequiredV1Schema } from '../../compat/operationUpdateRequiredV1.js';
 import { ProviderErrorV1Schema } from '../../providers/errors.js';
 import { TerminalHostUnavailableSpawnErrorDetailSchema } from '../spawnSession.js';

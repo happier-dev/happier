@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { StoredImageRefV1Schema, PluginUiReadStoredImageResultV1Schema } from '../plugins/ui/storedImage.js';
 
 /** Host-stamped caller identity with the same strict native image facts as renderer requests. */

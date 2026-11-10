@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /** Qualified address shared by Voice and widgets, independent of the Follow API graph. */
 export const VoiceTrackedSessionAddressV1Schema = lazyZodSchema(() => z.strictObject({

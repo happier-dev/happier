@@ -1,5 +1,5 @@
 import { migrateThemeProfileOverrideTokenIds } from './themeProfileTokens.js';
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { isValidThemeProfileColorValue } from './themeProfileColors.js';
 

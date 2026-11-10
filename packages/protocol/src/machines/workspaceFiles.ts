@@ -1,6 +1,6 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2 } from '../actions/externalActionLimits.js';
 import { ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES, ACCOUNT_SCOPED_SECRETBOX_OVERHEAD_BYTES } from '../crypto/accountScopedCipherEnvelope.js';
 import { stringifySerializedJsonValue } from '../crypto/serializedJsonValue.js';

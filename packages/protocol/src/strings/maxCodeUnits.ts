@@ -1,4 +1,4 @@
-import { check } from 'zod/mini';
+import { check } from '../zodRuntimePolicy.js';
 import type { $ZodCheck } from 'zod/v4/core';
 
 /** Maximum preserved UTF-16 code units, independent of Zod's character-count policy. */

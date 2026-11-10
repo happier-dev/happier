@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { isPortableRelativePath } from '../../../filesystem/portablePathSegment.js';
 import { PluginUiArtifactDigestV1Schema } from '../../ui/artifactIntegrity.js';

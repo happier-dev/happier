@@ -1,5 +1,5 @@
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { isCanonicalProviderSavedSecretIdV1 } from '../providers/settings/v1.js';

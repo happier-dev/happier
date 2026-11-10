@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { ProviderCompatibilityCapabilitiesV1Schema, ProviderWireProtocolSchema } from '../capabilities/v1.js';
 import { ProviderCatalogProbeV1Schema } from '../catalog/descriptorV1.js';

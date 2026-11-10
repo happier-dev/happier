@@ -3,7 +3,7 @@ import type { PreNormalizedActionSpec } from './definition.js';
 import type { ActionExecutorContext } from '../executor/types.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { readRecord } from '../../inputs/inputRecords.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { WorkflowActionInputSchemasV1, WorkflowActionOutputSchemasV1, type WorkflowActionIdV1 } from '../../workflows/actionsV1.js';
 import { WORKFLOW_ACTION_IDS_V1 } from '../actionIds.js';
 import { getWorkflowInputHints, WORKFLOW_AUTOMATION_REMOVAL_WARNING } from './workflowInputHints.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionSurfaceItemIdSchema } from '../../sessions/board/ids.js';
 import { SessionSurfaceItemDestinationV1Schema } from '../../sessions/board/item.js';

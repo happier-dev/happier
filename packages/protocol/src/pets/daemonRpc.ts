@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { AccountPetCreateResponseV1Schema, PetAssetMediaTypeV1Schema } from './accountLibrary.js';
 import { appendCanonicalPetSpritesheetMediaTypeIssueV1 } from './assetFormats.js';

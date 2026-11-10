@@ -1,6 +1,6 @@
 import '../../zodRuntimePolicy.js';
 import { z } from 'zod';
-import { z as mini } from 'zod/mini';
+import { z as mini } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import { PluginJsonSchemaV2Schema, type PluginJsonSchemaV2 } from '../../plugins/contributions/jsonSchema.js';

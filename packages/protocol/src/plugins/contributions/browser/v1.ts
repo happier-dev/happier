@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 import { asProtocolZod } from '../../actions/internalProtocolZodAdapter.js';
 
 import { BrowserProfileStorageModeV1Schema } from '../../../browser/profile/v1.js';

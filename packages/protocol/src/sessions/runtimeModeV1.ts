@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const SessionRuntimeModeV1Schema = lazyZodSchema(() => z.enum(['external', 'terminal', 'remote']));
 export type SessionRuntimeModeV1 = z.infer<typeof SessionRuntimeModeV1Schema>;

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /** Additive, non-authoritative Message presentation; unknown display fields are dropped. */
 export const SessionHostOnboardingPresentationV1Schema = z.object({

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { SessionManagerV1Schema, SessionManagedSessionsV1Schema } from '../follow/sessionManagerV1.js';
 import { SessionOriginKindV1Schema } from '../creation/sessionCreateOriginV1.js';
 import { SessionDiscussionParticipantV1Schema } from '../creation/sessionDiscussionParticipantV1.js';

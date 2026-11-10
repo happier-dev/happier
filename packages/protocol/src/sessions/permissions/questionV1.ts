@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { InteractionTransientAuthorRequestV1Schema, InteractionTransientQuestionsAuthorRequestV1Schema } from '../../plugins/interactions/transientV1.js';

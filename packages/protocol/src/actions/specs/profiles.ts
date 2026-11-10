@@ -6,7 +6,7 @@ import {
 } from '../../profiles/profileActionsV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { readRecord } from '../../inputs/inputRecords.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 
 const ProfileSaveCliInput = lazyZodSchema(() => z.strictObject({

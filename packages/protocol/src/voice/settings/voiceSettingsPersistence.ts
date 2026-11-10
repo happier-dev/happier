@@ -9,7 +9,7 @@ import { SecretStringV1Schema, type SecretStringV1 } from '../../crypto/settings
 import { VoiceCredentialBindingV1Schema, type VoiceCredentialBindingV1, type VoiceProviderSettingsEnvelopeV1 } from '../realtime/providerSettings.js';
 import { VoiceSpeechDiagnosticsSettingsV1Schema, type VoiceSpeechDiagnosticsSettingsV1 } from '../diagnostics.js';
 import { resolvePredecessorVoiceProviderContributionIdentityV1 } from '../providerContributionIdentity.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { backendTargetKeysMatch, resolveBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
 

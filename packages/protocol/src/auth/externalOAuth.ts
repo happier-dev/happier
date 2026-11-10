@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { TeamInvitationPostAuthContinuationV1Schema } from '../teams/invitation.js';
 
 const ExternalOAuthParamsBaseResponseSchema = z.strictObject({ url: z.string().check(z.minLength(1)) });

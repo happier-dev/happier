@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { SessionImageMediaReferenceV1Schema } from '../sessions/media/imageReferenceV1.js';
 import { BrowserActiveTargetV1Schema } from '../browser/events/activeTarget.js';

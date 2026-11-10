@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { decodeV2SessionListCursorV1, decodeV2SessionListCursorV2 } from './cursor.js';
 import { readServerEnabledBit } from '../../features/serverEnabledBit.js';
 import type { FeaturesResponse } from '../../features/payload/featuresResponseSchema.js';

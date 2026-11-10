@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { TeamIdentityConnectionIdSchema } from '../teams/identity/ids.js';
 import { AuthEntryMethodIdV1Schema } from './methodId.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { PluginUiReleaseSlotV1Schema } from '../plugins/availability/v1.js';
 import { PackageAssetArchiveDescriptorV1Schema } from '../plugins/availability/packageAssetV1.js';
 

@@ -1,11 +1,11 @@
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { WorkflowTargetUnavailableReasonV1Schema } from './workflowTargetUnavailableReasonV1.js';
 import { WorkflowDocumentParseFailureV1Schema } from './workflowDocumentSchemasV1.js';
 export { WorkflowTargetUnavailableReasonV1Schema, type WorkflowTargetUnavailableReasonV1 } from './workflowTargetUnavailableReasonV1.js';
 import { WorkflowDiscussionOriginV1Schema } from './workflowDestinationsV1.js';
 import { SessionMessageReplyOutcomeV1Schema } from '../sessions/messages/sessionMessageReplyV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { ActionCompletionStateV1Schema } from '../actions/actionCompletion.js';
 import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import { AGENT_START_REFUSAL_CODES_V1, AgentStartRefusalV1Schema } from '../account/settings/admitAgentStartV1.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { PluginMachineMaterializationExecutionOriginV1Schema } from '../machines/administration/pluginMachineExecutionOriginV1.js';
 import { PluginReleaseRefV1Schema } from '../plugins/availability/v1.js';

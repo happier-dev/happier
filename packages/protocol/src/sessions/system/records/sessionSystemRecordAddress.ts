@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { SessionSystemRecordKindSchema } from './sessionSystemRecordKind.js';
 import { SessionSystemRecordNamespaceSchema } from './sessionSystemRecordNamespace.js';

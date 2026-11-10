@@ -1,4 +1,4 @@
-import * as z from 'zod/mini';
+import * as z from '../../zodRuntimePolicy.js';
 
 export const ProjectMemoryDemandV1Schema = z.strictObject({
   bytes: z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER)),

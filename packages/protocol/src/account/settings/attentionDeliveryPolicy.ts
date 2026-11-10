@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { PUSH_NOTIFICATION_SOUND_IDS } from '../../push/pushNotificationActions.js';
 import type { InboxItemAttentionTypeV1, ResolveFollowDeliveryV1Params } from '../../sessions/follow/sessionFollowPolicyV1.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 export * from './providerAccountUsagePageProjection.js';
 import { getProviderAccountUsageQuotaPageFactsV1, getProviderAccountUsageQuotaHistoryV1, type PackedProviderAccountUsagePageProjectionV1Schema } from './providerAccountUsagePageProjection.js';
 import { serializeProviderAccountUsageSnapshotMaterialV1 } from './providerAccountUsagePrimitives.js';

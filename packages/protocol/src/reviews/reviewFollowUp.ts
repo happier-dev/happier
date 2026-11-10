@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const ReviewFollowUpInputSchema = lazyZodSchema(() => z.looseObject({
   findingIds: z._default(z.array(z.string().check(z.minLength(1))).check(z.maxLength(100)), []),

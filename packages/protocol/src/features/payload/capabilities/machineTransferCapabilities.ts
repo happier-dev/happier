@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import type { FeaturesResponse } from '../featuresResponseSchema.js';
 import { isRecord } from '../isRecord.js';

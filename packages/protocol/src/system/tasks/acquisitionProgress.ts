@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 export const CLI_ACQUISITION_PROGRESS_EVENT = 'cli.acquisition.progress' as const;
 

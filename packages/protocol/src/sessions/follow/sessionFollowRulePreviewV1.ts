@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { FollowSourceRefV1Schema, followDeliveryMuteScopeKeyV1, type FollowSourceRefV1 } from './sessionDeliveryMuteV1.js';
 import { SessionFollowRuleIdV1Schema, SessionFollowRuleDefinitionV1Schema, type SessionFollowRuleDefinitionV1 } from './sessionFollowRuleV1.js';

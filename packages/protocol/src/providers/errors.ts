@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from './ids.js';
 import { ProfileRecordIdV1Schema } from '../profiles/v2/profileId.js';

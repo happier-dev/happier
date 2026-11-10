@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 /** Display metadata preserves Session intake names; only the target sanitizer chooses filesystem names. */
 export const AttachmentNameV1Schema = z.string().check(z.refine(value =>

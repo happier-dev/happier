@@ -1,6 +1,6 @@
 import { ACCOUNT_LIFECYCLE_ACTION_IDS } from './accountLifecycleActionIdsV1.js';
 export { ACCOUNT_LIFECYCLE_ACTION_IDS } from './accountLifecycleActionIdsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 export type AccountLifecycleActionId = typeof ACCOUNT_LIFECYCLE_ACTION_IDS[number];
 const target = z.strictObject({ serverId: z.string().check(z.trim(), z.minLength(1)), accountId: z.string().check(z.trim(), z.minLength(1)) });
 export const ACCOUNT_LIFECYCLE_ACTION_INPUT_SCHEMAS = {

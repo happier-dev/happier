@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { CanonicalHttpOriginSchema } from '../http/canonicalHttpOrigin.js';
 import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';

@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { ProviderLocalIdSchema } from '../ids.js';
 import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1, ProviderWireProtocolSchema } from '../capabilities/v1.js';

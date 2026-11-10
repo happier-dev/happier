@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 import { PluginCompatibilityProjectionV1Schema } from '../plugins/availability/compatibilityProjectionV1.js';
 export { PUBLIC_NPM_REGISTRY_ORIGIN_V1 } from './marketplaceSourceRegistryV1.js';

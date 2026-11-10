@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ManagedAcquireInputV1Schema, resolveManagedAcquireReviewV1 } from '../../machines/managed/actionsV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema, type ManagedMachineEnrollmentIdentityV1 } from '../../machines/managed/enrollmentIdentityV1.js';

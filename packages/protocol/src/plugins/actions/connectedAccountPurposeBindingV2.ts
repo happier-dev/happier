@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { InputPathSchema } from '../../inputs/inputPredicates.js';
 import { ConnectedAccountPurposeIdSchema } from '../../connect/connectedAccountPurposeIdentity.js';
 

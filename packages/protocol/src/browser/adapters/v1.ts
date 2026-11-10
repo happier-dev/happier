@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { BrowserAutomationActionCapabilityMapV1Schema } from '../automation/v1.js';
 import { BrowserContextKindV1Schema } from '../context/v1.js';

@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { SessionTargetV1Schema, ActionSessionAddressV1Schema, normalizeSessionTargetV1 } from '../../actions/sessionTargetV1.js';
 import { ActionSessionFanoutResultV1Schema } from '../../actions/sessionTargetV1.js';

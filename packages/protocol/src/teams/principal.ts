@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 /** Home-local identity shared by resource grants; this grants no authority itself. */
 export const AccountPrincipalRefV1Schema = lazyZodSchema(() => z.strictObject({

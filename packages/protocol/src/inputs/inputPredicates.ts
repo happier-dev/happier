@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;

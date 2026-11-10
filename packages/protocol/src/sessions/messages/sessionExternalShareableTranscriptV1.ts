@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { SessionTurnV1Schema, type SessionTurnV1 } from '../turns/sessionTurnV1.js';

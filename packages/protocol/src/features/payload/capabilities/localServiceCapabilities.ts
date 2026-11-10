@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { LocalServiceActionKindV1Schema } from '../../../local/services/actions/v1.js';
 import { LocalServiceLaunchTargetSourceV1Schema } from '../../../local/services/launcher/v1.js';

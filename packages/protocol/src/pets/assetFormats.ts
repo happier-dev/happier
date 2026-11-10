@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export const PET_CANONICAL_SPRITESHEET_ASSET_FORMATS_V1 = [
   { extension: 'webp', mediaType: 'image/webp', spritesheetPath: 'spritesheet.webp' },

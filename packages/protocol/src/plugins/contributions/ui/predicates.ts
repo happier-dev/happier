@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../../zodRuntimePolicy.js';
 
 import { PluginUiJsonValueV1Schema, type PluginUiJsonValueV1 } from './json.js';
 

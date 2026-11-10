@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { BrowserExtensionIdV1Schema, BrowserExtensionSourceV1Schema, BrowserExtensionPermissionReviewV1Schema,
   BrowserExtensionRecordV1Schema } from '../browser/profile/extensionsV1.js';
