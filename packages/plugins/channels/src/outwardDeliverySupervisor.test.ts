@@ -3746,9 +3746,10 @@ describe('Channels outward-delivery supervisor', () => {
   });
 
   it.each([
-    { scope: 'connection', blocker: 'delivery' }, { scope: 'binding', blocker: 'delivery' },
-    { scope: 'connection', blocker: 'ingress' }, { scope: 'binding', blocker: 'ingress' },
-  ] as const)('finishes $scope deletion after $blocker custody settles without requiring another structural change', async ({ scope, blocker }) => {
+    { scope: 'connection', blocker: 'delivery', resume: 'live host' }, { scope: 'binding', blocker: 'delivery', resume: 'live host' },
+    { scope: 'connection', blocker: 'ingress', resume: 'live host' }, { scope: 'binding', blocker: 'ingress', resume: 'live host' },
+    { scope: 'connection', blocker: 'ingress', resume: 'next host start' }, { scope: 'binding', blocker: 'ingress', resume: 'next host start' },
+  ] as const)('finishes $scope deletion after $blocker custody settles on $resume without requiring another structural change', async ({ scope, blocker, resume }) => {
     vi.useFakeTimers();
     vi.setSystemTime(100);
     const state = new MemoryCollection({ enforceUniqueBatchRows: true });
@@ -3774,10 +3775,10 @@ describe('Channels outward-delivery supervisor', () => {
     }
     const connectionId = scope === 'connection' ? FINALIZING_CONNECTION_ID : BINDING_DELETE_CONNECTION_ID;
     const bindingId = scope === 'connection' ? FINALIZING_BINDING_ID : BINDING_DELETE_BINDING_ID;
-    const generation = new AbortController();
+    let generation = new AbortController();
     const execute = vi.fn();
     const deliver = vi.fn();
-    const context = { ...backgroundContext({ state, deliveries, execute,
+    let context = { ...backgroundContext({ state, deliveries, execute,
       executeAdmittedTargetedOperationWithExecutionOrigin: deliver }), signal: generation.signal };
     const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state as never,
       deliveriesCollection: deliveries as never, signal: generation.signal, now: () => Date.now() });
@@ -3791,12 +3792,13 @@ describe('Channels outward-delivery supervisor', () => {
     if (held.kind !== 'updated') throw new Error('Expected unresolved delivery custody.');
     const reads = vi.spyOn(state, 'query');
     let completedCycles = 0;
-    const supervisor = createConversationOutwardDeliverySupervisor({ runCycle: async input => {
+    const createSupervisor = () => createConversationOutwardDeliverySupervisor({ runCycle: async input => {
       const result = await runConversationOutwardDeliveryCycle(input);
       completedCycles += 1;
       return result;
     } });
-    const running = supervisor.run(context);
+    let supervisor = createSupervisor();
+    let running = supervisor.run(context);
     try {
       await vi.waitFor(() => expect(completedCycles).toBeGreaterThan(0), { interval: 0 });
       await vi.advanceTimersByTimeAsync(0);
@@ -3809,6 +3811,12 @@ describe('Channels outward-delivery supervisor', () => {
         { expectedRevision: 'absent' });
       await vi.advanceTimersByTimeAsync(60_000);
       expect(reads).toHaveBeenCalledTimes(heldReads);
+      if (resume === 'next host start') {
+        generation.abort();
+        await running;
+        await supervisor.dispose();
+      }
+      const stoppedReads = reads.mock.calls.length;
       if (blocker === 'delivery') {
         await store.compareAndSwap({ custodyId: held.record.custodyId, expectedRevision: held.record.revision,
           custody: { state: 'delivered', attemptCount: 1, providerMessageIds: ['settled-before-delete'] } });
@@ -3821,8 +3829,19 @@ describe('Channels outward-delivery supervisor', () => {
             lifecycle: { phase: 'terminal', attemptCount: 1, dueAt: null }, disposition: 'admitted' },
         }, { expectedRevision: row.revision });
       }
-      // Only the real custody settlement wakes the runner; no structural
-      // connection/binding change is manufactured by the test.
+      if (resume === 'next host start') {
+        // No observer survives the old host. Startup must discover the retained
+        // finalizing rows even when the blocker settled while it was stopped.
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(reads).toHaveBeenCalledTimes(stoppedReads);
+        expect(state.rows.get(bindingId)?.deleted).not.toBe(true);
+        generation = new AbortController();
+        context = { ...context, signal: generation.signal };
+        supervisor = createSupervisor();
+        running = supervisor.run(context);
+      }
+      // Native custody settlement or the next host start drives the runner;
+      // no structural connection/binding change is manufactured by the test.
       await vi.waitFor(() => {
         expect(state.rows.get(bindingId)?.deleted).toBe(true);
         if (scope === 'connection') {
