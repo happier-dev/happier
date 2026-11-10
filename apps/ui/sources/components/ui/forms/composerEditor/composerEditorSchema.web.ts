@@ -2,6 +2,7 @@ import { Extension, Node, type AnyExtension, type NodeViewRenderer } from '@tipt
 import { history, undo, redo } from '@tiptap/pm/history';
 import { keymap } from '@tiptap/pm/keymap';
 import { baseKeymap } from '@tiptap/pm/commands';
+import type { Command } from '@tiptap/pm/state';
 
 /** No rich text, parsing rules, input rules or paste rules can create references. */
 export function createComposerEditorExtensions(nodeView?: NodeViewRenderer): AnyExtension[] {
@@ -19,12 +20,16 @@ export function createComposerEditorExtensions(nodeView?: NodeViewRenderer): Any
         Extension.create({
             name: 'composerEditing',
             addProseMirrorPlugins() {
+                // A line break is the only block split this plain-text document has. Shift+Enter needs its
+                // own binding: unhandled, the browser inserts a <br> the schema cannot parse, so nothing appears.
+                const insertLineBreak: Command = (state, dispatch) => {
+                    dispatch?.(state.tr.replaceSelectionWith(state.schema.nodes.hardBreak.create()).scrollIntoView());
+                    return true;
+                };
                 return [history(), keymap({
                     'Mod-z': undo, 'Shift-Mod-z': redo, 'Mod-y': redo,
-                    Enter: (state, dispatch) => {
-                        dispatch?.(state.tr.replaceSelectionWith(state.schema.nodes.hardBreak.create()).scrollIntoView());
-                        return true;
-                    },
+                    Enter: insertLineBreak,
+                    'Shift-Enter': insertLineBreak,
                 }), keymap(baseKeymap)];
             },
         }),

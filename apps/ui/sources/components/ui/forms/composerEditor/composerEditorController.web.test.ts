@@ -179,6 +179,15 @@ describe('real DOM composer editing', () => {
     });
   });
 
+  it('inserts a line break for Shift+Enter, as for an Enter the host leaves to the field', () => {
+    const controller = create({ text: 'ab' });
+    controller.setSelection({ start: 1, end: 1 });
+    const event = key(controller, 'Enter', { shiftKey: true });
+    expect(event.defaultPrevented).toBe(true);
+    expect(controller.read().text).toBe('a\nb');
+    expect(controller.read().selection).toEqual({ start: 2, end: 2 });
+  });
+
   it('keeps text entered during composition when the deferred controlled echo was unchanged', async () => {
     const ref = reference();
     const controller = create({ text: ref.token, references: [ref] });
