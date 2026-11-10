@@ -3596,6 +3596,17 @@ for provider correlation; assistant transcripts remain native. Session titles,
 summaries and excerpts are presented as quoted reference data, separate from the
 current Voice request and Profile instructions.
 
+In 0.3 development, host-spoken permission questions, acknowledgments and
+result announcements enter the same ordinary Session transcript before playback.
+The write acknowledgment supplies their sequence alongside native Agent turns;
+they remain in that chronology after reload. A failed write follows the existing
+Voice failure path before speech starts. The first accepted human utterance also
+publishes an initial title through the Session display-title writer when the
+conversation is untitled. Dictated all-capital text is formatted for that title
+without changing transcript content, and an authored title retains precedence.
+History and Actions consume the resulting Session title without reading message
+bodies to derive another name.
+
 For a session-sourced Local Voice Agent, the bound coding root owns the Agent,
 currently applied model, connected-account selection and Launch Profile. Its
 hidden Voice conversation owns transcript and RPC custody. Carrier creation
@@ -8562,13 +8573,16 @@ facts. Credential resolution stays Checking until the existing identity owner
 settles; missing transport material is not itself a failed read. Closing or
 hiding the last consumer releases its reads and parked Activity watch.
 
-The sampler uses one unref'ed timer on two cadences. With no Live (Processes)
-or Overview demand, it reads once per wall-clock minute boundary: the 7-day minute
-history is exactly what the idle cadence must serve, and minute-record aggregation
-needs a sample after every boundary. The per-Machine resources policy's
-`monitoring.intervalMs` (default 2 seconds) applies only while a Live or Overview
-viewer holds demand; a selected interval of a minute or more still reads every
-boundary. Summary and Guard-preview watches do not raise the cadence.
+The sampler uses one unref'ed timer on three cadences. With nothing visible, it
+reads once per wall-clock minute boundary: the 7-day minute history is exactly what
+the idle cadence must serve, and minute-record aggregation needs a sample after
+every boundary. A visible summary (summary watch or Guard preview) reads every
+15 seconds on wall-clock quarter-minutes, which include every minute boundary.
+The per-Machine resources policy's `monitoring.intervalMs` (default 2 seconds)
+applies only while a Live or Overview viewer holds demand; a selected interval of
+a minute or more falls back to the summary or minute cadence. UI demand comes
+only from `useMachineResourceLiveDemand`, gated by host visibility and layout
+presentation; a retained widget scrolled out of view withdraws presentation.
 Project workers queued on available memory hold the same Live demand through
 [`projectWorkerMemorySource`](../apps/cli/src/workspaces/execution/projectWorkerMemorySource.ts)
 and admit only on a reading taken during that hold, so a minute-old sample never
