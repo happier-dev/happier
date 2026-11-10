@@ -4,6 +4,8 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import tweetnacl from 'tweetnacl';
 import { beforeEach, expect, it, vi } from 'vitest';
+import { createApiSessionSocketStub, resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
+import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, MachineUpdateOperationProtocolCapabilitiesResponseV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -470,3 +472,28 @@ it.skipIf(process.platform !== 'linux').each([true, false])(
     if (pending) expect(await readdir(setup.targetPath)).toEqual([]);
     else expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   });
+
+it.skipIf(process.platform !== 'linux').each(['member-a', 'requester'])(
+  'creates a same-Machine distinct-root Sync through its owner Action (custodian=%s)', async sourceCustodianAccountId => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', sourceCustodianAccountId, socketIo, allowRelationshipAction: true });
+  const rejectedSelfCalls: string[] = [];
+  // Model Home's real exclusion of the originating daemon socket.
+  Reflect.set(setup.installed.machine, 'socket', createApiSessionSocketStub({ connected: true,
+    emitWithAck: async (event, payload) => {
+      if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) {
+        return MachineUpdateOperationProtocolCapabilitiesResponseV1Schema.parse({ v: 1, result: 'success', revision: 1 });
+      }
+      if (event === 'rpc-call' && payload && typeof payload === 'object' && 'method' in payload
+        && typeof payload.method === 'string' && payload.method.startsWith(`${setup.installed.machineId}:`)
+        && payload.method !== `${setup.installed.machineId}:${RPC_METHODS.CAPABILITIES_DESCRIBE}`) {
+        rejectedSelfCalls.push(payload.method);
+        return { ok: false, error: 'Cannot call RPC on the same socket' };
+      }
+      return resolveApiSessionSocketDefaultAck(event, payload);
+    } }));
+  const result = await setup.executeRelationshipAction();
+  expect(result, JSON.stringify({ result, rejectedSelfCalls })).toMatchObject({ ok: true, result: { created: true } });
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+  if (sourceCustodianAccountId !== 'member-a') expect(setup.custodianRows).toEqual(setup.custodianBefore);
+});

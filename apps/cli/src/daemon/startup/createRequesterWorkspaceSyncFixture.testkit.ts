@@ -520,7 +520,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
           headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version });
         return { status: 200, data: { id, success: true, headerVersion: version, bodyVersion: version } };
       }
-      if (options.remoteTarget && url.endsWith('/v1/machines/machine/admission/verify')
+      if (url.endsWith('/v1/machines/machine/admission/verify')
         && body && typeof body === 'object' && 'proof' in body
         && ('workspaceSyncSourceWriterTargetRouting' in body || 'workspaceSyncSeedRouting' in body)) {
         const { proof, ...wirePurpose } = body;
@@ -530,7 +530,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
             version: 1, accountId: sourceCustodianAccountId, machineId: installed.machineId,
             installationId: installed.installation.installationId, rpcAdmission }) });
         return { status: ok ? 200 : 403, data: ok ? { v: 1, ok: true,
-          destinationInstallation: 'workspaceSyncSeedRouting' in body
+          destinationInstallation: 'workspaceSyncSeedRouting' in body || !options.remoteTarget
             ? { machineId: installed.machineId, installationId: installed.installation.installationId,
               installationPublicKey: installed.installation.publicKey }
             : { machineId: 'target-parent', installationId: targetInstallation.installationId,

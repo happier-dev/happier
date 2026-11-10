@@ -2885,6 +2885,9 @@ export function createWorkspaceSyncTargetAuthority(
       if (wireRequest.serverId !== localServerId) {
         throw authorityError('target_unavailable', 'Handoff target server does not match this daemon');
       }
+      if (wireRequest.machineId === localMachineId) {
+        return await authority.preflightHandoffTargetReplacementHere(wireRequest, request.signal, context);
+      }
       const source = context?.workspaceSyncSourceWriterTargetRouting?.source ?? context?.workspaceSyncSourceRouting;
       if (context?.callerInputAuthorization && source) {
         context.signal.throwIfAborted();
