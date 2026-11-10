@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPluginManifestV2Fixture } from '../testkit/manifestV2Fixture';
 import { ensureManagedJavaScriptRuntimeCommand } from '@/packagedRuntime/js/managedJavaScriptRuntime';
 import { PluginAuthorBundlerUnavailableError } from './bundleDaemonRuntime';
+import { evaluatePortableCommonJs } from '../../../../../packages/plugin-sdk/src/test-support/evaluatePortableCommonJs';
 import { collectBundledPrepublicationAuthorPackageNames } from '@happier-dev/cli-common/workspaceRuntimeDependencies';
 import { assertPluginAuthorPrepublicationRuntimeDeclarations, resolvePluginUiBuildArguments } from './hostSdkResolution';
 import { generatePluginActionContracts } from './actionContracts';
@@ -1553,7 +1554,7 @@ describe('classifyPluginAuthorDaemonBuild', () => {
         expect(inventory.entries).toEqual([expect.objectContaining({ artifactId: 'panel' })]);
         const bytes = await readFile(join(artifactsRoot, inventory.entries[0].entry), 'utf8');
         const module = { exports: {} as Record<string, unknown> };
-        new Function('module', 'exports', bytes)(module, module.exports);
+        evaluatePortableCommonJs(bytes, module);
         const renderSurface = module.exports.renderSurface;
         expect(renderSurface).toBeTypeOf('function');
         if (typeof renderSurface !== 'function') throw new Error('Expected the compiled UI export');
