@@ -436,7 +436,7 @@ run_local() {
       [ -f "$local_preparation_script" ] || local_preparation_script="$script_dir/../scripts/utils/dev_targets/remote_validation_preparation.mjs"
       node "$local_preparation_script" \
         "--validation-kind=$policy_kind" "--component-relative-dir=$local_preparation_component" \
-        "--required-tools=$policy_requiredTools" \
+        "--required-tools=$policy_requiredTools" "--preparation-scope=$policy_preparationScope" \
         "--repo-dir=$local_preparation_repo" || exit $?
     fi
     if [ "$policy_bootstrap" = 1 ] || [ "$policy_commandClass" = targeted-validation ]; then
@@ -2079,7 +2079,7 @@ if [ "$requires_remote_dependencies" -eq 1 ]; then
   fi
 fi
 if [ "$requires_remote_workspace_preparation" -eq 1 ]; then
-  remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node \"\$(if [ -f $(quote_remote "$remote_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs") ]; then printf '%s' $(quote_remote "$remote_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs"); else printf '%s' $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs"); fi)\" $(quote_remote "--component-relative-dir=$preparation_component_relative_dir") $(quote_remote "--validation-kind=$remote_validation_kind") $(quote_remote "--required-tools=$policy_requiredTools") $(quote_remote "--repo-dir=$remote_repo") $(quote_remote "--default-build-mode=$remote_preparation_build_mode");"
+  remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node \"\$(if [ -f $(quote_remote "$remote_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs") ]; then printf '%s' $(quote_remote "$remote_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs"); else printf '%s' $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs"); fi)\" $(quote_remote "--component-relative-dir=$preparation_component_relative_dir") $(quote_remote "--validation-kind=$remote_validation_kind") $(quote_remote "--required-tools=$policy_requiredTools") $(quote_remote "--preparation-scope=$policy_preparationScope") $(quote_remote "--repo-dir=$remote_repo") $(quote_remote "--default-build-mode=$remote_preparation_build_mode");"
 fi
 remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_cwd");"
 remote_command_environment=

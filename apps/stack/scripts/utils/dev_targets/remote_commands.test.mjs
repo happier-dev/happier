@@ -1380,7 +1380,6 @@ test('compiler-consuming suites reserve their nested compiler envelope in both d
   for (const [component, config] of [
     ['.', 'vitest.config.ts'],
     ['packages/plugins/claude', 'vitest.config.ts'],
-    ['packages/triage-protocol', 'vitest.source.config.ts'],
     ['apps/ui', 'vitest.legend-native.config.ts'],
     ['packages/plugin-ui', 'vitest.config.ts'],
   ]) {
@@ -1476,8 +1475,6 @@ test('verified Plugin SDK Vitest configs skip publication while emitted configs 
   const { prepareRemoteValidationWorkspace } = await import('./remote_validation_preparation.mjs');
   const requests = [
     { cwd, args: ['pnpm', 'exec', 'vitest', 'run'] },
-    { cwd: root, args: ['pnpm', '--dir', 'packages/plugin-sdk', 'exec', 'vitest', 'run', '--config', 'vitest.source.config.ts'] },
-    { cwd, args: ['vitest', 'run', '--config=./vitest.source.config.ts'] },
   ];
   for (const request of requests) {
     await t.test(request.args.join(' '), async () => {
@@ -1496,7 +1493,7 @@ test('verified Plugin SDK Vitest configs skip publication while emitted configs 
       assert.equal(native.stdout, 'source-test,');
     });
   }
-  for (const config of ['vitest.declaration-closure.config.ts', 'vitest.external-fixture.config.ts', 'vitest.facade-current.config.ts']) {
+  for (const config of ['vitest.source.config.ts', './vitest.source.config.ts', 'vitest.declaration-closure.config.ts', 'vitest.external-fixture.config.ts', 'vitest.facade-current.config.ts']) {
     const args = ['vitest', 'run', `--config=${config}`];
     assert.equal(resolveRemoteCommandPolicy(args, { cwd }).kind, 'runtime', config);
     if (process.platform === 'win32') continue;
@@ -2082,14 +2079,14 @@ test('the real UI hit area native probe has no workspace dist demand', async () 
   assert.deepEqual(commandPolicy.resolveCommandWorkspaceLocks(policy, repoRoot), []);
 });
 
-test('host and first-party plugin source Vitest skip emitted publication while resolver overrides retain preparation', async () => {
+test('complete source Vitest resolvers skip publication while partial resolvers and overrides retain preparation', async () => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/u, '');
   const artifact = fileURLToPath(new URL('./native_command_policy.sh', import.meta.url));
   assert.equal(readFileSync(artifact, 'utf8'), renderNativeCommandPolicy());
   for (const component of ['apps/server', 'packages/cli-common', 'packages/sdk', 'packages/embed', 'packages/channels-protocol', 'packages/email-transports-protocol', 'packages/plugins/channels', 'packages/plugins/channel-email', 'packages/plugins/channel-telegram', 'packages/plugins/channel-discord', 'packages/plugins/scm-github', 'packages/plugins/scm-gitlab', 'packages/plugins/app-context', 'packages/plugins/inspector']) {
     const args = ['node', 'node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.config.ts', 'src/ingress.test.ts'];
     const cases = [
-      { args, kind: 'source-test', heavyClass: component === 'packages/plugins/channels' ? 'focused-validation' : 'validation' },
+      { args, kind: ['apps/server', 'packages/plugins/scm-github'].includes(component) ? 'source-test' : 'runtime' },
       ...['--config=vitest.integration.config.ts', '--root=../other', '--workspace=custom.workspace.ts', '--project=artifact']
         .map(override => ({ args: [...args, override], kind: component === 'apps/server' && override === '--config=vitest.integration.config.ts' ? 'source-test' : 'runtime' })),
       ...(component === 'apps/server' ? [{
@@ -2118,23 +2115,16 @@ test('confirmed workspace-source configs skip dist preparation in both dispatche
   await writeFile(artifact, renderNativeCommandPolicy());
   const { prepareRemoteValidationWorkspace } = await import('./remote_validation_preparation.mjs');
   const components = [
-    'apps/bootstrap', 'packages/agents', 'packages/deployment-protocol', 'packages/deployments',
-    'packages/forge-ci', 'packages/session-core', 'packages/support', 'packages/sync-client', 'packages/triage-sources',
-    ...['auggie', 'backup-destinations', 'channel-slack', 'cloudflare-ai-gateway', 'cursor', 'deepseek',
-      'deploy-cloudflare', 'deploy-vercel', 'deployment-neon', 'deployment-supabase', 'deployment-templates',
-      'devcontainer', 'elevenlabs', 'grok', 'kimi', 'kiro', 'machine-boat', 'machine-crabbox', 'machine-cua',
-      'machine-digitalocean', 'machine-fly', 'machine-hetzner', 'machine-lima', 'machine-lume', 'machine-modal',
-      'machine-vercel', 'ohmypi', 'openai', 'openrouter', 'scm-azure-devops', 'scm-bitbucket', 'scm-git',
-      'vercel-ai-gateway', 'xai'].map(name => `packages/plugins/${name}`),
+    'packages/deployments', 'packages/forge-ci',
+    ...['backup-destinations', 'cloudflare-ai-gateway', 'deepseek',
+      'deploy-cloudflare', 'deploy-vercel', 'deployment-neon', 'deployment-supabase',
+      'devcontainer', 'grok', 'kimi', 'machine-digitalocean', 'machine-hetzner', 'machine-modal',
+      'ohmypi', 'openrouter', 'scm-git', 'vercel-ai-gateway'].map(name => `packages/plugins/${name}`),
   ];
   const configs = [
     ...components.map(component => [component, 'vitest.config.ts']),
-    ['packages/triage-protocol', 'vitest.source.config.ts'],
-    ['packages/voice-modelpacks', 'vitest.direct-source.config.ts'],
     ['packages/plugins/cliproxyapi', 'vitest.config.ts'],
     ['packages/plugins/pi', 'vitest.config.ts'],
-    ['packages/plugins/pi', 'vitest.realOwners.config.ts'],
-    ['packages/plugins/pi', 'vitest.spawnedRealOwners.config.ts'],
   ];
   for (const [component, config] of configs) {
     await t.test(`${component}/${config}`, async () => {

@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import ts from 'typescript';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
@@ -11,6 +12,40 @@ import { prepareWorkspaceSourceTypecheckProjects, readWorkspaceTypecheckSources,
 import { prepareCliTypecheckProjects } from '../../apps/cli/scripts/deriveTypecheckProjects.mjs';
 import { prepareReferencedTypecheckDeclarations, orderTypecheckProjects } from './prepareReferencedTypecheckDeclarations.mjs';
 import { createDistTypeScriptProjectConfig } from './buildTypeScriptPackageDist.mjs';
+
+test('channels declaration preparation never emits Protocol source siblings', async t => {
+  const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+  const root = await mkdtemp(join(tmpdir(), 'happier-channel-declaration-boundary-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const project = join(root, 'declarations.json');
+  await writeFile(project, JSON.stringify(createDistTypeScriptProjectConfig({
+    projectPath: join(repoRoot, 'packages/plugins/channels/tsconfig.json'),
+    compilerOptions: { emitDeclarationOnly: true, noCheck: true, declarationMap: false },
+  })));
+  const parsed = ts.getParsedCommandLineOfConfigFile(project, {}, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic: diagnostic => assert.fail(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
+  });
+  const entry = join(repoRoot, 'packages/plugins/channels/src/testkit/memoryCollection.ts');
+  const source = ts.sys.readFile(entry);
+  assert.equal(typeof source, 'string');
+  const inputs = ts.preProcessFile(source).importedFiles.map(({ fileName }) => {
+    const resolved = ts.resolveModuleName(fileName, entry, parsed.options, ts.sys).resolvedModule;
+    assert.ok(resolved, `the testkit dependency must resolve: ${fileName}`);
+    return resolved.resolvedFileName;
+  }).filter(filename => !filename.endsWith('.d.ts'));
+  parsed.fileNames = [entry, ...inputs];
+  // Use the compiler's output names for the real entry and its direct inputs.
+  // Never emit into the shared checkout; no semantic program is needed to
+  // reproduce the out-of-root declaration path that the native cache recorded.
+  const normalize = filename => filename.replaceAll('\\', '/');
+  const emitted = parsed.fileNames.flatMap(filename => ts.getOutputFileNames(parsed, filename, false)).map(normalize);
+  assert.ok(emitted.includes(normalize(join(repoRoot, 'packages/plugins/channels/dist/testkit/memoryCollection.d.ts'))),
+    'the included testkit still emits its declaration');
+  const protocolSource = normalize(join(repoRoot, 'packages/protocol/src')) + '/';
+  const escaped = emitted.filter(filename => filename.startsWith(protocolSource));
+  assert.equal(escaped.length, 0, `declaration preparation wrote outside its package: ${escaped.slice(0, 3).join(', ')}`);
+});
 
 test('workspace consumers check declaration boundaries while producer self imports keep source types', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-owned-typecheck-'));

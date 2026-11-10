@@ -1,8 +1,8 @@
 import { CHANNEL_STATE_COLLECTION, CHANNEL_DELIVERIES_COLLECTION, CHANNEL_STATE_INDEX_ID, CHANNEL_DELIVERIES_INDEX_ID, CHANNEL_STATE_RECORD_KIND } from '../collections.js';
 import { assertChannelsTestCollectionQueryLimit } from './collectionQueryBound.js';
 import type { PluginCollectionQuery } from '@happier-dev/plugin-sdk/collections';
-import { comparePluginCollectionIndexSortKeysV1, encodePluginCollectionIndexTuplePrefixV1 } from '../../../../protocol/src/plugins/data/collectionsV1.js';
-import { pluginCollectionQueryShapeV1 } from '../../../../protocol/src/plugins/data/collectionQueryWireV1.js';
+import { comparePluginCollectionIndexSortKeysV1, encodePluginCollectionIndexTuplePrefixV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { pluginCollectionQueryShapeV1 } from '@happier-dev/protocol/plugins/data/collectionQueryWireV1';
 
 export type StoredRow<TValue extends Record<string, unknown> = Record<string, unknown>> = Readonly<{
   rowId: string;

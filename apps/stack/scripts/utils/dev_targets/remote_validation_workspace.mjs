@@ -85,6 +85,7 @@ export async function prepareRemoteValidationWorkspace({
   batchReader,
   validationKind = 'runtime',
   requiredTools = '',
+  preparationScope = '',
   defaultBuildMode = validationKind === 'runtime' ? 'source-dev' : 'strict',
   env = process.env,
   signal,
@@ -115,7 +116,8 @@ export async function prepareRemoteValidationWorkspace({
     return { ok: true, built: [], skipped: ['workspace-typecheck-reader'] };
   }
   env = resolveRemoteValidationPreparationEnv(env, validationKind, defaultBuildMode);
-  const livePluginHost = normalizedComponentPath === 'apps/cli' || normalizedComponentPath === 'apps/ui';
+  const components = resolveRemoteValidationPreparationComponents(normalizedComponentPath, validationKind, preparationScope);
+  const livePluginHost = components.some(component => component === 'apps/cli' || component === 'apps/ui');
   const buildOptions = { env, ...(livePluginHost ? { isolatePluginFailures: true } : {}) };
 
   const { ensureWorkspacePackagesBuiltForComponent } = await loadWorkspaceBuildOwner();
@@ -139,7 +141,6 @@ export async function prepareRemoteValidationWorkspace({
       bundledPluginArtifactPublication: { mode: 'write', targetOwnedOnly: true },
     });
   }
-  const components = resolveRemoteValidationPreparationComponents(normalizedComponentPath, validationKind);
   const result = await ensureWorkspacePackagesBuiltForComponent(resolve(repoDir, components[0]), buildOptions);
   for (const component of components.slice(1)) {
     // The UI owns only its bundled UI package subset. The publisher above
@@ -149,11 +150,11 @@ export async function prepareRemoteValidationWorkspace({
     // closure consumed by the UI validation command.
     await ensureWorkspacePackagesBuiltForComponent(resolve(repoDir, component), buildOptions);
   }
-  if (normalizedComponentPath === 'apps/ui') {
+  if (components.includes('apps/ui')) {
     // This inventory is replica-owned too. Current package outputs do not
     // imply that its declaration references were regenerated on this host.
     const { generateBundledPluginUiArtifacts } = await import(pathToFileURL(
-      join(componentDir, 'scripts/generateBundledPluginUiArtifacts.mjs'),
+      join(repoDir, 'apps/ui/scripts/generateBundledPluginUiArtifacts.mjs'),
     ).href);
     await generateBundledPluginUiArtifacts({ repoRoot: resolve(repoDir), mode: 'write', publicationMode: 'live' });
   }
@@ -204,6 +205,7 @@ export async function runRemoteValidationPreparationCli() {
   const repoDir = repo ? resolve(repo.slice('--repo-dir='.length)) : resolve(process.cwd());
   const executorRepoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
   const kind = readValidationKind(process.argv.slice(2));
+  const preparationScope = process.argv.slice(2).find(value => value.startsWith('--preparation-scope='))?.slice('--preparation-scope='.length) ?? '';
   const mode = process.argv.slice(2).find(value => value.startsWith('--default-build-mode='))?.slice('--default-build-mode='.length)
     ?? (kind === 'runtime' ? 'source-dev' : 'strict');
   const env = { ...process.env, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({
@@ -212,12 +214,16 @@ export async function runRemoteValidationPreparationCli() {
   if (repo && resolve(repoDir) !== resolve(executorRepoRoot) && kind !== 'source-test' && kind !== 'typecheck') {
     // The selected checkout owns its package graph and emitted output.
     const { ensureWorkspacePackagesBuiltForComponent } = await import(pathToFileURL(resolve(repoDir, 'scripts/workspaces/ensureWorkspacePackagesBuilt.mjs')).href);
-    await ensureWorkspacePackagesBuiltForComponent(resolveComponentDir(repoDir, readComponentRelativeDir(process.argv.slice(2))).componentDir, { env: resolveRemoteValidationPreparationEnv(env, kind, mode) });
+    const components = resolveRemoteValidationPreparationComponents(readComponentRelativeDir(process.argv.slice(2)), kind, preparationScope);
+    for (const component of components) {
+      await ensureWorkspacePackagesBuiltForComponent(resolveComponentDir(repoDir, component).componentDir, { env: resolveRemoteValidationPreparationEnv(env, kind, mode) });
+    }
   } else {
     await prepareRemoteValidationWorkspace({
       repoDir,
       componentRelativeDir: readComponentRelativeDir(process.argv.slice(2)),
       validationKind: kind,
+      preparationScope,
       requiredTools: process.argv.slice(2).find(value => value.startsWith('--required-tools='))?.slice('--required-tools='.length) ?? '',
       env,
     });

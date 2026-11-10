@@ -24,10 +24,11 @@ writeFileSync(join(sourceFixtureDir, 'package.json'), JSON.stringify({ workspace
 // Source-test classification follows the actual CLI resolver and setup policy.
 // The fixture checkout has no remote dependencies, but retains those declarations.
 mkdirSync(join(sourceFixtureDir, 'apps/cli/src'), { recursive: true });
+mkdirSync(join(sourceFixtureDir, 'apps/cli/scripts'), { recursive: true });
 writeFileSync(join(sourceFixtureDir, 'apps/cli/vitest.config.ts'),
-  readFileSync(new URL('../../../../cli/vitest.config.ts', import.meta.url), 'utf8').replace(
-    "'./scripts/vitestWorkspacePackageResolution'",
-    JSON.stringify(fileURLToPath(new URL('../../../../cli/scripts/vitestWorkspacePackageResolution.ts', import.meta.url)))));
+  readFileSync(new URL('../../../../cli/vitest.config.ts', import.meta.url)));
+writeFileSync(join(sourceFixtureDir, 'apps/cli/scripts/vitestWorkspacePackageResolution.ts'),
+  readFileSync(new URL('../../../../cli/scripts/vitestWorkspacePackageResolution.ts', import.meta.url)));
 writeFileSync(join(sourceFixtureDir, 'apps/cli/src/test-setup.unit.ts'),
   readFileSync(new URL('../../../../cli/src/test-setup.unit.ts', import.meta.url)));
 test.after(() => rmSync(sourceFixtureDir, { recursive: true, force: true }));
@@ -62,6 +63,27 @@ test('workspace aliases prepare their manifest component before remote payload a
   assert.match(command, /remote_validation_preparation\.mjs/);
   assert.match(command, /--component-relative-dir=apps\/viewer/);
   assert.ok(command.indexOf('remote_validation_preparation.mjs') < command.indexOf('--heavyweight-admission'));
+});
+
+for (const platform of ['posix', 'windows']) test(`entry graph preparation reaches the ${platform} worker before its payload`, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-entry-preparation-transport-' });
+  const sourceDir = fixture.path('repo');
+  mkdirSync(join(sourceDir, 'apps/cli'), { recursive: true });
+  writeFileSync(join(sourceDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*'] }));
+  writeFileSync(join(sourceDir, 'apps/cli/package.json'), JSON.stringify({ name: '@fixture/cli' }));
+  const trace = fixture.path('requests');
+  const { binDir } = writeFakeBin({ root: fixture.root, name: 'ssh', content:
+    '#!/bin/sh\nfor arg in "$@"; do last=$arg; done\nprintf "%s\\n" "$last" >> "$TRACE"\n' });
+  const result = await runDevTargetCommand({ target: { ...target, platform }, sourceDir,
+    stackBaseDir: fixture.root, commandArgs: ['node', 'apps/stack/scripts/perf/entry-load.mjs'],
+    dependencyAdmission: 'skip', syncAlreadyVerified: true, provenance: 'skip',
+    env: { ...process.env, TRACE: trace, PATH: `${binDir}:${process.env.PATH}` },
+  });
+  assert.equal(result.code, 0);
+  const requests = readFileSync(trace, 'utf8').trim().split('\n').map(request => platform === 'windows'
+    ? Buffer.from(request.split(' ').at(-1), 'base64').toString('utf16le') : request).join('\n');
+  assert.match(requests, /remote_validation_preparation\.mjs[\s\S]*--preparation-scope=entry-loads[\s\S]*entry-load\.mjs/);
+  if (platform === 'posix') assert.ok(requests.indexOf('--preparation-scope=entry-loads') < requests.indexOf('--heavyweight-admission'));
 });
 
 test('remote preparation retries refused multiplex admission but never an ambiguous command disconnect', async () => {

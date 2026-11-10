@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { once } from 'node:events';
@@ -60,18 +61,25 @@ export async function buildAtmosphereRenderers(options) {
   await assertNativeAdmissionIdle(native);
 });
 
-test('source reload preparation rebuilds stale package output once and publishes a capture before later edits', async t => {
+for (const entryLoads of [false, true]) test(`${entryLoads ? 'entry-load' : 'source reload'} preparation rebuilds stale package output once and publishes a capture before later edits`, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-reload-stale-protocol-' });
   const root = fixture.root;
   for (const app of ['cli', 'ui', 'server', 'stack']) {
     mkdirSync(fixture.path('apps', app), { recursive: true });
     writeFileSync(fixture.path('apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}`,
-      ...(app === 'stack' ? { dependencies: { '@happier-dev/protocol': 'workspace:*' } } : {}) }));
+      ...((entryLoads ? app === 'cli' : app === 'stack') ? { dependencies: { '@happier-dev/protocol': 'workspace:*' } } : {}) }));
   }
   const packageManager = JSON.parse(readFileSync(new URL('../../../../../package.json', import.meta.url), 'utf8')).packageManager;
   writeFileSync(fixture.path('package.json'), JSON.stringify({ private: true, packageManager }));
   writeFileSync(fixture.path('pnpm-lock.yaml'), '# fixture\n');
   writeFileSync(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
+  if (entryLoads) {
+    mkdirSync(fixture.path('packages/sdk'), { recursive: true });
+    writeFileSync(fixture.path('packages/sdk/package.json'), JSON.stringify({ name: '@fixture/sdk' }));
+    mkdirSync(fixture.path('apps/ui/scripts'), { recursive: true });
+    writeFileSync(fixture.path('apps/ui/scripts/generateBundledPluginUiArtifacts.mjs'),
+      'export async function generateBundledPluginUiArtifacts() {}');
+  }
   const pkg = fixture.path('packages/protocol');
   mkdirSync(join(pkg, 'src'), { recursive: true });
   writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@happier-dev/protocol', type: 'module',
@@ -95,18 +103,25 @@ writeFileSync(join(output, 'index.js'), captured);
   const native = await installWorkspaceAdmissionProcessFixture(t, root);
   const env = { ...native.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '1',
     HAPPIER_WORKSPACE_BUILD_MODE: 'strict', HAPPIER_TEST_COMPILER_COUNT: countPath };
-  await ensureWorkspacePackagesBuiltForComponent(fixture.path('apps/stack'), { env, quiet: true });
+  await ensureWorkspacePackagesBuiltForComponent(fixture.path(entryLoads ? 'apps/cli' : 'apps/stack'), { env, quiet: true });
   assert.equal(readFileSync(countPath, 'utf8'), '1');
-  const command = ['node', './apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs', '--worker', '{}'];
+  const command = entryLoads ? ['node', './apps/stack/scripts/perf/entry-load.mjs']
+    : ['node', './apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs', '--worker', '{}'];
   const policy = resolveRemoteCommandPolicy(command, { cwd: root, repoRoot: root, env });
   const prepare = () => prepareRemoteValidationWorkspace({ repoDir: root, componentRelativeDir: policy.component,
-    validationKind: policy.kind, defaultBuildMode: policy.preparationBuildMode, env });
+    validationKind: policy.kind, preparationScope: policy.preparationScope, defaultBuildMode: policy.preparationBuildMode, env });
 
-  writeFileSync(source, 'export const value = "synced-fix";');
+  writeFileSync(source, `${entryLoads ? 'export const REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS = []; ' : ''}export const value = "synced-fix";`);
   await prepare();
   assert.match(readFileSync(output, 'utf8'), /"synced-fix"/,
     'the real reload policy must prepare the new package before the worker can import its dist');
   assert.equal(readFileSync(countPath, 'utf8'), '2', 'one demand compiles the changed package once');
+  if (entryLoads) {
+    const consumer = fixture.path('daemon-import.mjs');
+    writeFileSync(consumer, 'export { REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS } from "./packages/protocol/dist/index.js";');
+    assert.deepEqual((await import(pathToFileURL(consumer).href)).REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS, [],
+      'a newly added Protocol export loads after entry preparation without a manual dist build');
+  }
   await prepare();
   assert.equal(readFileSync(countPath, 'utf8'), '2', 'unchanged reload preparation performs zero compiler work');
 

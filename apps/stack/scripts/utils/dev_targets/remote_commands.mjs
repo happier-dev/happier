@@ -55,22 +55,17 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
   // Verified default configs resolve their workspace imports from source.
   // Merely importing the resolver is insufficient: it maps only the declared
   // packages, so partial configs keep emitted preparation (for example the
-  // machine-docker-sandboxes and Pi defaults).
+  // machine-docker-sandboxes and Pi defaults). Graphs mixing Protocol source
+  // with emitted SDK/deployment-protocol also need dist preparation.
   sourceTestComponents: Object.freeze([
-    'apps/bootstrap', 'apps/server', 'apps/ui',
-    'packages/agents', 'packages/channels-protocol', 'packages/cli-common',
-    'packages/deployment-protocol', 'packages/deployments', 'packages/email-transports-protocol', 'packages/embed',
-    'packages/forge-ci', 'packages/plugin-ui', 'packages/sdk', 'packages/session-core',
-    'packages/support', 'packages/sync-client', 'packages/triage-sources',
-    ...['app-context', 'auggie', 'backup-destinations', 'channel-discord', 'channel-email',
-      'channel-slack', 'channel-telegram', 'channels', 'claude', 'cloudflare-ai-gateway',
-      'cursor', 'deepseek', 'deploy-cloudflare', 'deploy-vercel', 'deployment-neon',
-      'deployment-supabase', 'deployment-templates', 'devcontainer', 'elevenlabs', 'grok',
-      'inspector', 'jira', 'kimi', 'kiro', 'linear', 'machine-boat', 'machine-crabbox',
-      'machine-cua', 'machine-digitalocean', 'machine-fly', 'machine-hetzner', 'machine-lima',
-      'machine-lume', 'machine-modal', 'machine-vercel', 'ohmypi', 'onepassword', 'openai', 'openrouter',
-      'posthog', 'scm-azure-devops', 'scm-bitbucket', 'scm-git', 'scm-github', 'scm-gitlab',
-      'sentry', 'triage', 'vercel-ai-gateway', 'xai'].map(name => `packages/plugins/${name}`),
+    'apps/server', 'apps/ui',
+    'packages/deployments', 'packages/forge-ci', 'packages/plugin-ui',
+    ...['backup-destinations', 'claude', 'cloudflare-ai-gateway',
+      'deepseek', 'deploy-cloudflare', 'deploy-vercel', 'deployment-neon',
+      'deployment-supabase', 'devcontainer', 'grok',
+      'kimi', 'machine-digitalocean', 'machine-hetzner', 'machine-modal', 'ohmypi', 'openrouter',
+      'posthog', 'scm-git', 'scm-github',
+      'sentry', 'triage', 'vercel-ai-gateway'].map(name => `packages/plugins/${name}`),
   ]),
   sourceTestConfigs: Object.freeze(['vitest.config.ts']),
   compilerNativeTestFiles: COMPILER_NATIVE_TEST_FILES,
@@ -134,9 +129,7 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
   // specialized lanes retain the CLI in-memory source resolver unchanged.
   // Unknown configs may consume emitted packages and retain preparation.
   pluginSourceTestConfigs: Object.freeze({
-    'packages/plugin-sdk': Object.freeze(['vitest.config.ts', 'vitest.source.config.ts']),
-    'packages/triage-protocol': Object.freeze(['vitest.source.config.ts']),
-    'packages/voice-modelpacks': Object.freeze(['vitest.direct-source.config.ts']),
+    'packages/plugin-sdk': Object.freeze(['vitest.config.ts']),
     'packages/plugins/claude': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
     'packages/plugins/cliproxyapi': Object.freeze(['vitest.config.ts']),
     'packages/plugins/codex': Object.freeze(['vitest.config.ts', 'vitest.mcpApproval.config.ts', 'vitest.mcpToolPolicy.config.ts']),
@@ -194,7 +187,7 @@ const DEFAULT_COMMAND_POLICY = Object.freeze({
   workerArguments: '0', runnerKnown: '0', componentOverride: '',
   generator: '0', generatorCheck: '0', componentFromNative: '0',
   localCompile: '0', requiredTools: '', selfPublisher: '0', compilerLeaf: '0', controllerDispatcher: '0', workspaceLock: '',
-  preparationBuildMode: 'strict',
+  preparationBuildMode: 'strict', preparationScope: '',
   workspaceSync: '1',
   compilerSuite: '0',
 });
@@ -377,7 +370,7 @@ const COMMAND_RULES = [
   // like test consumers they need runtime outputs, not a strict type verdict.
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'],
     entryRepositoryPath: ['apps/stack/scripts/perf/entry-load.mjs'] },
-    set: { ...validation, kind: 'source-test', componentOverride: 'apps/stack', localCompile: '1', heavyClass: 'entry-loads', preparationBuildMode: 'qa-runtime' } },
+    set: { ...validation, componentOverride: 'apps/cli', preparationScope: 'entry-loads', localCompile: '1', heavyClass: 'entry-loads', preparationBuildMode: 'qa-runtime' } },
   // Reload coordinates completed lookup, finite production and activation.
   // Its producers jointly admit their own leases; charging the coordinator
   // first makes ordinary foreign-lease contention an admission-order refusal.
@@ -1950,7 +1943,7 @@ export function buildRemoteExecCommand(
     }
     if (preparation?.componentRelativeDir != null) {
       requireRemoteRelativeWorkingDirectory(target, preparation.componentRelativeDir);
-      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--required-tools=${policy.requiredTools}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}`);
+      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--required-tools=${policy.requiredTools}`)} ${posixQuote(`--preparation-scope=${policy.preparationScope}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}`);
     }
     body.push(`cd -- ${posixQuote(workingDirectory)}`);
     let payloadCommand = '';
