@@ -20,6 +20,7 @@ type InstalledRuntime = Readonly<{ serverId: string; machineId: string; accountI
 /** Installed child ingress consumes the original admitted root; it never executes another Action. */
 export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerRegistrar, host: Readonly<{
     machineId: string;
+    executeManagedSnapshot?: import('./daemonDeploymentNativeSnapshot').ExecuteManagedNativeSnapshot;
     resolveRequesterIdentity: import('./readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver;
     resolveRequesterRuntime(ingress: RpcHandlerContext): Promise<AdmittedRequesterAccountReadRuntime | null>;
     resolveInstalledRuntime(signal: AbortSignal, accountId: string): Promise<InstalledRuntime | null>;
@@ -89,6 +90,7 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
             serverId: job.input.serverId, externalActionTarget: authority.binding.target,
             externalActionExecutionAuthorization: requesterRuntime.accountAuthorization });
         const deps = createDaemonDeploymentActionDeps({ credentials: requester.credentials,
+            ...(host.executeManagedSnapshot ? { executeManagedSnapshot: host.executeManagedSnapshot } : {}),
             ...(host.ensureServiceObservations ? { ensureServiceObservations: host.ensureServiceObservations } : {}),
             ...(host.captureNativeSetup ? { captureNativeSetup: host.captureNativeSetup } : {}),
             resolveRequesterIdentity: host.resolveRequesterIdentity,

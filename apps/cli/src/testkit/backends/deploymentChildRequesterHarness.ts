@@ -64,9 +64,11 @@ export async function createDeploymentChildRequesterHarness(options: Readonly<{
     if (job.machineId !== machineId || job.installationId !== installed.installationId) {
         throw new Error('Deployment fixture job must target its installed receiver');
     }
+    const sourceMachineId = job.kind === 'snapshot' ? job.input.machineId : 'controller';
+    const sourceInstallationId = job.kind === 'snapshot' ? job.input.installationId : 'controller-installation';
     const binding = { accountId: 'bob', authentication: { kind: 'account' as const, tokenEpoch: 1 },
         serverIdentityId: homeIdentityId, actionId: options.rootActionId ?? job.actionId, requestId: 'private-deployment-request',
-        target: { kind: 'machine' as const, machineId: 'controller' } };
+        target: { kind: 'machine' as const, machineId: sourceMachineId } };
     const rootInput = getActionSpec(binding.actionId).inputSchema.parse(options.rootInput ?? job.input);
     const envelope = encryptionMode === 'plain'
         ? ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target: binding.target, input: rootInput })
@@ -76,10 +78,10 @@ export async function createDeploymentChildRequesterHarness(options: Readonly<{
     const deploymentPreparationAdmission = projectDeploymentPreparationAdmissionV1(binding.actionId, rootInput);
     const nativeAdmission = projectDeploymentNativeAdmissionV1(binding.actionId, rootInput);
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'private-deployment-root', binding: {
-        ...binding, custodianAccountId: 'controller-owner', accountEncryptionMode: encryptionMode, machineId: 'controller',
-        installationId: 'controller-installation', requestEnvelopeDigest,
+        ...binding, custodianAccountId: 'controller-owner', accountEncryptionMode: encryptionMode, machineId: sourceMachineId,
+        installationId: sourceInstallationId, requestEnvelopeDigest,
         ...(isDeploymentChildRootActionIdV1(binding.actionId, deploymentPreparationAdmission) ? { deploymentChildRoot: true } : {}),
-        ...(isDeploymentDomainNativeAdmissionV1(nativeAdmission)
+        ...(isDeploymentDomainNativeAdmissionV1(nativeAdmission) || nativeAdmission?.kind === 'restore'
             ? { environmentId: nativeAdmission.environmentId, deploymentNativeAdmission: nativeAdmission } : {}),
         ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
         ...(options.rootActionId || deploymentOperationForRootActionV1(job.actionId) === undefined ? {} : { deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ ...binding, requestEnvelopeDigest,

@@ -1,10 +1,11 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ManagedMachineV1Schema } from '../machines/managed/managedMachineV1.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import type { DeploymentChildRpcV1 } from './deploymentChildRpcV1.js';
 import { DeploymentDomainChildRoutingV1Schema, DeploymentDomainDiscoverChildRpcV1Schema } from './deploymentChildRpcV1.js';
-import { DeploymentTeardownStepV1Schema } from './deploymentActionsV1.js';
+import { DeploymentTeardownStepV1Schema } from './deploymentTeardownRequestV1.js';
 
 const common = { v: z.literal(1), actionId: z.enum(['deployments.deploy', 'deployments.rollback', 'deployments.promote']),
     machineId: id, installationId: id,
@@ -17,7 +18,7 @@ const common = { v: z.literal(1), actionId: z.enum(['deployments.deploy', 'deplo
 /** Non-content admission references beside E2EE params, authenticated by the incumbent source signature. */
 export const DeploymentChildRoutingV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.strictObject({ v: z.literal(1), kind: z.literal('snapshot'), actionId: z.literal('deployments.backups.restore'),
-        machineId: id, installationId: id, managedId: id, intentRevision: revision, actionOperationId: id,
+        machineId: id, installationId: id, managedId: id, intentRevision: ManagedMachineV1Schema.shape.intentRevision, actionOperationId: id,
         input: z.strictObject({ serverId: id, environmentId: id, targetLinkId: id, machineId: id,
             installationId: id, prepareOperationId: id, expectedRevision: revision }) }),
     z.strictObject({ v: z.literal(1), kind: z.literal('dataRole'), actionId: z.literal('deployments.bindings.set'),

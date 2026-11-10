@@ -1475,12 +1475,21 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         const opened = readDeploymentEnvironmentArtifactV1(prepared, await open(prepared.contentArtifactId, request.context));
                         if (!opened.ok) return failure(opened.error);
                         // Approved replay reconstructs the same invocation-local template continuation.
-                        if (opened.content.previewProvenance && opened.content.definition.kind === 'repository') {
+                        let previewDefinition = opened.content.definition;
+                        if (prepared.previewCompanionOfEnvironmentId) {
+                            const main = await readDeploymentEnvironmentForHost({
+                                environmentId: prepared.previewCompanionOfEnvironmentId, context: request.context },
+                            { readMetadata: readEnvironmentMetadata, open, assertCurrent });
+                            previewDefinition = main.content.definition;
+                        }
+                        if (opened.content.previewProvenance && previewDefinition.kind === 'repository') {
                             const input = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ serverId: prepared.serverId,
                                 projectSourceId: prepared.projectSourceId, newProject: prepared.newProject, requestKey: prepared.requestKey,
                                 protection: prepared.protection, purpose: prepared.purpose, deployerMode: prepared.deployerMode,
+                                ...(prepared.previewCompanionOfEnvironmentId === undefined ? {} : {
+                                    previewCompanionOfEnvironmentId: prepared.previewCompanionOfEnvironmentId }),
                                 preview: { ...prepared.preview, provenance: opened.content.previewProvenance,
-                                    headSha: opened.content.definition.ref } });
+                                    headSha: previewDefinition.ref } });
                             const preview = await resolveEnvironmentCreatePreviewForHost({ input, context: request.context }, previewCreateHost(request.context));
                             if ('errorCode' in preview) return preview;
                             if (preview.fork) return prepareForkPreviewCreateForHost({ prepared, content: opened.content,

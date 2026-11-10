@@ -26,7 +26,8 @@ import { DeploymentChildRoutingV1Schema, projectDeploymentChildRoutingV1 } from 
 import { DeploymentBindingsPreparedInputV1Schema } from './deploymentActionsV1.js';
 import { captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1 } from './deploymentBindingPatchV1.js';
 import { EnvironmentSecretBindingV1Schema } from './storedAppInputV1.js';
-import { DeploymentTargetLinkProviderContentV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
+import { DeploymentTargetLinkProviderContentV1Schema, DeploymentTargetRoleInputSchemasV1,
+  DeploymentTargetRoleInputProtocolSchemasV1 } from '../plugins/contributions/deploymentTargetRolesV1.js';
 import { PluginUiHostReadReferenceV1Schema } from '../plugins/ui/subscriptions.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
 import { projectExternalActionDeploymentNativeEnvelopeAdmissionV1, ExternalActionExecutionAuthorizationBindingV1Schema } from '../actions/externalActionApi.js';
@@ -34,7 +35,53 @@ import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthoriza
 import { createDeploymentDomainContentArtifactIdV1, projectDeploymentNativeAdmissionV1,
   isDeploymentDomainNativeAdmissionV1 } from './deploymentCandidatePublicationV1.js';
 
+it('admits an opaque next-page cursor for branch reads while branch mutations stay closed', () => {
+  const credentialRef = { service: { pluginId: 'com.example.database', localId: 'database' }, accountId: 'token' };
+  const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
+    targetLinkId: 'data-link', expectedTargetLinkRevision: 2, credentialRef,
+    credentialPrincipal: { kind: 'account', accountId: 'owner',
+      purpose: { consumer: { pluginId: 'com.example.database', localId: 'parents' }, purpose: 'database.manage' },
+      target: { kind: 'account', account: credentialRef } },
+    providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'main' },
+    providerEnvironment: { kind: 'custom', id: 'main' } };
+  expect(DeploymentTargetRoleInputSchemasV1['branches.list'].parse(input)).toEqual(input);
+  const nextPage = { ...input, cursor: 'provider-next-page' };
+  expect(DeploymentTargetRoleInputSchemasV1['branches.list'].parse(nextPage)).toEqual(nextPage);
+  expect(DeploymentTargetRoleInputProtocolSchemasV1['branches.list'].parse(nextPage)).toEqual(nextPage);
+  expect(DeploymentTargetRoleInputSchemasV1['branches.create'].safeParse(nextPage).success).toBe(false);
+  expect(DeploymentTargetRoleInputSchemasV1['branches.delete'].safeParse(nextPage).success).toBe(false);
+});
+
 describe('existing deployment restart', () => {
+  it('routes the exact admitted restore snapshot to its managed controller without disclosing native resource content', () => {
+    const offer = { managedId: 'allocation', intentRevision: 0,
+      controller: { machineId: 'controller', installationId: 'controller-installation' },
+      resource: { contributionRef: { pluginId: 'acme.cloud', localId: 'vm' }, schemaVersion: 1, value: { serverId: 'native-private' } },
+      contribution: { pluginId: 'acme.cloud', localId: 'vm' }, coverage: { rootDisk: true, attachedVolumes: false },
+      cost: { kind: 'billed', source: 'Native snapshot pricing' }, consistency: 'running' };
+    const input = { serverId: 'home', environmentId: 'environment', machineId: 'guest', installationId: 'guest-installation',
+      targetLinkId: 'target', deploymentId: 'deployment', source: { kind: 'repository', snapshotId: 'backup' }, expectedRevision: 1,
+      mode: 'confirm', prepareOperationId: 'prepared', snapshotReview: offer };
+    const child = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'snapshot', actionId: 'deployments.backups.restore',
+      input, machineId: 'controller', installationId: 'controller-installation', actionOperationId: 'restore-operation',
+      label: 'Before restore', reason: 'Restore existing database', offer });
+    expect(doesDeploymentChildInputMatchRootV1({ rootActionId: 'deployments.backups.restore', rootInput: input, child })).toBe(true);
+    expect(doesDeploymentChildInputMatchRootV1({ rootActionId: 'deployments.backups.restore',
+      rootInput: { ...input, machineId: 'other' }, child })).toBe(false);
+    expect(doesDeploymentChildInputMatchRootV1({ rootActionId: 'deployments.backups.restore',
+      rootInput: { ...input, snapshot: false }, child })).toBe(false);
+    expect(doesDeploymentChildInputMatchRootV1({ rootActionId: 'deployments.backups.restore',
+      rootInput: { ...input, source: { kind: 'upload', transferId: 'other' } }, child })).toBe(false);
+    expect(doesDeploymentChildInputMatchRootV1({ rootActionId: 'deployments.backups.restore',
+      rootInput: { ...input, destination: { kind: 'volume', service: 'db', volume: 'data' } }, child })).toBe(false);
+    expect(doesDeploymentChildInputMatchRootV1({ rootActionId: 'deployments.backups.restore',
+      rootInput: { ...input, snapshotReview: { ...offer, managedId: 'other' } }, child })).toBe(false);
+    const routing = DeploymentChildRoutingV1Schema.parse(projectDeploymentChildRoutingV1(child));
+    expect(routing).toMatchObject({ kind: 'snapshot', managedId: 'allocation', intentRevision: 0, machineId: 'controller' });
+    expect(JSON.stringify(routing)).not.toContain('native-private');
+    expect(readDeploymentChildRpcV1({ rootActionId: 'deployments.backups.restore', deploymentChildRoot: true,
+      effectActionId: 'deployments.backups.restore', method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: child })).toEqual(child);
+  });
   it('recovers the same retained native intent without conflating restore preparation', () => {
     const teardown = { serverId: 'home', environmentId: 'environment', requestKey: 'remove', reason: 'manual' };
     expect(readDeploymentActionOperationRequestIdV1('deployments.teardown', teardown))
@@ -721,6 +768,36 @@ describe('deployment semantic preparation', () => {
     }
   });
 
+  it('retains a named preview companion through authored admission, prepared storage and exact list demand', () => {
+    const actionId = 'deployments.environments.create';
+    const repository = { kind: 'github', deployment: 'https://github.com', repository: 'acme/app' };
+    const reference = { templateEnvironmentId: 'template', expectedTemplateRevision: 7,
+      pullRequestId: 'pr:17', runtimeTargetLinkId: 'runtime' };
+    const authored = { serverId: 'home', projectSourceId: 'source', requestKey: 'companion',
+      protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+      previewCompanionOfEnvironmentId: 'main-preview', preview: { ...reference, headSha: 'a'.repeat(40),
+        provenance: { v: 1, templateEnvironmentId: 'template', runtimeTargetLinkId: 'runtime', repository,
+          pullRequestId: 'pr:17', pullRequestNumber: 17, author: { id: 'author', login: 'contributor' },
+          headRepository: repository } } };
+    const schema = getActionSpec(actionId).inputSchema;
+    const parsed = schema.parse(authored);
+    expect(parsed).toMatchObject({ previewCompanionOfEnvironmentId: 'main-preview', name: '', preview: authored.preview });
+    expect(projectDeploymentPreparationAdmissionV1(actionId, parsed)).toMatchObject({
+      operation: 'create', previewCompanionOfEnvironmentId: 'main-preview', preview: reference });
+    const prepared = { serverId: 'home', projectSourceId: 'source', requestKey: 'companion',
+      protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'controller',
+      previewCompanionOfEnvironmentId: 'main-preview', preview: reference,
+      contentArtifactId: 'fresh-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    expect(DeploymentEnvironmentCreateStorageInputV1Schema.parse(prepared)).toEqual(prepared);
+    expect(DeploymentEnvironmentCreateStorageInputV1Schema.safeParse({ ...prepared, purpose: 'preview' }).success).toBe(false);
+    expect(schema.safeParse({ ...authored, definition: { from: 'image', image: 'postgres:17', port: 5432 } }).success).toBe(false);
+    const input = { serverId: 'home', previewCompanionOfEnvironmentId: 'main-preview' };
+    const spec = getActionSpec('deployments.environments.list');
+    if (!spec.serverTransport) throw new Error('Environment list transport missing');
+    const request = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input });
+    expect(new URL(request.path, 'https://home.test').searchParams.get('previewCompanionOfEnvironmentId')).toBe('main-preview');
+  });
+
   it('admits authored compose/image create intent without accepting a prepared-content overlay', () => {
     const schema = getActionSpec('deployments.environments.create').inputSchema;
     const metadata = { serverId: 'home', projectSourceId: 'source', requestKey: 'create',
@@ -770,6 +847,27 @@ describe('deployment semantic preparation', () => {
       { ...input, deploy: { requestKey: 'other' } }, { ...input, serverId: 'foreign' }]) {
       expect(doesDeploymentChildInputMatchRootV1({ rootActionId: actionId, rootInput, child })).toBe(false);
     }
+  });
+
+  it('places repository template changes at the admitted workspace rather than the runtime controller', async () => {
+    const { resolveDeploymentTemplateExecutionMachineIdV1 } = await import('./deploymentTemplateInstantiationV1.js');
+    const input = getActionSpec('deployments.templates.instantiate').inputSchema.parse({ mode: 'preview',
+      serverId: 'home', machineId: 'runtime', projectSourceId: 'source',
+      templateRef: { sourceId: 'apps', itemId: 'database', version: '2',
+        ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+      environment: { kind: 'existing', environmentId: 'environment', expectedRevision: 2 },
+      target: { kind: 'existing', targetLinkId: 'runtime', expectedRevision: 3, installationId: 'installed' },
+      destination: { kind: 'repositoryPullRequest', workspace: { kind: 'workspace-ref', serverId: 'home', id: 'checkout' },
+        sourceRevision: 4, repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
+        baseCommit: 'a'.repeat(40), baseBranch: 'main', branchName: 'add-database', composePath: 'compose.yaml', title: 'Add database' },
+      bindings: [] });
+    const selected = await resolveDeploymentTemplateExecutionMachineIdV1(input,
+      async () => { throw new Error('Repository placement must not require the runtime controller'); },
+      async workspace => workspace.id === 'checkout' ? { ok: true, machineId: 'checkout-machine' }
+        : { ok: false, errorCode: 'workspace_unavailable', error: 'workspace_unavailable' });
+    expect(selected).toEqual({ ok: true, machineId: 'checkout-machine' });
+    expect(getActionSpec('deployments.templates.instantiate').inputSchema.safeParse({ ...input,
+      destination: { ...input.destination, cwd: '/caller-controlled-path' } }).success).toBe(false);
   });
 
   it('admits pinned opaque template intent with a read-only preview and reviewed apply', () => {
@@ -882,6 +980,17 @@ describe('deployment admission results', () => {
 });
 
 describe('deployment build placement update', () => {
+  it('accepts the existing migration policy and explicit removal through Environment update', () => {
+    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 1,
+      contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const policy = { migration: { service: 'app', argv: ['migrate', ''], pendingCheck: { argv: ['pending'] } },
+      backupBeforeMigration: false, migrationFailurePolicy: 'rollbackCodeOnly' };
+    expect(DeploymentEnvironmentUpdateInputV1Schema.parse({ ...input, patch: { ownServer: policy } }).patch?.ownServer).toEqual(policy);
+    expect(DeploymentEnvironmentUpdateInputV1Schema.parse({ ...input, patch: { ownServer: { migration: null } } }).patch?.ownServer)
+      .toEqual({ migration: null });
+    expect(omitDeploymentEnvironmentPrivateContentPatchV1({ ownServer: policy })).toEqual({ ownServer: {
+      backupBeforeMigration: false, migrationFailurePolicy: 'rollbackCodeOnly' } });
+  });
   it('authors exact private exports and stored source while refusing public exposure and invalid selections', () => {
     const serviceExport = { key: 'database', service: 'db', containerPort: 5432, scheme: 'postgres',
       exposure: 'privateNetwork', privateNetwork: 'network-a' };

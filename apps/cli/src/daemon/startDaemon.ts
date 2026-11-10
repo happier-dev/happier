@@ -1792,7 +1792,43 @@ export async function startDaemon(
       },
     };
     const deploymentAccountHomeServerId = configuration.activeServerId;
+    const acquireServiceExportForward: NonNullable<ApiMachineClientLifecycleDependencies['acquireServiceExportForward']> = async input => {
+        const runtime = machineIrohRuntime;
+        const authorization = input.context.externalActionExecutionAuthorization;
+        const requester = authorization ? readRequesterAccountActionContext(authorization) : undefined;
+        const accountId = authorization?.binding.accountId ?? externalActionAccountId;
+        const requesterCredentials = authorization ? requester?.credentials : credentials;
+        if (!runtime || !accountId || !requesterCredentials || !machineId) throw Object.assign(
+          new Error('The private service carrier is unavailable'), { code: 'machine_carrier_unavailable' });
+        const requesterApi = await ApiClient.create(requesterCredentials);
+        const nativeForward = await createServiceExportMachineForward({ accountId, localMachineId: machineId, runtime,
+          resolveTrustRoots: resolvePeerMediationTrustRoots,
+          readTargetMachine: (targetMachineId, signal) => runWithServerHttpBaseUrl(readDaemonHomeServerHttpBaseUrl(),
+            () => requesterApi.getMachine(targetMachineId, { signal })),
+          mintGrant: (request, signal) => runWithServerHttpBaseUrl(readDaemonHomeServerHttpBaseUrl(),
+            () => requesterApi.mintPeerMediationRouteGrant(request, { signal })),
+        })({ targetMachineId: input.targetMachineId, serviceExport: input.serviceExport, signal: input.signal,
+          preferredListenPort: input.preferredListenPort, onFailure: input.onFailure, onRecovered: input.onRecovered });
+        const forwardSignal = input.signal;
+        const forget = () => {
+          const owned = requesterServiceForwards.get(accountId);
+          owned?.delete(forward);
+          if (!owned?.size) requesterServiceForwards.delete(accountId);
+          forwardSignal.removeEventListener('abort', forget);
+        };
+        const forward = { ...nativeForward, async close() {
+          forget();
+          await nativeForward.close();
+        } };
+        const owned = requesterServiceForwards.get(accountId) ?? new Set();
+        owned.add(forward);
+        requesterServiceForwards.set(accountId, owned);
+        forwardSignal.addEventListener('abort', forget, { once: true });
+        if (forwardSignal.aborted) forget();
+        return forward;
+    };
     const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
+      acquireServiceExportForward,
       deploymentAccountExecution: {
         credentials,
         serverUrl: readDaemonHomeServerHttpBaseUrl(),
@@ -2275,41 +2311,7 @@ export async function startDaemon(
       const stamp = target.requesterWorkAttributionV1 ?? tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1;
       return !stamp || stamp.serverId === configuration.activeServerId && stamp.accountId === externalActionAccountId;
     }, externalActionAccountId ? { serverId: requesterRuntimeServerId, accountId: externalActionAccountId } : undefined);
-    const acquireServiceExportForward: NonNullable<ApiMachineClientLifecycleDependencies['acquireServiceExportForward']> = async input => {
-        const runtime = machineIrohRuntime;
-        const authorization = input.context.externalActionExecutionAuthorization;
-        const requester = authorization ? readRequesterAccountActionContext(authorization) : undefined;
-        const accountId = authorization?.binding.accountId ?? externalActionAccountId;
-        const requesterCredentials = authorization ? requester?.credentials : credentials;
-        if (!runtime || !accountId || !requesterCredentials || !machineId) throw Object.assign(
-          new Error('The private service carrier is unavailable'), { code: 'machine_carrier_unavailable' });
-        const requesterApi = await ApiClient.create(requesterCredentials);
-        const nativeForward = await createServiceExportMachineForward({ accountId, localMachineId: machineId, runtime,
-          resolveTrustRoots: resolvePeerMediationTrustRoots,
-          readTargetMachine: (targetMachineId, signal) => runWithServerHttpBaseUrl(readDaemonHomeServerHttpBaseUrl(),
-            () => requesterApi.getMachine(targetMachineId, { signal })),
-          mintGrant: (request, signal) => runWithServerHttpBaseUrl(readDaemonHomeServerHttpBaseUrl(),
-            () => requesterApi.mintPeerMediationRouteGrant(request, { signal })),
-        })({ targetMachineId: input.targetMachineId, serviceExport: input.serviceExport, signal: input.signal,
-          preferredListenPort: input.preferredListenPort, onFailure: input.onFailure, onRecovered: input.onRecovered });
-        const forwardSignal = input.signal;
-        const forget = () => {
-          const owned = requesterServiceForwards.get(accountId);
-          owned?.delete(forward);
-          if (!owned?.size) requesterServiceForwards.delete(accountId);
-          forwardSignal.removeEventListener('abort', forget);
-        };
-        const forward = { ...nativeForward, async close() {
-          forget();
-          await nativeForward.close();
-        } };
-        const owned = requesterServiceForwards.get(accountId) ?? new Set();
-        owned.add(forward);
-        requesterServiceForwards.set(accountId, owned);
-        forwardSignal.addEventListener('abort', forget, { once: true });
-        if (forwardSignal.aborted) forget();
-        return forward;
-    };
+
     const {
       processOwnershipRuntime,
       processActionLifecycle,
@@ -4335,7 +4337,7 @@ export async function startDaemon(
             homeTransportReplacementPending = !attemptedApiMachine.requestServerTransportReconnect();
           }
           apiMachineForSessions = attemptedApiMachineForSessions;
-          attemptedApiMachineForSessions?.registerDeploymentChildRoutes(daemonWorkSignal);
+          attemptedApiMachineForSessions?.registerDeploymentChildRoutes(daemonWorkSignal, managedMachinePolicyAdapter.snapshotAdmitted);
           machineActivity.notifyChanged();
           syncActivity.notifyChanged();
           sessionLiveWorkProducer.notifyChanged();

@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { acquireDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
 /**
  * WebSocket client for machine/daemon communication with Happy server
  * Similar to ApiSessionClient but for machine-scoped connections
@@ -1104,6 +1105,13 @@ export class ApiMachineClient {
 
     readDeploymentBackupOperations(request: Parameters<HostActionOperationRuntime['readDeploymentBackupOperations']>[0]) {
         return this.actionOperationRuntime.readDeploymentBackupOperations(request);
+    }
+
+    async acquireDeploymentRestoreUpload(input: Readonly<{ transferId: string; environmentId: string }>,
+        context: import('@happier-dev/protocol').ActionExecutorContext) {
+        const accountId = context.externalActionExecutionAuthorization?.binding.accountId ?? context.runtimeAccountId;
+        if (!accountId) return null;
+        return acquireDeploymentRestoreUpload(this.fileSystemTransferRelayOwner.store, { ...input, accountId });
     }
 
     /** Installed content transport facts, independent of the invoking Account's mode. */
@@ -2994,9 +3002,11 @@ export class ApiMachineClient {
         registerDaemonMachineVitalsRpcHandlers(this.rpcHandlerManager, options);
     }
 
-    registerDeploymentChildRoutes(daemonWorkSignal: AbortSignal): void {
+    registerDeploymentChildRoutes(daemonWorkSignal: AbortSignal,
+        executeManagedSnapshot?: import('@/deployments/daemonDeploymentNativeSnapshot').ExecuteManagedNativeSnapshot): void {
         registerDaemonDeploymentChildRpcHandler(this.rpcHandlerManager, {
             machineId: this.machine.id, signal: daemonWorkSignal,
+            ...(executeManagedSnapshot ? { executeManagedSnapshot } : {}),
             ensureServiceObservations: () => this.ensureEnvironmentServices(),
             captureNativeSetup: () => {
                 const desired = this.captureMachineSetupDesired();
