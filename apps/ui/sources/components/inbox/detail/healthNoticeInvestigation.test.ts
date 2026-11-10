@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
 import { MachineServiceIdentityV1Schema } from '@happier-dev/protocol';
+import { AgentsBackendsListOutputSchema } from '@happier-dev/protocol/actions/agentBackendInventory';
+import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { TriageSessionHandoffResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { createTriageRunConfiguredActionHandler } from '@happier-dev/plugins-triage/happier-plugin-ui/triage-configured-action-native';
@@ -86,7 +88,7 @@ describe('useHealthNoticeInvestigate', () => {
   it.each([
     { mode: 'start', truncated: false }, { mode: 'review', truncated: false },
     { mode: 'start', truncated: true }, { mode: 'review', truncated: true },
-  ] as const)('opens a seeded composer for an unresolved Inbox deployment without starting a Session ($mode, partial Projects=$truncated)', async ({ mode, truncated }) => {
+  ] as const)('opens a seeded composer for an unresolved repository workspace in an Inbox deployment with valid host DTOs without starting a Session ($mode, partial Projects=$truncated)', async ({ mode, truncated }) => {
     const artifact = createAccountNoticeArtifactFixture({ header: {
       title: 'odeploy-qa-env-1030: deployment failed', type: 'blocked', healthPhase: 'open',
       source: { kind: 'host', topic: 'service_health', subject: {
@@ -103,6 +105,18 @@ describe('useHealthNoticeInvestigate', () => {
     const configured = createTriageRunConfiguredActionHandler();
     const agentTarget: AgentExecutionTargetV1 = { kind: 'agent', identity: { pluginId: 'happier.example.agent', localId: 'example' } };
     const targetKey = buildAgentTargetKeyV2(agentTarget);
+    const agents = AgentsBackendsListOutputSchema.parse({ defaultTargetKey: targetKey,
+      items: [{ targetKey, label: 'Example Agent', agentTarget, enabled: true }] });
+    const environment = DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, environment: {
+      v: 1, id: 'environment', serverId: scope.serverId, projectSourceId: 'project', revision: 1,
+      owner: { kind: 'account', accountId: scope.accountId }, protection: 'nonProduction',
+      purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'other-account-machine',
+      runtimeTargetLinkId: 'runtime', contentArtifactId: 'environment-content',
+      contentHeaderVersion: 1, contentBodyVersion: 1,
+      capabilities: { role: 'manager', read: true, deploy: true, manage: true,
+        manageBindings: true, manageTargets: true, delete: true },
+      createdByAccountId: scope.accountId, createdAtMs: 1, updatedAtMs: 1,
+    }, targetLinks: [] });
     const bundledManifest = JSON.parse(readFileSync(new URL('../../../../../cli/assets/bundled-plugin-manifests/triage.json', import.meta.url), 'utf8')) as {
       contributes: { actions: Array<{ id: string; inputSchema: object; resultSchema: object }> };
     };
@@ -128,7 +142,7 @@ describe('useHealthNoticeInvestigate', () => {
               const id = typeof action === 'string' ? action : action.localId;
               hostActions.push(id);
               if (id === 'actions/read-v1') return { v: 1, availability: 'parsed', revision: '1', actions: [{
-                actionId: 'investigate', label: 'Investigate deployment', enabled: true, appliesTo: ['other'],
+                actionId: 'investigate', label: 'Investigate repository workspace', enabled: true, appliesTo: ['other'],
                 profileId: null, workspaceMode: 'repository', target: { kind: 'agent', promptInvocationId: null,
                   seededFallbackInstruction: 'Investigate this failed deployment.', delivery: 'send' },
               }] };
@@ -138,12 +152,9 @@ describe('useHealthNoticeInvestigate', () => {
                 revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion },
                 seq: artifact.seq, createdAt: artifact.createdAt, updatedAt: artifact.updatedAt,
               } };
-              if (id === 'deployments.environments.get') return { ok: true, environment: {
-                id: 'environment', projectSourceId: 'project', controllerMachineId: 'other-account-machine',
-              } };
+              if (id === 'deployments.environments.get') return environment;
               if (id === 'projects.list') return { items: [], truncated };
-              if (id === 'agents.backends.list') return { defaultTargetKey: targetKey,
-                items: [{ targetKey, agentTarget, enabled: true }] };
+              if (id === 'agents.backends.list') return agents;
               throw new Error(`Unexpected host Action ${id}`);
             },
           },
