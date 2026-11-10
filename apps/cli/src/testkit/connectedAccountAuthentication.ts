@@ -31,12 +31,14 @@ export async function createPortableConnectedAccountAuthenticationHttpFixture(or
         'connectedServices.authentication.beginConnect': { approvalRequiredSurfaces: [] },
         'connectedServices.authentication.beginReconnect': { approvalRequiredSurfaces: [] },
         'connectedServices.authentication.submitManual': { approvalRequiredSurfaces: [] },
+        'connectedServices.authentication.cancel': { approvalRequiredSurfaces: [] },
         'connectedServices.authentication.continueConnect': { approvalRequiredSurfaces: [] },
         'connectedServices.configuration.replace': { approvalRequiredSurfaces: [] },
     }, approvalWaivedSurfaces: {
         'connectedServices.authentication.beginConnect': ['agent', 'cli'],
         'connectedServices.authentication.beginReconnect': ['agent', 'cli'],
         'connectedServices.authentication.submitManual': ['agent', 'cli'],
+        'connectedServices.authentication.cancel': ['agent', 'cli'],
         'connectedServices.authentication.continueConnect': ['agent', 'cli'],
         'connectedServices.configuration.replace': ['agent', 'cli'],
     } }) });

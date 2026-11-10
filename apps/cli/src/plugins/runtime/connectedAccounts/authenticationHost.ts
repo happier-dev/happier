@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { createConnectedAccountAuthenticationAttemptOwner, createConnectedAccountConfigurationOwner,
     executeConnectedAccountAuthenticationCommand, type ConnectedAccountAttemptTransactionRecord } from '@happier-dev/cli-common/connectedAccounts';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId, ConnectedAccountDaemonCommand,
-    ConnectedAccountAttemptResponse, ConnectedAccountDaemonControlCommand, ConnectedAccountDaemonControlResponse } from '@happier-dev/protocol';
+    ConnectedAccountAttemptResponse, ConnectedAccountDaemonControlCommand, ConnectedAccountDaemonControlResponse,
+    PluginConnectedAccountAuthenticationV2 } from '@happier-dev/protocol';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION, CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import { connectedAccountSourceCustodyV1Equal } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
@@ -43,6 +44,16 @@ export type CredentialedConnectedAccountAuthenticationHost = Readonly<{
 
 function unavailable(code: string, attemptId?: string) {
     return { status: 'unavailable' as const, code, ...(attemptId ? { attemptId } : {}) };
+}
+
+/** The catalog and begin admission use the same declared authentication placement. */
+export function resolveCredentialedConnectedAccountAuthenticationPlacement(
+    authentication: PluginConnectedAccountAuthenticationV2 | undefined,
+    machineId?: string,
+): Readonly<{ kind: 'account' } | { kind: 'machine'; machineId: string } | { kind: 'unavailable'; code: string }> {
+    if (authentication?.account) return { kind: 'account' as const };
+    if (machineId) return { kind: 'machine' as const, machineId };
+    return { kind: 'unavailable' as const, code: 'connected_account_authentication_mode_unavailable' };
 }
 function failureCode(error: unknown): string {
     return error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
@@ -190,8 +201,9 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                     if (command.operation === 'beginConnect' || command.operation === 'beginReconnect') {
                         const service = command.operation === 'beginConnect' ? command.service : command.account.service;
                         const declared = input.contributions.describe(service);
-                        if (!declared?.descriptor.authentication.account) return machineId
-                            ? options.native(machineId, command) : unavailable('connected_account_authentication_mode_unavailable');
+                        const placement = resolveCredentialedConnectedAccountAuthenticationPlacement(declared?.descriptor.authentication, machineId);
+                        if (placement.kind === 'unavailable') return unavailable(placement.code);
+                        if (placement.kind === 'machine') return options.native(placement.machineId, command);
                         const selected = await select(service);
                         const modeId = command.operation === 'beginConnect' ? command.modeId
                             : (await persistence.attempts.accounts.readExact(command.account))?.authenticationModeId;
@@ -215,6 +227,11 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                         : await runtime(await select(command.service)).attempts.selectResumableAttempts(pending) };
                 }
                 if (command.operation === 'describeService') {
+                    // Operation admission belongs to the selected Machine's executable
+                    // registry and peer transport, not this cold authentication catalog.
+                    if (command.requiredOperation) return machineId
+                        ? options.native(machineId, command)
+                        : unavailable('connected_account_peer_operation_admission_unavailable');
                     try {
                         // Discovery consumes the admitted declaration, including native-only
                         // modes. Acquiring an Account runtime here hides daemon-owned imports.

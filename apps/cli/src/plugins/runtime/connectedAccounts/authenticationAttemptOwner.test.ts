@@ -626,6 +626,27 @@ describe('addressed manual attempts', () => {
         } finally { h.owner.dispose(); }
     });
 
+    it.each(['wrong-field', 'unknown-secret'])('keeps refused manual input retryable (%s)', async invalid => {
+        const h = harness();
+        try {
+            await h.owner.beginConnect({ service, modeId: 'manual' });
+            await expect(h.owner.submitManual({
+                attemptId: 'attempt-1',
+                fields: invalid === 'wrong-field' ? { apiKey: 'candidate' } : { token: 'candidate' },
+                ...(invalid === 'unknown-secret' ? { selectedSecrets: { wrong: {
+                    ref: 'happier:shared-secret:v1:00000000-0000-4000-8000-000000000001', resourceRevision: 1,
+                } } } : {}),
+            })).resolves.toMatchObject({ status: 'rejected', code: 'connected_account_manual_fields_invalid' });
+            expect(h.invoke).not.toHaveBeenCalled();
+            expect(h.transactionApi.records.has('attempt-1')).toBe(true);
+            await expect(h.owner.read({ attemptId: 'attempt-1' }))
+                .resolves.toMatchObject({ status: 'awaitingManual' });
+            await expect(h.owner.submitManual({ attemptId: 'attempt-1', fields: { token: 'candidate' } }))
+                .resolves.toMatchObject({ status: 'connected' });
+            expect(h.transactionApi.records.has('attempt-1')).toBe(false);
+        } finally { h.owner.dispose(); }
+    });
+
     it('expires unsubmitted manual input at the acknowledged lifetime without entering the provider', async () => {
         let now = 1_000;
         const h = harness({ now: () => now });

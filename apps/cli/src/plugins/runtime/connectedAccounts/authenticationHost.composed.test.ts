@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import { ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import type { ActionId } from '@happier-dev/protocol';
 import { createPortableConnectedAccountAuthenticationHttpFixture } from '@/testkit/connectedAccountAuthentication';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -16,7 +17,43 @@ import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/regi
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 
-it('continues a manual Account attempt in a fresh host after beginConnect has returned', async () => {
+it('agrees with begin admission when the catalog lists daemon-only Slack authentication without a Machine', async () => {
+    const origin = 'http://slack-authentication-availability.test';
+    const service = { pluginId: 'happier.channel.slack', localId: 'slack-bot' };
+    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, {
+        includeBundledPluginIds: [service.pluginId],
+    });
+    const machineId = 'slack-authentication-machine';
+    const native = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
+        expect(request.machineId).toBe(machineId);
+        return { status: 'awaitingManual', attemptId: 'native-slack-attempt' };
+    });
+    try {
+        await runWithServerHttpBaseUrl(origin, async () => {
+            await ensureCliActionPolicySettings(fixture.credentials, origin);
+            const executor = createCliActionExecutorFromCredentials({ credentials: fixture.credentials,
+                pluginActionExecutionOwner: 'current_process' });
+            const context = { surface: 'cli' as const, actionRequestId: randomUUID() };
+            expect(await executor.execute('connectedServices.authentication.beginConnect', { service, modeId: 'bot-tokens' }, context))
+                .toMatchObject({ ok: true, result: { status: 'unavailable', code: 'connected_account_authentication_mode_unavailable' } });
+            const catalog = await executor.execute('connectedServices.catalog.list', {}, context);
+            if (!catalog.ok) throw new Error(catalog.errorCode);
+            const services = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.catalog.list'].parse(catalog.result).services;
+            expect(services.find(entry => entry.service.pluginId === service.pluginId && entry.service.localId === service.localId))
+                .toMatchObject({ service, canAdd: false, reason: 'connected_account_authentication_mode_unavailable',
+                    descriptor: { authentication: { modes: expect.arrayContaining([expect.objectContaining({ id: 'bot-tokens' })]) } } });
+            expect(services.find(entry => entry.service.pluginId === 'happier.voice.openai' && entry.service.localId === 'openai'))
+                .toMatchObject({ canAdd: true });
+            expect(fixture.machineRequests).toBe(0);
+            expect(fixture.promotedResourceCount).toBe(0);
+            expect(await executor.execute('connectedServices.authentication.beginConnect', { service, modeId: 'bot-tokens', machineId }, context))
+                .toMatchObject({ ok: true, result: { status: 'awaitingManual', attemptId: 'native-slack-attempt' } });
+            expect(native).toHaveBeenCalledOnce();
+        });
+    } finally { native.mockRestore(); await fixture.close(); }
+});
+
+it('continues a refused manual Account attempt in a fresh host', async () => {
     const origin = 'http://manual-account-host-handoff.test';
     const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin);
     const registries: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>[] = [];
@@ -38,10 +75,14 @@ it('continues a manual Account attempt in a fresh host after beginConnect has re
                 return registry.connectedAccountAuthenticationHost;
             };
             const native = async (): Promise<never> => { throw new Error('Account attempt must remain portable'); };
-            const begun = await (await createHost()).authenticationCommand(undefined,
+            const first = await createHost();
+            const begun = await first.authenticationCommand(undefined,
                 { operation: 'beginConnect', service: fixture.service, modeId: 'manual' }, { native });
             expect(begun).toMatchObject({ status: 'awaitingManual', attemptId: expect.any(String) });
             if (begun.status !== 'awaitingManual') throw new Error('Expected manual attempt');
+            expect(await first.authenticationCommand(undefined,
+                { operation: 'submitManual', attemptId: begun.attemptId, fields: { apiKey: 'wrong-field-candidate' } }, { native }))
+                .toMatchObject({ status: 'rejected', code: 'connected_account_manual_fields_invalid' });
             await registries[0]!.dispose();
             const resumed = await createHost();
             expect(await resumed.authenticationCommand(undefined, { operation: 'read', attemptId: begun.attemptId }, { native }))

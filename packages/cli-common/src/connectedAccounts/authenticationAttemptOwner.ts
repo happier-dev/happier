@@ -3747,12 +3747,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             const selectedFieldIds = new Set(listConnectedAccountSecretCredentialKeysV1(attempt.admission.descriptor).values());
             if (!areConnectedAccountManualFieldsValidV1(attempt.admission.descriptor, input.fields, input.selectedSecrets)
                 || Object.keys(input.selectedSecrets ?? {}).some(fieldId => !selectedFieldIds.has(fieldId))) {
-                const response: AttemptResponse = {
+                return {
                     status: 'rejected', attemptId: attempt.id,
                     code: 'connected_account_manual_fields_invalid',
                 };
-                await destroyAttempt(attempt, response);
-                return response;
             }
             return await invoke(attempt, {
                 kind: 'submitManual',

@@ -154,18 +154,27 @@ export function createCliConnectedServiceAction(params: Readonly<{
       },
       readSetupCatalog: async () => {
         await assertReadCurrent();
-        const [{ readCurrentContributionRegistry }, { projectConnectedAccountDescriptors }, { listProviderGatewayContributionsV1 }] = await Promise.all([
+        const [{ readCurrentContributionRegistry }, { projectConnectedAccountDescriptors }, { listProviderGatewayContributionsV1 },
+          { resolveCredentialedConnectedAccountAuthenticationPlacement }, { isAccountDirectConnectedAccountModeV1 }] = await Promise.all([
           import('@/agent/catalog/snapshot'), import('@/plugins/projection/registry/connectedAccounts'),
           import('@happier-dev/protocol/providers/gatewayContributionsV1'),
+          import('@/plugins/runtime/connectedAccounts/authenticationHost'),
+          import('@happier-dev/protocol/connect/plugin-connected-account-authentication-v2'),
         ]);
         const registry = readCurrentContributionRegistry();
         const descriptors = Object.values(projectConnectedAccountDescriptors(registry));
         await assertReadCurrent();
-        return { status: 'ready', services: descriptors.flatMap(descriptor => descriptor.pluginId ? [{
-          service: { pluginId: descriptor.pluginId, localId: descriptor.id }, descriptor,
-          canAdd: descriptor.availability.state === 'available',
-          reason: descriptor.availability.state === 'available' ? null : descriptor.availability.reason,
-        }] : []), gateways: listProviderGatewayContributionsV1([...registry.providersByContributionKey.entries()]
+        return { status: 'ready', services: descriptors.flatMap(descriptor => {
+          const placement = resolveCredentialedConnectedAccountAuthenticationPlacement(descriptor.authentication);
+          // Saved-key authoring uses the Account credential owner rather than beginning a provider attempt.
+          const unavailableReason = descriptor.availability.state !== 'available' ? descriptor.availability.reason
+            : placement.kind === 'unavailable' && !descriptor.authentication.modes.some(isAccountDirectConnectedAccountModeV1)
+              ? placement.code : null;
+          return descriptor.pluginId ? [{
+            service: { pluginId: descriptor.pluginId, localId: descriptor.id }, descriptor,
+            canAdd: unavailableReason === null, reason: unavailableReason,
+          }] : [];
+        }), gateways: listProviderGatewayContributionsV1([...registry.providersByContributionKey.entries()]
           .map(([contributionKey, provider]) => ({ contributionKey, definition: provider.definition, provenance: provider.provenance }))),
         };
       },
