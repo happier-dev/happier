@@ -45,6 +45,33 @@ function response(status: number, body: unknown, finalUrl = 'https://oauth2.goog
 }
 
 describe('Antigravity qualified Connected Account', () => {
+  it('discovers and retains the fresh OAuth project before materializing an access-only native bundle', async () => {
+    const accountRuntime = await runtime();
+    const mode = accountRuntime.authentication.modes['oauth-personal'];
+    if (!mode || mode.kind !== 'oauthAuthorizationCode') throw new Error('Expected OAuth');
+    const attempted = store();
+    const requests: Array<{ url: string; body?: Uint8Array; headers?: Readonly<Record<string, string>> }> = [];
+    const context = { attempt: { kind: 'connect', attemptId: 'project-connect' }, service, attemptCredentials: attempted, signal: new AbortController().signal,
+      services: { http: { async request(request: typeof requests[number]) {
+        requests.push(request);
+        if (request.url.includes('/userinfo')) return response(200, { sub: 'selected-account' });
+        if (request.url.includes(':loadCodeAssist')) return response(200, { currentTier: { id: 'free-tier' }, paidTier: { id: 'free-tier' }, cloudaicompanionProject: 'fresh-project' });
+        return response(200, { access_token: 'fresh-access', refresh_token: 'fresh-refresh', expires_in: 3600 });
+      } } },
+    } as Parameters<typeof mode.complete>[1];
+    await expect(mode.complete({ callbackUrl, code: 'code', state: 'state', pkceVerifier: 'verifier' }, context)).resolves.toMatchObject({ status: 'connected' });
+    expect(attempted.values.get('projectId')).toBe('fresh-project');
+    const discovery = requests.find(request => request.url.includes(':loadCodeAssist'));
+    expect(discovery?.headers?.Authorization).toBe('Bearer fresh-access');
+    expect(JSON.parse(new TextDecoder().decode(discovery?.body))).toEqual({ metadata: { ideType: 'ANTIGRAVITY' } });
+    const bundle = await accountRuntime.materialize({ kind: 'environment', keys: ['GOOGLE_ANTIGRAVITY_CREDENTIAL'] }, readContext(attempted) as Parameters<typeof accountRuntime.materialize>[1]);
+    expect(bundle.kind).toBe('environment');
+    if (bundle.kind !== 'environment') throw new Error('Expected native bundle');
+    expect(JSON.parse(bundle.env.GOOGLE_ANTIGRAVITY_CREDENTIAL)).toEqual({ access: 'fresh-access', expires: Number(attempted.values.get('expiresAtMs')), projectId: 'fresh-project' });
+    expect(JSON.stringify(bundle)).not.toContain('fresh-refresh');
+    expect(requests.filter(request => request.url.includes('/token'))).toHaveLength(1);
+  });
+
   it('materializes gateway headers with retained project and actual credential expiry', async () => {
     const accountRuntime = await runtime();
     const credentials = store(new Map([['accessToken', 'selected-access'], ['projectId', 'selected-project'], ['expiresAtMs', '1700003600000']]));
@@ -60,6 +87,67 @@ describe('Antigravity qualified Connected Account', () => {
       readContext(credentials) as Parameters<typeof accountRuntime.materialize>[1])).rejects.toThrow();
   });
 
+  it.each(['complete', 'cancel', 'failed'] as const)('settles asynchronous onboarding as %s before staging credentials', async outcome => {
+    const accountRuntime = await runtime();
+    const mode = accountRuntime.authentication.modes['oauth-personal'];
+    if (!mode || mode.kind !== 'oauthAuthorizationCode') throw new Error('Expected OAuth');
+    const attempted = store();
+    const controller = new AbortController();
+    const requests: string[] = [];
+    let provisioned = false;
+    const context = { attempt: { kind: 'connect', attemptId: 'project-onboard' }, service, attemptCredentials: attempted, signal: controller.signal,
+      services: { http: { async request(request: { url: string; body?: Uint8Array }) {
+        requests.push(request.url);
+        if (request.url.includes('/userinfo')) return response(200, { sub: 'selected-account' });
+        if (request.url.includes(':loadCodeAssist')) return response(200, provisioned
+          ? { currentTier: { id: 'free-tier' }, paidTier: { id: 'free-tier' }, cloudaicompanionProject: 'onboarded-project' }
+          : { allowedTiers: [{ id: 'free-tier' }] });
+        if (request.url.includes(':onboardUser')) {
+          expect(JSON.parse(new TextDecoder().decode(request.body))).toEqual({ tierId: 'free-tier', metadata: { ideType: 'ANTIGRAVITY' } });
+          if (outcome === 'cancel') controller.abort();
+          return response(200, { name: 'operations/synthetic-onboarding', done: false });
+        }
+        if (request.url.endsWith('/operations/synthetic-onboarding')) {
+          provisioned = true;
+          return response(200, outcome === 'failed' ? { done: true, error: { code: 7, message: 'private vendor response' } }
+            : { done: true, response: { '@type': 'type.googleapis.com/OnboardUserResponse' } });
+        }
+        return response(200, { access_token: 'fresh-access', refresh_token: 'fresh-refresh' });
+      } } },
+    } as Parameters<typeof mode.complete>[1];
+    const operation = mode.complete({ callbackUrl, code: 'code', state: 'state', pkceVerifier: 'verifier' }, context);
+    if (outcome === 'cancel') await expect(operation).rejects.toMatchObject({ name: 'AbortError' });
+    else if (outcome === 'failed') {
+      const result = await operation;
+      expect(result).toMatchObject({ status: 'rejected', diagnostic: { code: 'antigravity_project_onboarding_failed' } });
+      expect(JSON.stringify(result)).not.toContain('private vendor response');
+    } else {
+      await expect(operation).resolves.toMatchObject({ status: 'connected' });
+      expect(attempted.values.get('projectId')).toBe('onboarded-project');
+    }
+    expect(requests.filter(url => url.endsWith('/operations/synthetic-onboarding'))).toHaveLength(outcome === 'cancel' ? 0 : 1);
+    if (outcome !== 'complete') expect(attempted.values.size).toBe(0);
+  });
+
+  it.each([403, 503, 'missing'] as const)('does not claim fresh OAuth readiness when project discovery returns %s', async failure => {
+    const accountRuntime = await runtime();
+    const mode = accountRuntime.authentication.modes['oauth-personal'];
+    if (!mode || mode.kind !== 'oauthAuthorizationCode') throw new Error('Expected OAuth');
+    const attempted = store();
+    const context = { attempt: { kind: 'connect', attemptId: 'project-failure' }, service, attemptCredentials: attempted, signal: new AbortController().signal,
+      services: { http: { async request(request: { url: string }) {
+        if (request.url.includes('/userinfo')) return response(200, { sub: 'selected-account' });
+        if (request.url.includes(':loadCodeAssist')) return failure === 'missing'
+          ? response(200, { currentTier: { id: 'free-tier' }, paidTier: { id: 'free-tier' } }) : response(failure, { error: 'private vendor response' });
+        return response(200, { access_token: 'fresh-access', refresh_token: 'fresh-refresh' });
+      } } },
+    } as Parameters<typeof mode.complete>[1];
+    const result = await mode.complete({ callbackUrl, code: 'code', state: 'state', pkceVerifier: 'verifier' }, context);
+    expect(result).toMatchObject({ status: failure === 403 ? 'rejected' : 'outcomeUnknown', diagnostic: { code: failure === 'missing' ? 'antigravity_project_missing' : 'antigravity_project_http_failed' } });
+    expect(attempted.values.size).toBe(0);
+    expect(JSON.stringify(result)).not.toContain('private vendor response');
+  });
+
   it('connects with the Antigravity issuing client, registered callback and selected-token identity', async () => {
     const accountRuntime = await runtime();
     const mode = accountRuntime.authentication.modes['oauth-personal'];
@@ -69,7 +157,9 @@ describe('Antigravity qualified Connected Account', () => {
     const attempted = store();
     const requests: Array<{ url: string; body?: Uint8Array; headers?: Readonly<Record<string, string>> }> = [];
     const context = { attempt: { kind: 'connect', attemptId: 'connect-selected' }, service, attemptCredentials: attempted, signal: new AbortController().signal,
-      services: { http: { async request(request: typeof requests[number]) { requests.push(request); return request.url.includes('/userinfo')
+      services: { http: { async request(request: typeof requests[number]) { requests.push(request);
+        if (request.url.includes(':loadCodeAssist')) return response(200, { currentTier: {}, paidTier: {}, cloudaicompanionProject: 'selected-project' }, request.url);
+        return request.url.includes('/userinfo')
         ? response(200, { sub: 'selected-google-account', email: 'selected@example.com' }, request.url)
         : response(200, { access_token: 'selected-access', refresh_token: 'selected-refresh', expires_in: 3600 }); } } },
     } as Parameters<typeof mode.complete>[1];
@@ -82,9 +172,11 @@ describe('Antigravity qualified Connected Account', () => {
     expect(url.searchParams.get('scope')?.split(' ')).toEqual(scopes);
     expect(url.searchParams.get('state')).toBe('state');
     expect(url.searchParams.get('code_challenge')).toBe('challenge');
-    await expect(mode.complete({ callbackUrl, code: 'code', state: 'state', pkceVerifier: 'verifier' }, context)).resolves.toMatchObject({
-      status: 'connected', accountId: 'selected-google-account', providerIdentity: { email: 'selected@example.com' }, displayName: 'selected@example.com', scopes,
+    const connected = await mode.complete({ callbackUrl, code: 'code', state: 'state', pkceVerifier: 'verifier' }, context);
+    expect(connected).toMatchObject({
+      status: 'connected', providerIdentity: { accountId: 'selected-google-account', email: 'selected@example.com' }, displayName: 'selected@example.com', scopes,
     });
+    expect(connected).not.toHaveProperty('accountId');
     const body = new URLSearchParams(new TextDecoder().decode(requests[0]?.body));
     expect(body.get('client_id')).toBe(url.searchParams.get('client_id'));
     expect(body.get('redirect_uri')).toBe(callbackUrl);
@@ -100,7 +192,9 @@ describe('Antigravity qualified Connected Account', () => {
     if (!mode || mode.kind !== 'oauthAuthorizationCode') throw new Error('Antigravity OAuth is unavailable');
     const attempted = store();
     const context = { attempt: { kind: 'connect', attemptId: 'connect-empty-grants' }, service, attemptCredentials: attempted, signal: new AbortController().signal,
-      services: { http: { async request(request: { url: string }) { return request.url.includes('/userinfo')
+      services: { http: { async request(request: { url: string }) {
+        if (request.url.includes(':loadCodeAssist')) return response(200, { currentTier: {}, paidTier: {}, cloudaicompanionProject: 'selected-project' }, request.url);
+        return request.url.includes('/userinfo')
         ? response(200, { sub: 'selected-google-account' }, request.url)
         : response(200, { access_token: 'selected-access', refresh_token: 'selected-refresh', scope: '' }); } } },
     } as Parameters<typeof mode.complete>[1];
@@ -115,6 +209,7 @@ describe('Antigravity qualified Connected Account', () => {
     const attempted = store();
     const context = { attempt: { kind: 'connect', attemptId: 'connect-identity' }, service, attemptCredentials: attempted, signal: new AbortController().signal,
       services: { http: { async request(request: { url: string }) {
+        if (request.url.includes(':loadCodeAssist')) return response(200, { currentTier: {}, paidTier: {}, cloudaicompanionProject: 'selected-project' }, request.url);
         return request.url.includes('/userinfo') ? response(status, {}, request.url) : response(200, { access_token: 'access', refresh_token: 'refresh' });
       } } },
     } as Parameters<typeof mode.complete>[1];
@@ -145,6 +240,7 @@ describe('Antigravity qualified Connected Account', () => {
       const context = { attempt: attemptKind === 'connect' ? { kind: 'connect', attemptId: 'identity-connect' } : { kind: 'reconnect', attemptId: 'identity-reconnect', account: { service, accountId: 'stable-provider-account' } },
         service, attemptCredentials: attempted, signal: new AbortController().signal,
         services: { logger: { warn() {} }, http: { async request(request: { url: string }) {
+          if (request.url.includes(':loadCodeAssist')) return response(200, { currentTier: {}, paidTier: {}, cloudaicompanionProject: 'selected-project' }, request.url);
           if (request.url.includes('/userinfo')) return response(200, identity, request.url);
           if (request.url.includes('/tokeninfo')) return response(200, { azp: '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com', scope: scopes.join(' '), expires_in: '3600', ...identity }, request.url);
           return response(200, { access_token: 'replacement-access', refresh_token: 'replacement-refresh', expires_in: 3600, scope: scopes.join(' ') }, request.url);
@@ -157,7 +253,10 @@ describe('Antigravity qualified Connected Account', () => {
       expect(outcome.status).toBe(accepted ? 'connected' : 'rejected');
       if (accepted) {
         expect(attempted.values.get('accessToken')).toBe('replacement-access');
-        if (identityKind === 'verified') expect(outcome).toMatchObject({ accountId: 'stable-provider-account' });
+        if (identityKind === 'verified') {
+          expect(outcome).toMatchObject({ providerIdentity: { accountId: 'stable-provider-account' } });
+          expect(outcome).not.toHaveProperty('accountId');
+        }
       } else expect(attempted.values.size).toBe(0);
     } finally { vi.unstubAllEnvs(); await rm(home, { recursive: true, force: true }); }
   });
