@@ -1,6 +1,6 @@
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 export { bindScmRefineSavedSessionV1, verifyScmRefineSavedSessionV1, isScmRefineInputPurposeV1,
   isScmRefineInputRpcPurposeV1 } from './executor/scmRefineInputPurpose.js';
@@ -130,7 +130,7 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
       && (binding.deploymentLinkAdmission === undefined
         || binding.deploymentLinkAdmission.environmentId === projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1(input))
       && (binding.actionId === 'deployments.environments.update' && nativeAdmission !== undefined
-        || isDeploymentDomainNativeAdmissionV1(nativeAdmission) || nativeAdmission !== undefined && 'kind' in nativeAdmission && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup')
+        || isDeploymentDomainNativeAdmissionV1(nativeAdmission) || nativeAdmission !== undefined && 'kind' in nativeAdmission && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup' || nativeAdmission.kind === 'backupConfigure')
         ? binding.environmentId === nativeAdmission.environmentId && sameStrictJsonValue(binding.deploymentNativeAdmission, nativeAdmission)
         : (binding.actionId === 'action.operations.get' || binding.actionId === 'deployments.teardown'
           ? binding.environmentId : binding.deploymentCandidatePublication?.environmentId) === nativeAdmission?.environmentId)
@@ -366,7 +366,7 @@ function machineRpcRequestBytes(request: MachineRpcRequest, payloadProof?: Reado
   if (request.deploymentArchiveOrigin && !controllerProof) throw new TypeError('Archive origin requires its exact parent proof');
   if (controllerProof) {
     const routing = controllerProof.externalActionExecution.deploymentChildRouting;
-    if (event !== SOCKET_RPC_EVENTS.CALL || !routing || routing.kind === 'review' || routing.kind === 'prepare'
+    if (event !== SOCKET_RPC_EVENTS.CALL || !routing || routing.kind === 'dataRole' || routing.kind === 'review' || routing.kind === 'prepare'
       || routing.kind === 'member' && routing.phase === 'cleanup'
       || readDeploymentArchiveRpcEffectV1(request.method.slice(request.method.indexOf(':') + 1)) !== request.effectActionId
       || request.installationId !== routing.installationId

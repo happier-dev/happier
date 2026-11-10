@@ -2,8 +2,10 @@ import { normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStric
 import { readRecord } from '../../inputs/inputRecords.js';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
-import { isDeploymentChildEffectActionIdV1, isDeploymentDomainAddActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
-import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
+import { isDeploymentChildEffectActionIdV1, isDeploymentDomainAddActionIdV1,
+  DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
+  isDeploymentBackupConfigureNativeAdmissionV1, type DeploymentNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
 import type { WorkflowApprovedOperationV1 } from '../approvedOperationV1.js';
 import type { ActionId } from '../actionIds.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
@@ -68,7 +70,14 @@ function readProof(context: ActionExecutorContext | undefined, actionId: string,
 /** In-process host evidence; a serialized requester/token carrier alone never admits child work. Not a plugin sandbox. */
 export function readHostReviewedChildOperationV1(context: ActionExecutorContext | undefined, actionId: string,
   input?: unknown): ReviewedOperation | null {
-  return readProof(context, actionId, input)?.operation ?? null;
+  const operation = readProof(context, actionId, input)?.operation;
+  if (operation) return operation;
+  if (!context || context.signal?.aborted) return null;
+  const parent = readHostAdmittedReviewedParentV1(context.hostReviewedChild);
+  if (parent?.actionId !== 'action.invoke') return null;
+  const admitted: ReviewedOperation = { parent,
+    steps: [{ actionId: parent.actionId, input: parent.input }], [deploymentRoleChild]: true };
+  return isHostAdmittedReviewedChildPolicyV1(admitted, actionId, input) ? admitted : null;
 }
 
 /** The issuer records the admitted policy once; serialized data cannot carry it. */
@@ -172,12 +181,17 @@ export function readHostReviewedChildOriginalAuthorizationV1(context: ActionExec
   return proof.originalAuthorization;
 }
 
-function createReviewedChildProof(actionId: string, role: string, input: JsonValue): ReviewedActionChildHttpProofV1 {
-  const domainNative = isDeploymentDomainAddActionIdV1(actionId) && 'content' in readRecord(input)
-    ? projectDeploymentNativeAdmissionV1(actionId, input) : undefined;
+function createReviewedChildProof(actionId: string, role: string, input: JsonValue, rootActionId: string | undefined,
+  parentAdmission?: DeploymentNativeAdmissionV1): ReviewedActionChildHttpProofV1 {
+  const native = isDeploymentDomainAddActionIdV1(actionId) && 'content' in readRecord(input)
+    || rootActionId === 'deployments.environments.create' && actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 && role === 'preview.backup'
+    ? projectDeploymentNativeAdmissionV1(actionId, input)
+    : actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && role === 'backup.bindings'
+      && isDeploymentBackupConfigureNativeAdmissionV1(parentAdmission) ? parentAdmission : undefined;
   return Object.freeze({ actionId, role,
     inputDigest: computeActionInputApprovalDigestV1(actionId as ActionId, input),
-    ...(isDeploymentDomainNativeAdmissionV1(domainNative) ? { deploymentNativeAdmission: domainNative } : {}) });
+    ...(isDeploymentDomainNativeAdmissionV1(native) || isDeploymentBackupConfigureNativeAdmissionV1(native)
+      ? { deploymentNativeAdmission: native } : {}) });
 }
 
 function attachReviewedChildHttpProjection(context: ActionExecutorContext, childContext: ChildContext, proof: ChildProof): void {
@@ -233,7 +247,8 @@ export function retainHostReviewedChildAdmissionV1(context: ActionExecutorContex
       steps: envelope ? [{ actionId: 'action.invoke', input: envelope }]
         : [{ actionId: proof.qualifiedActionId, input: admittedProofInput as Record<string, JsonValue> }] },
     ...(binding?.actionId === proof.rootActionId ? {
-      reviewedChild: createReviewedChildProof(proof.qualifiedActionId, proof.role, admittedProofInput),
+      reviewedChild: createReviewedChildProof(proof.qualifiedActionId, proof.role, admittedProofInput, proof.rootActionId,
+        proof.parentProof?.reviewedChild?.deploymentNativeAdmission ?? binding?.deploymentNativeAdmission),
     } : {}),
   };
   const admittedContext: ChildContext = { ...context, [deploymentRoleChild]: admittedProof };
@@ -320,7 +335,8 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
     && (!binding || binding.actionId === callerProof.rootActionId) ? callerProof : undefined;
   const rootActionId = parentProof?.rootActionId ?? parent.actionId;
   const reviewedChild = params.admittedReview && binding?.actionId === rootActionId
-    ? createReviewedChildProof(qualifiedActionId, child.role, proofInput) : undefined;
+    ? createReviewedChildProof(qualifiedActionId, child.role, proofInput, rootActionId,
+      parentProof?.reviewedChild?.deploymentNativeAdmission ?? binding?.deploymentNativeAdmission) : undefined;
   const proof: ChildProof = {
     rootActionId, role: child.role, qualifiedActionId, input: proofInput,
     ...(parentProof ? { parentProof } : {}),

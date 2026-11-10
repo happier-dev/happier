@@ -15,7 +15,7 @@ import { isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationAc
 export { WorkspaceSyncAdmissionV1Schema, projectWorkspaceSyncAdmissionInputV1, deriveWorkspaceSyncRelationshipId,
   readWorkspaceSyncSourceAdmissionV1,
   type WorkspaceSyncAdmissionV1, type WorkspaceSyncAdmissionInputV1 } from '../workspaces/workspaceSyncAdmissionV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { RegistryAppUpdateAdmissionV1Schema, projectRegistryAppUpdateAdmissionV1,
   type RegistryAppUpdateAdmissionV1 } from '../registries/registryAppUpdateAdmissionV1.js';
 export { RegistryAppUpdateAdmissionV1Schema, projectRegistryAppUpdateAdmissionV1,

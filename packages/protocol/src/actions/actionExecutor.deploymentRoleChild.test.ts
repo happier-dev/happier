@@ -5,7 +5,7 @@ import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { DeploymentTargetRoleInputSchemasV1 } from '../plugins/contributions/deploymentTargetRolesV1.js';
-import { readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
+import { invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from '../deployments/deploymentReceiptResultV1.js';
 
 const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3, requestKey: 'deploy-request',
@@ -41,6 +41,51 @@ function context(): ActionExecutorContext {
 }
 
 describe('deployment role host-child scope', () => {
+  it('retains the exact configure admission for the reviewed preview backup child', async () => {
+    const root = context();
+    const authorization = root.externalActionExecutionAuthorization!;
+    const child = { action: 'deployments.backups.configure' as const, role: 'preview.backup',
+      input: { serverId: 'home', environmentId: 'environment', expectedRevision: 3, intent: 'markNotNeeded' } };
+    const result = await invokeHostReviewedChildV1({
+      parent: { actionId: 'deployments.environments.create', input: { serverId: 'home' } },
+      child,
+      context: { ...root, externalActionExecutionAuthorization: { ...authorization,
+        binding: { ...authorization.binding, actionId: 'deployments.environments.create' } } },
+      admittedReview: { action: child.action, role: child.role, surface: 'api' },
+      execute: async (_input, childContext) => ({ ok: true, result: readHostAdmittedReviewedChildV1(childContext) }),
+    });
+    expect(result).toMatchObject({ ok: true, result: { actionId: child.action, role: child.role,
+      deploymentNativeAdmission: { kind: 'backupConfigure', actionId: child.action,
+        environmentId: 'environment', expectedRevision: 3, intent: 'markNotNeeded', inputDigest: expect.any(String) } } });
+  });
+
+  it('retains the configure admission across the preview backup binding child', async () => {
+    const root = context();
+    const authorization = root.externalActionExecutionAuthorization!;
+    const configure = { action: 'deployments.backups.configure' as const, role: 'preview.backup',
+      input: { serverId: 'home', environmentId: 'environment', expectedRevision: 3, intent: 'save',
+        configuration: { configRevision: 1, destinationRef: { pluginId: 'happier.backup.local', localId: 'open' },
+          occurrenceId: 'destination', config: { path: '/private/repository' }, credentialBindings: [],
+          sources: [{ kind: 'dump', sourceId: 'database', service: 'postgres', consistency: 'logical' }],
+          ownership: { environmentId: 'environment', prefix: '' }, retention: { kind: 'keepEverything' } } } };
+    const binding = { action: 'deployments.bindings.set' as const, role: 'backup.bindings',
+      input: { serverId: 'home', environmentId: 'environment', expectedRevision: 4, set: [], remove: [] } };
+    const result = await invokeHostReviewedChildV1({
+      parent: { actionId: 'deployments.environments.create', input: { serverId: 'home' } }, child: configure,
+      context: { ...root, externalActionExecutionAuthorization: { ...authorization,
+        binding: { ...authorization.binding, actionId: 'deployments.environments.create' } } },
+      admittedReview: { action: configure.action, role: configure.role, surface: 'api' },
+      execute: async (_input, configureContext) => invokeHostReviewedChildV1({
+        parent: { actionId: configure.action, input: configure.input }, child: binding, context: configureContext,
+        admittedReview: { action: binding.action, role: binding.role, surface: 'api' },
+        execute: async (_input, bindingContext) => ({ ok: true, result: readHostAdmittedReviewedChildV1(bindingContext) }),
+      }),
+    });
+    expect(result).toMatchObject({ ok: true, result: { actionId: binding.action, role: binding.role,
+      deploymentNativeAdmission: { kind: 'backupConfigure', actionId: configure.action,
+        environmentId: 'environment', expectedRevision: 3, intent: 'save' } } });
+  });
+
   it('lends invocation-private connector custody only to the admitted child and its active parent', async () => {
     const lifetime = new AbortController();
     const deploymentResult = DeploymentReceiptAcceptedResultV1Schema.parse({ ok: true, environmentId: 'environment',
