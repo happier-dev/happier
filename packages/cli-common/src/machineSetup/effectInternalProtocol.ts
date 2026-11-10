@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { MachineSetupNativeSshHostKeyV1Schema } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
-import { asProtocolZod } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
 import { MachineAdministratorUsernameV1Schema, MachineElevationFailureV1Schema, MachineFirewallRecoveryV1Schema, MachineFirewallRestorationV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MachineSetupEffectPlanV1Schema, MachineSetupElevatedEffectV1Schema, MachineSetupBootstrapBasisV1Schema, isMachineSetupBootstrapBasisV1, MachineFirewallTransitionIntentV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type * as machineSetup from './index.js';
@@ -112,7 +111,7 @@ const Result = z.object({
     requiredFact: z.string().min(1).optional(),
     failure: z.optional(MachineElevationFailureV1Schema),
     initialPresence: z.array(z.enum(['present', 'absent', 'unknown'])).optional(),
-    sshHostKeys: z.array(asProtocolZod(MachineSetupNativeSshHostKeyV1Schema)).optional(),
+    sshHostKeys: z.array(MachineSetupNativeSshHostKeyV1Schema).optional(),
     restoration: z.optional(MachineFirewallRestorationV1Schema),
     comparison: z.object({ targetChanged: z.boolean(), fields: z.array(z.object({
         field: z.string().regex(/^(?:plans\[\d+\]\.)?(?:basis|steps|checks|selectedCheckIds|checkFacts|nativeFacts\[\d+\]\.(?:stepId|status|reason|facts(?:\.[A-Za-z][A-Za-z0-9_]*)?))$/),

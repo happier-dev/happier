@@ -5,7 +5,9 @@ import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, findMachineSe
 import { createMachineSetupNativeBackend, type MachineSetupNativeCommand } from './nativeBackend.js';
 import { nativeFileDigest } from './nativeFileSafety.js';
 import { MachineRecipeV1Schema, resolveMachineRecipeStepInputsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
-import { boundedJournal } from '../../../plugins/machine-recipes/src/boundedJournal.js';
+import { PLUGIN_MANIFEST } from '@happier-dev/plugins-machine-recipes';
+
+const boundedJournal = PLUGIN_MANIFEST.contributes.machineRecipes!.find(recipe => recipe.id === 'bounded-journal')!;
 
 const boundary = vi.hoisted(() => ({ main: '', systemdRoot: '' }));
 vi.mock('node:fs/promises', async importOriginal => {
@@ -127,7 +129,7 @@ describe.skipIf(process.getuid?.() !== 0)('native file activation through the ex
             restarts++;
             return { code: 0, stdout: '', stderr: '' };
         } });
-        const recipe = MachineRecipeV1Schema.parse({ id: 'bounded-journal', ...boundedJournal });
+        const recipe = MachineRecipeV1Schema.parse(boundedJournal);
         const steps = recipe.steps.map(step => resolveMachineRecipeStepInputsV1(step, { maximumUse: '1G' }));
         const plan = await checkMachineSetupEffectPlan({ basis, steps, backend });
         expect(await applyMachineSetupEffectPlan({ plan, backend })).toMatchObject({ status: 'applied' });

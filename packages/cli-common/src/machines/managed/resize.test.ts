@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { executeManagedMachineResize } from './resize.js';
+import type { ManagedNativeInvocation } from './reconcile.js';
 
 const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
     launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
@@ -27,7 +28,7 @@ describe('admitted managed resize', () => {
         let memoryBytes = 2 * 1024 ** 3;
         const size = { memoryBytes: 4 * 1024 ** 3 };
         const value = await executeManagedMachineResize({ machine, size, provisioner: restartingProvisioner,
-            invoke: async (role, body) => {
+            invoke: async (role, body): ReturnType<ManagedNativeInvocation> => {
                 calls.push({ role, body });
                 if (role === 'inspect') return { observedAt: 1, availability: 'present', power, size: { memoryBytes } };
                 if (role === 'resize') { memoryBytes = size.memoryBytes; return { kind: 'confirmed' }; }
@@ -44,7 +45,7 @@ describe('admitted managed resize', () => {
     });
     it('does not claim success from a native acknowledgement without observed size', async () => {
         const value = await executeManagedMachineResize({ machine, size: { cpuCores: 4 }, provisioner,
-            invoke: async role => role === 'inspect' ? { observedAt: 1, availability: 'present', power: 'running', size: { cpuCores: 2 } } : { kind: 'confirmed' } });
+            invoke: async (role): ReturnType<ManagedNativeInvocation> => role === 'inspect' ? { observedAt: 1, availability: 'present', power: 'running', size: { cpuCores: 2 } } : { kind: 'confirmed' } });
         expect(value.result).toEqual({ kind: 'unknown', code: 'resize_unconfirmed' });
     });
     it('preserves a stopped guest and settles from the size the provider observes', async () => {
@@ -52,7 +53,7 @@ describe('admitted managed resize', () => {
         let diskBytes = 1024;
         const effects: string[] = [];
         const value = await executeManagedMachineResize({ machine, size: { diskBytes: 2048 }, provisioner: restartingProvisioner,
-            invoke: async (role, body) => {
+            invoke: async (role, body): ReturnType<ManagedNativeInvocation> => {
                 if (role === 'inspect') return { observedAt: 1, availability: 'present', power, size: { diskBytes } };
                 if (role === 'resize') { effects.push('resize'); diskBytes = 2048; return { kind: 'confirmed' }; }
                 if (role === 'power') {
@@ -68,7 +69,7 @@ describe('admitted managed resize', () => {
     it('retains a dimension-specific native refusal without restarting live compute', async () => {
         const calls: string[] = [];
         const value = await executeManagedMachineResize({ machine, size: { diskBytes: 1024 }, provisioner,
-            invoke: async role => { calls.push(role); return { kind: 'unsupported', dimension: 'diskBytes', code: 'disk_immutable' }; } });
+            invoke: async (role): ReturnType<ManagedNativeInvocation> => { calls.push(role); return { kind: 'unsupported', dimension: 'diskBytes', code: 'disk_immutable' }; } });
         expect(value).toEqual({ result: { kind: 'unsupported', dimension: 'diskBytes', code: 'disk_immutable' } });
         expect(calls).toEqual(['resize']);
     });
@@ -76,7 +77,7 @@ describe('admitted managed resize', () => {
         let power = 'running';
         const failure = new Error('native edit failed');
         await expect(executeManagedMachineResize({ machine, size: { cpuCores: 4 }, provisioner: restartingProvisioner,
-            invoke: async (role, body) => {
+            invoke: async (role, body): ReturnType<ManagedNativeInvocation> => {
                 if (role === 'inspect') return { observedAt: 1, availability: 'present', power };
                 if (role === 'resize') throw failure;
                 if (role === 'power') { power = (body as { intent: string }).intent === 'stop' ? 'stopped' : 'running'; return { kind: 'confirmed' }; }
@@ -88,7 +89,7 @@ describe('admitted managed resize', () => {
         let power = 'running';
         const effects: string[] = [];
         const value = await executeManagedMachineResize({ machine, size: { diskBytes: 512 }, provisioner: restartingProvisioner,
-            invoke: async (role, body) => {
+            invoke: async (role, body): ReturnType<ManagedNativeInvocation> => {
                 if (role === 'inspect') return { observedAt: 1, availability: 'present', power };
                 if (role === 'resize') return { kind: 'unsupported', dimension: 'diskBytes', code: 'resize_shrink_unsupported' };
                 if (role === 'power') {

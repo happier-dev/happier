@@ -3,13 +3,14 @@ import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolveMachineRecipeStepInputsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
-import { BACKUP_RECEIVER_RECIPE } from '../../../plugins/machine-recipes/src/backupReceiver.js';
+import { PLUGIN_MANIFEST } from '@happier-dev/plugins-machine-recipes';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan } from './index.js';
 import { MachineEffectInternalRecordSchema } from './effectInternalProtocol.js';
 import { createMachineSetupNativeBackend, runMachineSetupNativeCommand } from './nativeBackend.js';
 import { probeNativeSshFile, validateNativeSshFile } from './nativeSshFile.js';
 import type { NativeRun } from './nativeSystemBackend.js';
 
+const BACKUP_RECEIVER_RECIPE = PLUGIN_MANIFEST.contributes.machineRecipes!.find(recipe => recipe.id === 'backup-receiver')!;
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 const run: NativeRun = (executable, args) => runMachineSetupNativeCommand({ executable, args });
@@ -116,7 +117,7 @@ describe.skipIf(process.getuid?.() !== 0)('native SSH complete-configuration val
             administrator: { username: administrator.user, host: administrator.host, address: administrator.address },
             connection: { host: administrator.host, address: administrator.address } };
         const policy = resolveMachineRecipeStepInputsV1(BACKUP_RECEIVER_RECIPE.steps.find(step => step.id === 'receiver-ssh-policy')!, inputs);
-        const removal = resolveMachineRecipeStepInputsV1(BACKUP_RECEIVER_RECIPE.removeSteps.find(step => step.id === 'receiver-ssh-policy')!, inputs);
+        const removal = resolveMachineRecipeStepInputsV1(BACKUP_RECEIVER_RECIPE.removeSteps!.find(step => step.id === 'receiver-ssh-policy')!, inputs);
         if (policy?.kind !== 'file' || policy.content?.kind !== 'literal' || policy.probe?.kind !== 'sshd'
             || removal?.kind !== 'file' || typeof removal.validate !== 'object' || removal.validate.kind !== 'sshd') {
             throw new Error('Receiver policy declaration did not resolve native SSH validation');

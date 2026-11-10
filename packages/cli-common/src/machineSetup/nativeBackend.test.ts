@@ -58,6 +58,7 @@ it.each(['prerequisite', 'command-impact'] as const)('keeps an unimplemented %s 
     expect(observation).toEqual({ stepId: step.id, status: 'unavailable', reason: 'required_fact_unavailable',
         facts: declaration === 'prerequisite' ? { requiredFact: 'administrator' } : {} });
     await expect(backend.apply(step)).rejects.toMatchObject({ reasonCode: 'required_fact_unavailable' });
+    // @ts-expect-error Deliberately test runtime refusal outside the firewall-only staging API.
     await expect(backend.stage!(step)).rejects.toMatchObject({ reasonCode: 'required_fact_unavailable' });
     expect(calls).toEqual([]);
 });
