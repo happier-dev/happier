@@ -3,13 +3,14 @@ import { VoiceCredentialSlotIdSchema } from '@happier-dev/plugin-sdk/voice';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { openAiConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
+import { OPENAI_CONNECTED_ACCOUNT_SERVICE } from './auth/service.js';
 import { OPENAI_VOICE_PROVIDER_CONTRIBUTION_ID } from './constants.js';
 import { OPENAI_REALTIME_SETTINGS_SECTION } from './voiceSettingsPresentation.js';
 
 const OPENAI_API_KEY_CREDENTIAL_SLOT_ID = VoiceCredentialSlotIdSchema.parse('api_key');
 
 export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
-  id: 'happier.voice.openai',
+  id: OPENAI_CONNECTED_ACCOUNT_SERVICE.pluginId,
   version: '0.0.0',
   displayName: 'OpenAI Realtime Voice',
   brand: { iconResourceId: 'brand-icon', monochrome: true },
@@ -31,7 +32,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   connectedAccountDescriptors: {
-    openai: {
+    [OPENAI_CONNECTED_ACCOUNT_SERVICE.localId]: {
       declaration: {
         title: 'OpenAI API key',
         ui: { iconResourceId: 'service-mark', setup: { order: 4, firstRun: false, catalogDescription: { key: 'connectedServicesSettings.catalogOpenAi', fallback: 'Pay per use, billed to your OpenAI organization.' } } },
@@ -109,7 +110,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           }],
         }, {
           kind: 'connectedAccount',
-          service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+          service: OPENAI_CONNECTED_ACCOUNT_SERVICE,
           operationProjections: [{
             kind: 'materializedHttpHeaders',
             operation: 'client-auth',

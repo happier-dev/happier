@@ -22,6 +22,11 @@
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "exports": {
+    "./connected-account-service": {
+      "happier-source": "./src/auth/service.ts",
+      "types": "./dist/auth/service.d.ts",
+      "default": "./dist/auth/service.js"
+    },
     ".": {
       "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",

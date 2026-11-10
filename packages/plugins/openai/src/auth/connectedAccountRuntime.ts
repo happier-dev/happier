@@ -2,6 +2,7 @@ import type {
   ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { OPENAI_SELECTED_API_KEY_ENV } from './service.js';
 
 type ConnectedAccountCredentialReader =
   Parameters<PluginConnectedAccountRuntime['status']>[0]['credentials'];
@@ -84,6 +85,7 @@ const openAiConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
     if (request.kind === 'environment') {
       const env: Record<string, string> = {};
       if (request.keys.includes('OPENAI_API_KEY')) env.OPENAI_API_KEY = token;
+      if (request.keys.includes(OPENAI_SELECTED_API_KEY_ENV)) env[OPENAI_SELECTED_API_KEY_ENV] = token;
       return {
         kind: 'environment',
         env,

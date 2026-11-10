@@ -112,11 +112,11 @@ describe('OpenAI API-key Connected Account', () => {
       credentials: stored.store,
     } as Parameters<typeof runtime.materialize>[1];
     await expect(runtime.materialize(
-      { kind: 'environment', keys: ['OPENAI_API_KEY', 'UNRELATED'] },
+      { kind: 'environment', keys: ['OPENAI_API_KEY', 'HAPPIER_CONNECTED_OPENAI_API_KEY', 'UNRELATED'] },
       readContext,
     )).resolves.toEqual({
       kind: 'environment',
-      env: { OPENAI_API_KEY: 'sk-openai' },
+      env: { OPENAI_API_KEY: 'sk-openai', HAPPIER_CONNECTED_OPENAI_API_KEY: 'sk-openai' },
     });
     await expect(runtime.materialize(
       { kind: 'httpHeaders', origin: 'https://api.openai.com', headerNames: ['authorization'] },
