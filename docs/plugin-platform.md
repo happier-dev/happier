@@ -6047,7 +6047,8 @@ remain the admission owners.
 ### Shared usage row (0.3 development source)
 
 `@happier-dev/plugin-ui/presentation` owns `UsageMeterRow`, `UsageMeterStack`
-and their typed props and column metrics. Core's connected-services
+and their typed props and column metrics. The author-facing `/components` and root exports supply
+the mounted plugin theme to those same owners. Core's connected-services
 `UsageMeterRow` is its domain adapter: percentage normalization, quota tone,
 estimated/unavailable wording, reset phrases and accessible descriptions stay
 in the host. The public presentation owns inline/stacked anatomy, shared name
@@ -6057,6 +6058,13 @@ remain distinct. Neither row acquires usage or schedules time updates. The
 public-import example is `packages/plugin-ui/fixtures/external-authoring/src/usageMeterSurface.tsx`;
 the [author guide](../apps/docs/content/docs/plugins/ui/react-native.mdx#usage-meter-rows-03-development)
 shows the same public seam.
+
+The same public presentation entry point exports `OfferedChoices` and `OfferedChoiceFeedbackInput`.
+`PermissionFooterOfferedChoices` projects permission refusal, availability and localized scope descriptions
+into this shared adaptive row/list/feedback owner; `PermissionFeedbackInput` binds the same field for
+plan-change prompts. Native decision refs and app TextInput are host renderer bindings, without local
+geometry. Primary selection and permission submission remain host/domain responsibilities.
+The public authoring fixture is `packages/plugin-ui/fixtures/external-authoring/src/offeredChoicesSurface.tsx`.
 
 ## Public seam and authority
 
