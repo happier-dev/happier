@@ -96,7 +96,7 @@ export function createDevinConnectedAccountRuntime(): ConnectedAccountRuntime {
     },
     async revoke() { return { status: 'remoteUnsupported' }; },
     async materialize(request, context, options) {
-      if (request.kind === 'environment' || (request.kind === 'files' && request.fileIds.some(id => id !== DEVIN_NATIVE_FILE))) {
+      if (request.kind === 'files' && request.fileIds.some(id => id !== DEVIN_NATIVE_FILE)) {
         throw new PluginError({ code: 'unsupported', message: 'The requested Devin credential destination is unsupported.' });
       }
       const mode = await context.credentials.get('credentialMode', options);
@@ -107,6 +107,13 @@ export function createDevinConnectedAccountRuntime(): ConnectedAccountRuntime {
       }
       const token = await context.credentials.get(mode === 'session' ? 'sessionToken' : 'seatToken', options);
       if (!token) throw new PluginError({ code: 'credentials_unavailable', message: 'The selected Devin credential is unavailable.' });
+      if (request.kind === 'environment') {
+        // The native environment driver addresses these API servers; custom servers retain native-file delivery.
+        if (base !== DEVIN_DEFAULT_API_SERVER && base !== 'https://server.enterprise.windsurf.com') {
+          throw new PluginError({ code: 'unsupported', message: 'Use native credential files for the selected Devin API server.' });
+        }
+        return { kind: 'environment', env: Object.fromEntries(request.keys.filter(key => key === 'DEVIN_API_KEY').map(key => [key, token])) };
+      }
       if (request.kind === 'files') {
         if (await context.credentials.get('nativeGeneration', options) !== DEVIN_NATIVE_GENERATION) {
           throw new PluginError({ code: 'unsupported', message: 'The selected Devin native credential generation is unsupported. Reconnect or import it again.' });
@@ -120,7 +127,7 @@ export function createDevinConnectedAccountRuntime(): ConnectedAccountRuntime {
       }
       // Pinned executor PrepareRequest uses this exact wire form; it is not RFC Basic base64.
       return { kind: 'httpHeaders', headers: { authorization: `Basic ${token}-${token}` },
-        facts: { base_url: base, device_seed: context.account.accountId } };
+        facts: { mode, base_url: base, device_seed: context.account.accountId } };
     },
   };
 }

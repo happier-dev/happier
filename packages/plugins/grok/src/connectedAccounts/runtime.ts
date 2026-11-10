@@ -10,6 +10,7 @@ import { fetchXaiQuota } from './quota.js';
 import { readXaiPolicyReason } from './failures.js';
 import { GROK_XAI_CLIENT_ID, GROK_XAI_ISSUER, readGrokNativeCredential, serializeGrokSelectedAuth } from './nativeCredentials.js';
 import { GROK_CONNECTED_ACCOUNT_MODE_ENV } from '../agent/connectedAccount.js';
+import { XAI_SELECTED_API_KEY_ENV } from './service.js';
 
 export const XAI_CREDENTIAL_KEY = 'xaiCredential';
 const DEVICE_KEY = 'xaiDevice';
@@ -183,7 +184,8 @@ export function createXaiConnectedAccountRuntime(): ConnectedAccountRuntime {
       if (request.kind === 'environment') {
         const available: Readonly<Record<string, string>> = {
           [GROK_CONNECTED_ACCOUNT_MODE_ENV]: credential.mode,
-          ...(credential.mode === 'api-key' ? { XAI_API_KEY: credential.accessToken } : {
+          ...(credential.mode === 'api-key' ? { XAI_API_KEY: credential.accessToken, [XAI_SELECTED_API_KEY_ENV]: credential.accessToken } : {
+            XAI_OAUTH_TOKEN: credential.accessToken,
             GROK_OAUTH2_ISSUER: credential.issuer ?? GROK_XAI_ISSUER,
             GROK_OAUTH2_CLIENT_ID: credential.clientId ?? GROK_XAI_CLIENT_ID,
           }),

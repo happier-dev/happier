@@ -13,6 +13,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isPermanentRequestStatus } from '@happier-dev/plugin-sdk/http';
 import { z } from 'zod';
 import { fetchKimiQuota } from './quota.js';
+import { KIMI_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV, KIMI_CODE_ANTHROPIC_BASE_ENV, KIMI_SELECTED_CODE_API_KEY_ENV } from './service.js';
 
 export const KIMI_OAUTH_CLIENT_ID = '17e5f671-d194-4dfb-9706-5516cb48c098';
 export const KIMI_ACCESS_TOKEN_ENV = 'HAPPIER_KIMI_ACCESS_TOKEN';
@@ -54,7 +55,29 @@ export async function materializeKimiCredentials(request: ConnectedAccountMateri
   options?: { signal?: AbortSignal; existingFiles?: Readonly<Record<string, Uint8Array>> }): Promise<ConnectedAccountMaterialization> {
   const token = await context.credentials.get('accessToken', options);
   if (!token) throw Object.assign(new Error('Kimi credentials are unavailable'), { code: 'kimi_credentials_unavailable' });
-  if (request.kind === 'environment') return { kind: 'environment', env: request.keys.includes(KIMI_ACCESS_TOKEN_ENV) ? { [KIMI_ACCESS_TOKEN_ENV]: token } : {} };
+  const [kind, apiKind] = await Promise.all([
+    context.credentials.get('credentialKind', options), context.credentials.get('apiKind', options),
+  ]);
+  if (request.kind === 'environment') {
+    const codeCredentialRequested = request.keys.some(key => key === KIMI_CODE_API_KEY_ENV || key === KIMI_SELECTED_CODE_API_KEY_ENV);
+    const codeEndpointRequested = request.keys.some(key => key === KIMI_CODE_API_BASE_ENV || key === KIMI_CODE_ANTHROPIC_BASE_ENV);
+    if ((codeCredentialRequested && kind === 'oauth') || ((codeCredentialRequested || codeEndpointRequested) && apiKind === 'platform')) {
+      throw Object.assign(new Error('Select a Kimi Code API key for this native route.'), { code: 'kimi_code_api_key_unavailable' });
+    }
+    const available: Readonly<Record<string, string>> = {
+      [KIMI_ACCESS_TOKEN_ENV]: token,
+      ...(apiKind !== 'platform' ? {
+        [KIMI_CODE_API_BASE_ENV]: apiBase,
+        [KIMI_CODE_ANTHROPIC_BASE_ENV]: new URL('../', `${apiBase.replace(/\/$/u, '')}/`).href,
+      } : {}),
+      ...(kind !== 'oauth' && apiKind !== 'platform' ? {
+        [KIMI_CODE_API_KEY_ENV]: token,
+        [KIMI_SELECTED_CODE_API_KEY_ENV]: token,
+      } : {}),
+      ...(kind === 'token' && apiKind === 'platform' ? { MOONSHOT_API_KEY: token } : {}),
+    };
+    return { kind: 'environment', env: Object.fromEntries(request.keys.filter(key => key in available).map(key => [key, available[key]])) };
+  }
   const deviceId = await context.credentials.get('deviceId', options);
   if (request.kind === 'files') {
     if (!request.fileIds.includes('config.toml')) return { kind: 'files', files: {} };
@@ -73,7 +96,10 @@ export async function materializeKimiCredentials(request: ConnectedAccountMateri
       selectedConfig: await context.credentials.get('nativeConfig', options), existingConfig: options?.existingFiles?.['config.toml'],
     }) } };
   }
-  if (new URL(apiBase).origin !== request.origin) throw new Error('Kimi selected account origin does not match');
+  // The gateway declares the CN origin for both regions; selected facts retain the actual regional base.
+  const declaredGlobalCode = apiKind === 'code' && apiBase === regions.global.apiBase
+    && request.origin === new URL(regions.cn.apiBase).origin;
+  if (new URL(apiBase).origin !== request.origin && !declaredGlobalCode) throw new Error('Kimi selected account origin does not match');
   const headers: Record<string, string> = {};
   for (const name of request.headerNames) {
     if (name.toLowerCase() === 'authorization') headers.Authorization = `Bearer ${token}`;
@@ -81,7 +107,8 @@ export async function materializeKimiCredentials(request: ConnectedAccountMateri
     else throw new Error('Unsupported Kimi request header');
   }
   const expiry = await context.credentials.get('expiresAtMs', options);
-  return { kind: 'httpHeaders', headers, facts: { domain: new URL(apiBase).hostname.replace(/^api\./u, ''), apiBase, ...(deviceId ? { deviceId } : {}) }, ...(expiry ? { expiresAt: Number(expiry) } : {}) };
+  return { kind: 'httpHeaders', headers, facts: { domain: new URL(apiBase).hostname.replace(/^api\./u, ''), apiBase,
+    ...(kind ? { credentialKind: kind } : {}), ...(apiKind ? { apiKind } : {}), ...(deviceId ? { deviceId } : {}) }, ...(expiry ? { expiresAt: Number(expiry) } : {}) };
 }
 
 export const kimiPortableAccountRuntime: ConnectedAccountPortableRuntime = {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/plugin-sdk/errors';
 import { createKimiConnectedAccountRuntime } from './runtime.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 
 function store(initial: Record<string, string> = {}) {
   const values = new Map(Object.entries(initial));
@@ -13,6 +14,18 @@ function context(credentials = store()) {
 }
 
 describe('Kimi connected service', () => {
+  it('delivers regional Code-key endpoints without exposing refresh material', async () => {
+    const runtime = createKimiConnectedAccountRuntime();
+    const ctx = { ...context(store({ accessToken: 'fake-code', refreshToken: 'fake-root', credentialKind: 'token', apiKind: 'code', apiBase: 'https://api.kimi.ai/coding/v1' })), services: {} } as Parameters<ConnectedAccountRuntime['materialize']>[1];
+    expect(await runtime.materialize({ kind: 'environment', keys: ['KIMI_API_KEY', 'KIMI_CODE_BASE_URL', 'KIMI_CODE_ANTHROPIC_BASE_URL'] }, ctx)).toEqual({ kind: 'environment', env: {
+      KIMI_API_KEY: 'fake-code', KIMI_CODE_BASE_URL: 'https://api.kimi.ai/coding/v1', KIMI_CODE_ANTHROPIC_BASE_URL: 'https://api.kimi.ai/coding/',
+    } });
+  });
+  it('keeps an unknown credential kind usable for selected Code-key delivery', async () => {
+    const runtime = createKimiConnectedAccountRuntime();
+    const ctx = { ...context(store({ accessToken: 'fake-unknown', apiKind: 'code' })), services: {} } as Parameters<ConnectedAccountRuntime['materialize']>[1];
+    expect(await runtime.materialize({ kind: 'environment', keys: ['KIMI_API_KEY'] }, ctx)).toEqual({ kind: 'environment', env: { KIMI_API_KEY: 'fake-unknown' } });
+  });
   it('uses one install id through device begin, pending, slow-down, success and headers', async () => {
     const runtime = createKimiConnectedAccountRuntime();
     const credentials = store();
@@ -34,7 +47,11 @@ describe('Kimi connected service', () => {
     expect(await mode.begin(ctx)).toMatchObject({ status: 'awaitingDeviceAuthorization', pollIntervalMs: 2000 });
     expect(await mode.poll(ctx)).toMatchObject({ status: 'pending', retryAfterMs: 2000 });
     expect(await mode.poll(ctx)).toMatchObject({ status: 'pending', retryAfterMs: 7000 });
-    expect(await mode.poll(ctx)).toMatchObject({ status: 'connected', credentialKind: 'oauth' });
+    const connected = await mode.poll(ctx);
+    expect(connected).toMatchObject({ status: 'connected', credentialKind: 'oauth' });
+    if (connected.status !== 'connected') throw new Error('Kimi grant was not connected');
+    const purpose = PLUGIN_MANIFEST.contributes.agents?.find(agent => agent.id === 'kimi')?.connectedAccounts?.[0];
+    expect(purpose?.credentialKinds).toContain(connected.credentialKind);
     expect(new Set(calls).size).toBe(1);
     expect(calls[0]).not.toBe('');
     expect(credentials.values.get('deviceId')).toBe(calls[0]);
@@ -50,15 +67,36 @@ describe('Kimi connected service', () => {
     const mode = runtime.authentication.modes['api-key'];
     if (mode.kind !== 'manual') throw new Error('manual mode missing');
     const input = { ...context(credentials), attemptCredentials: credentials, services: {}, attempt: { kind: 'connect', attemptId: 'fake' }, service: { pluginId: 'happier.agent.kimi', localId: 'kimi-code' } } as Parameters<typeof mode.complete>[1];
-    expect(await mode.complete({ fields: { token: 'fake-key' } }, input)).toMatchObject({ status: 'connected', credentialKind: 'token' });
+    const connected = await mode.complete({ fields: { token: 'fake-key' } }, input);
+    expect(connected).toMatchObject({ status: 'connected', credentialKind: 'token' });
+    if (connected.status !== 'connected') throw new Error('Kimi key was not connected');
+    const purpose = PLUGIN_MANIFEST.contributes.agents?.find(agent => agent.id === 'kimi')?.connectedAccounts?.[0];
+    expect(purpose?.credentialKinds).toContain(connected.credentialKind);
     expect(await runtime.refresh({ ...context(credentials), stagedCredentials: store(), operation: { operationId: 'fake', configurationRevision: '1' }, services: {} } as Parameters<ConnectedAccountRuntime['refresh']>[0])).toMatchObject({ status: 'connected', credentialKind: 'token' });
     expect(credentials.values.has('refreshToken')).toBe(false);
+    expect(await runtime.materialize({ kind: 'environment', keys: ['KIMI_API_KEY', 'HAPPIER_KIMI_ACCESS_TOKEN', 'UNRELATED_KEY'] },
+      { ...context(credentials), services: {} } as Parameters<ConnectedAccountRuntime['materialize']>[1])).toEqual({
+      kind: 'environment', env: { KIMI_API_KEY: 'fake-key', HAPPIER_KIMI_ACCESS_TOKEN: 'fake-key' },
+    });
   });
-  it('materializes only selected headers and refuses a different origin', async () => {
+  it.each([
+    { credentialKind: 'oauth', apiKind: 'code' },
+    { credentialKind: 'token', apiKind: 'platform' },
+  ])('refuses to relabel $credentialKind/$apiKind credentials as a Code API key', async row => {
     const runtime = createKimiConnectedAccountRuntime();
-    const ctx = { ...context(store({ accessToken: 'fake-b', credentialKind: 'oauth', apiBase: 'https://api.kimi.ai/coding/v1', deviceId: 'fake-install' })), services: {} } as Parameters<ConnectedAccountRuntime['materialize']>[1];
+    const ctx = { ...context(store({ accessToken: 'fake-selected', ...row })), services: {} } as Parameters<ConnectedAccountRuntime['materialize']>[1];
+    await expect(runtime.materialize({ kind: 'environment', keys: ['KIMI_API_KEY'] }, ctx)).rejects.toMatchObject({
+      code: 'kimi_code_api_key_unavailable',
+    });
+    expect(await runtime.materialize({ kind: 'environment', keys: ['HAPPIER_KIMI_ACCESS_TOKEN'] }, ctx)).toEqual({
+      kind: 'environment', env: { HAPPIER_KIMI_ACCESS_TOKEN: 'fake-selected' },
+    });
+  });
+  it('materializes selected regional headers and refuses a foreign origin', async () => {
+    const runtime = createKimiConnectedAccountRuntime();
+    const ctx = { ...context(store({ accessToken: 'fake-b', credentialKind: 'oauth', apiKind: 'code', apiBase: 'https://api.kimi.ai/coding/v1', deviceId: 'fake-install' })), services: {} } as Parameters<ConnectedAccountRuntime['materialize']>[1];
     expect(await runtime.materialize({ kind: 'httpHeaders', origin: 'https://api.kimi.ai', headerNames: ['Authorization', 'X-Msh-Device-Id'] }, ctx)).toMatchObject({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fake-b', 'X-Msh-Device-Id': 'fake-install' } });
-    await expect(runtime.materialize({ kind: 'httpHeaders', origin: 'https://api.kimi.com', headerNames: ['Authorization'] }, ctx)).rejects.toThrow();
+    await expect(runtime.materialize({ kind: 'httpHeaders', origin: 'https://foreign.example', headerNames: ['Authorization'] }, ctx)).rejects.toThrow();
   });
   it.each([
     { status: 503, limitCategory: 'capacity', retryable: true },
