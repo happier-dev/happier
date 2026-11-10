@@ -2877,8 +2877,16 @@ describe('default Action executor mode and catalog contracts', () => {
     }) }));
   });
 
-  it('sends the strict V2 spawn input as the daemon wire request', async () => {
-    const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'manual:voice-v2-contract',
+  it.each(([false, true, undefined] as const).flatMap(isShared => (['create', 'preview'] as const).map(phase => ({ isShared, phase }))))(
+    'sends strict V2 spawn input with one custody read only when uncertain ($phase isShared=$isShared)', async ({ isShared, phase }) => {
+    if (phase === 'preview') await homes.requireUiApproval(serverId, 'session.spawn_new');
+    const existing = storage.getState().machineListByServerId[serverId]?.find(machine => machine.id === 'machine-a');
+    if (!existing) throw new Error('Expected the scoped Machine inventory');
+    const machine = { ...existing, isShared };
+    storage.getState().applyMachines([machine], true, { sourceServerId: connection!.serverId });
+    const access = bindMachineAccessActionHttpRequestV1('machines.access.grants.list', { serverId, machineId: machine.id });
+    const readsBefore = homes.requestsFor(access.path).length;
+    const input = SessionSpawnNewInputV2Schema.parse({ creationKey: `manual:voice-v2-contract:${phase}:${String(isShared)}`,
       executionTarget: { serverId, machineId: 'machine-a' }, directory: { kind: 'path', path: '/tmp/project' },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       initialInput: { text: 'Inspect this project.' } });
@@ -2886,9 +2894,23 @@ describe('default Action executor mode and catalog contracts', () => {
       organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'accepted', localId: 'message-new' } };
     daemonAnswer = request => request.method === `machine-a:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`
       ? createExistingSessionDirectoryPreflightResult(request.params) : spawnResult;
-    const result = await createDefaultActionExecutor().execute('session.spawn_new', input, { ...context(), signal: new AbortController().signal });
-    expect(result).toEqual({ ok: true, result: spawnResult });
-    expect(outgoing).toContainEqual(expect.objectContaining({ method: `machine-a:${RPC_METHODS.SESSION_SPAWN_NEW}`, params: input }));
+    let previewed = false;
+    const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async ({ preview }) => {
+      expect(preview).toMatchObject({ actionId: 'session.spawn_new' });
+      previewed = true;
+      return false;
+    } });
+    if (phase === 'create') {
+      const result = await executor.execute('session.spawn_new', input, { ...context(), signal: new AbortController().signal });
+      expect(result).toEqual({ ok: true, result: spawnResult });
+      expect(outgoing).toContainEqual(expect.objectContaining({ method: `machine-a:${RPC_METHODS.SESSION_SPAWN_NEW}`, params: input }));
+    } else {
+      const result = await executor.execute('session.spawn_new', input, context());
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+      expect(previewed).toBe(true);
+      expect(outgoing.some(request => request.method === `machine-a:${RPC_METHODS.SESSION_SPAWN_NEW}`)).toBe(false);
+    }
+    expect(homes.requestsFor(access.path)).toHaveLength(readsBefore + (isShared === false ? 0 : 1));
   });
 
   it('clears the terminal composer with the expected state at the Session RPC boundary', async () => {
