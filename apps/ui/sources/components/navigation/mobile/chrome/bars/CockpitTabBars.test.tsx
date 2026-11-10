@@ -925,6 +925,10 @@ describe('cockpit tab bars', () => {
         const screen = await renderScreen(bar());
         expect(screen.tree.findAllByType('GestureHandlerScrollView' as never)).toHaveLength(1);
         expect(screen.findHostByTestId('session-cockpit-tab-browser')).toBeTruthy();
+        // More stands outside the scrolling track (owner 11-10), so no scroll position hides it.
+        const track = screen.tree.findByType('GestureHandlerScrollView' as never);
+        expect(track.findAll((node) => node.props?.testID === 'session-cockpit-tab-more')).toHaveLength(0);
+        expect(screen.findHostByTestId('session-cockpit-tab-more')).toBeTruthy();
         expect(observed.at(-1)).toBe(true);
 
         // "Always swipe between sessions": the bar keeps what fits; the rest wait in More, labelled.

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View, useWindowDimensions } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
@@ -30,6 +31,11 @@ type PhoneMenuItem = PhonePlacementItem & Readonly<{
     count?: string;
     moreTrailing?: React.ReactNode;
 }>;
+
+const styles = StyleSheet.create((theme) => ({
+    // A row's quiet fact and its pin share one line.
+    rowEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
+}));
 
 export type DetailPhonePreviewMetrics = Readonly<{ metrics: ReturnType<typeof resolveTabBarMetrics>; slotCount: number | null }>;
 
@@ -189,12 +195,12 @@ export function DetailPhoneMoreMenu(props: Readonly<{
         disabled: entry.disabled === true, ...(entry.subtitle ? { subtitle: entry.subtitle } : {}),
         testID: `${prefix}-more-item:${entry.id}`,
         // Pins mount only while the menu is open: a closed More holds no per-row settings writers.
-        rightElement: open && (entry.pinnable || entry.trailing) ? <>
+        rightElement: open && (entry.pinnable || entry.trailing) ? <View style={styles.rowEnd}>
             {entry.trailing}
             {entry.pinnable ? <NavigationPlacementPinButton surfaceId={props.surfaceId} entryId={entry.id} pinned={entry.pinned}
                 label={t(entry.pinned ? 'phoneNav.bar.removeFromBar' : 'phoneNav.bar.keepOnBar')} preferences={props.preferences}
                 testID={`${prefix}-pin:${entry.id}`} /> : null}
-        </> : undefined,
+        </View> : undefined,
     })), { id: 'customize', title: t('navigationPlacement.customizeTabs'), icon: <Icon name="sliders-horizontal" size={18} />,
         testID: `${prefix}-more-customize` }];
     return <DropdownMenu open={open} onOpenChange={props.onOpenChange} items={items} categoryTitles={categoryTitles}

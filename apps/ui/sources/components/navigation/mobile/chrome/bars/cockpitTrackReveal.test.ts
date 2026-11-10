@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { COCKPIT_TRACK_MORE_SLOT, resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
+import { resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
 
 describe('a scrolling phone bar keeps its selected tab in view', () => {
     const viewport = 300;
@@ -20,10 +20,12 @@ describe('a scrolling phone bar keeps its selected tab in view', () => {
 describe('what a scrolling phone bar brings into view', () => {
     const tabs = ['chat', 'files', 'git'] as const;
     it('reveals a selected tab in the track and leaves the fixed first tab alone', () => {
+        expect(resolveCockpitTrackRevealTarget(tabs, 'files')).toBe('files');
         expect(resolveCockpitTrackRevealTarget(tabs, 'git')).toBe('git');
         expect(resolveCockpitTrackRevealTarget(tabs, 'chat')).toBeNull();
     });
-    it('reveals More at the end of the track when the selected item is behind it', () => {
-        expect(resolveCockpitTrackRevealTarget(tabs, 'browser')).toBe(COCKPIT_TRACK_MORE_SLOT);
+    // Owner 11-10: More stands outside the track, always in view; nothing behind it moves the track.
+    it('leaves the track alone when the selected item is behind More', () => {
+        expect(resolveCockpitTrackRevealTarget(tabs, 'browser')).toBeNull();
     });
 });

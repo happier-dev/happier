@@ -10,14 +10,11 @@ export function resolveCockpitTrackRevealX(input: Readonly<{ x: number; width: n
     return null;
 }
 
-/** The track slot holding what follows the tabs (More). Never a tab id. */
-export const COCKPIT_TRACK_MORE_SLOT = '\u0000more';
-
 /**
- * What the track brings into view: the selected tab, or More when the selected item is behind it (More then
- * carries that item's name). Null for the first tab, which stays fixed outside the track.
+ * What the track brings into view: the selected tab. Null for the first tab and for More, which both stand
+ * outside the track, and for an item behind More, which moves nothing (owner 11-10).
  */
 export function resolveCockpitTrackRevealTarget(tabIds: readonly string[], activeId: string): string | null {
     if (tabIds[0] === activeId) return null;
-    return tabIds.includes(activeId) ? activeId : COCKPIT_TRACK_MORE_SLOT;
+    return tabIds.includes(activeId) ? activeId : null;
 }

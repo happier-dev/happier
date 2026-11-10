@@ -19,7 +19,7 @@ import { resolveHorizontalScrollEdgeMaskRamps, resolveHorizontalScrollEdgeMaskSt
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { usePublishCockpitBarScrolls } from './cockpitBarScrollState';
-import { COCKPIT_TRACK_MORE_SLOT, resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
+import { resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
 import { CockpitBarFoldedContext } from '../pageBarChromeFold';
 
 
@@ -239,14 +239,14 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
                     <>
                         {props.tabs[0] ? renderTab(props.tabs[0]) : null}
                         <View style={styles.trackDivider} />
-                        <CockpitTabBarTrack activeId={resolveCockpitTrackRevealTarget(props.tabs.map(tab => tab.id), props.activeSurface) ?? undefined}>
+                        <CockpitTabBarTrack activeId={resolveCockpitTrackRevealTarget(props.tabs.map(tab => tab.id), props.activeSurface) ?? undefined}
+                            lastId={props.tabs.at(-1)?.id}>
                             {props.tabs.slice(1).map(tab => (
                                 <CockpitTabBarTrackItem key={tab.id} id={tab.id}>{renderTab(tab)}</CockpitTabBarTrackItem>
                             ))}
-                            {props.trailing ? (
-                                <CockpitTabBarTrackItem id={COCKPIT_TRACK_MORE_SLOT} style={styles.trackTrailing}>{props.trailing}</CockpitTabBarTrackItem>
-                            ) : null}
                         </CockpitTabBarTrack>
+                        {/* More stands outside the track (owner 11-10): no scroll position hides it. */}
+                        {props.trailing ? <View style={styles.trackTrailing}>{props.trailing}</View> : null}
                     </>
                 ) : (
                     <>
@@ -281,7 +281,7 @@ function CockpitTabBarTrackItem(props: Readonly<{ id: string; children: React.Re
     );
 }
 
-function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeId?: string }>) {
+function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeId?: string; lastId?: string }>) {
     const fades = useScrollEdgeFades({ enabledEdges: { left: true, right: true }, overflowThreshold: 4, edgeThreshold: 2 });
     // The selected tab is scrolled into view (Plan 30 §457) when it, or the track's width, changes; a person's own
     // scroll is left alone until then.
@@ -290,11 +290,16 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeI
     const viewport = React.useRef(0);
     const layouts = React.useRef(new Map<string, Readonly<{ x: number; width: number }>>());
     const reveal = React.useCallback(() => {
+        // The last tab (the open item from More rides there) is the track's end: no measured position can be stale.
+        if (props.activeId !== undefined && props.activeId === props.lastId) {
+            scrollRef.current?.scrollToEnd({ animated: false });
+            return;
+        }
         const active = props.activeId === undefined ? undefined : layouts.current.get(props.activeId);
         if (!active || viewport.current <= 0) return;
         const x = resolveCockpitTrackRevealX({ ...active, offset: offset.current, viewport: viewport.current, fade: TRACK_EDGE_FADE.fadeSize });
         if (x !== null) scrollRef.current?.scrollTo({ x, animated: false });
-    }, [props.activeId]);
+    }, [props.activeId, props.lastId]);
     React.useEffect(reveal, [reveal]);
     const report = React.useCallback((id: string, x: number, width: number) => {
         layouts.current.set(id, { x, width });
@@ -322,7 +327,7 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeI
             showsHorizontalScrollIndicator={false}
             style={webMask ?? undefined}
             contentContainerStyle={styles.trackContent}
-            onContentSizeChange={fades.onContentSizeChange}
+            onContentSizeChange={(width, height) => { fades.onContentSizeChange(width, height); reveal(); }}
             onScroll={onScroll}
             scrollEventThrottle={32}
         >
