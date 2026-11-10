@@ -2,9 +2,10 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import Color from 'color';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { standardCleanup } from '@/dev/testkit';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
-import { installModalComponentCommonModuleMocks } from '../modalComponentTestHelpers';
+import { installPopoverCommonModuleMocks } from '@/components/ui/popover/popoverTestHelpers';
 
 const windowState = vi.hoisted(() => ({
     width: 1024,
@@ -31,7 +32,7 @@ function hasShadow(style: Record<string, unknown>): boolean {
         || style.elevation !== undefined;
 }
 
-installModalComponentCommonModuleMocks({
+installPopoverCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -45,15 +46,14 @@ installModalComponentCommonModuleMocks({
             }),
         });
     },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key: string) => key });
-    },
 });
 
 // The platform keyboard adapter (keyboard-controller on native, the visual viewport on web) is the OS boundary.
 const keyboardBoundary = vi.hoisted(() => ({ height: 0 }));
 vi.mock('@/hooks/ui/useKeyboardHeight', () => ({ useKeyboardHeight: () => keyboardBoundary.height }));
+
+// Collect the real component graph before per-test clocks start; its first import can exceed the test budget.
+await import('./ModalCardFrame');
 
 afterEach(() => {
     standardCleanup();
@@ -72,7 +72,6 @@ describe('ModalCardFrame', () => {
             return React.createElement('RetainedInput', { value: draft, onChangeText: setDraft });
         }
         try {
-            const { renderScreen } = await import('@/dev/testkit');
             const { ModalCardFrame } = await import('./ModalCardFrame');
             const content = <RetainedInput />;
             const screen = await renderScreen(<ModalCardFrame framed={false} title="Input" bodyScroll="none">{content}</ModalCardFrame>);
@@ -92,7 +91,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('registers its own scrolling body as the scroll source of its content, and keeps the modal\'s otherwise', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
         const { PopoverScrollSourceProvider, usePopoverScrollSourceRef } = await import('@/components/ui/popover/PopoverScrollSource');
         const bodyScroller = { bodyScroller: true };
@@ -114,7 +112,6 @@ describe('ModalCardFrame', () => {
         windowState.width = 390;
         windowState.height = 844;
         try {
-            const { renderScreen } = await import('@/dev/testkit');
             const { ModalCardFrame } = await import('./ModalCardFrame');
             const frame = (child: string) => <ModalCardFrame testID="bounded-sheet" presentation="sheet" scrollHost="bounded"
                 title="Where should it run?" dimensions={{ size: 'md', maxHeightRatio: 0.92 }}>{React.createElement(child)}</ModalCardFrame>;
@@ -140,7 +137,6 @@ describe('ModalCardFrame', () => {
             return React.createElement('Child');
         }
         try {
-            const { renderScreen } = await import('@/dev/testkit');
             const { ModalCardFrame } = await import('./ModalCardFrame');
             const content = <RetainedContent />;
             const screen = await renderScreen(<ModalCardFrame testID="full-page" presentation="fullscreen" scrollHost="body"
@@ -168,7 +164,6 @@ describe('ModalCardFrame', () => {
         act(() => storage.setState({ settings: { ...previousState.settings, glassBlurEnabled: true,
             glassSurfaceMaterials: { ...glassPresetMaterials('auto'), floating: { blur: 'strong', opacity: 0 } } } }));
         try {
-            const { renderScreen } = await import('@/dev/testkit');
             const { ModalCardFrame } = await import('./ModalCardFrame');
             const screen = await renderScreen(<ModalCardFrame material="solid" presentation={presentation} testID="solid-form">
                 {React.createElement('Child')}
@@ -194,7 +189,6 @@ describe('ModalCardFrame', () => {
             glassSurfaceMaterials: { ...glassPresetMaterials('auto'), floating: { blur: 'strong', opacity: 0 } },
         } }));
         try {
-            const { renderScreen } = await import('@/dev/testkit');
             const { ModalCardFrame } = await import('./ModalCardFrame');
             const screen = await renderScreen(<ModalCardFrame title="Material card" presentation={presentation} testID="material-frame">
                 {React.createElement('Child', { testID: 'material-card-child' })}
@@ -218,7 +212,6 @@ describe('ModalCardFrame', () => {
         }
     });
     it('keeps a one-line subtitle to one line when the chrome asks for it', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
         const subtitle = 'Scripts · a-long-project-name · a-long-checkout-name';
         const screen = await renderScreen(React.createElement(ModalCardFrame, {
@@ -239,7 +232,6 @@ describe('ModalCardFrame', () => {
         windowState.width = 390;
         windowState.height = 844;
         try {
-            const { renderScreen } = await import('@/dev/testkit');
             const { ModalCardFrame } = await import('./ModalCardFrame');
             const screen = await renderScreen(React.createElement(ModalCardFrame, {
                 children: React.createElement('Child'),
@@ -260,7 +252,6 @@ describe('ModalCardFrame', () => {
         windowState.width = 390;
         windowState.height = 844;
         try {
-            const { renderScreen } = await import('@/dev/testkit');
             const { ModalCardFrame } = await import('./ModalCardFrame');
             const screen = await renderScreen(React.createElement(ModalCardFrame, {
                 children: React.createElement('Child'),
@@ -277,7 +268,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('keeps modal shadows outside the clipped rounded card surface', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
         const screen = await renderScreen(
@@ -310,7 +300,6 @@ describe('ModalCardFrame', () => {
     });
 
     it.each([['card', true], ['sheet', true], ['fullscreen', false]] as const)('draws a freshness line in a %s plain on its sheet: %s', async (presentation, plain) => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
         const { SurfaceFreshnessLine } = await import('@/components/ui/surfaces/SurfaceFreshnessLine');
         const screen = await renderScreen(<ModalCardFrame presentation={presentation} title="Bots">
@@ -324,7 +313,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('renders a flexing body wrapper (so the overlay scroll host can handle overflow)', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
         const screen = await renderScreen(
@@ -357,7 +345,6 @@ describe('ModalCardFrame', () => {
 
     it.each([[0, 34], [300, 0]] as const)('pads a sheet by the home indicator only while no keyboard covers it (keyboard %s)', async (keyboard, foot) => {
         keyboardBoundary.height = keyboard;
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
         const screen = await renderScreen(React.createElement(ModalCardFrame, {
             children: React.createElement('Child'), title: 'Model', presentation: 'sheet', sheetBottomInset: 34, testID: 'sheet',
@@ -372,7 +359,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('renders a close button that calls onClose', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
         const onClose = vi.fn();
@@ -397,7 +383,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('renders no title band for a headerless card (search, palette) while keeping its content', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
         const screen = await renderScreen(
@@ -419,7 +404,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('renders a leading header slot when provided', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
         const screen = await renderScreen(
@@ -438,7 +422,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('applies the same constrained sizing to the card container', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
         windowState.width = 920;
@@ -478,7 +461,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('does not hard-clamp height (the overlay scroll host owns overflow)', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
         windowState.width = 920;
@@ -525,7 +507,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('can constrain the card to the viewport when the modal body owns scrolling', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
         windowState.width = 920;
@@ -563,7 +544,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('sizes the card to its content up to the viewport bound when the body owns overflow', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
         windowState.width = 920;
@@ -594,7 +574,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('marks the card container as a modal card boundary on web (so backdrop clicks can dismiss without swallowing inner clicks)', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
         const screen = await renderScreen(
@@ -616,7 +595,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('renders a scrollable body surface when bodyScroll is auto', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
         const screen = await renderScreen(
@@ -639,7 +617,6 @@ describe('ModalCardFrame', () => {
     });
 
     it('keeps card footers divider-free and gives their buttons the dialog action tier (label words, as alerts)', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
         const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
         const { ModalCardFrame } = await import('./ModalCardFrame');
         const screen = await renderScreen(React.createElement(ModalCardFrame, {

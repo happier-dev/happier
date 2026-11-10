@@ -62,14 +62,22 @@ type ModalCardFrameProps = Readonly<{
 }>;
 
 
+const sheetFrameGeometry = {
+    alignSelf: 'stretch',
+    flexShrink: 1,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+} satisfies ViewStyle;
+
 const stylesheet = StyleSheet.create((theme) => ({
-    shadowFrame: {
+    shadowFrame: (sheet: boolean) => ({
         backgroundColor: 'transparent',
         borderRadius: theme.borderRadius.modalCard,
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
         alignSelf: 'center',
         minHeight: 0,
-    },
+        ...(sheet ? sheetFrameGeometry : null),
+    }),
     clipSurface: {
         borderRadius: theme.borderRadius.modalCard,
         ...resolveThemeSurfaceBorderStyle({
@@ -81,12 +89,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'column',
         minHeight: 0,
     },
-    sheetFrame: {
-        alignSelf: 'stretch',
-        flexShrink: 1,
-        borderBottomLeftRadius: 0,
-        borderBottomRightRadius: 0,
-    },
+    sheetFrame: sheetFrameGeometry,
     fullscreenFrame: {
         alignSelf: 'stretch',
         minHeight: 0,
@@ -147,6 +150,8 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
     // A body that does not scroll hands its content exactly its own height, so content that owns its
     // scrolling (a placement list, a catalog beside its details) is the one scroller and reaches its end.
     // Web bounds it by flex; a native ScrollView lays its content out unbounded, so the bound is measured.
+    // A fixed-height body gives an exact height: under a mere cap, native flex children below it still lay
+    // out at their full height (iOS QA: the Customize list stayed 1122 pt tall in a 522 pt body).
     const boundsContent = (fixedHeight || bounded) && bodyScroll !== 'auto';
     const [bodyHeight, setBodyHeight] = React.useState(0);
     const onBodyLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -189,9 +194,10 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
             {...(dismiss || bounded ? { onLayout: onFrameLayout } : {})}
             style={[
                 dismiss ? { transform: [{ translateY: drag.offset }] } : null,
-                framed ? (fullscreen ? styles.fullscreenFrame : styles.shadowFrame) : null,
+                // Native Animated flattens this array; one registered frame keeps its complete Unistyles link.
+                framed ? (fullscreen ? styles.fullscreenFrame : styles.shadowFrame(sheet)) : null,
                 sheet
-                    ? [styles.sheetFrame, { width: '100%', maxWidth: '100%' }]
+                    ? { width: '100%', maxWidth: '100%' }
                     : framed ? {
                         width: dimensions.width,
                         maxWidth: dimensions.width,
@@ -255,13 +261,17 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                             : fixedHeight || bounded ? styles.bodyBounded : styles.bodyUnscrolled}
                         onLayout={boundsContent ? onBodyLayout : undefined}
                         contentContainerStyle={bodyScroll === 'auto' ? styles.bodyScrollContent
-                            : boundsContent ? [styles.bodyBounded, bodyHeight > 0 ? { maxHeight: bodyHeight } : null] : undefined}
+                            : boundsContent ? [styles.bodyBounded, bodyHeight > 0 ? (fixedHeight ? { height: bodyHeight } : { maxHeight: bodyHeight }) : null] : undefined}
                         scrollEnabled={bodyScroll === 'auto'}
                         keyboardShouldPersistTaps="handled"
                         nestedScrollEnabled={bodyScroll === 'auto'}
                     >
                         <PopoverScrollSourceProvider scrollSourceRef={bodyScroll === 'auto' ? bodyScrollRef : inheritedScrollSource}>
-                            <ModalCardBody fill={framed && bodyScroll !== 'auto'} style={props.bodyStyle}>
+                            <ModalCardBody fill={framed && bodyScroll !== 'auto'}
+                                // Sized from the exact body height, never from its content: native Yoga (legacy errata)
+                                // shrank a content-sized body to the card but left its children at the content height
+                                // (iOS QA: a 1122 pt Customize list inside a 522 pt body).
+                                style={[boundsContent && fixedHeight && bodyHeight > 0 ? { height: bodyHeight, flexGrow: 0, flexShrink: 0 } : null, props.bodyStyle]}>
                                 {/* A card or sheet already draws the surface; a fullscreen page keeps the strip under its header. */}
                                 <SurfaceFreshnessOnSheetProvider onSheet={framed && !fullscreen}>{props.children}</SurfaceFreshnessOnSheetProvider>
                             </ModalCardBody>
