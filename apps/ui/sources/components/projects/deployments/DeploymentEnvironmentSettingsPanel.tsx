@@ -12,6 +12,7 @@ import type {
   DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
 import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol/v1';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 import {
   DropdownMenu,
@@ -26,6 +27,7 @@ import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Switch } from '@/components/ui/forms/Switch';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { StatusDot } from '@/components/ui/status/StatusDot';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { readProjectRepositoryIdentityV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { useSettingReveal } from '@/components/settings/shell/SettingRow';
@@ -38,6 +40,7 @@ import { useDeploymentEnvironmentRowParts } from './DeploymentEnvironmentCollect
 import type { DeploymentRetainedBackup } from './deploymentRestore';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { DeploymentTabState } from './DeploymentTabState';
+import { DeploymentPrivateServiceExports } from './DeploymentPrivateServiceExports';
 import {
   DeploymentBackupControls,
   DeploymentBackupDestinationRow,
@@ -53,6 +56,7 @@ import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { createDeploymentActions } from './deploymentActions';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
+import { DeploymentPreviewBranchChoice } from './DeploymentPreviewBranchChoice';
 import { useDeploymentEnvironmentPreviews } from './useDeploymentProject';
 import {
   useDeploymentEnvironmentBackups,
@@ -63,7 +67,8 @@ const noop = () => {};
 
 /** What a manager can change from Settings and Permissions, through the Action owner. */
 export type DeploymentEnvironmentEditing = Readonly<{
-  actions: Pick<ReturnType<typeof createDeploymentActions>, 'setController' | 'updateEnvironment'>;
+  actions: Pick<ReturnType<typeof createDeploymentActions>, 'setController' | 'updateEnvironment'>
+    & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'inspectPlatformTarget'>>;
   serverId: string;
   review: DeploymentReviewHandle;
   /** A settled change moved the Environment's revision: re-read it. */
@@ -158,6 +163,12 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             copy="setting"
           />
         ) : null}
+        {change.followup ? (
+          <SurfaceStateCard testID="project-deployments.environment.settings.preview-enrollment" kind="warning"
+            title={t('projects.deployments.settingsSections.previewsEnrollmentUnavailable')}
+            reason={readDeploymentFailureRecoveryV1(change.followup.errorCode).remedy}
+            diagnosticCode={change.followup.errorCode} />
+        ) : null}
         <ItemGroup
           testID={section('servers-build')}
           title={t('projects.deployments.sectionServersBuild')}
@@ -246,6 +257,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             />
           )}
         </ItemGroup>
+
+        <DeploymentPrivateServiceExports detail={detail} editing={editing} />
 
         <View ref={controllerReveal.hostRef} collapsable={false}>
         <ItemGroup
@@ -434,6 +447,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
                   void change.press(() => editing.actions.updateEnvironment(detail.environment, { previewTemplate: next }));
                 } : null}
                 saving={change.running}
+                inspect={editing?.actions.inspectPlatformTarget ?? null}
                 lifetime={props.lifetime ?? null}
                 testID={`${section('previews')}.template`}
               />
@@ -696,6 +710,7 @@ function PreviewTemplateRows(props: Readonly<{
   /** Saves the whole next template once through `environments.update` (patch.previewTemplate); absent for viewers. */
   onSave: ((next: PreviewTemplate) => void) | null;
   saving: boolean;
+  inspect: ReturnType<typeof createDeploymentActions>['inspectPlatformTarget'] | null;
   /** The captured Home/Account the Project repository is read under; absent while it is not current. */
   lifetime: ServerAccountScopeLifetime | null;
   testID: string;
@@ -705,6 +720,7 @@ function PreviewTemplateRows(props: Readonly<{
   const onSaveTemplate = props.onSave;
   // The saved data selections this page has seen, so switching to None and back keeps the exact choice.
   const [seenData, setSeenData] = React.useState<Readonly<Partial<Record<'own' | 'branch', PreviewTemplate['data']>>>>({});
+  const [choosingBranch, setChoosingBranch] = React.useState(false);
   React.useEffect(() => {
     const kind = template ? previewDataKind(template) : 'none';
     if (template && kind !== 'none') setSeenData((seen) => seen[kind] === template.data ? seen : { ...seen, [kind]: template.data });
@@ -724,11 +740,13 @@ function PreviewTemplateRows(props: Readonly<{
   const dataKind = previewDataKind(template);
   const save = (patch: Partial<PreviewTemplate>) => onSave?.({ ...template, ...patch });
   const unavailable = t('projects.deployments.settingsSections.previewsDataUnavailable');
+  const canChooseBranch = !!props.lifetime && !!props.inspect
+    && props.detail.targetLinks.some(row => row.targetLink.role === 'data' && row.targetLink.source.kind === 'plugin');
   const dataOptions: ReadonlyArray<SegmentedChoiceOption<PreviewData>> = [
     { id: 'own', label: t('projects.deployments.settingsSections.previewsDataOwn'),
       disabled: !seenData.own && dataKind !== 'own', unavailableReason: unavailable },
     { id: 'branch', label: t('projects.deployments.settingsSections.previewsDataBranch'),
-      disabled: !seenData.branch && dataKind !== 'branch', unavailableReason: unavailable },
+      disabled: !seenData.branch && dataKind !== 'branch' && !canChooseBranch, unavailableReason: unavailable },
     { id: 'none', label: t('projects.deployments.settingsSections.previewsDataNone') },
   ];
   const runsOnSubtitle = sharesProduction ? t('projects.deployments.settingsSections.previewsProductionMachine') : undefined;
@@ -806,9 +824,10 @@ function PreviewTemplateRows(props: Readonly<{
           title={t('projects.deployments.settingsSections.previewsData')}
           accessoryLayout="adaptive"
           options={dataOptions}
-          value={dataKind}
+          value={choosingBranch ? 'branch' : dataKind}
           disabled={props.saving}
           onChange={(next) => {
+            setChoosingBranch(next === 'branch');
             if (next === dataKind) return;
             const data = next === 'none' ? [] : seenData[next];
             if (data) save({ data });
@@ -822,6 +841,10 @@ function PreviewTemplateRows(props: Readonly<{
           mode="info"
         />
       )}
+      {onSave && props.lifetime && props.inspect && (choosingBranch || dataKind === 'branch') ? (
+        <DeploymentPreviewBranchChoice detail={props.detail} lifetime={props.lifetime} inspect={props.inspect}
+          saving={props.saving} onSave={(data) => save({ data })} testID={`${props.testID}.branch`} />
+      ) : null}
       {template.forkPreviews === 'off' ? (
         <Item testID={`${props.testID}.forks`} title={t('projects.deployments.settingsSections.previewsForks')} mode="info" />
       ) : null}

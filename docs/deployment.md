@@ -904,9 +904,11 @@ Artifact; a changed patch uses the existing signed content-publication path.
 
 In the same 0.3 development Action, `patch.ownServer.serviceExports` replaces the
 declared exports with an explicit private endpoint list: each entry names its
-key, Compose service, container port, scheme and `privateNetwork` exposure with
-the selected private network. An empty list clears the declarations. This operand
-cannot author public or loopback exports; existing declarations remain readable.
+key, Compose service, container port and scheme. A private-network entry uses
+`exposure: 'privateNetwork'` with the selected exact network. An Iroh entry uses
+`exposure: 'loopback'` and `transport: { kind: 'iroh' }`, without `privateNetwork`.
+An empty list clears the declarations. This operand cannot author public exports
+or loopback exports without the Iroh transport; existing declarations remain readable.
 `patch.definition` accepts the existing
 `from: 'compose'` source input, including document, public files and selectors;
 the native source owner derives its digest and stored content revision. It edits
@@ -915,6 +917,52 @@ Both operands stay in the private invocation and Account Artifact; Home receives
 the prepared content reference. Signed private authoring publishes its invocation's
 Artifact even when the selected content is unchanged. Neither an export
 declaration nor a source save opens a firewall rule or deploys the change.
+
+The Iroh export contract is development-only. Activation requires one effective
+TCP publication for the exported container port, bound to a literal loopback
+address with an actual host port. Host networking cannot establish that mapping.
+`resolvePrivateServiceExportAdmissionForHost` selects the active member,
+installation and current managed-service occurrence and derives the signed
+`TcpTunnelServiceExportBindingV1`, including its generation and loopback destination.
+Home admits the requester's access to both Machines when issuing the TCP grant;
+the destination daemon runs that same occurrence selector against the declarations
+retained on its applied Environment service and compares the resulting binding at
+tunnel open. B does not fetch a newer saved Environment or use requester credentials.
+A supplied port or membership alone does not authorize a connection.
+The transport uses the existing Machine Iroh carrier and TCP framing. Iroh's own
+relay fallback remains within that carrier; the user-socket server relay is not
+a Machine service-forward fallback. The consuming service owns its local Node
+loopback listener and disposes it with retained service custody. Ordinary API
+reconnect leaves the Iroh carrier running; cold observation recovery rebinds the
+address recorded in the receipt. A port conflict is visible and requires retry or
+redeployment rather than silently changing a running container's environment.
+
+For native Linux Docker, the existing admitted Compose lifecycle creates its
+consumer network before runtime binding materialization. A Node bridge binds that
+network's host gateway only and admits its subnet; it never binds all host
+interfaces. Compose owns network creation and labels, using a zero-replica
+projection without starting a helper container. Docker Desktop, remote/rootless
+gateways outside the daemon's host namespace, unsupported network drivers and
+consumers without a common network return typed unavailability.
+Receipt reference addresses retain `route.kind: 'iroh'`, the acquisition's
+observed direct/relay/unknown path and, for containers, the actual network id.
+Admission, destination connection and carrier failures use existing deployment
+recovery and service diagnostics. A later successful new connection clears a
+destination failure; an older connection's traffic does not prove recovery.
+Accepting a declaration does not prove connectivity; managed two-Machine and
+platform validation remain separate from these source contracts.
+
+The 0.3 development Environment Settings surface places private sharing after
+Servers & build. Its editor reviews the selected service, container port,
+observed private network and concrete host publication before calling that same
+update Action. Missing network observations remain a visible prerequisite.
+The Happier network choice remains disabled as “Not available yet” until its
+native and security validation closes; its authoring arm uses this same Action.
+This editor authors a stored definition for one native Machine: a shared Compose
+document cannot use one Machine's concrete address on several Machines. It does
+not restrict existing multi-Machine deployment or Connect readers. Connect's
+missing-share remedy opens this Settings section; saving still requires an
+explicit deployment before an observed endpoint can be connected.
 
 An explicit deployment supplies its exact private workload binding to the
 existing Machine firewall transition. The native writer retains the applied
@@ -1116,6 +1164,15 @@ name-only and audience-only edits do not read dependent defaults. Artifact shari
 remains a separate operation through its existing writers. This development-source defaults
 check does not complete the separate five-step workload Move to Team.
 
+In development source, the effective Source audience also receives read-only
+access to the private Artifacts held by its deployment defaults, Environments,
+Links, Domains and deployment receipts. Artifact access and recipient census
+derive this from the actual parent relation and Source custody; no Artifact grant
+is copied. Independent Artifact grants retain their own lifetime. For E2EE
+content, the existing keyholder header-read preparation must still supply current
+recipient envelopes before another reader can open it; a Source audience edit
+alone cannot create encryption keys.
+
 The same development-source CAS checks workload custody through the existing
 Machine, Artifact and Saved Secret admission owners. Required secret uses come
 from the binding writer's non-content capture and current placement, not from
@@ -1303,7 +1360,10 @@ In development source, the private Environment body accepts a strict
 `previewTemplate` with the repository, runtime link, fork choice, Domain naming
 inputs, variable blueprints and exact template or managed-data references. The
 public Environment header carries none of these private choices. This content
-field alone does not activate a PR observer or authorize child effects.
+field is saved through `deployments.environments.update`. Its host enrolls the
+declared Forge lifecycle source through the existing Workflow trigger owner;
+enrollment failure is reported alongside the successful save and can be retried.
+Saving a template creates no database or child Environment.
 The host preview-admission owner opens the private parent template before a fork
 can create a child or acquire deployment runtime, provider or registry resources.
 Forks with `forkPreviews: off` are refused. `approveEachCommit` also remains
@@ -1323,8 +1383,22 @@ A prepared preview child identifies its current template revision, pull request
 and runtime target link. Storage derives the four preview relation ids from that
 same Source-managed repository template and live link, and requires an enabled
 saved admission definition. Standard Environments have none of those four ids.
-This storage relation does not establish current-head/fork approval or a complete
-preview setup and cleanup journey; those execution producers remain required.
+This storage relation does not establish current-head/fork approval. The Workflow
+claimant reads current `previewTemplate.data` for each PR occurrence. It creates
+`pr-<number>` through the ordinary Environment writer, using fresh child runtime
+and data links, then executes the selected data target's declared branch-create
+Action. Neon declares schema-only initialization; Supabase declares `withData: false`.
+The existing link writer publishes the returned child branch identity.
+Existing PR children are reused on synchronization. Production bindings, backup
+settings and ingress are not copied into the child.
+
+The child's private content records its creation Workflow Run. On close, the
+caller reads that Run's authenticated branch captures and invokes ordinary data
+teardown before removing the runtime and Environment. Disabling new previews
+keeps an existing lifecycle listener available for this cleanup. Own-server
+database copies remain a separate restore-lifecycle integration. This is
+development source behavior; real GitHub delivery and managed-provider effects
+still require the composed live journey on the reloaded development stack.
 
 The GitHub plugin's development preview publication Workflow reads the current
 deployment receipt on a selected controller, then binds its receipt, Environment
@@ -1335,8 +1409,9 @@ scope through the preview relation to the template. Publication does not grant
 deployment approval. Pending, failed and removed publications carry no URL. Ready
 publication remains unavailable until P41 supplies current application readiness
 and its authoritative preview URL; historical receipts and caller URLs do not
-supply that fact. This explicit Workflow does not supply the automatic Plan 44
-preview lifecycle trigger. Teardown publication precedes child deletion.
+supply that fact. This publication Workflow is separate from the lifecycle
+caller above. Teardown publication precedes child deletion when publication is
+part of the selected Workflow.
 
 In development source, a managed preview data-create Action retains a minimal
 paired-delete projection in its existing Workflow invocation output. Neon and
@@ -1522,8 +1597,15 @@ connected through the existing receipt and Machine RPC owners. The accepted
 Environment revision comes from the parent's actual admission response, not a
 guessed increment or a new current-state snapshot. Missing child authority or
 execution wiring fails closed. Scoped semantic preparation/key-bootstrap issuance,
-semantic accepted-host continuity after controller changes, and joining/drain
-route proofs still require their owning producers. The connected native journey and P45's typed
+semantic accepted-host continuity after controller changes still require their owning producers.
+Joining restores the retained uniform artifacts onto every joining installation
+and requires healthy native results before the existing Domain owner enrolls
+routes. Successful uniform settlement activates membership only after signed
+Domain health is stored. Scoped teardown reconciles Domains to the surviving
+members before native removal; target-link replacement consumes that teardown's
+exact installation proof through `drainedDeploymentId`, retaining predecessor
+custody. These are development-source paths; the three-Machine join, rollback and
+drain journey still needs live proof. The connected native journey and P45's typed
 single-writer/data-move remedies remain unfinished; these source changes do not
 establish released multi-Machine execution support.
 

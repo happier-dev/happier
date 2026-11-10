@@ -21,25 +21,30 @@ export const DeploymentTextV1Schema = lazyZodSchema(() => z.string().check(z.tri
 export const OwnServerEnvironmentReleasePolicyV1Schema = z.strictObject({
     rollout: z.enum(['recreate', 'startFirst']), autoRestorePreviousRelease: z.boolean(),
 });
-function serviceExportNetworkMatchesExposure(value: Readonly<{ exposure: string; privateNetwork?: string }>): boolean {
+function serviceExportNetworkMatchesExposure(value: Readonly<{
+    exposure: string; privateNetwork?: string; transport?: Readonly<{ kind: 'iroh' }>;
+}>): boolean {
+    if (value.transport?.kind === 'iroh') return value.exposure === 'loopback' && value.privateNetwork === undefined;
     return value.exposure === 'privateNetwork' ? value.privateNetwork !== undefined : value.privateNetwork === undefined;
 }
 function serviceExportKeysAreUnique(exports: ReadonlyArray<Readonly<{ key: string }>>): boolean {
     return new Set(exports.map(value => value.key)).size === exports.length;
 }
-/** Stored declarations retain public exports; new authoring selects only an exact private endpoint. */
+/** Stored declarations retain public exports; Iroh exports publish only on loopback. */
 export const DeploymentServiceExportV1Schema = lazyZodSchema(() => z.strictObject({
     key: DeploymentTextV1Schema, service: DeploymentTextV1Schema,
     containerPort: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
     scheme: z.string().check(z.regex(/^[a-z][a-z0-9+.-]*$/iu)),
     exposure: z.enum(['public', 'privateNetwork', 'loopback']), privateNetwork: z.optional(DeploymentTextV1Schema),
+    transport: z.optional(z.strictObject({ kind: z.literal('iroh') })),
 }).check(z.refine(serviceExportNetworkMatchesExposure,
-    { message: 'Only a private export names its exact observed private network.' })));
+    { message: 'Private network exports name their exact network; Iroh exports require loopback without a private network.' })));
 export const DeploymentServiceExportsV1Schema = lazyZodSchema(() => z.array(DeploymentServiceExportV1Schema)
     .check(z.refine(serviceExportKeysAreUnique, { message: 'Service export keys must be unique.' })));
-export const DeploymentPrivateServiceExportsV1Schema = lazyZodSchema(() => z.array(z.strictObject({
-    ...DeploymentServiceExportV1Schema.shape, exposure: z.literal('privateNetwork'), privateNetwork: DeploymentTextV1Schema,
-}))
+export type DeploymentServiceExportV1 = z.infer<typeof DeploymentServiceExportV1Schema>;
+export const DeploymentPrivateServiceExportsV1Schema = lazyZodSchema(() => z.array(DeploymentServiceExportV1Schema.check(
+    z.refine(value => value.exposure === 'privateNetwork' || value.transport?.kind === 'iroh',
+        { message: 'Private authoring requires an exact private network or Iroh transport.' })))
     .check(z.refine(serviceExportKeysAreUnique, { message: 'Service export keys must be unique.' })));
 /** Multi-server ingress intent. Source/placement admission validates the referenced edge. */
 export const DeploymentIngressV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -145,6 +150,7 @@ export type DeploymentSecretBindingSourceV1 = z.infer<typeof DeploymentSecretBin
 const publicValue = lazyZodSchema(() => z.strictObject({ kind: z.literal('value'), value: z.string() }));
 export const DeploymentReferenceSourceV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('reference'), environmentId: id, export: DeploymentTextV1Schema, via: z.enum(['auto', 'privateNetwork', 'public']),
+    component: z.optional(z.enum(['host', 'port'])),
 }));
 export const DeploymentNonSecretVariableBindingSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     publicValue,
