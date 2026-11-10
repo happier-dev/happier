@@ -1849,6 +1849,7 @@ export const pt: TranslationStructure = {
             connecting: { title: 'A ligar a esta máquina', reason: 'Esta vista abre assim que a máquina responder.' },
             sourceRequired: { title: 'Escolha onde é executado', reason: 'Mais do que uma origem o pode executar. Escolha uma para o carregar.' },
             namedUnavailable: ({ name }: { name: string }) => `Não é possível abrir ${name}`,
+            namedPageUnavailable: ({ name }: { name: string }) => `Esta página não está disponível em ${name}`,
             namedFailed: ({ name }: { name: string }) => `Não foi possível carregar ${name}`,
         },
         offlineSnapshot: {
@@ -18636,7 +18637,6 @@ settingsSession: {
         domainIngressChoose: "Escolher um túnel",
         domainIngressEmpty: "Nenhum túnel elegível. Verifique a conta, a zona e o conector e tente novamente.",
         domainIngressUnavailable: "Não foi possível carregar os túneis. Verifique a conexão e tente novamente.",
-        domainIngressLoading: "Carregando túneis…",
         domainFieldHost: "Domínio",
         domainFieldService: "Serviço",
         domainFieldPort: "Porta do contentor",

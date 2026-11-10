@@ -1649,6 +1649,7 @@ export const fr: TranslationStructure = {
             connecting: { title: 'Connexion à cette machine', reason: 'Cette vue s’ouvre dès que la machine répond.' },
             sourceRequired: { title: 'Choisis où il s’exécute', reason: 'Plusieurs sources peuvent l’exécuter. Choisis-en une pour le charger.' },
             namedUnavailable: ({ name }: { name: string }) => `${name} ne peut pas s’ouvrir`,
+            namedPageUnavailable: ({ name }: { name: string }) => `Cette page n’est pas disponible dans ${name}`,
             namedFailed: ({ name }: { name: string }) => `${name} n’a pas pu se charger`,
         },
         offlineSnapshot: {
@@ -18404,7 +18405,6 @@ settingsSession: {
         domainIngressChoose: "Choisir un tunnel",
         domainIngressEmpty: "Aucun tunnel compatible. Vérifiez le compte, la zone et le connecteur, puis réessayez.",
         domainIngressUnavailable: "Impossible de charger les tunnels. Vérifiez la connexion et réessayez.",
-        domainIngressLoading: "Chargement des tunnels…",
         domainFieldHost: "Domaine",
         domainFieldService: "Service",
         domainFieldPort: "Port du conteneur",

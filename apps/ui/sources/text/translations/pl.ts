@@ -1641,6 +1641,7 @@ export const pl: TranslationStructure = {
             connecting: { title: 'Łączenie z tą maszyną', reason: 'Ten widok otworzy się, gdy maszyna odpowie.' },
             sourceRequired: { title: 'Wybierz, gdzie działa', reason: 'Może go uruchomić więcej niż jedno źródło. Wybierz jedno, aby go załadować.' },
             namedUnavailable: ({ name }: { name: string }) => `Nie można otworzyć: ${name}`,
+            namedPageUnavailable: ({ name }: { name: string }) => `Ta strona nie jest dostępna w ${name}`,
             namedFailed: ({ name }: { name: string }) => `Nie udało się wczytać: ${name}`,
         },
         offlineSnapshot: {
@@ -18355,7 +18356,6 @@ settingsSession: {
         domainIngressChoose: "Wybierz tunel",
         domainIngressEmpty: "Brak odpowiednich tuneli. Sprawdź konto, strefę i łącznik, a następnie spróbuj ponownie.",
         domainIngressUnavailable: "Nie udało się wczytać tuneli. Sprawdź połączenie i spróbuj ponownie.",
-        domainIngressLoading: "Wczytywanie tuneli…",
         domainFieldHost: "Domena",
         domainFieldService: "Usługa",
         domainFieldPort: "Port kontenera",

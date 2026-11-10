@@ -1626,6 +1626,7 @@ export const zhHans: TranslationStructure = {
             connecting: { title: '正在连接这台机器', reason: '机器响应后，此视图就会打开。' },
             sourceRequired: { title: '选择运行位置', reason: '有多个来源可以运行它。请选择一个来加载它。' },
             namedUnavailable: ({ name }: { name: string }) => `无法打开 ${name}`,
+            namedPageUnavailable: ({ name }: { name: string }) => `${name} 未提供此页面`,
             namedFailed: ({ name }: { name: string }) => `无法加载 ${name}`,
         },
         offlineSnapshot: {
@@ -18149,7 +18150,6 @@ settingsSession: {
         domainIngressChoose: "选择隧道",
         domainIngressEmpty: "没有符合条件的隧道。请检查账户、区域和连接器后重试。",
         domainIngressUnavailable: "无法加载隧道。请检查连接后重试。",
-        domainIngressLoading: "正在加载隧道…",
         domainFieldHost: "域名",
         domainFieldService: "服务",
         domainFieldPort: "容器端口",

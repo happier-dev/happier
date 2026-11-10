@@ -1434,6 +1434,7 @@ export const de: TranslationStructure = {
             connecting: { title: 'Verbindung zu diesem Rechner', reason: 'Diese Ansicht öffnet sich, sobald der Rechner antwortet.' },
             sourceRequired: { title: 'Wähle, wo es läuft', reason: 'Mehrere Quellen können es ausführen. Wähle eine, um es zu laden.' },
             namedUnavailable: ({ name }: { name: string }) => `${name} kann nicht geöffnet werden`,
+            namedPageUnavailable: ({ name }: { name: string }) => `Diese Seite ist in ${name} nicht verfügbar`,
             namedFailed: ({ name }: { name: string }) => `${name} konnte nicht geladen werden`,
         },
         offlineSnapshot: {
@@ -18636,7 +18637,6 @@ settingsSession: {
             domainIngressChoose: "Tunnel auswählen",
             domainIngressEmpty: "Keine geeigneten Tunnel. Prüfe Konto, Zone und Connector und versuche es erneut.",
             domainIngressUnavailable: "Tunnel konnten nicht geladen werden. Prüfe die Verbindung und versuche es erneut.",
-            domainIngressLoading: "Tunnel werden geladen…",
             domainFieldHost: "Domain",
             domainFieldService: "Dienst",
             domainFieldPort: "Container-Port",

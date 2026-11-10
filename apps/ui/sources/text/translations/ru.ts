@@ -1642,6 +1642,7 @@ export const ru: TranslationStructure = {
             connecting: { title: 'Подключение к этой машине', reason: 'Этот вид откроется, как только машина ответит.' },
             sourceRequired: { title: 'Выберите, где он работает', reason: 'Запустить его могут несколько источников. Выберите один, чтобы загрузить.' },
             namedUnavailable: ({ name }: { name: string }) => `Не удаётся открыть ${name}`,
+            namedPageUnavailable: ({ name }: { name: string }) => `Эта страница недоступна в ${name}`,
             namedFailed: ({ name }: { name: string }) => `Не удалось загрузить ${name}`,
         },
         offlineSnapshot: {
@@ -18483,7 +18484,6 @@ settingsSession: {
         domainIngressChoose: "Выберите туннель",
         domainIngressEmpty: "Нет подходящих туннелей. Проверьте аккаунт, зону и коннектор и повторите попытку.",
         domainIngressUnavailable: "Не удалось загрузить туннели. Проверьте подключение и повторите попытку.",
-        domainIngressLoading: "Загрузка туннелей…",
         domainFieldHost: "Домен",
         domainFieldService: "Сервис",
         domainFieldPort: "Порт контейнера",

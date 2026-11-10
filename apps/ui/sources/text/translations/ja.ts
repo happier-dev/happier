@@ -1795,6 +1795,7 @@ export const ja: TranslationStructure = {
             connecting: { title: 'このマシンに接続しています', reason: 'マシンが応答するとこのビューが開きます。' },
             sourceRequired: { title: '実行する場所を選択', reason: '複数の実行元で実行できます。読み込むには 1 つ選択してください。' },
             namedUnavailable: ({ name }: { name: string }) => `${name} を開けません`,
+            namedPageUnavailable: ({ name }: { name: string }) => `${name} ではこのページを利用できません`,
             namedFailed: ({ name }: { name: string }) => `${name} を読み込めませんでした`,
         },
         offlineSnapshot: {
@@ -18444,7 +18445,6 @@ settingsSession: {
         domainIngressChoose: "トンネルを選択",
         domainIngressEmpty: "利用可能なトンネルがありません。アカウント、ゾーン、コネクターを確認して再試行してください。",
         domainIngressUnavailable: "トンネルを読み込めませんでした。接続を確認して再試行してください。",
-        domainIngressLoading: "トンネルを読み込み中…",
         domainFieldHost: "ドメイン",
         domainFieldService: "サービス",
         domainFieldPort: "コンテナポート",
