@@ -29,7 +29,7 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-pro
 import { ProjectAccountRowMutationRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { DeploymentBindingsSetStorageInputV1Schema, DeploymentDomainContentV1Schema, readDeploymentDomainArtifactV1,
     computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema,
-    EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema,
+    EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretClientBindingsInputV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema,
     readDeploymentEnvironmentArtifactV1, captureDeploymentBindingSavedSecretRevisionsV1,
     type EnvironmentSecretBindingV1, type MachineConnectorSecretGrantBodyV1 } from '@happier-dev/deployment-protocol';
 import { API_TOKEN_FULL_GRANT_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, sealSavedSecretResourceStoredContentV1,
@@ -2693,6 +2693,45 @@ describe('deployment children retain their controller Action authority', () => {
         }
     });
 
+    it('prepares client-side binding secrets only for the signed Home and Environment without a proposed builder', async () => {
+        const f = await fixture();
+        const foreign = await fixture();
+        const actionId = 'deployments.bindings.set';
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const input = getActionSpec(actionId).inputSchema.parse({ serverId, environmentId: f.environment.id,
+            expectedRevision: f.environmentRevision, referencedSavedSecretRevisions: [],
+            ...await f.content('deployment-environment.v1') });
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId, machineId: f.controller.id, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const preparation = EnvironmentSecretClientBindingsInputV1Schema.parse({ kind: 'clientBindings', serverId,
+                environmentId: f.environment.id, expectedRevision: f.environmentRevision });
+            const prepare = (body: typeof preparation) => {
+                const path = `/v1/deployments/environments/${body.environmentId}/secret-launch-admission`;
+                return app.inject({ method: 'POST', url: path, payload: body, headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId: actionId, target,
+                        installationId: f.controller.installationId, requestId: envelope.requestId,
+                        method: 'POST', path, body, privateKey: f.controller.keys.secretKey }),
+                } });
+            };
+            for (const body of [{ ...preparation, serverId: 'another-home' },
+                { ...preparation, environmentId: foreign.environment.id },
+                { ...preparation, buildMachineId: f.controller.id }]) {
+                expect((await prepare(body)).statusCode).toBe(401);
+            }
+            const prepared = await prepare(preparation);
+            expect(prepared.statusCode, prepared.body).toBe(200);
+            expect(prepared.json()).toMatchObject({ ok: true, bindingPreparation: {} });
+        }, { authentication: 'real' });
+    });
+
     it.each(['deployments.targets.link', 'deployments.bindings.set'] as const)(
         'allows signed %s preparation to read an accessible Environment without granting foreign resources or writes', async actionId => {
         const f = await fixture();
@@ -3007,6 +3046,14 @@ describe('deployment children retain their controller Action authority', () => {
         const bindingInput = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision + 1, set: [], remove: [] };
         const reviewedChild = { actionId: bindingAction, role: 'backup.bindings',
             inputDigest: computeActionInputApprovalDigestV1(bindingAction, bindingInput) };
+        const preparationPath = `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`;
+        const clientPreparation = EnvironmentSecretClientBindingsInputV1Schema.parse({ kind: 'clientBindings', serverId,
+            environmentId: f.environment.id, expectedRevision: bindingInput.expectedRevision });
+        const prepareBindings = (body: typeof clientPreparation) => verify('POST', preparationPath, body, body,
+            bindingAction, authorization, reviewedChild);
+        expect(await prepareBindings({ ...clientPreparation, expectedRevision: clientPreparation.expectedRevision + 1 })).toBeNull();
+        expect(await prepareBindings({ ...clientPreparation, buildMachineId: f.controller.id })).toBeNull();
+        expect(await prepareBindings(clientPreparation)).not.toBeNull();
         // The ordinary bindings preparer reads the incumbent content before
         // publishing its binding-only successor under this child purpose.
         expect(await verify('GET', currentContentPath, undefined, { id: f.environment.contentArtifactId },

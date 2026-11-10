@@ -33,22 +33,23 @@ import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { admitStoredComposeDefinition, parseNativeComposeSource, storedComposeDefinitionDigest } from '@/workspaces/projectSetup/nativeComposeSource';
-import { captureDeploymentBindingSavedSecretRevisionsV1 } from '../secrets/prepareDeploymentBindingsForHost';
 import { createDeploymentTemplateGeneratedSecretForHost, validateDeploymentTemplateGeneratedSecretProfileForHost } from './generatedSecretForHost';
 import type { DeploymentCreationDefaultRequestForHost, DeploymentCreationDefaultInputsForHost } from '../readCreationDefaultsForHost';
 import { createPublishCatalogPreparation } from '@/workspaces/publishProject';
 import { readDeploymentAuthorizationFailure } from '../deploymentAuthorizationFailure';
 import { projectDeploymentFailure } from '../deploymentFailure';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 const refuse = (failure: string | ActionExecuteFailure): never => {
     const code = typeof failure === 'string' ? failure : failure.errorCode;
     throw Object.assign(new Error(code, typeof failure === 'string' ? undefined : { cause: failure }), { code });
 };
 const deploymentTemplateDomainChildRole = (key: string) => `template.domain:${key}`;
+const deploymentTemplateBindingsChildRole = 'template.bindings';
 function deploymentTemplateReviewedChildren(review: DeploymentTemplateInstantiationReviewV1): HostReviewedChildrenPreparationV1 {
     const children = review.domains.map(domain => ({ action: 'deployments.domains.add' as const,
         role: deploymentTemplateDomainChildRole(domain.key) }));
-    return { children: [...children, ...(review.deploy ? [{ action: 'deployments.deploy' as const,
+    return { children: [{ action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, role: deploymentTemplateBindingsChildRole }, ...children, ...(review.deploy ? [{ action: 'deployments.deploy' as const,
         role: 'template.deploy' }] : [])] };
 }
 function failure(errorCode: string, error?: unknown): ActionExecuteFailure {
@@ -274,7 +275,8 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         let effectIssued = false;
         try {
             if (plan.input.mode === 'preview') return { kind: 'preview', review: plan.review };
-            if (plan.prepared.domains.length && !context.hostReviewedChild) return failure('credential_scope_denied');
+            const reviewedChild = context.hostReviewedChild;
+            if (!reviewedChild) return failure('credential_scope_denied');
             const { input } = plan;
             const createContent = (content: unknown, kind: string) => host.createContent(content, kind, context, plan.contentAuthority);
             const bindings: StoredAppPresetInputV1['bindings'] = [...plan.prepared.bindings];
@@ -301,11 +303,20 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             const candidateDefinition = { kind: 'stored' as const, contentRevision: plan.definition.contentRevision, composeDigest: plan.definition.composeDigest };
             let content = DeploymentEnvironmentContentV1Schema.parse(plan.current ? plan.content
                 : { ...plan.content, template: { ...finalPrepared.template, definition: candidateDefinition } });
-            const commit = async (actionId: 'deployments.environments.create' | 'deployments.environments.update' | 'deployments.bindings.set', input: Parameters<Host['storage']>[1]) => {
-                const result = await host.storage(actionId, input, context);
+            const commitBindings = async (set: DeploymentEnvironmentDetailV1['content']['bindings']) => {
+                const applied = await reviewedChild.invoke({ action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
+                    role: deploymentTemplateBindingsChildRole, input: normalizeStrictJsonValue({ serverId: input.serverId,
+                        environmentId: environmentId!, expectedRevision: revision!, set, remove: [] }) });
+                if (!applied.ok) return refuse(applied);
+                const parsed = DeploymentBindingsSetResultV1Schema.parse(applied.result);
+                if (!parsed.ok) return refuse(parsed.error);
+                environmentId = parsed.environmentId; revision = parsed.revision;
+            };
+            const commit = async (actionId: 'deployments.environments.create' | 'deployments.environments.update', input: Parameters<Host['storage']>[1]) => {
+                const result = await host.storage(actionId, input, context, actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+                    ? { creationDefaults: defaults, template: plan.review } : undefined);
                 if ('errorCode' in result) return refuse(result);
-                const parsed = (actionId === 'deployments.bindings.set'
-                    ? DeploymentBindingsSetResultV1Schema : DeploymentEnvironmentCreateResultV1Schema).parse(result);
+                const parsed = DeploymentEnvironmentCreateResultV1Schema.parse(result);
                 if (!parsed.ok) return refuse(parsed.error);
                 environmentId = parsed.environmentId; revision = parsed.revision;
             };
@@ -349,9 +360,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             const merged = new Map(content.bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
             for (const binding of finalPrepared.bindings) merged.set(environmentSecretBindingIdentityV1(binding), binding);
             content = DeploymentEnvironmentContentV1Schema.parse({ ...content, bindings: [...merged.values()] });
-            await commit('deployments.bindings.set', { serverId: input.serverId, environmentId: environmentId!, expectedRevision: revision!,
-                ...await createContent(content, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1),
-                referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(content.bindings) });
+            await commitBindings(content.bindings);
             if (input.environment.kind === 'existing') {
                 phase = 'metadata';
                 const finalContent = DeploymentEnvironmentContentV1Schema.parse({ ...content, template: { ...finalPrepared.template, definition: appliedDefinition } });
