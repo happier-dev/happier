@@ -41,6 +41,7 @@ import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import { database, sourceManifest, installRestoreBoundary } from './nativeRestore.testkit';
 import { RESTIC_RUNTIME_V1 } from '@happier-dev/deployments';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
@@ -226,7 +227,7 @@ describe('own-server target at the Action host boundary', () => {
     for (const { scenario, sourceKind } of [
         ...(['private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
-        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'public_backup', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'public_backup', 'public_backup_restore', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
     ]) it(
         `native deployment admission, finite execution and retained C1 observation: ${scenario}`, async () => {
         const startedAt = Date.now();
@@ -966,13 +967,20 @@ describe('own-server target at the Action host boundary', () => {
                     const storage = createCliDeploymentActionDeps({ serverHttpBaseUrl, admitAccount: async () => null,
                         resolveRequestHeaders: async () => ({ Authorization: `Bearer ${token}` }),
                         async dispatchReceipt() { throw new Error('Backup Actions must not allocate deployment receipts'); } });
-                    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), serverId: 'home', machineId: 'machine-a',
-                        resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
-                        deploymentBackupAction, deploymentRestore, runActionOperation: value => operations.runActionOperation(value) });
                     const actionsSettings = setScopedActionApprovalPreference({ settings: DEPLOYMENT_BACKUP_ACTION_IDS_V1.reduce((settings, actionId) => setScopedActionApprovalPreference({
                         settings, actionId, scope: { kind: 'environment', environmentId: environment.environment.id }, surface: 'ui', mode: 'waived',
                     }), ActionsSettingsV1Schema.parse({ v: 1 })), actionId: 'deployments.backups.restore',
                         scope: { kind: 'environment', environmentId: environment.environment.id }, surface: 'ui', mode: 'waived' });
+                    const nativeActions = { deploymentBackupAction, deploymentRestore };
+                    const executor = scenario === 'public_backup_restore'
+                        ? createCliActionExecutorFromCredentials({ credentials, serverId: 'home', serverApiUrl: serverHttpBaseUrl,
+                            serverIdentityId: 'srv_health_home', machineId: 'machine-a',
+                            actionsSettingsProvider: { getActionsSettings: () => actionsSettings },
+                            resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
+                            ...nativeActions, runActionOperation: value => operations.runActionOperation(value) })
+                        : createActionExecutor({ ...createUnavailableActionTransportDeps(), serverId: 'home', machineId: 'machine-a',
+                            resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
+                            ...nativeActions, runActionOperation: value => operations.runActionOperation(value) });
                     const actionContext = { ...sourceContext, surface: 'ui' as const, actionCaller: { kind: 'host' as const },
                         serverId: 'home', runtimeAccountId: accountId, signal: caller.signal, actionsSettings };
                     const targetInput = { serverId: 'home', environmentId: environment.environment.id, machineId: 'machine-a',
@@ -1160,6 +1168,24 @@ describe('own-server target at the Action host boundary', () => {
                         }
                         expect(await docker.readInvocations()).toEqual(beforeHistory);
                         expect(await readFile(boundary.eventsFile, 'utf8')).toBe(beforeHistoryEvents);
+                        return;
+                    }
+                    if (scenario === 'public_backup_restore') {
+                        // #111: a real standalone dump exists and verifies, but the
+                        // credentialed daemon factory dropped its restore handler.
+                        const { configRevision: _configRevision, ...restoreTarget } = targetInput;
+                        const prepareInput = { ...restoreTarget, mode: 'prepare' as const,
+                            backupOperationId: captured.operationId, restoreBackupId: manifest.snapshot.snapshotId };
+                        const preparation = await executor.execute('deployments.backups.restore', prepareInput,
+                            { ...actionContext, actionRequestId: 'standalone-backup-check' });
+                        expect(preparation, JSON.stringify(preparation)).toMatchObject({ ok: true, result: { kind: 'prepared' } });
+                        if (!preparation.ok) throw new Error('Expected standalone backup preparation');
+                        const prepared = DeploymentBackupRestoreResultV1Schema.parse(preparation.result);
+                        if (prepared.kind !== 'prepared') throw new Error('Expected standalone backup preparation evidence');
+                        expect(await executor.execute('deployments.backups.restore', { ...prepareInput, mode: 'confirm',
+                            prepareOperationId: prepared.operationId }, { ...actionContext, actionRequestId: 'standalone-backup-restore' }))
+                            .toMatchObject({ ok: true, result: { kind: 'restored', verified: true, nextAction: 'none' } });
+                        expect(await docker.readOperationContainerIds()).toEqual([]);
                         return;
                     }
                     const beforePrune = await readFile(boundary.stateFile, 'utf8');

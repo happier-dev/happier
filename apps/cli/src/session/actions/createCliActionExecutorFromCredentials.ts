@@ -783,6 +783,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   projectAction?: ActionExecutorDeps['projectAction'];
   deploymentAction?: ActionExecutorDeps['deploymentAction'];
   deploymentBackupAction?: ActionExecutorDeps['deploymentBackupAction'];
+  deploymentRestore?: ActionExecutorDeps['deploymentRestore'];
   projectReadinessRead?: ActionExecutorDeps['projectReadinessRead'];
   deploymentTemplateInstantiate?: ActionExecutorDeps['deploymentTemplateInstantiate'];
   prepareDeploymentTemplateInstantiation?: ActionExecutorDeps['prepareDeploymentTemplateInstantiation'];
@@ -1076,6 +1077,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(params.projectAction ? { projectAction: params.projectAction } : {}),
       ...(params.deploymentAction ? { deploymentAction: params.deploymentAction } : {}),
       ...(params.deploymentBackupAction ? { deploymentBackupAction: params.deploymentBackupAction } : {}),
+      ...(params.deploymentRestore ? { deploymentRestore: params.deploymentRestore } : {}),
       ...(params.projectReadinessRead ? { projectReadinessRead: params.projectReadinessRead } : {}),
       ...(params.deploymentTemplateInstantiate ? { deploymentTemplateInstantiate: params.deploymentTemplateInstantiate } : {}),
       ...(params.prepareDeploymentTemplateInstantiation ? { prepareDeploymentTemplateInstantiation: params.prepareDeploymentTemplateInstantiation } : {}),

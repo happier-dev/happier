@@ -81,6 +81,7 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     /** Reuses the root placement owner for Machine children of Account composites. */
     routeHostChildAction?: ActionExecutorDeps['routeHostChildAction'];
     deploymentBackupAction?: ActionExecutorDeps['deploymentBackupAction'];
+    deploymentRestore?: ActionExecutorDeps['deploymentRestore'];
     projectReadinessRead?: ActionExecutorDeps['projectReadinessRead'];
     managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
     machineSetupPlan?: ActionExecutorDeps['machineSetupPlan'];
@@ -231,6 +232,7 @@ export function createCliActionExecutor(
       ...(params.projectWorkerAction ? { projectWorkerAction: params.projectWorkerAction } : {}),
       ...(params.workflowAction ? { workflowAction: params.workflowAction } : {}),
       ...(params.deploymentBackupAction ? { deploymentBackupAction: params.deploymentBackupAction } : {}),
+      ...(params.deploymentRestore ? { deploymentRestore: params.deploymentRestore } : {}),
       ...(params.projectReadinessRead ? { projectReadinessRead: params.projectReadinessRead } : {}),
       routeHostChildAction: async request => {
         if (request.actionId === 'action.invoke') {
