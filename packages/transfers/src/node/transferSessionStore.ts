@@ -73,6 +73,11 @@ export type TransferSessionStoreDeps = Readonly<{
 export type NativeTransferDownloadDescription = Readonly<{
   nextIndex: number; sizeBytes: number; recipientPublicKeyBase64?: string; manifestHash?: string;
 }>;
+/** Complete bytes retained by the finite owner; destination tools own their format. */
+export type CompletedUploadArtifact = Readonly<{
+  uploadId: string; filePath: string; sizeBytes: number; sha256: string;
+  scopeFingerprint: string;
+}>;
 export type NativeTransferSessionOwner = Readonly<{
   invoke: (method: string, input: unknown) => Promise<unknown>;
   verifyInvocation: (context: unknown) => Promise<void>;
@@ -81,6 +86,8 @@ export type NativeTransferSessionOwner = Readonly<{
   readExpiry?: () => number | undefined;
   /** Native descriptor metadata for the incumbent relay data plane. */
   describeDownload?: (downloadId: string, includeManifest: boolean) => Promise<NativeTransferDownloadDescription>;
+  readCompletedUpload?: () => CompletedUploadArtifact | null;
+  readCompletedUploadChunk?: (uploadId: string, input: Readonly<{ offset: number; length: number }>) => Promise<Buffer>;
   dispose: () => Promise<void>;
 }>;
 type NativeTransferSession = { nativeOwner: NativeTransferSessionOwner; expiresAt: number; activeOperationCount: number };
@@ -89,6 +96,9 @@ export class TransferSessionStore {
   private readonly uploads = new Map<string, UploadSession | NativeTransferSession>();
   private readonly downloads = new Map<string, DownloadSession | NativeTransferSession>();
   private readonly attachments = new Map<string, IssuedAttachment>();
+  private readonly completedUploads = new Map<string, {
+    artifact: CompletedUploadArtifact; expiresAt: number; activeOperationCount: number; nativeOwner?: NativeTransferSessionOwner;
+  }>();
   private readonly baseTempRoot: string;
   private readonly tempRoot: string;
   private readonly ttlMs: number;
@@ -193,6 +203,13 @@ export class TransferSessionStore {
     if (this.disposed) return [];
     const closures: Promise<void>[] = [];
 
+    for (const [uploadId, completed] of this.completedUploads) {
+      if (completed.expiresAt > now || completed.activeOperationCount > 0) continue;
+      this.completedUploads.delete(uploadId);
+      closures.push(this.trackClosure(() => completed.nativeOwner ? completed.nativeOwner.dispose()
+        : rm(completed.artifact.filePath, { force: true })));
+    }
+
     for (const [uploadId, session] of this.uploads) {
       if (session.expiresAt > now || session.activeOperationCount > 0) continue;
       this.uploads.delete(uploadId);
@@ -263,6 +280,10 @@ export class TransferSessionStore {
     if (this.disposed) return null;
 
     let nextExpiryAt: number | null = null;
+    for (const completed of this.completedUploads.values()) {
+      if (completed.activeOperationCount > 0) continue;
+      nextExpiryAt = nextExpiryAt === null ? completed.expiresAt : Math.min(nextExpiryAt, completed.expiresAt);
+    }
     for (const session of this.uploads.values()) {
       if (session.activeOperationCount > 0) continue;
       nextExpiryAt = nextExpiryAt === null
@@ -411,7 +432,55 @@ export class TransferSessionStore {
   }
 
   async abortUploadSession(uploadId: string): Promise<void> {
+    const completed = this.completedUploads.get(uploadId);
+    if (completed) {
+      completed.expiresAt = 0;
+      await Promise.all(this.collectExpiredClosures(Date.now()));
+    }
     await this.closeUploadSession(uploadId, { deleteTempFile: true });
+  }
+
+  /** Finalization transfers scratch custody rather than publishing a caller path. */
+  retainCompletedUpload(artifact: CompletedUploadArtifact, nativeOwner?: NativeTransferSessionOwner): void {
+    this.assertOpen();
+    if (nativeOwner) this.uploads.delete(artifact.uploadId);
+    this.completedUploads.set(artifact.uploadId, { artifact, expiresAt: Date.now() + this.ttlMs,
+      activeOperationCount: 0, ...(nativeOwner ? { nativeOwner } : {}) });
+    this.scheduleExpirySweep();
+  }
+
+  readCompletedUpload(uploadId: string): CompletedUploadArtifact | null {
+    return this.completedUploads.get(uploadId)?.artifact ?? null;
+  }
+
+  /** Completed native custody keeps the initializer's actor check for later control calls. */
+  async verifyCompletedUploadInvocation(uploadId: string, context: unknown): Promise<boolean> {
+    const owner = this.completedUploads.get(uploadId)?.nativeOwner;
+    if (!owner) return false;
+    await owner.verifyInvocation(context);
+    return true;
+  }
+
+  /** Scope is checked once at acquisition; admitted readers pin existing cleanup. */
+  beginCompletedUploadOperation(uploadId: string, scopeFingerprint: string):
+    Readonly<{ artifact: CompletedUploadArtifact; readChunk?: (input: Readonly<{ offset: number; length: number }>) => Promise<Buffer>;
+      release(): void }> | null {
+    this.cleanupExpiredBestEffort();
+    const completed = this.completedUploads.get(uploadId);
+    if (!completed || completed.expiresAt <= Date.now() || completed.artifact.scopeFingerprint !== scopeFingerprint) return null;
+    const nativeRead = completed.nativeOwner?.readCompletedUploadChunk;
+    if (completed.nativeOwner && !nativeRead) return null;
+    completed.activeOperationCount++;
+    this.scheduleExpirySweep();
+    let released = false;
+    return { artifact: completed.artifact,
+      ...(nativeRead ? { readChunk: (input: Readonly<{ offset: number; length: number }>) => nativeRead(uploadId, input) } : {}),
+      release: () => {
+      if (released) return;
+      released = true;
+      completed.activeOperationCount--;
+      this.scheduleExpirySweep();
+    } };
   }
 
   async finalizeUploadSession(uploadId: string): Promise<UploadSession | null> {
@@ -506,14 +575,18 @@ export class TransferSessionStore {
     this.clearExpiryTimer();
     const uploads = [...this.uploads.values()];
     const downloads = [...this.downloads.values()];
+    const completedUploads = [...this.completedUploads.values()];
     this.uploads.clear();
     this.downloads.clear();
+    this.completedUploads.clear();
     // Retire preview authority, not the successfully finalized attachment files.
     this.attachments.clear();
 
     this.disposePromise = (async () => {
       await this.settleClosures();
       await Promise.all([
+        ...completedUploads.map(completed => completed.nativeOwner ? completed.nativeOwner.dispose()
+          : rm(completed.artifact.filePath, { force: true })),
         ...uploads.map(async (session) => {
           if ('nativeOwner' in session) { await session.nativeOwner.dispose(); return; }
           await session.file.close().catch(() => undefined);

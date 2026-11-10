@@ -20,6 +20,7 @@ import { registerUploadTransferLifecycleHandlers } from './registerUploadTransfe
 import { createNativeFilesystemTransferRpcRegistrar, type PrepareNativeFilesystemTransfer } from './nativeTransferRpcRegistrar';
 import type { WorkspaceFinalizeFileOperationsFactory } from '../targets/resolveWorkspaceFileUploadTarget';
 import { sniffSessionMediaMimeTypeFromFile } from '@/session/media/mime';
+import { isDeploymentRestoreUploadKind, resolveDeploymentRestoreUploadTarget } from '../targets/deploymentRestoreUpload';
 
 type TransferUploadInitResponse =
   | Readonly<{ success: true; uploadId: string; chunkSizeBytes: number; recipientPublicKeyBase64: string; expiresAt?: number }>
@@ -27,6 +28,7 @@ type TransferUploadInitResponse =
 
 type TransferUploadFinalizeResponse =
   | Readonly<{ success: true; path: string; sizeBytes: number; sha256: string; result?: unknown; attachmentHandle?: SessionAttachmentHandleV1 }>
+  | Readonly<{ success: true; transferId: string; sizeBytes: number; sha256: string }>
   | Readonly<{ success: false; error: string; errorCode?: string; expiresAt?: number }>;
 
 export function registerTransferUploadRpcHandlers(
@@ -42,6 +44,8 @@ export function registerTransferUploadRpcHandlers(
     sessionRpcTransferMaxBytes?: number | null;
     attachmentUpload?: TransferUploadInitAttachmentDeps;
     composerMediaStage?: ComposerMediaStageUploadTargetDeps;
+    /** Fixed by the already admitted native process, never by an upload DTO. */
+    requesterAccountId?: string;
     /** Immutable Session namespace; native hosts can fix placement inside the workspace. */
     sessionAttachment?: Readonly<{ sessionId: string; uploadLocation?: 'workspace' }>;
   }>,
@@ -60,7 +64,16 @@ export function registerTransferUploadRpcHandlers(
       finalize: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE,
       abort: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT,
     },
-    resolveInit: async (data) => {
+    resolveInit: async (data, context) => {
+      if (data && typeof data === 'object' && 't' in data && isDeploymentRestoreUploadKind(data.t)) {
+        if (deps.sessionAttachment) return { kind: 'rejected', response: { success: false, error: 'Restore uploads require Machine scope' } };
+        const resolved = resolveDeploymentRestoreUploadTarget({ request: data,
+          accountId: deps.requesterAccountId ?? context?.machineAdmission?.actorAccountId,
+          store: deps.store, sessionRpcTransferMaxBytes: deps.sessionRpcTransferMaxBytes });
+        return resolved.success ? { kind: 'accepted', target: resolved.target,
+          diagnosticContext: { transferKind: 'deployment_restore' } }
+          : { kind: 'rejected', response: { success: false, error: resolved.error } };
+      }
       const request = data as TransferUploadInitRequest | null;
       if (!request || typeof request !== 'object') {
         return { kind: 'rejected', response: { success: false, error: 'Invalid request' } };
@@ -112,7 +125,7 @@ export function registerTransferUploadRpcHandlers(
       if (!resolved.success) {
         return {
           kind: 'rejected',
-          response: { success: false, error: resolved.error },
+          response: resolved,
         };
       }
 
@@ -164,7 +177,9 @@ export function registerTransferUploadRpcHandlers(
     buildFinalizeHashMismatchResponse: () => ({ success: false, error: 'Upload hash mismatch' }),
     buildFinalizeErrorResponse: (error) => ({ success: false, error: error instanceof Error ? error.message : 'Upload finalize failed' }),
     buildFinalizeFailureResponse: (error, errorCode, expiresAt) => ({ success: false, error, ...(errorCode ? { errorCode, expiresAt } : {}) }),
-    buildFinalizeSuccessResponse: ({ finalized, sha256, uploadId }) => ({
+    buildFinalizeSuccessResponse: ({ finalized, sha256, uploadId }) => deps.store.readCompletedUpload(uploadId) ? ({
+      success: true, transferId: uploadId, sizeBytes: finalized.sizeBytes, sha256,
+    }) : ({
       success: true,
       path: finalized.path,
       sizeBytes: finalized.sizeBytes,

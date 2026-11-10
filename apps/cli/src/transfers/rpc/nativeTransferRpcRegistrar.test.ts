@@ -1,7 +1,7 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createEncryptedTransferChunkEnvelope, createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
@@ -12,8 +12,82 @@ import { createFilesystemOwnerRpcContext } from '@/rpc/handlers/fileSystem.testk
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem/registerFileSystemHandlers';
 import { runFilesystemEffectInternal } from '@/rpc/handlers/fileSystem/filesystemEffectInternal';
 import { createFilesystemEffectChannel, createFilesystemEffectRpcOwner, initializeFilesystemEffectChannel } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
+import { createFilesystemEffectByteOwner } from '@/rpc/handlers/fileSystem/filesystemEffectBytes';
+import { acquireDeploymentRestoreUpload } from '../targets/deploymentRestoreUpload';
+import { configuration } from '@/configuration';
 
 describe('retained native filesystem RPC transfer', () => {
+  it.each(['admitted', 'idle'] as const)('keeps completed native import custody until its actual owner settles (%s)', async state => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    try { await withTempDir('happier-native-restore-upload-', async root => {
+      const context = createFilesystemOwnerRpcContext();
+      const accountId = context.machineAdmission!.actorAccountId;
+      const native = createFilesystemEffectByteOwner({ workingDirectory: root, accessPolicy: { kind: 'osUser' }, requesterAccountId: accountId });
+      const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+      const registration = registerFileSystemHandlers({ registerHandler(method, handler) {
+        handlers.set(method, handler as RpcHandler<unknown, unknown>);
+      } }, root, { prepareNativeTransfer: async () => createFilesystemEffectRpcOwner({
+        // Process transport boundary; both production producer and consumer run.
+        request: input => native.execute(input), dispose: () => native.dispose(),
+      }, async incoming => {
+        const admission = incoming && typeof incoming === 'object' && 'machineAdmission' in incoming
+          ? incoming.machineAdmission : null;
+        if (!admission || typeof admission !== 'object' || !('actorAccountId' in admission)
+          || admission.actorAccountId !== context.machineAdmission?.actorAccountId) throw Object.assign(
+          new Error('Different admitted invocation'), { code: 'FILESYSTEM_TRANSFER_SCOPE_MISMATCH' });
+      }, () => {}) });
+      const invoke = async (method: string, input: unknown) => {
+        const handler = handlers.get(method);
+        if (!handler) throw new Error('Missing finite transfer method');
+        return await handler(input, context);
+      };
+      try {
+        const bytes = Buffer.from('PGDMPnative-custom-archive');
+        const initialized = z.object({ success: z.literal(true), uploadId: z.string(), recipientPublicKeyBase64: z.string() })
+          .parse(await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT,
+            { t: 'deployment_restore_upload_v1', environmentId: 'environment', sizeBytes: bytes.length }));
+        const encrypted = createEncryptedTransferChunkEnvelope({ transferId: initialized.uploadId, sequence: 0,
+          payload: bytes, recipientPublicKeyBase64: initialized.recipientPublicKeyBase64 });
+        expect(await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK, { uploadId: initialized.uploadId, index: 0,
+          payloadBase64: encrypted.payloadBase64, encryptedDataKeyEnvelopeBase64: encrypted.encryptedDataKeyEnvelopeBase64 }))
+          .toEqual({ success: true });
+        const finalized = await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE, { uploadId: initialized.uploadId });
+        expect(finalized).toMatchObject({ success: true, transferId: initialized.uploadId });
+        expect(finalized).not.toHaveProperty('path');
+        const abort = handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT);
+        if (!abort) throw new Error('Missing abort handler');
+        expect(await abort({ uploadId: initialized.uploadId }, { ...context,
+          machineAdmission: { ...context.machineAdmission!, actorAccountId: 'other' } }))
+          .toMatchObject({ success: false, errorCode: 'FILESYSTEM_TRANSFER_SCOPE_MISMATCH' });
+        const artifact = registration.transferSessionStore.readCompletedUpload(initialized.uploadId);
+        if (!artifact) throw new Error('Native completed artifact was lost');
+        if (state === 'idle') {
+          await vi.advanceTimersByTimeAsync(configuration.filesTransferSessionTtlMs + 1);
+          await registration.transferSessionStore.cleanupExpired();
+          await registration.transferSessionStore.settleClosures();
+          await expect(readFile(artifact.filePath)).rejects.toMatchObject({ code: 'ENOENT' });
+          expect(acquireDeploymentRestoreUpload(registration.transferSessionStore,
+            { transferId: initialized.uploadId, environmentId: 'environment', accountId })).toBeNull();
+          return;
+        }
+        const admitted = acquireDeploymentRestoreUpload(registration.transferSessionStore,
+          { transferId: initialized.uploadId, environmentId: 'environment', accountId });
+        if (!admitted) throw new Error('Native completed artifact was lost');
+        try {
+          expect(await admitted.source.readChunk({ offset: 0, length: bytes.length })).toEqual(bytes);
+          // The parent admitted this finite read. The retained requester store
+          // must not apply its own transfer expiry halfway through that read.
+          await vi.advanceTimersByTimeAsync(configuration.filesTransferSessionTtlMs + 1);
+          expect(await admitted.source.readChunk({ offset: 0, length: bytes.length })).toEqual(bytes);
+        }
+        finally { admitted.release(); }
+        await registration.transferSessionStore.cleanupExpired(Number.MAX_SAFE_INTEGER);
+        await expect(readFile(artifact.filePath)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(acquireDeploymentRestoreUpload(registration.transferSessionStore,
+          { transferId: initialized.uploadId, environmentId: 'environment', accountId })).toBeNull();
+      } finally { await registration.dispose(); }
+    }); } finally { vi.useRealTimers(); }
+  });
   it('cancels a launched initializer before promotion and settles its physical process without retaining a record', async () => {
     await withTempDir('happier-native-rpc-cancel-', async root => {
       const receipt = new AbortController();

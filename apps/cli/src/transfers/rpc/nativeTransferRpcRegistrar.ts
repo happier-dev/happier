@@ -66,15 +66,20 @@ export function createNativeFilesystemTransferRpcRegistrar(registrar: RpcHandler
               await retained.owner.verifyInvocation(context);
               const response = await retained.owner.invoke(method, input);
               const parsed = resultSchema.parse(response);
-              if (parsed.success && (method === methods.finalize || method === methods.abort)) await close(sessionId);
+              const completed = parsed.success && method === methods.finalize ? retained.owner.readCompletedUpload?.() : null;
+              if (completed) params.store.retainCompletedUpload(completed, retained.owner);
+              else if (parsed.success && (method === methods.finalize || method === methods.abort)) await close(sessionId);
               else refresh(sessionId);
               return response;
             } finally { retained.release(); }
           }
           const local = params.direction === 'upload' ? params.store.getUploadSession(sessionId) : params.store.getDownloadSession(sessionId);
+          if (params.direction === 'upload' && await params.store.verifyCompletedUploadInvocation(sessionId, context)) {
+            return await handler(input, context);
+          }
           // No descriptor exists: preserve incumbent missing/idempotent replies
           // without re-entering requester/Home/native preparation per phase.
-          if (!local) return await handler(input, context);
+          if (!local && !(params.direction === 'upload' && params.store.readCompletedUpload(sessionId))) return await handler(input, context);
         }
         const refused = await params.fallbackAdmission?.(context);
         return refused ? { success: false, ...refused } : await handler(input, context);

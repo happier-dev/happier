@@ -46,6 +46,7 @@ const commandSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('rpc'), method: z.enum(transferMethods), input: z.unknown() }),
   z.strictObject({ kind: z.literal('filesystem.rpc'), method: z.string(), input: z.unknown() }),
   z.strictObject({ kind: z.literal('rpc.download.describe'), downloadId: id, includeManifest: z.boolean() }),
+  z.strictObject({ kind: z.literal('rpc.upload.readCompleted'), uploadId: id, offset: integer, length: integer }),
   z.strictObject({ kind: z.literal('download.open'), path: z.string(), asZip: z.boolean() }),
   z.strictObject({ kind: z.literal('download.read'), sourceId: id, offset: integer, length: integer }),
   z.strictObject({ kind: z.literal('download.close'), sourceId: id }),
@@ -127,6 +128,7 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
   registerWorkspaceFileListHandler(registrar, configuration.workingDirectory, { accessPolicy: configuration.accessPolicy });
   registerTransferUploadRpcHandlers(registrar, { workingDirectory: configuration.workingDirectory,
     accessPolicy: configuration.accessPolicy, store: rpcStore, sessionRpcTransferMaxBytes, finalizeFileOperations,
+    ...(configuration.requesterAccountId ? { requesterAccountId: configuration.requesterAccountId } : {}),
     ...(configuration.sessionAttachment ? {
       sessionAttachment: { ...configuration.sessionAttachment, uploadLocation: 'workspace' as const },
       attachmentUpload: { pathAllowanceRegistry: attachmentPathAllowanceRegistry,
@@ -145,6 +147,15 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
       assertOpen();
       const command = commandSchema.parse(raw);
       switch (command.kind) {
+        case 'rpc.upload.readCompleted': {
+          const artifact = rpcStore.readCompletedUpload(command.uploadId);
+          if (!artifact) throw invalidOperation();
+          const source = createFileTransferPayloadSource({ filePath: artifact.filePath, sizeBytes: artifact.sizeBytes,
+            manifestHash: `sha256:${artifact.sha256}` });
+          const bytes = await readTransferPayloadChunk({ source, offset: command.offset, length: command.length });
+          assertOpen();
+          return { contentBase64: bytes.toString('base64') };
+        }
         case 'session.directory.prepare': return await executeNativeSessionDirectoryPreparation(command, signal, onDirectoryPreflightRefused);
         case 'filesystem.rpc': {
           if (transferMethods.some(method => method === command.method)) throw invalidOperation();
@@ -190,7 +201,10 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
             && result && Reflect.get(result, 'success') === true
             ? SessionAttachmentHandleV1Schema.safeParse(Reflect.get(result, 'attachmentHandle')) : null;
           const issuedAttachment = handle?.success ? rpcStore.getIssuedAttachment(handle.data) : null;
+          const completedUpload = typeof uploadId === 'string' && command.method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE
+            && result && Reflect.get(result, 'success') === true ? rpcStore.readCompletedUpload(uploadId) : null;
           return { response, ...(expiresAt === undefined ? {} : { expiresAt }),
+            ...(completedUpload ? { completedUpload } : {}),
             ...(issuedAttachment ? { issuedAttachment } : {}) };
         }
         case 'action': return await executeConfiguredFilesystemEffect(configuration,

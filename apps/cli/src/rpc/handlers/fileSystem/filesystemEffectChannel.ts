@@ -10,6 +10,7 @@ import type { FilesystemEffectConfiguration } from './filesystemEffectOperation'
 import type { createWorkspaceEntryExportSource } from '@/machines/transfer/prepareWorkspaceFileExport';
 import type { createFilesystemEffectEntryOwner } from './filesystemEffectEntries';
 import { restorePluginCodeFailure } from '@/plugins/runtime/moduleFailure';
+import { DeploymentRestoreCompletedUploadSchema } from '@/transfers/targets/deploymentRestoreUpload';
 import { DirectoryPreflightRefusalSchema, recordDirectoryPreflightRefusal,
   type DirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
 
@@ -219,13 +220,21 @@ export function createFilesystemEffectRpcOwner(channel: FilesystemEffectChannel,
   verifyInvocation: NativeTransferSessionOwner['verifyInvocation'],
   promote: NativeTransferSessionOwner['promote']): NativeTransferSessionOwner {
   let expiresAt: number | undefined;
+  let completedUpload: ReturnType<NonNullable<NativeTransferSessionOwner['readCompletedUpload']>> = null;
+  const responseSchema = z.strictObject({ response: z.unknown(), expiresAt: z.optional(z.number()),
+    completedUpload: z.optional(DeploymentRestoreCompletedUploadSchema) });
   return { async invoke(method, input) {
-      const result = z.strictObject({ response: z.unknown(), expiresAt: z.optional(z.number()) })
-        .parse(await channel.request({ kind: 'rpc', method, input }));
+      const result = responseSchema.parse(await channel.request({ kind: 'rpc', method, input }));
       expiresAt = result.expiresAt;
+      completedUpload = result.completedUpload ?? null;
       return result.response;
     },
-    verifyInvocation, promote, readExpiry: () => expiresAt, dispose: () => channel.dispose(),
+    verifyInvocation, promote, readExpiry: () => expiresAt, readCompletedUpload: () => completedUpload, dispose: () => channel.dispose(),
+    async readCompletedUploadChunk(uploadId, { offset, length }) {
+      const chunk = z.strictObject({ contentBase64: z.string() })
+        .parse(await channel.request({ kind: 'rpc.upload.readCompleted', uploadId, offset, length }));
+      return Buffer.from(chunk.contentBase64, 'base64');
+    },
     async describeDownload(downloadId, includeManifest) {
       return z.strictObject({ nextIndex: z.number().check(z.int(), z.nonnegative()), sizeBytes: z.number().check(z.int(), z.nonnegative()),
         recipientPublicKeyBase64: z.optional(z.string()), manifestHash: z.optional(z.string()) })
