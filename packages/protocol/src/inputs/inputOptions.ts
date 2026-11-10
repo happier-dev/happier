@@ -9,7 +9,7 @@ import type { PublicActionResultById } from '../actions/actionSpecs.js';
 import { AgentInventoryProbeInputSchema } from '../actions/actionSpecs.js';
 import { parseWorkflowDefinitionRefV1, formatWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionRefV1.js';
 import { isWorkflowSavedDefinitionActionId } from '../actions/workflowSavedDefinitionActionIds.js';
-import { DaemonProviderModelProjectionResponseV1Schema } from '../rpc/providers.js';
+import { DaemonProviderModelProjectionResponseV1Schema, getConnectedAccountModelObservationConfidence, isProviderSourceModelCatalogConfidenceUsable } from '../rpc/providers.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { BackendTargetKeyV2InputSchema } from '../backends/targets/backendTargetRefV2.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
@@ -736,7 +736,12 @@ export async function resolveInputOptions(params: Readonly<{
     }, ctx);
     const failure = params.readFailure(result);
     if (failure) return failure;
-    const options = normalizeResolvedOptions(result);
+    const connectedAccountSelected = Object.values(probe.data.connectedServices?.bindingsByServiceId ?? {})
+      .some(selection => selection.source === 'connected');
+    const observationSource = readRecord(result).source;
+    const confidence = getConnectedAccountModelObservationConfidence(observationSource === 'dynamic' ? observationSource : undefined);
+    const options = connectedAccountSelected && !isProviderSourceModelCatalogConfidenceUsable(confidence)
+      ? [] : normalizeResolvedOptions(result);
     if (!params.includeSpawnModelCatalog) return { ok: true, result: options };
     const projection = DaemonProviderModelProjectionResponseV1Schema.safeParse(readRecord(result).providerProjection);
     return { ok: true, result: options, modelCatalog: {

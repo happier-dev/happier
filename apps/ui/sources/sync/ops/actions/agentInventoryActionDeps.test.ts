@@ -27,6 +27,7 @@ import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/c
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { NEW_SESSION_MODEL_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
+import type { SessionModelDetailState } from '@/components/sessions/modelPicker/SessionModelDiscoveryDetail';
 
 // Native window measurement/portals are outside the inventory wiring under test.
 vi.mock('@/components/ui/popover', async (importOriginal) => {
@@ -300,6 +301,118 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
       vi.useRealTimers();
     }
   });
+  it.each([false, true])('withholds unverified native candidates from selected-account choices (bound %s)', async bound => {
+    resetDynamicModelProbeCacheForTests();
+    const agentId = 'acme-runtime-agent';
+    const connectedServices = { v: 2, bindingsByServiceId: {
+      'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'acct-work' },
+    } } as const;
+    const diagnosticModels = [{ id: 'native/candidate', name: 'Native candidate' }];
+    let source: 'static' | 'dynamic' = 'static';
+    network.setRpcResponder(async request => {
+      if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return describeAgent(agentId);
+      if (request.method !== RPC_METHODS.CAPABILITIES_INVOKE) throw new Error(`Unexpected method: ${request.method}`);
+      const payload = request.payload as { params?: { connectedServices?: unknown } };
+      expect(payload.params?.connectedServices).toEqual(bound ? connectedServices : undefined);
+      return { ok: true, result: AgentModelsProbeObservationSchema.parse({ agentId, source, supportsFreeform: false,
+        availableModels: diagnosticModels }) };
+    });
+    const probe = { cwd: '/repo', ...(bound ? { connectedServices } : {}) };
+    const diagnostic = await createDefaultActionExecutor().execute('agents.models.list', {
+      agentId, machineId: 'machine-1', probe,
+    }, { surface: 'ui', serverId });
+    expect(diagnostic).toMatchObject({ ok: true, result: { source: 'static',
+      items: [{ modelId: 'native/candidate' }], probeObservation: { availableModels: diagnosticModels } } });
+    const discovery = {
+      backendTarget: { kind: 'backend' as const, backendId: agentId }, runtimeCarrierAgentId: agentId,
+      selectedMachineId: 'machine-1', capabilityServerId: serverId, cwd: '/repo',
+      probeContext: { cacheKeySuffixParts: [bound ? 'account:acct-work' : 'native'], capabilityParams: probe },
+    };
+    const hook = await renderHook(() => useNewSessionPreflightModelsState(discovery));
+    const { SessionModelDiscoveryDetail } = await import('@/components/sessions/modelPicker/SessionModelDiscoveryDetail');
+    let detail: SessionModelDetailState | undefined;
+    const screen = await renderScreen(React.createElement(SessionModelDiscoveryDetail, {
+      agentId, composerOptionsInput: null, selectedModelId: 'native/current', discovery: () => discovery,
+      renderDetail: next => { detail = next; return null; },
+    }));
+    try {
+      await vi.waitFor(() => expect(hook.getCurrent().preflightModels?.availableModels).toEqual(diagnosticModels));
+      expect(hook.getCurrent().modelOptions.some(option => option.value === 'native/candidate')).toBe(!bound);
+      await vi.waitFor(() => expect(detail?.modelOptions.some(option => option.value === 'native/candidate')).toBe(!bound));
+      source = 'dynamic';
+      await act(async () => { hook.getCurrent().probe.onRefresh?.(); });
+      await vi.waitFor(() => expect(hook.getCurrent().modelOptions.some(option => option.value === 'native/candidate')).toBe(true));
+      await vi.waitFor(() => expect(detail?.modelOptions.some(option => option.value === 'native/candidate')).toBe(true));
+    } finally { await screen.unmount(); await hook.unmount(); }
+  });
+
+  it('keeps cached candidates without observation provenance diagnostic for a selected account', async () => {
+    const { buildDynamicModelProbeCacheKey } = await import('@/sync/domains/models/dynamicModelProbeCacheKey');
+    const { writeDynamicModelProbeCacheSuccess } = await import('@/sync/domains/models/dynamicModelProbeCache');
+    resetDynamicModelProbeCacheForTests();
+    const agentId = 'acme-runtime-agent';
+    const targetKey = 'agent:acme.voice/agent';
+    const connectedServices = { v: 2, bindingsByServiceId: {
+      'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'acct-work' },
+    } } as const;
+    const extraKeySuffixParts = ['account:acct-work'];
+    const cached = { availableModels: [{ id: 'native/cached-candidate', name: 'Cached candidate' }], supportsFreeform: false };
+    const cacheKey = buildDynamicModelProbeCacheKey({ machineId: 'machine-1', targetKey,
+      providerConnectionId: null, serverId, cwd: '/repo', extraKeySuffixParts });
+    if (!cacheKey) throw new Error('Expected the selected Machine catalog cache key');
+    writeDynamicModelProbeCacheSuccess(cacheKey, cached);
+    const release = createDeferred<void>();
+    let entered = false;
+    network.setRpcResponder(async request => {
+      if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return describeAgent(agentId);
+      if (request.method !== RPC_METHODS.CAPABILITIES_INVOKE) throw new Error(`Unexpected method: ${request.method}`);
+      entered = true;
+      await release.promise;
+      return { ok: true, result: AgentModelsProbeObservationSchema.parse({ ...cached, agentId, source: 'dynamic' }) };
+    });
+    const hook = await renderHook(() => useNewSessionPreflightModelsState({
+      backendTarget: { kind: 'backend', backendId: agentId }, backendTargetKey: targetKey, runtimeCarrierAgentId: agentId,
+      selectedMachineId: 'machine-1', capabilityServerId: serverId, cwd: '/repo',
+      probeContext: { cacheKeySuffixParts: extraKeySuffixParts, capabilityParams: { connectedServices } },
+    }));
+    try {
+      await vi.waitFor(() => expect(entered).toBe(true));
+      expect(hook.getCurrent().preflightModels?.availableModels).toMatchObject(cached.availableModels);
+      expect(hook.getCurrent().modelOptions.some(option => option.value === 'native/cached-candidate')).toBe(false);
+      release.resolve();
+      await vi.waitFor(() => expect(hook.getCurrent().modelOptions.some(option => option.value === 'native/cached-candidate')).toBe(true));
+    } finally { release.resolve(); await hook.unmount(); }
+  });
+
+  it('withholds bundled fallback choices when a selected-account Session detail observation is unavailable', async () => {
+    resetDynamicModelProbeCacheForTests();
+    const connectedServices = { v: 2, bindingsByServiceId: {
+      'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'acct-work' },
+    } } as const;
+    const described = describeAgent('codex');
+    described.projection.agentsById.codex!.identity = { pluginId: 'happier.agent.codex', localId: 'codex' };
+    network.setRpcResponder(async request => {
+      if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return described;
+      if (request.method !== RPC_METHODS.CAPABILITIES_INVOKE) throw new Error(`Unexpected method: ${request.method}`);
+      expect(request.payload).toMatchObject({ params: { connectedServices } });
+      return { ok: true, result: AgentModelsProbeObservationSchema.parse({ agentId: 'codex', source: 'unavailable',
+        availableModels: [], supportsFreeform: false }) };
+    });
+    const { SessionModelDiscoveryDetail } = await import('@/components/sessions/modelPicker/SessionModelDiscoveryDetail');
+    let detail: SessionModelDetailState | undefined;
+    const screen = await renderScreen(React.createElement(SessionModelDiscoveryDetail, {
+      agentId: 'codex', composerOptionsInput: null,
+      discovery: () => ({ backendTarget: { kind: 'backend', backendId: 'codex' }, selectedMachineId: 'machine-1',
+        capabilityServerId: serverId, cwd: '/repo', probeContext: { cacheKeySuffixParts: ['account:acct-work'],
+          capabilityParams: { connectedServices } } }),
+      renderDetail: next => { detail = next; return null; },
+    }));
+    try {
+      await vi.waitFor(() => expect(detail?.modelOptionsContext.preflight?.unavailable).toBe(true));
+      expect(detail?.modelOptions).toEqual([]);
+    } finally { await screen.unmount(); }
+  });
+
   it('discovers a role engine through its exact machine and connected default, matching Action model options', async () => {
     resetDynamicModelProbeCacheForTests();
     const { writeAgentConnectedAccountPurposeDefault } = await import('@happier-dev/protocol/account/settings/connected-services');
@@ -462,7 +575,7 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
     } finally { await models.unmount(); await picker.unmount(); }
   });
 
-  it('resolves native model choices from the selected account through the real option-source and probe transport', async () => {
+  it.each(['dynamic', 'static'] as const)('resolves %s native model choices from the selected account through the real option-source and probe transport', async source => {
     const agentId = 'acme-runtime-agent';
     const connectedServices = { v: 2, bindingsByServiceId: {
       'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'acct-work' },
@@ -470,7 +583,7 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
     network.respond(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, describeAgent(agentId));
     network.respond(RPC_METHODS.CAPABILITIES_INVOKE, { ok: true, result: AgentModelsProbeObservationSchema.parse({
       availableModels: [{ id: 'selected-account/model', name: 'Selected account model' }],
-      supportsFreeform: false, source: 'dynamic',
+      supportsFreeform: false, source,
     }) });
     const executor = createDefaultActionExecutor();
     const request = { actionId: 'session.spawn_new', fieldPath: 'modelSelection', optionsSourceId: 'agents.models.available',
@@ -479,7 +592,8 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
       directory: { kind: 'path', path: '/repo' }, profileId: 'launch-work', connectedServices,
     };
     const result = await executor.execute('action.options.resolve', request, { surface: 'ui', serverId });
-    expect(result).toMatchObject({ ok: true, result: { options: [{ value: 'selected-account/model', label: 'Selected account model' }] } });
+    expect(result).toMatchObject({ ok: true, result: { options: source === 'dynamic'
+      ? [{ value: 'selected-account/model', label: 'Selected account model' }] : [] } });
     expect(network.requests).toContainEqual(expect.objectContaining({ targetId: 'machine-1',
       method: RPC_METHODS.CAPABILITIES_INVOKE, payload: expect.objectContaining({ id: `cli.${agentId}`, method: 'probeModels',
         params: expect.objectContaining({ cwd: '/repo', profileId: 'launch-work', connectedServices }) }) }));

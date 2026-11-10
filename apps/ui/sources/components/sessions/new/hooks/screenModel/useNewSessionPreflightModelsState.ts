@@ -47,6 +47,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 }>): Readonly<{
     /** Configuration discovery must use the same source as model discovery. */
     usesNativeCatalog: boolean;
+    connectedAccountSelected: boolean;
     preflightModels: PreflightModelList | null;
     preflightModelsTargetKey: string | null;
     modelOptions: ReturnType<typeof getModelOptionsForAgentTypeOrPreflight>;
@@ -98,6 +99,8 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     const teamCatalogSelected = params.selectedTeamCredentialModel?.agentTargetKey === backendTargetKey
         || Object.values(params.probeContext?.capabilityParams?.connectedServices?.bindingsByServiceId ?? {})
             .some(selection => selection.source === 'team_resource');
+    const connectedAccountSelected = Object.values(params.probeContext?.capabilityParams?.connectedServices?.bindingsByServiceId ?? {})
+        .some(selection => selection.source === 'connected');
 
     const backendTargetForProbe = React.useMemo(() => {
         if (!backendTarget) return null;
@@ -292,12 +295,13 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             }
             return getModelOptionsForAgentTypeOrPreflight({
                 agentType,
+                connectedAccountSelected,
                 preflight: currentModels,
                 preflightTargetKey: currentModelsTargetKey,
                 currentTargetKey: backendTargetKey,
             });
         },
-        [agentType, backendTargetKey, currentModels, currentModelsTargetKey],
+        [agentType, backendTargetKey, connectedAccountSelected, currentModels, currentModelsTargetKey],
     );
 
     const namesPending = dynamicProbeEnabled && !currentModels && !(hasCurrentIdentity && modelDiscoveryFailed);
@@ -318,5 +322,5 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         }) } : {}),
         ...(dynamicProbeEnabled && preflightModelsKey && enabled ? { onRefresh } : {}),
     }), [namesPending, retainedModelName, hasCurrentIdentity, probePhase, modelDiscoveryFailed, refreshedAt, spawnFailure, failure, dynamicProbeEnabled, preflightModelsKey, enabled, onRefresh, teamCatalogSelected]);
-    return { usesNativeCatalog: !teamCatalogSelected, preflightModels: currentModels, preflightModelsTargetKey: currentModels ? currentModelsTargetKey : null, modelOptions, probe };
+    return { usesNativeCatalog: !teamCatalogSelected, connectedAccountSelected, preflightModels: currentModels, preflightModelsTargetKey: currentModels ? currentModelsTargetKey : null, modelOptions, probe };
 }

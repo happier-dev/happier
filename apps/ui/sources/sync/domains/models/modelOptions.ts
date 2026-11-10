@@ -1,5 +1,7 @@
 import type { ModelMode } from '../permissions/permissionTypes';
 import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol/models/descriptor';
+import type { AgentModelsProbeObservation } from '@happier-dev/protocol/capabilities';
+import { getConnectedAccountModelObservationConfidence, isProviderSourceModelCatalogConfidenceUsable } from '@happier-dev/protocol/rpc/providers';
 import { t } from '@/text';
 import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { readAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
@@ -25,6 +27,7 @@ export type ModelOption = Readonly<{
 }>;
 
 export type PreflightModelList = Readonly<{
+    source?: AgentModelsProbeObservation['source'];
     availableModels: ReadonlyArray<Readonly<{
         id: string;
         name: string;
@@ -47,6 +50,7 @@ export function createUnavailablePreflightModelList(): PreflightModelList {
 }
 
 export type SessionModelOptionsContext = Readonly<{
+    connectedAccountSelected?: boolean;
     preflight?: PreflightModelList | null;
     preflightUpdatedAt?: number | null;
     selectedModelId?: string | null;
@@ -303,11 +307,17 @@ export function getModelOptionsForAgentType(agentType: AgentType): readonly Mode
 
 export function getModelOptionsForAgentTypeOrPreflight(params: {
     agentType: AgentType;
+    connectedAccountSelected?: boolean;
     preflight: PreflightModelList | null | undefined;
     preflightTargetKey?: string | null;
     currentTargetKey?: string | null;
 }): readonly ModelOption[] {
-    if (!isPreflightListCurrentForTarget(params)) {
+    const current = isPreflightListCurrentForTarget(params);
+    if (params.connectedAccountSelected && (!current
+        || !isProviderSourceModelCatalogConfidenceUsable(getConnectedAccountModelObservationConfidence(params.preflight?.source)))) {
+        return [];
+    }
+    if (!current) {
         return getModelOptionsForAgentType(params.agentType);
     }
     if (params.preflight?.unavailable === true) {
@@ -335,7 +345,11 @@ function resolveModelOptionsForSession(
     context?: SessionModelOptionsContext,
 ): readonly ModelOption[] {
     const list = resolveSessionModelList(agentType, metadata, context);
-    const options = getModelOptionsForAgentTypeOrPreflight({ agentType, preflight: list });
+    const options = getModelOptionsForAgentTypeOrPreflight({ agentType, preflight: list,
+        // Session metadata already contains the host's runnable publication;
+        // Raw or unavailable preflight observations still need account-aware membership.
+        ...(!list || list === context?.preflight ? { connectedAccountSelected: context?.connectedAccountSelected } : {}),
+    });
     if (options.length === 0) return options;
     const selectedModelId = context?.selectedModelId || readSelectedModelOverrideId(agentType, metadata);
     return appendRequestedModelOption(options, selectedModelId);

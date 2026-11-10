@@ -27,15 +27,16 @@ export function SessionModelDiscoveryDetail(props: Readonly<{
 }>) {
     const settings = useAgentUiSettings({ agentIds: [props.agentId], machineId: props.machineId, accountScope: props.accountScope, domain: 'runtime' });
     const discovery = React.useMemo(() => props.discovery(settings), [props.discovery, settings]);
-    const { preflightModels, preflightModelsTargetKey, probe } = useNewSessionPreflightModelsState(discovery);
+    const { preflightModels, preflightModelsTargetKey, connectedAccountSelected, probe } = useNewSessionPreflightModelsState(discovery);
     const currentTargetKey = discovery.backendTarget ? resolveBackendTargetKeyV2(discovery.backendTarget) : null;
     const modelOptionsContext = React.useMemo<SessionModelOptionsContext>(() => ({
+        connectedAccountSelected,
         preflight: preflightModels,
         preflightUpdatedAt: probe.refreshedAt,
         preflightTargetKey: preflightModelsTargetKey,
         currentTargetKey,
         selectedModelId: props.selectedModelId,
-    }), [preflightModels, preflightModelsTargetKey, currentTargetKey, probe.refreshedAt, props.selectedModelId]);
+    }), [connectedAccountSelected, preflightModels, preflightModelsTargetKey, currentTargetKey, probe.refreshedAt, props.selectedModelId]);
     const modelOptions = React.useMemo(() => getModelOptionsForSession(props.agentId, props.composerOptionsInput, modelOptionsContext),
         [props.agentId, props.composerOptionsInput, modelOptionsContext]);
     return props.renderDetail({
