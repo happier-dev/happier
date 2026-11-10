@@ -246,7 +246,8 @@ async function main() {
     producerStackName: process.env.HAPPIER_STACK_EXPO_SOURCE_STACK }) : null;
   if (sourceSnapshot && controlledPlacement?.target) {
     await runControlledRemoteStack({ rootDir, argv, flags, json, autostart, runtimeSnapshot: null,
-      runtimeLaunchContext, placement: controlledPlacement, serverComponentName, sourceSnapshot: true, sourceUi, pendingSourceStart });
+      runtimeLaunchContext, placement: controlledPlacement, serverComponentName, sourceSnapshot: true, sourceUi, pendingSourceStart,
+      sourceCapturedAfter: kv.get('--source-after') });
     return;
   }
   const unavailableTargets = [];
@@ -1277,7 +1278,7 @@ async function main() {
   }
 }
 
-async function runControlledRemoteStack({ rootDir, flags, json, autostart, runtimeSnapshot, runtimeLaunchContext, placement, serverComponentName, sourceSnapshot = false, sourceUi = null, pendingSourceStart = null }) {
+async function runControlledRemoteStack({ rootDir, flags, json, autostart, runtimeSnapshot, runtimeLaunchContext, placement, serverComponentName, sourceSnapshot = false, sourceUi = null, pendingSourceStart = null, sourceCapturedAfter }) {
   let env = { ...process.env, HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH: '1' };
   const context = resolveStackContext({ env, autostart });
   const borrowedExpoProducerStackName = !sourceSnapshot || sourceUi === 'borrowed'
@@ -1326,7 +1327,7 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
     const { buildSourceRuntimeBundle } = await import('./build/build_source_runtime.mjs');
     const built = await buildSourceRuntimeBundle({ repoDir: getRepoDir(rootDir, env),
       stackBaseDir:autostart.baseDir, component: 'daemon', env, preparation: pendingSourceStart, signal:pendingSourceStart?.signal,
-      reuseSelected: env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1', sourceCapturedAfter: kv.get('--source-after') });
+      reuseSelected: env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1', sourceCapturedAfter });
     localCli = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: built });
     localSourceIdentity = { selected: built.identity, loaded: null };
     env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec: localCli });
