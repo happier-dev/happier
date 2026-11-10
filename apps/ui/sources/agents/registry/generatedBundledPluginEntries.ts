@@ -1315,6 +1315,7 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION: Readonly<Record<string, Re
   "displayName": "ElevenLabs Voice"
 }),
   "happier.agent.fx": Object.freeze({
+  "description": "FX coding agent.",
   "displayName": "FX"
 }),
   "happier.agent.gemini": Object.freeze({
@@ -1342,6 +1343,7 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION: Readonly<Record<string, Re
   "displayName": "Kimi"
 }),
   "happier.agent.kiro": Object.freeze({
+  "description": "Kiro coding agent.",
   "displayName": "Kiro"
 }),
   "happier.language.markdown": Object.freeze({
@@ -1456,9 +1458,11 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION: Readonly<Record<string, Re
   "displayName": "MiniMax"
 }),
   "happier.agent.muse": Object.freeze({
+  "description": "Muse coding agent.",
   "displayName": "Muse"
 }),
   "happier.agent.ohmypi": Object.freeze({
+  "description": "Oh My Pi coding agent.",
   "displayName": "Oh My Pi"
 }),
   "happier.provider.ollama": Object.freeze({

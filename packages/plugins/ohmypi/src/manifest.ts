@@ -38,6 +38,7 @@ export const OH_MY_PI_PLUGIN = definePlugin({
   id: 'happier.agent.ohmypi',
   version: '0.0.0',
   displayName: 'Oh My Pi',
+  description: 'Oh My Pi coding agent.',
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{

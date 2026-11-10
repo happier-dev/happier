@@ -15,6 +15,7 @@ export const MUSE_PLUGIN = definePlugin({
   id: 'happier.agent.muse',
   version: '0.0.0',
   displayName: 'Muse',
+  description: 'Muse coding agent.',
   brand: { iconResourceId: 'brand-icon', monochrome: true },
   resources: {
     'brand-icon': { kind: 'asset', path: 'assets/icon.png', contentType: 'image/png' },

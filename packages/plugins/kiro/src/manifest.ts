@@ -17,6 +17,7 @@ export const KIRO_PLUGIN = definePlugin({
   id: 'happier.agent.kiro',
   version: '0.0.0',
   displayName: 'Kiro',
+  description: 'Kiro coding agent.',
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{

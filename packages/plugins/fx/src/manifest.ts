@@ -13,6 +13,7 @@ import { FX_CODEX_PURPOSE, FX_CODEX_SERVICE, FX_NATIVE_KEY_PURPOSES, FX_NATIVE_K
 
 export const FX_PLUGIN = definePlugin({
   id: 'happier.agent.fx', version: '0.0.0', displayName: 'FX',
+  description: 'FX coding agent.',
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{
     id: 'fx-process', capability: 'process', reason: 'Run the declared FX CLI executable.',
