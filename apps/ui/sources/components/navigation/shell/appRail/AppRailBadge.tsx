@@ -13,11 +13,11 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { APP_RAIL_BADGE, APP_RAIL_BADGE_OVERLAP_PX } from './appRailMetrics';
 
 /**
- * `attention`: something needs the person's action (the attention amber). `accent`: news worth a look
- * (strong ink). `neutral`: a quiet fact (muted ink), the default. Blue is reserved for focus and links,
+ * `attention`: something needs the person's action (the attention amber). `neutral`: everything else, a
+ * quiet fact in muted ink (owner 2026-11-10: news is not a need). Blue is reserved for focus and links,
  * rose for failure.
  */
-export type AppRailBadgeTone = 'attention' | 'accent' | 'neutral';
+export type AppRailBadgeTone = 'attention' | 'neutral';
 
 export type AppRailBadgeSignal =
     | Readonly<{ kind: 'count'; value: number; tone: AppRailBadgeTone }>
@@ -26,7 +26,7 @@ export type AppRailBadgeSignal =
 
 /** A folded rail keeps the strongest signal, never a sum of unrelated domain counts. */
 export function resolveStrongestAppRailBadge(signals: readonly (AppRailBadgeSignal | null)[]): AppRailBadgeSignal | null {
-    for (const tone of ['attention', 'accent', 'neutral'] as const) {
+    for (const tone of ['attention', 'neutral'] as const) {
         const candidates = signals.filter((signal): signal is AppRailBadgeSignal => signal?.tone === tone
             && (signal.kind === 'dot' || signal.value > 0));
         if (candidates.length === 0) continue;
@@ -52,7 +52,7 @@ export function resolveAppRailBadgeTone(
         case 'signIn':
             return 'attention';
         case 'updates':
-            return source.failed ? 'attention' : 'accent';
+            return source.failed ? 'attention' : 'neutral';
         case 'plugin':
             // A plugin's static label ("Beta") asks for nothing, so it never pulls the eye.
             return source.tone === 'danger' || source.tone === 'warning' ? 'attention' : 'neutral';
@@ -62,16 +62,16 @@ export function resolveAppRailBadgeTone(
 }
 
 /**
- * The Inbox's rail signal (owner 2026-11-10): an amber count of what needs the person (the Inbox's own
- * "Needs you" share), else a quiet dot that the Inbox has something to read. Unknown keeps the quiet dot.
+ * The Inbox's rail signal (owner 2026-11-10): a dot, never a number (the Inbox itself says how many).
+ * Amber while something in its "Needs you" share asks for the person, else quiet while it has something
+ * to read. Unknown keeps the quiet dot.
  */
 export function resolveAppRailInboxBadge(summary: Readonly<{ count: number | null; needsYouCount: number | null }>): AppRailBadgeSignal | null {
-    if (summary.needsYouCount !== null && summary.needsYouCount > 0) {
-        return { kind: 'count', value: summary.needsYouCount, tone: 'attention' };
-    }
+    if (summary.needsYouCount !== null && summary.needsYouCount > 0) return NEEDS_YOU_DOT;
     return summary.count === null || summary.count > 0 ? QUIET_DOT : null;
 }
 
+const NEEDS_YOU_DOT: AppRailBadgeSignal = Object.freeze({ kind: 'dot', tone: 'attention' });
 const QUIET_DOT: AppRailBadgeSignal = Object.freeze({ kind: 'dot', tone: 'neutral' });
 
 /**
@@ -97,9 +97,7 @@ export const AppRailBadge = React.memo(function AppRailBadge(props: Readonly<{
 }>) {
     const styles = stylesheet;
     const appear = useBadgeAppear();
-    const tone = props.signal.tone === 'attention'
-        ? styles.attention
-        : props.signal.tone === 'accent' ? styles.accent : styles.neutral;
+    const tone = props.signal.tone === 'attention' ? styles.attention : styles.neutral;
     const anchor = props.glyphSizePx === undefined ? styles.anchor
         : [styles.anchor, {
             left: props.glyphSizePx - APP_RAIL_BADGE_OVERLAP_PX,
@@ -140,11 +138,10 @@ function useBadgeAppear() {
 
 /**
  * The same signal on a row of the rail's More menu (a rail slot that moved there): a count in the
- * menu row's trailing slot, from the same tone mapping. Menu rows have no strong-ink badge, so news
- * reads as the quiet count there.
+ * menu row's trailing slot, in the same tone.
  */
 export function AppRailMenuCount(props: Readonly<{ value: number; tone: AppRailBadgeTone }>) {
-    return <TabBadge variant="count" tone={props.tone === 'attention' ? 'attention' : 'neutral'} value={props.value} />;
+    return <TabBadge variant="count" tone={props.tone} value={props.value} />;
 }
 
 const RINGED_COUNT_PX = APP_RAIL_BADGE.countSizePx + 2 * APP_RAIL_BADGE.ringPx;
@@ -174,9 +171,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     attention: {
         backgroundColor: theme.colors.state.attention.foreground,
-    },
-    accent: {
-        backgroundColor: theme.colors.text.primary,
     },
     neutral: {
         backgroundColor: theme.colors.text.tertiary,

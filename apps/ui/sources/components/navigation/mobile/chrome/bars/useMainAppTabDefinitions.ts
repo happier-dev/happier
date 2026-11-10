@@ -1,7 +1,8 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { TabType } from '@/components/ui/navigation/tabTypes';
 import { resolveTabBarTabs } from '@/components/ui/navigation/resolveTabBarTabs';
-import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
+import { useSharedInboxSummary } from '@/hooks/inbox/useInboxSummary';
+import { resolveAppRailInboxBadge } from '@/components/navigation/shell/appRail/AppRailBadge';
 import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
 import { useSessionsHaveAttention } from '@/hooks/session/useSessionsHaveAttention';
 import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
@@ -21,14 +22,18 @@ export type MainAppTabDefinition = Readonly<{
     accessibilityLabel: string;
     icon: IconName;
     sfSymbol: string;
-    badge?: Readonly<{ kind: 'count'; value: number }> | Readonly<{ kind: 'dot' }>;
+    badge?: Readonly<{ kind: 'count'; value: number }> | Readonly<{ kind: 'dot' }> | Readonly<{ kind: 'attention' }>;
 }>;
 
 /** Shared presentation facts; the main-tab state provider remains navigation authority. */
+const DOT_BADGE = Object.freeze({ kind: 'dot' as const });
+const ATTENTION_BADGE = Object.freeze({ kind: 'attention' as const });
+
 export function useMainAppTabDefinitions(): readonly MainAppTabDefinition[] {
     const workflowsEnabled = useWorkflowsDestinationAccess().discoverable;
     const inboxEnabled = useInboxAvailable();
-    const inboxHasContent = useInboxHasContent();
+    // The rail's one Inbox rule: amber while something needs the person, else a quiet dot.
+    const inboxSignal = resolveAppRailInboxBadge(useSharedInboxSummary());
     const sessionsHaveAttention = useSessionsHaveAttention();
     const inboxBadgeEnabled = useSetting('tabBarInboxBadgeEnabled');
     const sessionsBadgeEnabled = useSetting('tabBarSessionsBadgeEnabled');
@@ -38,7 +43,8 @@ export function useMainAppTabDefinitions(): readonly MainAppTabDefinition[] {
         sfSymbol: MAIN_TAB_FACTS[key].sfSymbol,
         accessibilityLabel: t(key === 'sessions' && showSessionsAttentionBadge ? 'tabs.sessionsNeedsAttention' : MAIN_TAB_FACTS[key].label),
         // Friend requests reach the person through the Inbox tab, which lists them.
-        badge: key === 'sessions' && showSessionsAttentionBadge || key === 'inbox' && inboxBadgeEnabled && inboxHasContent
-            ? { kind: 'dot' as const } : undefined,
+        badge: key === 'sessions' && showSessionsAttentionBadge ? DOT_BADGE
+            : key === 'inbox' && inboxBadgeEnabled && inboxSignal ? (inboxSignal.tone === 'attention' ? ATTENTION_BADGE : DOT_BADGE)
+            : undefined,
     }));
 }

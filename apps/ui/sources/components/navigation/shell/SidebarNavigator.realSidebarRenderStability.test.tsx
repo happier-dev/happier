@@ -184,10 +184,6 @@ vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
     useIsTablet: () => true,
 }));
 
-vi.mock('@/hooks/inbox/useInboxHasContent', () => ({
-    useInboxHasContent: () => false,
-}));
-
 vi.mock('@/hooks/inbox/useInboxAvailable', () => ({
     useInboxAvailable: () => true,
 }));

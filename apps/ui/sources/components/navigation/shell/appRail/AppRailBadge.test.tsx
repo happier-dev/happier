@@ -33,10 +33,10 @@ describe('AppRailBadge', () => {
         });
         expect(count.getTextContent()).toBe('3');
 
-        const many = await renderScreen(<AppRailBadge signal={{ kind: 'count', value: 250, tone: 'accent' }} testID="badge" />);
+        const many = await renderScreen(<AppRailBadge signal={{ kind: 'count', value: 250, tone: 'neutral' }} testID="badge" />);
         expect(many.getTextContent()).toBe('99+');
 
-        const dot = await renderScreen(<AppRailBadge signal={{ kind: 'dot', tone: 'accent' }} testID="badge" />);
+        const dot = await renderScreen(<AppRailBadge signal={{ kind: 'dot', tone: 'neutral' }} testID="badge" />);
         const dotStyle = flatten(dot.findByTestId('badge')!.props.style);
         expect(dotStyle).toMatchObject({
             left: APP_RAIL_BADGE.anchorLeftPx,
@@ -50,14 +50,13 @@ describe('AppRailBadge', () => {
     it('draws needs-action in the attention amber and everything else in the ink, never blue or red', async () => {
         const { AppRailBadge } = await import('./AppRailBadge');
         const { lightTheme } = await import('@/theme');
-        const fill = async (tone: 'attention' | 'accent' | 'neutral', kind: 'count' | 'dot') => {
+        const fill = async (tone: 'attention' | 'neutral', kind: 'count' | 'dot') => {
             const signal = kind === 'count' ? { kind, value: 4, tone } as const : { kind, tone } as const;
             const screen = await renderScreen(<AppRailBadge signal={signal} testID="badge" />);
             return flatten(screen.findByTestId('badge')!.props.style).backgroundColor;
         };
         for (const kind of ['count', 'dot'] as const) {
             expect(await fill('attention', kind)).toBe(lightTheme.colors.state.attention.foreground);
-            expect(await fill('accent', kind)).toBe(lightTheme.colors.text.primary);
             expect(await fill('neutral', kind)).toBe(lightTheme.colors.text.tertiary);
         }
     });
@@ -65,7 +64,8 @@ describe('AppRailBadge', () => {
     it('is amber only for what needs action', async () => {
         const { resolveAppRailBadgeTone } = await import('./AppRailBadge');
         expect(resolveAppRailBadgeTone({ source: 'updates', failed: true })).toBe('attention');
-        expect(resolveAppRailBadgeTone({ source: 'updates', failed: false })).toBe('accent');
+        // An update waiting is news, not a need: a quiet count.
+        expect(resolveAppRailBadgeTone({ source: 'updates', failed: false })).toBe('neutral');
         expect(resolveAppRailBadgeTone({ source: 'plugin', tone: 'danger' })).toBe('attention');
         expect(resolveAppRailBadgeTone({ source: 'plugin', tone: 'warning' })).toBe('attention');
         // A static label ("Beta") asks for nothing: it stays quiet.
@@ -73,11 +73,12 @@ describe('AppRailBadge', () => {
         expect(resolveAppRailBadgeTone({ source: 'plugin', tone: 'neutral' })).toBe('neutral');
     });
 
-    it('counts the Inbox in amber only for what needs the person; anything else is a quiet dot (owner 2026-11-10)', async () => {
+    it('marks the Inbox with an amber dot only for what needs the person; anything else is a quiet dot (owner 2026-11-10)', async () => {
         const { resolveAppRailInboxBadge } = await import('./AppRailBadge');
         expect(resolveAppRailInboxBadge({ count: 0, needsYouCount: 0 })).toBeNull();
         expect(resolveAppRailInboxBadge({ count: 140, needsYouCount: 0 })).toEqual({ kind: 'dot', tone: 'neutral' });
-        expect(resolveAppRailInboxBadge({ count: 140, needsYouCount: 2 })).toEqual({ kind: 'count', value: 2, tone: 'attention' });
+        // The rail never carries a number for the Inbox; the Inbox itself shows how many.
+        expect(resolveAppRailInboxBadge({ count: 140, needsYouCount: 120 })).toEqual({ kind: 'dot', tone: 'attention' });
         // Not yet known: the existing quiet dot stays until the summary settles.
         expect(resolveAppRailInboxBadge({ count: null, needsYouCount: null })).toEqual({ kind: 'dot', tone: 'neutral' });
     });

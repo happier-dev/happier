@@ -39,6 +39,12 @@ describe('TabBadge', () => {
         expect(await fill('neutral')).toBe(lightTheme.colors.text.secondary);
     });
 
+    it('draws a quiet dot in the same muted ink as the rail, never the strong ink (owner 2026-11-10)', async () => {
+        const { TabBadge } = await import('./TabBadge');
+        const screen = await renderScreen(<TabBadge variant="dot" testID="dot" />);
+        expect(flatten(screen.findByTestId('dot')!.props.style).backgroundColor).toBe(lightTheme.colors.text.tertiary);
+    });
+
     it('draws a needs-you dot in the same attention amber', async () => {
         const { TabBadge } = await import('./TabBadge');
         const screen = await renderScreen(<TabBadge variant="dot" tone="attention" testID="dot" />);

@@ -57,7 +57,7 @@ export const SessionCollaborationRailBadge = React.memo(function SessionCollabor
 }>) {
     const { theme } = useUnistyles();
     const mentioned = useSessionConversationMentioned(props.target);
-    if (props.renderSignal) return <>{props.renderSignal(mentioned ? { kind: 'dot', tone: 'accent' } : null)}</>;
+    if (props.renderSignal) return <>{props.renderSignal(mentioned ? { kind: 'dot', tone: 'neutral' } : null)}</>;
     if (!mentioned) return null;
     return (
         <TabBadge

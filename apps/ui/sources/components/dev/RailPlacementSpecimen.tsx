@@ -62,7 +62,7 @@ export function RailPlacementSpecimen(props: Readonly<{ frame?: string | null }>
 function FixtureFooter(props: Readonly<{ item: AppRailPlacementItem; renderTrigger?: SidebarFooterPopoverTrigger; onPress: () => void }>) {
     if (props.renderTrigger) return props.renderTrigger({ onPress: props.onPress, open: false });
     return (
-        <AppRailSlot badge={props.item.id === 'app-rail-updates' ? <AppRailBadge testID="app-rail-updates-badge" signal={{ kind: 'count', value: 1, tone: 'accent' }} /> : null}>
+        <AppRailSlot badge={props.item.id === 'app-rail-updates' ? <AppRailBadge testID="app-rail-updates-badge" signal={{ kind: 'count', value: 1, tone: 'neutral' }} /> : null}>
             <IconButton testID={props.item.id} variant="plain" size={APP_RAIL_ITEM_SIZE_PX} accessibilityLabel={props.item.title}
                 onPress={props.onPress} tooltip={props.item.title} tooltipPlacement="right"
                 icon={props.item.id === 'app-rail-account' ? <Avatar id="rail-fixture-person" size={28} />

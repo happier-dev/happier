@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { storage } from '@/sync/domains/state/storageStore';
-import { useInboxHasContent } from './useInboxHasContent';
+
 import { renderScreen as renderScreenBase } from '@/dev/testkit/render/renderScreen';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -16,11 +16,14 @@ import { deleteServerFeaturesSnapshot, primeServerFeaturesSnapshot } from '@/syn
 import { MMKV } from 'react-native-mmkv';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import type { SessionMessages } from '@/sync/store/domains/messages';
-import { InboxSummaryProvider } from './useInboxSummary';
+import { InboxSummaryProvider, useSharedInboxSummary } from './useInboxSummary';
 import { INBOX_ARTIFACT_KINDS } from '@/sync/domains/artifacts/inboxArtifacts';
 import { ApprovalRequestV1Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 
+
+/** Whether the Inbox has anything to show; unknown counts as content (the quiet dot stays until it settles). */
+const useInboxHasContent = (): boolean => useSharedInboxSummary().hasContent !== false;
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -85,7 +88,7 @@ function withOrdinarySession(session: Partial<Session>) {
     };
 }
 
-describe('useInboxHasContent', () => {
+describe('Inbox summary hasContent', () => {
     let tree: renderer.ReactTestRenderer | null = null;
 
     beforeEach(async () => {

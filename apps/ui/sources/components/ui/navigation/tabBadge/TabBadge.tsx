@@ -61,7 +61,8 @@ const styles = StyleSheet.create((theme) => ({
         width: 6,
         height: 6,
         borderRadius: 3,
-        backgroundColor: theme.colors.text.primary,
+        // A quiet dot, in the rail's muted ink (`AppRailBadge` neutral): "something to read", never a pull.
+        backgroundColor: theme.colors.text.tertiary,
     },
     /** Needs you: the one colour a tab dot may carry, the same amber as every waiting-for-you signal. */
     dotAttention: {
