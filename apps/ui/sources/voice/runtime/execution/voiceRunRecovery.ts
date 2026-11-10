@@ -213,56 +213,65 @@ export function createVoiceRunRecovery(
           : (persistedRunMeta?.backendId ?? null),
       );
 
-      if (handle) {
-        try {
-          await handle.client.stop({
-            sessionId: handle.rpcSessionId,
-            voiceAgentId: handle.voiceAgentId,
-            signal,
-          });
-        } catch (error) {
-          await reconcileStopFailure(error, handle.rpcSessionId, handle.voiceAgentId);
+      const stopPrimaryRun = async (): Promise<void> => {
+        if (handle) {
+          try {
+            await handle.client.stop({
+              sessionId: handle.rpcSessionId,
+              voiceAgentId: handle.voiceAgentId,
+              signal,
+            });
+          } catch (error) {
+            await reconcileStopFailure(error, handle.rpcSessionId, handle.voiceAgentId);
+          }
+        } else if (persistedRunMeta?.runId) {
+          await stopRun(fallbackRpcSessionId, persistedRunMeta.runId);
         }
-      } else if (persistedRunMeta?.runId) {
-        await stopRun(fallbackRpcSessionId, persistedRunMeta.runId);
-      }
-
-      if (daemonBackendId) {
-        // The exact primary Run owns the Stop result. Other matching Runs are
-        // best-effort cleanup; a failed sweep does not undo that result.
-        const inventoryFailure = (error: unknown): undefined => {
-          caller.throwIfAborted();
-          console.warn('[voiceRunRecovery] Additional Voice Run cleanup could not be confirmed', {
-            errorCode: readRpcErrorCode(error),
-          });
-          return undefined;
-        };
-        const listed = await sessionExecutionRunList(daemonRpcSessionId, {}, runOptions).catch(inventoryFailure);
-        if (listed && !('runs' in listed)) {
-          inventoryFailure(createRpcCallError({ error: listed.error, errorCode: listed.errorCode }));
+      };
+      const cleanupOtherRuns = async (): Promise<void> => {
+        if (daemonBackendId) {
+          // The exact primary Run owns the Stop result. Other matching Runs are
+          // best-effort cleanup; a failed sweep does not undo that result.
+          const inventoryFailure = (error: unknown): undefined => {
+            caller.throwIfAborted();
+            console.warn('[voiceRunRecovery] Additional Voice Run cleanup could not be confirmed', {
+              errorCode: readRpcErrorCode(error),
+            });
+            return undefined;
+          };
+          const listed = await sessionExecutionRunList(daemonRpcSessionId, {}, runOptions).catch(inventoryFailure);
+          if (listed && !('runs' in listed)) {
+            inventoryFailure(createRpcCallError({ error: listed.error, errorCode: listed.errorCode }));
+          }
+          const runs = listed && 'runs' in listed ? listed.runs : [];
+          const matchingRunIds: string[] = Array.from(
+            new Set(
+              runs
+                .filter(
+                  (run) =>
+                    run.intent === 'voice_agent' &&
+                    run.status === 'running' &&
+                    // The exact primary Stop is reconciled separately; this
+                    // sweep stops only other Runs, never retries the primary.
+                    run.runId !== (handle?.voiceAgentId ?? persistedRunMeta?.runId) &&
+                    resolveVoiceAgentRunBackendId(run.backendTarget) ===
+                      daemonBackendId,
+                )
+                .map((run) => run.runId),
+            ),
+          );
+          for (const runId of matchingRunIds) {
+            const stopped = await sessionExecutionRunStop(daemonRpcSessionId, { runId }, runOptions).catch(inventoryFailure);
+            if (stopped?.ok === false) inventoryFailure(createRpcCallError({ error: stopped.error, errorCode: stopped.errorCode }));
+          }
         }
-        const runs = listed && 'runs' in listed ? listed.runs : [];
-        const matchingRunIds: string[] = Array.from(
-          new Set(
-            runs
-              .filter(
-                (run) =>
-                  run.intent === 'voice_agent' &&
-                  run.status === 'running' &&
-                  // The primary Stop was already reconciled above; inventory
-                  // cleanup is a sweep of the remaining Runs, never a retry.
-                  run.runId !== (handle?.voiceAgentId ?? persistedRunMeta?.runId) &&
-                  resolveVoiceAgentRunBackendId(run.backendTarget) ===
-                    daemonBackendId,
-              )
-              .map((run) => run.runId),
-          ),
-        );
-        for (const runId of matchingRunIds) {
-          const stopped = await sessionExecutionRunStop(daemonRpcSessionId, { runId }, runOptions).catch(inventoryFailure);
-          if (stopped?.ok === false) inventoryFailure(createRpcCallError({ error: stopped.error, errorCode: stopped.errorCode }));
-        }
-      }
+      };
+      // Inventory excludes the exact primary Run, so its request need not
+      // wait for that Stop acknowledgment. Join both before final settlement;
+      // an early rejection must neither detach cleanup nor go unobserved.
+      const [primaryStop, otherRunsCleanup] = await Promise.allSettled([stopPrimaryRun(), cleanupOtherRuns()]);
+      if (primaryStop.status === 'rejected') throw primaryStop.reason;
+      if (otherRunsCleanup.status === 'rejected') throw otherRunsCleanup.reason;
       // One unresolved Stop never prevents cleanup of the other observed Runs.
       // Preserve the exact retained pointer and report uncertainty after the sweep.
       if (unconfirmedStop) throw unconfirmedStop;

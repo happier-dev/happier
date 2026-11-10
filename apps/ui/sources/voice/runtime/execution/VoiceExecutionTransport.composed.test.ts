@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, it, vi } from 'vitest';
-import { createSessionFixture } from '@/dev/testkit';
+import { createDeferred, createSessionFixture } from '@/dev/testkit';
 import { createStandaloneVoicePolicyHarness, prepareStandaloneVoicePolicyHarness } from '@/dev/testkit/harness/standaloneVoicePolicyHarness';
 import { createRetainedVoiceAgentRpcBoundary } from '@/dev/testkit/harness/voiceAgentRpcBoundary';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
@@ -16,6 +16,75 @@ await prepareStandaloneVoicePolicyHarness();
 await import('@/voice/adapters/localConversation/localConversationAdapter');
 
 describe('real Local Voice Agent activation', () => {
+    it.each(['primary', 'inventory'] as const)('overlaps independent cleanup inventory with primary Stop and awaits both before clearing retained metadata (%s first)', async first => {
+        const daemon = await createRetainedVoiceAgentRpcBoundary();
+        const stopEntered = createDeferred<void>();
+        const releaseStop = createDeferred<void>();
+        const releaseList = createDeferred<void>();
+        const inventoryReturned = createDeferred<void>();
+        let stopping = false;
+        let inventoryStarted = false;
+        let primaryStopRequests = 0;
+        let inventoryResponse: unknown;
+        const fixture = await createStandaloneVoicePolicyHarness({ mode: 'off', dispatch: async (method, input) => {
+            if (stopping && method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP) {
+                primaryStopRequests += 1;
+                stopEntered.resolve();
+                await releaseStop.promise;
+            }
+            if (stopping && method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) {
+                inventoryStarted = true;
+                await releaseList.promise;
+            }
+            const response = await daemon.dispatch(method, input);
+            if (stopping && method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) {
+                inventoryResponse = response;
+                inventoryReturned.resolve();
+            }
+            return response;
+        } });
+        const { createVoiceExecutionTransport } = await import('./VoiceExecutionTransport');
+        const { readVoiceAgentRunMetadataFromSession } = await import('@/voice/persistence/voiceAgentRunMetadata');
+        const transport = createVoiceExecutionTransport();
+        let completion: Promise<void> | undefined;
+        try {
+            await transport.ensureRunning(fixture.sessionId);
+            const runId = daemon.readRetainedRun()?.runId;
+            expect(runId).toBeTruthy();
+            stopping = true;
+            let completed = false;
+            completion = transport.stop(fixture.sessionId).then(() => { completed = true; });
+            await stopEntered.promise;
+            // The inventory excludes the primary Run, so an unanswered Stop
+            // must not serialize this independent network round trip.
+            await vi.waitFor(() => expect(inventoryStarted).toBe(true));
+            if (first === 'primary') {
+                releaseStop.resolve();
+                await vi.waitFor(() => expect(daemon.readRetainedRun()).toBeNull());
+            } else {
+                releaseList.resolve();
+                await inventoryReturned.promise;
+                expect(inventoryResponse).toMatchObject({ runs: [{ runId, status: 'running' }] });
+            }
+            expect(completed).toBe(false);
+            expect(readVoiceAgentRunMetadataFromSession({ sessionId: fixture.sessionId,
+                serverId: fixture.handle.accountLifetime.scope.serverId })?.runId).toBe(runId);
+            if (first === 'primary') releaseList.resolve();
+            else releaseStop.resolve();
+            await completion;
+            // An inventory obtained before primary Stop acknowledges still
+            // contains that Run. It must never trigger a second Stop for it.
+            expect(primaryStopRequests).toBe(1);
+            expect(readVoiceAgentRunMetadataFromSession({ sessionId: fixture.sessionId,
+                serverId: fixture.handle.accountLifetime.scope.serverId })).toBeNull();
+        } finally {
+            releaseStop.resolve();
+            releaseList.resolve();
+            await completion;
+            await fixture.dispose();
+        }
+    });
+
     it('reacquires Voice when online activity precedes first Session hydration', async () => {
         const daemon = await createRetainedVoiceAgentRpcBoundary();
         const fixture = await createStandaloneVoicePolicyHarness({ mode: 'off', dispatch: daemon.dispatch });
