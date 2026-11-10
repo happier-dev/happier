@@ -6,16 +6,33 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CANONICAL_AGENTS_CORE } from '@happier-dev/agents';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { resolveBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/enablement';
 import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { readAgentExecutionRunCapabilities, readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 describe('Muse selected-Agent admission', () => {
+  it('publishes Muse resume, skills and control capabilities to the installed registry', () => {
+    const agent = getResolvedContributionRegistry().agents.find(agent => agent.id === 'muse');
+    const declaration = agent?.richDefinition?.definition;
+    expect(agent?.catalogEntry?.vendorResumeSupport).toBe('supported');
+    expect(readAgentSessionCapabilities(declaration)).toMatchObject({
+      open: expect.arrayContaining(['create', 'resume', 'fork']),
+      cancel: true, configuration: true,
+      catalog: { active: ['skills'], inactive: ['skills'] },
+      compaction: { manual: true },
+    });
+    expect(readAgentExecutionRunCapabilities(declaration)).toMatchObject({
+      open: ['create', 'resume'], checkpoint: true, stop: true,
+    });
+    expect(declaration?.surfaces?.externalSession?.sources).toEqual([
+      expect.objectContaining({ sourceKind: 'museNative' }),
+    ]);
+  });
   it.each([true, false])('keeps native work at zero for passive Muse enablement=%s', async enabled => {
     const scratch = await fsPromises.mkdtemp(join(tmpdir(), 'happier-muse-passive-'));
     const configRoot = join(scratch, 'config');
@@ -83,10 +100,5 @@ describe('Muse selected-Agent admission', () => {
         { kind: 'fixedOrigin', origin: 'https://api.meta.ai' },
       ], methods: ['POST'] },
     }));
-  });
-  it('offers Muse with a reachable custom Session runtime in the host catalog', () => {
-    const muse = Object.values(CANONICAL_AGENTS_CORE).find(agent => agent.id === 'muse');
-    expect(muse, 'selected Muse must exist before the host can admit a Session').toBeDefined();
-    expect(muse?.id).toBe('muse');
   });
 });
