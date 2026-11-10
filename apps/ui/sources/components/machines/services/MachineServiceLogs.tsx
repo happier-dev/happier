@@ -20,6 +20,7 @@ import { Typography } from '@/constants/Typography';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
 import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 import { t } from '@/text';
+import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import { useMachineServiceLogViewer } from './useMachineServiceLogViewer';
 
@@ -185,11 +186,11 @@ export function MachineServiceLogs(
           kind="error"
           size="line"
           title={t('machineServices.logs.error.title')}
-          reason={t('machineServices.logs.error.body', {
+          reason={resolveActionExecutionErrorMessage(first.error, t('machineServices.logs.error.body', {
             machine: machineName,
-          })}
+          }), { safeToRetry: true })}
           diagnosticCode={first.error.code}
-          action={{
+          action={describeActionExecutionPrerequisite(first.error.code) ? undefined : {
             label: t('common.retry'),
             onPress: () => {
               void logs.readAgain();
@@ -239,12 +240,12 @@ export function MachineServiceLogs(
           testID="machine-service-logs-stale"
           asOf={readAt}
           tone="warning"
-          reason={t('machineServices.logs.stale', { machine: machineName })}
+          reason={resolveActionExecutionErrorMessage(logs.followed?.error, t('machineDetailPage.security.staleFailed'), { safeToRetry: true })}
           busy={
             logs.followed?.pending !== undefined &&
             logs.followed.pending !== 'idle'
           }
-          action={{
+          action={describeActionExecutionPrerequisite(logs.followed?.error?.code) ? undefined : {
             label: t('common.retry'),
             onPress: () => {
               void logs.followed?.refresh();

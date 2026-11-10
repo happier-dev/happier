@@ -26,6 +26,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import type { MachineServicesReadError } from './useMachineServices';
 
 import { MachineServiceLogs } from './MachineServiceLogs';
 import { showServiceCommandSheet } from './command/ServiceCommandSheet';
@@ -70,6 +72,7 @@ export function MachineServicePage(
     service: MachineServiceRowV1 | null;
     /** Whether the list answered: only a list that answered without this service says it is gone. */
     list: 'reading' | 'listed' | 'failed';
+    listError?: MachineServicesReadError | null;
     /** The Machine's presence: while it isn't answering the page is what it last reported, and offers no control. */
     online: boolean | null;
     readAt: number | null;
@@ -103,8 +106,10 @@ export function MachineServicePage(
               testID="machine-service-error"
               kind="error"
               title={t('machineServices.error.title')}
-              reason={t('machineServices.error.body', { machine: machineName })}
-              action={{ label: t('common.retry'), onPress: props.onRetry }}
+              reason={resolveActionExecutionErrorMessage(props.listError, t('common.requestFailed'), { safeToRetry: true })}
+              diagnosticCode={props.listError?.code}
+              action={describeActionExecutionPrerequisite(props.listError?.code) ? undefined
+                : { label: t('common.retry'), onPress: props.onRetry }}
             />
           ) : (
             <SurfaceStateCard testID="machine-service-loading" kind="loading" title={t('machineServices.loading')} />

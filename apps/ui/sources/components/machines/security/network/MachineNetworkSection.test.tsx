@@ -14,6 +14,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { t } from '@/text';
 import { HappierRadioMark } from '@happier-dev/plugin-ui/presentation';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -98,6 +99,7 @@ async function render(
     onPrepareChange: (change: unknown) => void;
     onDraft: (next: MachineReachabilityPostureV1 | null) => void;
   }> = {},
+  onOpenSecurity = vi.fn(),
 ) {
   const { MachineNetworkView } = await import('./MachineNetworkSection');
   const draft =
@@ -111,6 +113,7 @@ async function render(
       network,
       machineName: 'shop-prod',
       online,
+      onOpenSecurity,
       controls: {
         review,
         draft,
@@ -126,6 +129,30 @@ async function render(
 }
 
 describe('Machine → Network page', () => {
+  it('keeps retained Network facts neutral when Machine presence is unknown', async () => {
+    const screen = await render(model({ kind: 'settled' }, null), null);
+    const line = findTestInstanceByTypeWithProps(screen, SurfaceFreshnessLine, { testID: 'machine-network-stale' });
+    expect(line?.props.reason).toBe(t('machineDetailPage.security.staleFailed'));
+    expect(line?.props.glyph).toBeUndefined();
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-public-ssh' })).toBeTruthy();
+    expect(line?.props.action).toBeUndefined();
+  });
+  it.each([false, true])('presents administrator prerequisites and opens Security with retained facts=%s', async retained => {
+    const failure = { ok: false as const, errorCode: 'mode_none', error: 'mode_none' };
+    const networkFacts = retained ? facts : { posture: null, selections: null, observation: null };
+    const read = { kind: 'failed' as const, failure };
+    const onOpenSecurity = vi.fn();
+    const network = { ...model(read, true), ...presentMachineNetwork({ facts: networkFacts, read, reachable: true }) };
+    const screen = await render(network, true, { kind: 'idle' }, {}, onOpenSecurity);
+    const notice = retained
+      ? findTestInstanceByTypeWithProps(screen, SurfaceFreshnessLine, { testID: 'machine-network-refresh-failed' })
+      : findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-unavailable' });
+    expect(notice?.props.reason).toBe(t('machineDetailPage.security.reasons.needsAdminToCheck'));
+    expect(notice?.props.action?.label).toBe(t('machineDetailPage.subPages.security'));
+    notice?.props.action.onPress();
+    expect(onOpenSecurity).toHaveBeenCalledOnce();
+    expect(network.refresh).not.toHaveBeenCalled();
+  });
   it('keeps the last-reported facts at full strength while the Machine is offline, and says so once', async () => {
     const screen = await render(model({ kind: 'settled' }, false), false);
     const line = findTestInstanceByTypeWithProps(screen, SurfaceFreshnessLine, {
@@ -374,6 +401,7 @@ describe('Machine → Network page', () => {
       } },
     } });
     const screen = await renderScreen(React.createElement(MachineNetworkView, {
+      onOpenSecurity: vi.fn(),
       network: { ...network, facts: { ...network.facts, observation: withManagement } }, machineName: 'shop-prod', online: true,
       controls: { review: { kind: 'review', plan: reviewed }, draft: null, onDraft: vi.fn(), onPrepare: vi.fn(), onPrepareChange: vi.fn(), onApply: vi.fn(), onCancel: vi.fn(), onOpenApproval: vi.fn() },
     }));
@@ -385,6 +413,7 @@ describe('Machine → Network page', () => {
     const { MachineNetworkView } = await import('./MachineNetworkSection');
     const screen = await renderScreen(
       React.createElement(MachineNetworkView, {
+        onOpenSecurity: vi.fn(),
         network: model({ kind: 'settled' }, true),
         machineName: 'shop-prod',
         online: true,
@@ -409,6 +438,7 @@ describe('Machine → Network page', () => {
     const draft = plan.basis.change.kind === 'posture' ? plan.basis.change.posture : null;
     const screen = await renderScreen(
       React.createElement(MachineNetworkView, {
+        onOpenSecurity: vi.fn(),
         network: model({ kind: 'settled' }, true),
         machineName: 'shop-prod',
         online: true,
@@ -597,6 +627,7 @@ describe('Machine → Network page', () => {
     } satisfies MachineNetworkViewModel;
     const { MachineNetworkView } = await import('./MachineNetworkSection');
     const screen = await renderScreen(React.createElement(MachineNetworkView, {
+      onOpenSecurity: vi.fn(),
       network, machineName: 'shop-prod', online: true, ownerName: 'Mara',
       controls: { review: { kind: 'idle' }, draft: null, onDraft: vi.fn(), onPrepare: vi.fn(), onPrepareChange: vi.fn(),
         onApply: vi.fn(), onCancel: vi.fn(), onOpenApproval: vi.fn() },
@@ -639,6 +670,7 @@ describe('Machine → Network: how people reach its services and ways in (P-M4)'
     expect(findTestInstanceByTypeWithProps(screen, ItemGroup, { accessibilityRole: 'radiogroup' })?.props.selectableItemCountOverride).toBe(2);
     // A drafted provider reads as chosen.
     const drafted = await renderScreen(React.createElement((await import('./MachineNetworkSection')).MachineNetworkView, {
+      onOpenSecurity: vi.fn(),
       network: withCapabilities([cloudflare]), machineName: 'shop-prod', online: true,
       controls: { review: { kind: 'idle' }, draft: { ...posture, defaultServiceIngress: { kind: 'provider', selection: cloudflare } },
         onDraft: vi.fn(), onPrepare: vi.fn(), onPrepareChange: vi.fn(), onApply: vi.fn(), onCancel: vi.fn(), onOpenApproval: vi.fn() },
@@ -736,6 +768,7 @@ describe('Machine → Network: how people reach its services and ways in (P-M4)'
     const slot = createMachinePagePinnedBarSlot();
     const draft = plan.basis.change.kind === 'posture' ? plan.basis.change.posture : null;
     const view = (review: MachineNetworkReview) => React.createElement(MachineNetworkView, {
+      onOpenSecurity: vi.fn(),
       network: model({ kind: 'settled' }, true), machineName: 'shop-prod', online: true,
       controls: { review, draft, onDraft: vi.fn(), onPrepare: vi.fn(), onPrepareChange: vi.fn(),
         onApply: vi.fn(), onCancel: vi.fn(), onOpenApproval: vi.fn() } });
@@ -755,6 +788,7 @@ describe('Machine → Network: how people reach its services and ways in (P-M4)'
     const controls = { review: { kind: 'idle' } as const, draft: null, onDraft: vi.fn(), onPrepare: vi.fn(), onPrepareChange: vi.fn(),
       onApply: vi.fn(), onCancel: vi.fn(), onOpenApproval: vi.fn() };
     const screen = await renderScreen(React.createElement(MachineNetworkView, {
+      onOpenSecurity: vi.fn(),
       network, machineName: 'shop-prod', online: true, controls, onConnectAccount }));
     for (const title of ['machineDetailPage.network.ingressTitle', 'machineDetailPage.network.privateTitle']) {
       const action = findTestInstanceByTypeWithProps(screen, ItemGroup, { title })?.props.action;
@@ -765,6 +799,7 @@ describe('Machine → Network: how people reach its services and ways in (P-M4)'
     // A Use member has nothing to connect here.
     const read: MachineNetworkRead = { kind: 'unrequested' };
     const use = await renderScreen(React.createElement(MachineNetworkView, {
+      onOpenSecurity: vi.fn(),
       network: { ...network, ...presentMachineNetwork({ facts: network.facts, read, reachable: true, needsManage: true }) },
       machineName: 'shop-prod', online: true, controls, onConnectAccount }));
     expect(findTestInstanceByTypeWithProps(use, ItemGroup, { title: 'machineDetailPage.network.privateTitle' })?.props.action).toBeUndefined();

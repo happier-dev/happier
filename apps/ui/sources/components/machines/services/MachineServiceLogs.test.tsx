@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { createHash } from 'node:crypto';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MachineServiceRowV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -11,6 +12,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { t } from '@/text';
 
 // Only the authenticated Home HTTP/device-credential boundary is substituted.
 // The mounted Machine source, Action, Resource store and log-viewer owners stay real.
@@ -40,6 +42,7 @@ describe('Machine service shared log viewer', () => {
             details: { reason: 'secret_redaction_redeploy_required', remedy: 'redeploy_environment', retryable: false },
             unavailable: true },
         { code: 'unclassified_log_failure', message: 'Log read failed', details: undefined, unavailable: false },
+        { code: 'access_denied', message: 'Read refused', details: undefined, unavailable: false },
     ])('presents the typed $code refusal without inventing a Machine reachability failure', async failure => {
         const actionId = 'machines.services.logs.read';
         const actionPath = `/v1/actions/${actionId}`;
@@ -85,6 +88,10 @@ describe('Machine service shared log viewer', () => {
             } else {
                 expect(screen.findHostByTestId('machine-service-logs-open-environment')).toBeNull();
             }
+            if (failure.code === 'access_denied') {
+                expect(copy).toContain(t('errors.permissionDenied'));
+                expect(copy).not.toContain('Retry');
+            }
             await screen.pressByTestIdAsync(`${cardId}-details-toggle`);
             expect(screen.getTextContent()).toContain(failure.code);
         } finally { await screen.unmount(); }
@@ -97,6 +104,7 @@ describe('Machine service shared log viewer', () => {
             sourceRevision: 'native-source', text: 'first [REDACTED]\n', nextCursor: null, truncated: true,
         } };
         let current: ManagedServiceNativeLogResultV1 = first;
+        let resourceFailure = false;
         let firstReads = 0;
         let resourceReads = 0;
         let watchOpens = 0;
@@ -110,8 +118,10 @@ describe('Machine service shared log viewer', () => {
         };
         const emit = async () => {
             await vi.waitFor(() => expect(pending.size).toBe(1));
-            pending.values().next().value!();
-            await flushHookEffects();
+            await act(async () => {
+                pending.values().next().value!();
+                await flushHookEffects();
+            });
         };
         const row = { ...createPlainMachineRowFixture({ id: 'machine', accountId: 'account' }), installationId: 'installation' };
         homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
@@ -136,6 +146,7 @@ describe('Machine service shared log viewer', () => {
             if (!continuation) { firstReads++; return reply(first); }
             if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
                 resourceReads++;
+                if (resourceFailure) return reply({ ok: false, code: 'service_transport_unavailable', reason: 'unavailable' });
                 return reply({ ok: true, resource: continuation.params.resource, ...content() });
             }
             if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) {
@@ -156,7 +167,8 @@ describe('Machine service shared log viewer', () => {
                 };
                 const aborted = () => finish({ ok: true, status: 'idle' });
                 pending.set(subscriptionId, () => finish({ ok: true, status: 'event', event: {
-                    version: 1, kind: 'invalidated', subscriptionId, digest: content().digest,
+                    version: 1, kind: 'invalidated', subscriptionId,
+                    digest: resourceFailure ? `sha256:${'0'.repeat(64)}` : content().digest,
                 } }));
                 request.signal?.addEventListener('abort', aborted, { once: true });
                 if (request.signal?.aborted) aborted();
@@ -186,6 +198,12 @@ describe('Machine service shared log viewer', () => {
             await emit();
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('resumed 🌍'));
             expect(firstReads).toBe(1);
+            resourceFailure = true;
+            await emit();
+            await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-logs-stale')).not.toBeNull());
+            expect(screen.getTextContent()).toContain('resumed 🌍');
+            expect(screen.getTextContent()).not.toContain('isn’t answering');
+            resourceFailure = false;
             const beforeChange = resourceReads;
             current = { kind: 'source-changed', sourceRevision: 'replacement-source' };
             await emit();

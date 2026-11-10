@@ -39,6 +39,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import {
   compareMachineServices,
@@ -112,6 +113,7 @@ function MachineServicesTabBody(props: MachinePageTabBodyProps) {
         serviceId={params.service}
         service={service}
         list={list.rows ? 'listed' : list.pending || (!list.error && !list.unavailable) ? 'reading' : 'failed'}
+        listError={list.error}
         online={props.online}
         readAt={list.readAt}
         refreshing={list.pending}
@@ -282,16 +284,19 @@ function MachineServicesList(
 
   const openRoles = React.useCallback(() => setParams({ id: 'services', page: 'roles' }), [setParams]);
   const description = t('machineServices.lede', { machine: machineName });
-  // The last good list stays readable under one freshness line when a later read fails, or when the Machine stops
-  // answering (its presence, from the Machine page): what it last listed may no longer be true (lab `services/offline`).
+  // Retained rows outlive a failed read. Only the Machine page's presence says it stopped answering;
+  // a refused read keeps its own reason and recovery.
+  const prerequisite = describeActionExecutionPrerequisite(list.error?.code);
   const stale = list.rows && (list.error || props.online === false) ? (
     <SurfaceFreshnessLine
       testID="machine-services-stale"
       asOf={list.readAt}
       tone="warning"
-      reason={t('machineServices.stale', { machine: machineName })}
+      reason={props.online === false ? t('machineServices.stale', { machine: machineName })
+        : resolveActionExecutionErrorMessage(list.error, t('machineDetailPage.security.staleFailed'), { safeToRetry: true })}
       busy={list.pending}
-      action={{ label: t('common.retry'), onPress: () => { void list.refresh(); } }}
+      action={props.online === false || prerequisite ? undefined
+        : { label: t('common.retry'), onPress: () => { void list.refresh(); } }}
     />
   ) : null;
 
@@ -315,6 +320,7 @@ function MachineServicesList(
         </View>
       )}>
       {stale}
+      {/* An answered empty list has no lede; a retained empty list keeps the one recipient line here. */}
       {recipient ? recipientLine : null}
     </ItemGroup>
   );
@@ -332,7 +338,8 @@ function MachineServicesList(
               reason={t('machineServices.empty.body')}
               {...(recipient ? {} : { action: { label: t('machineServices.deployHere'), onPress: deployHere, testID: 'machine-services-deploy-here' } })}
               // With the sentence gone (answered empty) its two ways to add stand here, so the first Watch starts here too (lab `services/empty`).
-              {...(recipient ? { actionFooter: recipientLine } : answeredEmpty ? { actionFooter: <MachineServiceWatchMenu serverId={props.serverId} machineId={machineId} machineName={machineName} rows={rows} /> } : {})} />
+              {...(answeredEmpty ? { actionFooter: recipient ? recipientLine
+                : <MachineServiceWatchMenu serverId={props.serverId} machineId={machineId} machineName={machineName} rows={rows} /> } : {})} />
           ) : (
             <CoreCollectionScope>
               <Collection<ServicesListItem>
@@ -560,9 +567,9 @@ function StateCard(
       testID="machine-services-error"
       kind="error"
       title={t('machineServices.error.title')}
-      reason={t('machineServices.error.body', { machine: machineName })}
+      reason={resolveActionExecutionErrorMessage(state, t('common.requestFailed'), { safeToRetry: true })}
       diagnosticCode={state.code}
-      action={retry}
+      action={describeActionExecutionPrerequisite(state.code) ? undefined : retry}
     />
   );
 }

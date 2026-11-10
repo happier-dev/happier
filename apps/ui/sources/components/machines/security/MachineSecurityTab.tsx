@@ -180,6 +180,7 @@ function MachineSecurityNetworkPage(
         online={props.online}
         refreshKey={props.refreshKey}
         needsManage={props.needsManage}
+        onOpenSecurity={props.back.onPress}
         ownerName={
           props.machine.isShared === true
             ? props.machine.access?.custodian.displayName?.trim() || null

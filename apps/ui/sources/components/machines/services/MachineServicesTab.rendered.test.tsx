@@ -84,7 +84,7 @@ function answerAction(actionId: string, read: (envelope: Envelope, request: Requ
 function answerResource<T>(initial: T, actionId: 'machines.services.list' | 'machines.services.logs.read' = 'machines.services.list',
     select: (value: T, reference: PluginUiHostReadReferenceV1) => T = value => value) {
     let value = initial;
-    let failed = false;
+    let failureCode: string | null = null;
     let deliver: (() => void) | undefined;
     let reads = 0;
     const readValues: T[] = [];
@@ -100,7 +100,7 @@ function answerResource<T>(initial: T, actionId: 'machines.services.list' | 'mac
         if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
             reads++;
             readValues.push(select(value, reference));
-            return failed ? { ok: false, code: 'service_transport_unavailable', reason: 'unavailable' }
+            return failureCode ? { ok: false, code: failureCode, reason: 'unavailable' }
                 : { ok: true, resource: reference, ...content(reference) };
         }
         if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN)
@@ -115,13 +115,13 @@ function answerResource<T>(initial: T, actionId: 'machines.services.list' | 'mac
             };
             const abort = () => finish({ ok: true, status: 'idle' });
             deliver = () => finish({ ok: true, status: 'event', event: { version: 1, kind: 'invalidated',
-                subscriptionId: continuation.params.subscriptionId, digest: failed ? `sha256:${'0'.repeat(64)}` : content(reference).digest } });
+                subscriptionId: continuation.params.subscriptionId, digest: failureCode ? `sha256:${'0'.repeat(64)}` : content(reference).digest } });
             request.signal?.addEventListener('abort', abort, { once: true });
             if (request.signal?.aborted) abort();
         });
     });
     return {
-        fail() { failed = true; },
+        fail(code = 'service_transport_unavailable') { failureCode = code; },
         async publish(next: typeof value) {
             value = next;
             await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
@@ -607,6 +607,8 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(screen.findHostByTestId('machine-services-deploy-here')).toBeNull();
         expect(screen.findHostByTestId('machine-services-watch')).toBeNull();
         expect(screen.findHostByTestId('machine-services-recipient')).not.toBeNull();
+        // Said once: where the action would be, not again in the page's lede.
+        expect(screen.tree.findAll(node => typeof node.type === 'string' && node.props.testID === 'machine-services-recipient')).toHaveLength(1);
         await list.publish(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [service('Web')] }));
         await measureMountedCollections(screen);
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).not.toBeNull());
@@ -797,17 +799,50 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(screen.findHostByTestId('machine-services-retry')).toBeNull();
     });
 
-    it('keeps last-known rows visible with a freshness warning when a pushed refresh fails', async () => {
-        const value = MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [service('Retained')] });
+    it.each([false, true])('keeps last-known rows visible with a freshness warning when a pushed refresh fails (empty=%s)', async empty => {
+        await shareWith('use');
+        const value = MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: empty ? [] : [service('Retained')] });
         const list = answerResource(value);
         const { screen } = await mount();
-        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-retained')).not.toBeNull());
+        const resultId = empty ? 'machine-services-empty' : 'machine-service-retained';
+        await vi.waitFor(() => expect(screen.findHostByTestId(resultId)).not.toBeNull());
         list.fail();
         await list.publish(value);
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-services-stale')).not.toBeNull());
-        expect(screen.findHostByTestId('machine-service-retained')).not.toBeNull();
+        expect(screen.findHostByTestId(resultId)).not.toBeNull();
         expect(screen.findHostByTestId('machine-services-error')).toBeNull();
+        expect(screen.getTextContent()).not.toContain(t('machineServices.stale', { machine: machineName }));
+        expect(screen.getTextContent()).toContain(t('machineDetailPage.security.staleFailed'));
+        expect(screen.tree.findAll(node => typeof node.type === 'string' && node.props.testID === 'machine-services-recipient')).toHaveLength(1);
         expect(list.reads).toBeGreaterThan(1);
+    });
+
+    it.each([false, true])('presents a refused online grantee read without a false offline warning (retained=%s)', async retained => {
+        await shareWith('use');
+        const value = MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [service('Retained')] });
+        const list = answerResource(value);
+        if (!retained) list.fail('access_denied');
+        const { screen } = await mount();
+        if (retained) {
+            await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-retained')).not.toBeNull());
+            list.fail('access_denied');
+            await list.publish(value);
+        }
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('errors.permissionDenied')));
+        expect(screen.getTextContent()).not.toContain(t('machineServices.stale', { machine: machineName }));
+        expect(screen.findHostByTestId('machine-services-offline')).toBeNull();
+        expect(screen.findHostByTestId('machine-services-retry')).toBeNull();
+        expect(screen.tree.findAll(node => typeof node.type === 'string' && node.props.testID === 'machine-services-recipient')).toHaveLength(1);
+    });
+
+    it('preserves a refused Services read when opening a service directly', async () => {
+        await shareWith('use');
+        const list = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [] }));
+        list.fail('access_denied');
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: 'retained' } });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('errors.permissionDenied')));
+        expect(screen.findHostByTestId('machine-services-offline')).toBeNull();
+        expect(screen.getTextContent()).not.toContain(t('common.retry'));
     });
 
     it('says the last-known list and service are as of when the Machine went offline, and offers no control', async () => {

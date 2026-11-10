@@ -71,6 +71,23 @@ export function describeMachineNativeFailureCode(code: unknown): string | null {
 
 type FailurePresentationOptions = Readonly<{ safeToRetry?: boolean; notAppliedMessage?: string }>;
 
+/** A refused read needs its prerequisite resolved, rather than another identical attempt. */
+export function describeActionExecutionPrerequisite(code: unknown): Readonly<{
+    message: string;
+    recovery: 'machine_security' | 'access';
+}> | null {
+    if (code === 'mode_none' || code === 'not_preauthorized') {
+        return { message: t('machineDetailPage.security.reasons.needsAdminToCheck'), recovery: 'machine_security' };
+    }
+    if (code === 'action_forbidden' || code === 'credential_scope_denied' || code === 'artifact_access_forbidden' || code === 'artifact_kind_internal'
+        || code === 'project_account_access_denied' || code === 'forbidden' || code === 'access_denied'
+        || code === 'permission_denied' || code === 'denied'
+        || code === RPC_ERROR_CODES.FORBIDDEN) {
+        return { message: t('errors.permissionDenied'), recovery: 'access' };
+    }
+    return null;
+}
+
 function readFailureMessage(value: unknown, options?: FailurePresentationOptions): string | null {
     const record = asRecord(value);
     if (!record) return null;
@@ -80,6 +97,8 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     const discussionCode = typeof code === 'string' && code.startsWith('discussion')
         ? DiscussionErrorCodeV1Schema.safeParse(code) : null;
     if (discussionCode?.success) return discussionFailureLabel(discussionCode.data);
+    const prerequisite = describeActionExecutionPrerequisite(code);
+    if (prerequisite) return prerequisite.message;
     if (code === 'client_required') return t('errors.clientRequired');
     if (code === 'secret_save_client_required') return t('errors.secretSaveClientRequired');
     if (code === 'secret_use_client_required') return t('errors.secretUseClientRequired');
@@ -96,9 +115,6 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     if (code === 'invalid_setting_value' || code === 'account_settings_mutation_invalid') return t('settings.writeValueRefused');
     if (code === 'setting_not_bound' || code === 'action_account_scope_changed'
         || code === 'account_settings_mutation_conflict') return t('settings.writeContextChanged');
-    if (code === 'action_forbidden' || code === 'credential_scope_denied' || code === 'artifact_access_forbidden' || code === 'artifact_kind_internal'
-        || code === 'project_account_access_denied' || code === 'forbidden'
-        || code === RPC_ERROR_CODES.FORBIDDEN) return t('errors.permissionDenied');
     if (code === 'version_mismatch' || code === 'version-mismatch') return t('artifacts.browser.conflict.title');
     if (code === 'artifact_not_found' || code === 'not_found') return t('artifacts.notFound');
     if (typeof code === 'string' && code.startsWith('project_account_')) return t('widgetAdd.refusals.areaUnavailable');

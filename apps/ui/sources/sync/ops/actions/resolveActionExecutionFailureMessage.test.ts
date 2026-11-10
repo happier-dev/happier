@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import { t } from '@/text';
 
 import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it.each(['mode_none', 'not_preauthorized'])('names the administrator prerequisite for %s without treating it as transport failure', code => {
+        expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, error: code }, 'Could not read the network'))
+            .toBe(t('machineDetailPage.security.reasons.needsAdminToCheck'));
+        expect(resolveActionExecutionErrorMessage({ code }, 'Could not read the network'))
+            .toBe(t('machineDetailPage.security.reasons.needsAdminToCheck'));
+    });
+    it.each(['access_denied', 'permission_denied', 'denied', RPC_ERROR_CODES.FORBIDDEN])('preserves the %s denial from a Machine Resource read', code => {
+        expect(resolveActionExecutionErrorMessage({ code }, 'Could not read services'))
+            .toBe(t('errors.permissionDenied'));
+    });
     it.each(['approval_required', 'approval_canceled', 'plugin_action_current_intent_rejected'])
     ('preserves the known unapplied outcome for %s without recommending repetition', (code) => {
         const options = { notAppliedMessage: 'Not saved' };

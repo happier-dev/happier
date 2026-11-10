@@ -35,6 +35,7 @@ import { t } from '@/text';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { joinList } from '@/utils/text/joinList';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import {
   useMachineNetwork,
@@ -79,6 +80,7 @@ export function MachineNetworkSection(
     needsManage: boolean;
     /** The owner's public name when the share carries one: who to ask for Manage. */
     ownerName?: string | null;
+    onOpenSecurity: () => void;
   }>,
 ) {
   const router = useRouter();
@@ -141,6 +143,7 @@ export function MachineNetworkSection(
       online={props.online}
       ownerName={props.ownerName ?? null}
       controls={controls}
+      onOpenSecurity={props.onOpenSecurity}
       onConnectAccount={() => router.push(SETTINGS_ROUTES.connectedServices as never)}
     />
   );
@@ -159,11 +162,18 @@ export function MachineNetworkView(
     ownerName?: string | null;
     /** The existing Connected services entry, where a provider account is connected (lab "Connect Cloudflare"). */
     onConnectAccount?: () => void;
+    onOpenSecurity: () => void;
   }>,
 ) {
   const { network, machineName: machine } = props;
   const providerTitle = props.providerTitle ?? resolveMachineNetworkProviderTitle;
   const observation = network.facts.observation;
+  const prerequisite = describeActionExecutionPrerequisite(network.failure?.errorCode);
+  const failureAction = prerequisite
+    ? prerequisite.recovery === 'machine_security'
+      ? { label: t('machineDetailPage.subPages.security'), onPress: props.onOpenSecurity }
+      : undefined
+    : { label: t('common.retry'), onPress: () => { void network.refresh(); } };
   // Home admits the Network read only for Manage. A Use grantee gets the reason and who to ask, never a Retry
   // that cannot succeed; facts already published to them stay visible above it, read-only.
   const needsManage = network.state === 'needsManage';
@@ -211,23 +221,10 @@ export function MachineNetworkView(
           testID="machine-network-unavailable"
           kind="unavailable"
           title={t('machineDetailPage.network.unavailableTitle', { machine })}
-          reason={t(
-            offline
-              ? 'machineDetailPage.network.offlineReason'
-              : 'machineDetailPage.network.failedReason',
-            { machine },
-          )}
+          reason={offline ? t('machineDetailPage.network.offlineReason', { machine })
+            : resolveActionExecutionErrorMessage(network.failure, t('machineDetailPage.network.failedReason', { machine }), { safeToRetry: true })}
           diagnosticCode={network.failure?.errorCode ?? null}
-          action={
-            offline
-              ? undefined
-              : {
-                  label: t('common.retry'),
-                  onPress: () => {
-                    void network.refresh();
-                  },
-                }
-          }
+          action={offline ? undefined : failureAction}
         />
       </ItemGroup>
     );
@@ -240,6 +237,7 @@ export function MachineNetworkView(
         network={network}
         machineName={machine}
         online={props.online}
+        failureAction={failureAction}
       />
       <ManagementGroup
         providerTitle={providerTitle}
@@ -284,18 +282,20 @@ function NetworkFreshness(
     network: MachineNetworkViewModel;
     machineName: string;
     online: boolean | null;
+    failureAction: React.ComponentProps<typeof SurfaceFreshnessLine>['action'];
   }>,
 ) {
   const { network } = props;
   if (network.stale) {
+    const offline = props.online === false;
     return (
       <ItemGroup surface="none">
         <SurfaceFreshnessLine
           testID="machine-network-stale"
-          reason={t('machineDetailPage.network.staleReason', {
+          reason={offline ? t('machineDetailPage.network.staleReason', {
             machine: props.machineName,
-          })}
-          glyph="cloud-slash"
+          }) : t('machineDetailPage.security.staleFailed')}
+          glyph={offline ? 'cloud-slash' : undefined}
         />
       </ItemGroup>
     );
@@ -306,16 +306,11 @@ function NetworkFreshness(
         <SurfaceFreshnessLine
           testID="machine-network-refresh-failed"
           tone="warning"
-          reason={t('machineDetailPage.network.refreshFailed', {
+          reason={resolveActionExecutionErrorMessage(network.failure, t('machineDetailPage.network.refreshFailed', {
             machine: props.machineName,
-          })}
+          }), { safeToRetry: true })}
           busy={network.refreshing}
-          action={{
-            label: t('common.retry'),
-            onPress: () => {
-              void network.refresh();
-            },
-          }}
+          action={props.failureAction}
         />
       </ItemGroup>
     );
