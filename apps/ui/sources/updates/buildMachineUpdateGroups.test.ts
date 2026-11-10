@@ -8,7 +8,7 @@ vi.mock('@/text', async () => {
 import type { MachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
-import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded, withdrawMachinePresenceForScope, captureMachinePresenceObservation } from '@/sync/domains/machines/reachability/machineReachability';
+import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
 import { describeUpdatesGroupRow, partitionUpdatesPageGroups } from '@/components/updates/describeUpdatesGroupRow';
 
 import { buildMachineUpdateGroups, readUpdatableInstallables } from './buildMachineUpdateGroups';
@@ -38,12 +38,11 @@ const NO_RUNS = new Map();
 describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () => {
     beforeEach(clearMachineRequestReachabilityForTest);
 
-    it('retains unknown update facts without claiming the withdrawn Machine is offline or admitting updates', () => {
+    it('retains unknown update facts before the Account scope is available without claiming offline or admitting updates', () => {
         const scope = { serverId: 'home-a', accountId: 'updates-account' };
         const studio = machine('studio');
-        const params = { accountScope: scope, machines: [studio], thisMachineId: null, thisComputerItem: null,
+        const params = { accountScope: null, machines: [studio], thisMachineId: null, thisComputerItem: null,
             runs: NO_RUNS, machineAgents: new Map(), snapshots: new Map() };
-        withdrawMachinePresenceForScope(scope);
         const unknown = buildMachineUpdateGroups(params);
         expect(partitionUpdatesPageGroups(unknown.groups).offline).toHaveLength(0);
         expect(describeUpdatesGroupRow(unknown.groups[0]!)).toMatchObject({
@@ -51,9 +50,30 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
         });
         expect(unknown.groups[0]?.items[0]).toMatchObject({ currentVersion: '0.2.12', action: { kind: 'none' } });
         expect(buildUpdatesSummary(unknown.groups.flatMap(group => group.items)).status).not.toBe('offline');
-        captureMachinePresenceObservation(scope)([studio.id]);
-        const offline = buildMachineUpdateGroups({ ...params, machines: [{ ...studio, active: false, activeAt: Date.now() - 120_000 }] });
+        const offline = buildMachineUpdateGroups({ ...params, accountScope: scope, machines: [{ ...studio, active: false, activeAt: Date.now() - 120_000 }] });
         expect(partitionUpdatesPageGroups(offline.groups).offline).toHaveLength(1);
+    });
+
+    it('keeps historical Machines visible without adding them to the current fleet offline count', () => {
+        const current = { ...machine('current'), active: false, activeAt: 0 };
+        const previous = { ...machine('previous'), active: false, activeAt: 0, replacedByMachineId: 'current' };
+        const built = buildMachineUpdateGroups({ accountScope: { serverId: 'home-a', accountId: 'updates-account' },
+            machines: [current, previous], thisMachineId: null, thisComputerItem: null,
+            runs: NO_RUNS, machineAgents: new Map(), snapshots: new Map() });
+        const parts = partitionUpdatesPageGroups(built.groups);
+        expect(built.groups).toHaveLength(2);
+        expect(parts.offline.map(group => group.machineId)).toEqual(['current']);
+        expect(parts.sections.map(group => group.machineId)).toEqual(['previous']);
+    });
+
+    it('counts a current offline Machine while its display metadata is unavailable', () => {
+        const locked = { ...machine('locked'), active: false, activeAt: 0, metadata: null,
+            availability: { kind: 'locked' as const, reason: 'decryption_failed' as const } };
+        const built = buildMachineUpdateGroups({ accountScope: { serverId: 'home-a', accountId: 'updates-account' },
+            machines: [locked], thisMachineId: null, thisComputerItem: null,
+            runs: NO_RUNS, machineAgents: new Map(), snapshots: new Map() });
+        expect(partitionUpdatesPageGroups(built.groups).offline.map(group => group.machineId)).toEqual(['locked']);
+        expect(built.groups[0]?.items.every(item => item.action.kind === 'none')).toBe(true);
     });
 
     it('retains update facts and pending runs while failed requests prevent actions, scoped to their Home', () => {
@@ -98,7 +118,7 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
         };
         const { groups, uncheckedMachineCount } = buildMachineUpdateGroups(params);
         expect(groups).toHaveLength(1);
-        expect(groups[0]).toMatchObject({ online: false, items: [{
+        expect(groups[0]).toMatchObject({ online: true, items: [{
             currentVersion: '0.2.12', latestVersion: '0.2.13', action: { kind: 'none' },
         }] });
         expect(uncheckedMachineCount).toBe(0);

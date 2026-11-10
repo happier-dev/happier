@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { AccountNoticeArtifactBodyV1Schema, AccountNoticeArtifactHeaderV1Schema,
     ACCOUNT_NOTICE_ARTIFACT_KIND_V1, readAccountNoticeArtifactV1, normalizeAccountNoticeArtifactV1, projectAccountNoticeInboxItemV1 } from './usageNoticeArtifactV1.js';
+import { withArtifactExcerptV1 } from '../artifacts/artifactExcerptV1.js';
+
+it.each([undefined, 'Design review'])('projects only authored notice text after the Artifact writer adds its JSON excerpt (%s)', body => {
+    const content = AccountNoticeArtifactBodyV1Schema.parse({ v: 1,
+        source: { kind: 'plugin', pluginId: 'happier.channels', itemId: 'conversation-a' },
+        type: 'update', resolved: false, ...(body === undefined ? {} : { body }) });
+    const serialized = JSON.stringify(content);
+    const header = withArtifactExcerptV1({ ...content, kind: ACCOUNT_NOTICE_ARTIFACT_KIND_V1,
+        title: 'External conversation', status: 'open' }, serialized);
+    const admitted = readAccountNoticeArtifactV1({ header, body: serialized });
+    expect(admitted).not.toBeNull();
+    const item = projectAccountNoticeInboxItemV1({ artifactId: 'notice-a', serverId: 'home-a', createdAt: 1,
+        pageRoute: '/inbox', header: admitted! });
+    expect(item).toMatchObject({ context: body ?? null, excerpt: body ?? null });
+});
 
 it('keeps plugin identity on Inbox projections without inventing it for host notices', () => {
     const header = AccountNoticeArtifactHeaderV1Schema.parse({ v: 1, kind: ACCOUNT_NOTICE_ARTIFACT_KIND_V1,

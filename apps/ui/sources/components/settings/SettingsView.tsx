@@ -3,7 +3,7 @@ import { useOpenExternalUrl } from '@/hooks/ui/useOpenExternalUrl';
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useFocusEffect } from '@/components/appShell/workspace/destinationRoute';
-import Constants from 'expo-constants';
+import { readCurrentAppRuntimeInfo } from '@/sync/runtime/readCurrentAppRuntimeInfo';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useEntitlement, useLocalSetting } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
@@ -39,7 +39,8 @@ const DEFER_BELOW_FOLD_SETTINGS_STAGE_DELAY_MS = 16;
 
 export const SettingsView = React.memo(function SettingsView() {
     const router = useRouter();
-    const appVersion = Constants.expoConfig?.version || '1.0.0';
+    const runtime = readCurrentAppRuntimeInfo();
+    const appVersion = runtime.nativeApplicationVersion ?? runtime.appVersion ?? t('common.unknown');
     const railVisible = useSettingsRailVisible();
     const devModeEnabled = useLocalSetting('devModeEnabled');
     const writeSetting = useSettingActionWriter();

@@ -1,5 +1,6 @@
 import { isMachineRequestReachabilityFailureV1, type MachinePresenceV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { isMachineOnline, type MachinePresenceCounts } from '@/utils/sessions/machineUtils';
+import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier, type ProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import type { SessionMachineReachability } from './resolveSessionMachineReachability';
@@ -190,6 +191,45 @@ export function resolveMachineReachability(
     if (!reachable) return 'unreachable';
     if (!normalized) return 'unknown';
     return 'reachable';
+}
+
+/** Connectivity summaries count the current persistent fleet; retained history is still displayable. */
+export type MachineFleetPresence = Readonly<{
+    member: boolean;
+    online: boolean | null;
+    reachability: SessionMachineReachability;
+}>;
+
+export function resolveMachineFleetPresence(
+    scope: MachineReachabilityScope | null | undefined,
+    machine: Parameters<typeof resolveMachineReachability>[1] & Parameters<typeof isMachineVisibleForLaunchSelection>[0],
+    nowMs?: number,
+    resolveScopeId?: ProfileScopeResolver,
+): MachineFleetPresence {
+    const reachability = resolveMachineReachability(scope, machine, nowMs, resolveScopeId);
+    return { member: isMachineVisibleForLaunchSelection(machine), reachability,
+        online: reachability === 'unknown' ? null : reachability === 'reachable' };
+}
+
+/** All fleet counts and offline folds consume the same membership and connection projection. */
+export function partitionMachineFleetPresence<Row>(rows: readonly Row[], readPresence: (row: Row) => Pick<MachineFleetPresence, 'member' | 'online'> | null | undefined): Readonly<{
+    online: readonly Row[];
+    offline: readonly Row[];
+    unknown: readonly Row[];
+    other: readonly Row[];
+    counts: MachinePresenceCounts;
+}> {
+    const online: Row[] = [];
+    const offline: Row[] = [];
+    const unknown: Row[] = [];
+    const other: Row[] = [];
+    for (const row of rows) {
+        const presence = readPresence(row);
+        if (!presence?.member) other.push(row);
+        else if (presence.online === null) unknown.push(row);
+        else (presence.online ? online : offline).push(row);
+    }
+    return { online, offline, unknown, other, counts: { online: online.length, offline: offline.length, unknown: unknown.length } };
 }
 
 /** The protocol-owned verdict; a failed request overrides pushed presence until a later reply or reconnect. */

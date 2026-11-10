@@ -16,6 +16,8 @@ import {
     recordMachineRequestSucceeded,
     subscribeMachineRequestReachability,
     resolveMachineReachability,
+    resolveMachineFleetPresence,
+    partitionMachineFleetPresence,
     withdrawMachinePresenceForScope,
     captureMachinePresenceObservation,
 } from './machineReachability';
@@ -27,6 +29,25 @@ afterEach(() => {
 
 describe('machine reachability', () => {
     const negotiated = { presenceProtocolVersion: 1 as const };
+    it('counts only current persistent Machines, retaining unknown connection and historical identities separately', () => {
+        const scope = { serverId: 'home', accountId: 'fleet-account' };
+        const machines = [
+            { id: 'live', active: true },
+            { id: 'sleeping', active: false },
+            { id: 'old-install', active: false, replacedByMachineId: 'live' },
+            { id: 'revoked', active: false, revokedAt: 1 },
+            { id: 'runner', active: false, kind: 'ephemeral_session_runner' as const },
+        ].map(machine => ({ ...negotiated, activeAt: 1, ...machine }));
+        const rows = machines.map(machine => ({ machine, presence: resolveMachineFleetPresence(scope, machine) }));
+        const fleet = partitionMachineFleetPresence(rows, row => row.presence);
+        expect(fleet.counts).toEqual({ online: 1, offline: 1, unknown: 0 });
+        expect(fleet.other.map(row => row.machine.id)).toEqual(['old-install', 'revoked', 'runner']);
+        expect(partitionMachineFleetPresence([resolveMachineFleetPresence(null, machines[0]!)], value => value).counts)
+            .toEqual({ online: 0, offline: 0, unknown: 1 });
+        recordMachineRequestFailed({ ...scope, machineId: 'live' });
+        expect(partitionMachineFleetPresence(machines, machine => resolveMachineFleetPresence(scope, machine)).counts)
+            .toEqual({ online: 0, offline: 2, unknown: 0 });
+    });
     it('pushes completed-answer time only to its exact demand and retains it through a later failure', () => {
         const scope = { serverId: 'home', accountId: 'account-a' };
         const ordinary = vi.fn();

@@ -1,12 +1,11 @@
 import * as React from 'react';
-import { Slot, Stack, usePathname } from '@/components/appShell/workspace/destinationRoute';
+import { Slot } from '@/components/appShell/workspace/destinationRoute';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { useArtifactInventoryRead } from '@/components/artifacts/useArtifactInventoryRead';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { resolveSettingsRouteTitleKey } from '@/components/settings/navigation/settingsRouteRegistry';
 import { createSettingsLayoutRoute } from '@/components/settings/navigation/createSettingsLayoutRoute';
 import { useArtifactsLoaded } from '@/sync/domains/state/storage';
 import { PROMPT_LIBRARY_ARTIFACT_KINDS } from '@/sync/domains/artifacts/artifactInventory';
@@ -21,21 +20,15 @@ const styles = StyleSheet.create({
 });
 
 /**
- * The prompts subtree is one `prompts` screen in the settings stack (this layout waits for the library,
- * then renders the active route in a Slot). The native header therefore takes its title from here,
- * following the active route through the registry, so phones read "Skills", "Templates", "Edit
- * prompt"… rather than "Prompts & Skills" on every page.
+ * Wait for the library before mounting the active prompt route. The settings stack and each page's
+ * PageHeader own navigation and page titles.
  */
 const PromptsLayoutRoute = React.memo(function PromptsLayoutRoute() {
     const artifactsLoaded = useArtifactsLoaded(PROMPT_LIBRARY_ARTIFACT_KINDS);
     // The inventory is read while it is unknown; a failed read says so with Retry instead of spinning on.
     const inventory = useArtifactInventoryRead(!artifactsLoaded, PROMPT_LIBRARY_ARTIFACT_KINDS);
-    const pathname = usePathname();
-    const titleKey = resolveSettingsRouteTitleKey(pathname) ?? 'settings.prompts';
-    const screenOptions = React.useMemo(() => ({ headerTitle: t(titleKey) }), [titleKey]);
     return (
         <>
-            <Stack.Screen options={screenOptions} />
             {artifactsLoaded ? <Slot /> : inventory.failed ? (
                 <SurfaceStateCard
                     testID="prompts.artifacts.failed"

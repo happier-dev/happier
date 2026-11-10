@@ -2,6 +2,8 @@ import * as React from 'react';
 
 import { useReleaseNotesLauncher, useReleaseNotesUnread } from '@/changelog/releaseNotes';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { selectMachineAgentUpdateFacts, useMachineAgentsByMachine } from '@/agents/machineAgents/useMachineAgents';
 import { useMachineUpdateFactsBackground } from './useMachineUpdateFactsBackground';
 import { useActiveMachineFacts, useActiveServerAccountScope } from '@/sync/domains/state/storage';
@@ -32,6 +34,7 @@ export type { UpdatesGroup };
 export type { UpdateAllProgress } from './machineUpdateRuns';
 
 export type UpdatesContentModel = Readonly<{
+    homeLabel?: string;
     summary: UpdatesSummary;
     groups: readonly UpdatesGroup[];
     /** The newest check behind these rows: the app's own, or any machine's update facts. */
@@ -88,6 +91,7 @@ export function useUpdatesContentModel(options: Readonly<{
     );
     // One server scope for the rows, their facts, their runs and their refreshes.
     const serverId = useActiveServerSnapshot().serverId;
+    const homeLabel = useHomeDisplayLabel(getServerProfileById(serverId));
     const activeScope = useActiveServerAccountScope();
     const activeHomeScope = selectActiveServerAccountScopeForServer(activeScope, serverId);
     const execution = useMountedActionExecution(serverId);
@@ -228,6 +232,7 @@ export function useUpdatesContentModel(options: Readonly<{
     const checkedAt = app.checkedAt == null && factsCheckedAt == null ? null : Math.max(app.checkedAt ?? 0, factsCheckedAt ?? 0);
 
     return React.useMemo(() => ({
+        homeLabel,
         summary,
         groups,
         checkedAt,
@@ -243,5 +248,5 @@ export function useUpdatesContentModel(options: Readonly<{
         skipAppVersion: app.skipVersion ? skipAppVersion : null,
         openWhatsNew: releaseNotesLauncher.openWhatsNew,
         whatsNewUnread: releaseNotes.hasUnread,
-    }), [app.skipVersion, batch, checkNow, checkedAt, checking, groups, releaseNotesLauncher.openWhatsNew, releaseNotes.hasUnread, runItem, sessionsRunningOn, skipAppVersion, stopAfterCurrent, summary, uncheckedMachineCount, updateAll, updateGroup]);
+    }), [app.skipVersion, batch, checkNow, checkedAt, checking, groups, homeLabel, releaseNotesLauncher.openWhatsNew, releaseNotes.hasUnread, runItem, sessionsRunningOn, skipAppVersion, stopAfterCurrent, summary, uncheckedMachineCount, updateAll, updateGroup]);
 }

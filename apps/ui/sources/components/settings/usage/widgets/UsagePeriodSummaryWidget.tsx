@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { UsagePeriodSummaryBody, formatHappierDataValue, type UsageSummaryMetric } from '@happier-dev/plugin-ui/presentation';
+import { UsagePeriodSummaryBody, type UsageSummaryMetric } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
-import { getPreferredLanguage, t } from '@/text';
+import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import {
   UsageCoverageLine,
@@ -19,7 +19,6 @@ import { usageCostKindPhrase } from '../usageCostPresentation';
 import { formatUsageDurationCompact } from './usageHowYouWorkPresentation';
 import { usageComparison } from '../usageComparisonPresentation';
 
-const HOUR_MS = 60 * 60 * 1000;
 
 /**
  * "Your month": the one multi-number widget. The hero is the shown metric with its exact preceding
@@ -109,15 +108,7 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   // value. An unanswered duration never temporarily becomes Active days.
   if (props.query.includeSessionEvidence)
     stats.push(
-      { id: 'agent', label: t('usage.board.page.agentTime'), value: intervals ? intervals.agentTimeMs / HOUR_MS : UNKNOWN_VALUE,
-        valueFormatter: intervals ? () => formatUsageDurationCompact(intervals.agentTimeMs) : undefined,
-        ...(intervals && !formatUsageDurationCompact(intervals.agentTimeMs).includes(formatHappierDataValue(intervals.agentTimeMs / HOUR_MS, getPreferredLanguage())) ? {
-          datum: { label: t('usage.board.page.agentTime'),
-            value: t('usage.board.howYouWork.durationSeconds', { seconds: formatHappierDataValue(intervals.agentTimeMs / 1000, getPreferredLanguage()) }),
-            subtitle: t('usage.board.page.elapsedTime', { time: t('usage.board.howYouWork.durationSeconds', {
-              seconds: formatHappierDataValue(intervals.elapsedBusyMs / 1000, getPreferredLanguage()),
-            }) }) },
-        } : {}),
+      { id: 'agent', label: t('usage.board.page.agentTime'), value: intervals ? formatUsageDurationCompact(intervals.agentTimeMs) : UNKNOWN_VALUE,
         caption: intervals ? t('usage.board.page.elapsedTime', {
           time: formatUsageDurationCompact(intervals.elapsedBusyMs),
         }) : unmeasured('how_you_work') },

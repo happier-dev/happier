@@ -20,6 +20,7 @@ import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import { UsagePeriodSummaryWidget } from './UsagePeriodSummaryWidget';
+import { formatUsageDurationCompact } from './usageHowYouWorkPresentation';
 import { UsageFootprintWidget } from './UsageFootprintWidget';
 import { formatTokenCount } from '@/utils/format/usageNumbers';
 import { UsageCostFactsWidget } from './UsageCostFactsWidget';
@@ -74,6 +75,25 @@ function mountedCosts(unpriced: boolean | 'all' = false, tokenCount = 10) {
 }
 
 describe('one selected money basis across Usage bodies', () => {
+  it('omits unmeasured model rows while retaining measured zero and known model amounts', async () => {
+    const base = mountedCosts();
+    const query = normalizeUsageQuery({ ...base.query, metric: 'tokens', breakdown: ['model'] });
+    const cost = base.slice.accounting!.totals.cost;
+    const unknownTokens = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+    const entries = [
+      { key: 'unknown', eventCount: 1, tokens: unknownTokens, cost },
+      { key: 'measured-zero', eventCount: 1, tokens: { ...tokens, input: 0, total: 0 }, cost },
+      { key: 'measured-model', eventCount: 1, tokens, cost },
+    ];
+    const slice = { ...base.slice, accounting: { ...base.slice.accounting!, breakdowns: { model: entries } } };
+    const screen = await renderScreen(<UsageBreakdownsWidget {...base} query={query} slice={slice}
+      model={{ ...base.model, slice }} id="usage_breakdowns" testID="model-measurements" />);
+    const rows = screen.findByType(RankedRows).props.rows;
+    expect(rows.map((row: { id: string; value: number | null }) => ({ id: row.id, value: row.value }))).toEqual([
+      { id: 'measured-model', value: 10 }, { id: 'measured-zero', value: 0 },
+    ]);
+  });
+
   it('keeps unknown token figures as dashes in the period summary and unpriced fact widgets', async () => {
     const base = mountedCosts(true);
     const unknownTokens = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
@@ -403,7 +423,7 @@ describe('one selected money basis across Usage bodies', () => {
       .filter(metric => metric.props.size === 'stat').map(metric => metric.props.label);
     // A Cost-mode hero is the cost, so the first column is the tokens (R135 N2).
     const expectedLabels = [t('usage.tokens'), t('usage.board.page.mergedPrs'), t('usage.board.page.agentTime')];
-    for (const [batch, expected] of [[cold, '—'], [partial, '—'], [complete, 1], [completeIntervals, 1], [pending, 1], [partial, '—'], [refused, '—']] as const) {
+    for (const [batch, expected] of [[cold, '—'], [partial, '—'], [complete, formatUsageDurationCompact(3_600_000)], [completeIntervals, formatUsageDurationCompact(3_600_000)], [pending, formatUsageDurationCompact(3_600_000)], [partial, '—'], [refused, '—']] as const) {
       await screen.update(<UsagePeriodSummaryWidget {...props} query={query}
         slice={batch.results[0]!} id="usage_period_summary" testID="summary" />);
       expect(statLabels()).toEqual(expectedLabels);
@@ -414,6 +434,23 @@ describe('one selected money basis across Usage bodies', () => {
       expect(stat(t('usage.board.page.agentTime')).props.caption === t('usage.board.page.notMeasuredYet')).toBe(expected === '—');
       expect(stat(t('usage.board.page.mergedPrs')).props.caption).toEqual(expect.any(String));
     }
+  });
+  it('presents Agent time once as a duration without a second raw-seconds detail', async () => {
+    const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, includeSessionEvidence: true });
+    const slice = resolveUsagePageAggregation({ queries: [query],
+      accounting: [{ query, status: 'available', value: props.slice.accounting! }],
+      howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: [
+        { workId: 'work', evidenceId: 'turn', agentId: null, machineId: null, kind: 'busy', startMs: 0, endMs: 5_400_000 },
+      ] } }],
+    }).results[0]!;
+    const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} query={query} slice={slice}
+      id="usage_period_summary" testID="duration-summary" />);
+    const agent = screen.findAllByType(HappierDataMetric).find(metric => metric.props.label === t('usage.board.page.agentTime'))!;
+    expect(agent.props.value).toBe(formatUsageDurationCompact(5_400_000));
+    expect(screen.getTextContent()).not.toContain('5400');
+    expect(screen.getTextContent()).not.toContain('1.5');
+    expect(screen.findAllByType(ChartDatum).filter(node => node.props.datum?.label === t('usage.board.page.agentTime'))).toHaveLength(0);
   });
   it('renders observed merged counts from compact Work facts without allocation rows', async () => {
     const props = mountedCosts();

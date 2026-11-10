@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDeferred, flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, findAllHostTestInstances, flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installMachinesSettingsCommonModuleMocks } from './machinesSettingsTestHelpers';
@@ -158,6 +158,7 @@ const { AllMachinesIndex: MachinesSettingsView } =
   await import('@/components/machines/index/AllMachinesIndex');
 const { MachinesRelayDriftBanner } = await import('./MachinesRelayDriftBanner');
 const { storage } = await import('@/sync/domains/state/storage');
+const { readMachineActivity } = await import('@/sync/domains/machines/machineActivity');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } =
   await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -197,10 +198,15 @@ async function setMachines(
     home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
     home.answer(profileId, '/v1/machines/pools/list', { body: { pools: [] } });
   }
-  const allMachines = groups.flatMap((group) => group.machines);
-  storage.setState({ machines: Object.fromEntries(allMachines.map(row => [row.id, createMachineFixture(row)])),
-    machineListByServerId: Object.fromEntries(groups.map(group => [group.serverId, group.machines.map(row => createMachineFixture(row))])),
-    machineListStatusByServerId: Object.fromEntries(groups.map(group => [group.serverId, group.status])) });
+  storage.setState({ machines: {}, machineDisplayById: {}, machinePresenceById: {}, machinePresenceByServerId: {},
+    machineRecordsByServerId: {}, machineListByServerId: {}, machineListStatusByServerId: {} });
+  // Real ingress publishes the same admitted Machine to active and Home-scoped
+  // inventories, linking their live clock without mutating either content row.
+  for (const group of groups) {
+    storage.getState().applyMachines(group.machines.map(row => createMachineFixture(row)), true,
+      { sourceServerId: group.serverId });
+  }
+  storage.setState({ machineListStatusByServerId: Object.fromEntries(groups.map(group => [group.serverId, group.status])) });
   await updateEffectiveHomeViewState(() => ({ version: 1,
     groups: [{ id: 'test-fleet', name: 'Fleet', serverIds: groups.map(group => group.serverId), presentation: 'grouped' }],
     activeTargetKind: 'group', activeTargetId: 'test-fleet' }), { scope: 'device' });
@@ -290,10 +296,11 @@ it.each(['index', 'rail'] as const)('refreshes a retained offline %s roster row 
   await act(async () => {
     storage.getState().applyMachineActivityUpdates([{ id: retained.id, active: true, activeAt: now - 20_286 }], { sourceServerId: scope.serverId });
   });
-  // The heartbeat producer publishes immutable records. The mounted row still
-  // projects the owner's fresh verdict without reopening or mutating its old input.
+  // Heartbeats advance the live activity owner, leaving its admitted inventory
+  // content immutable. The mounted row consumes that clock in place.
   expect(before?.[0]?.activeAt).toBe(now - 80_000);
-  expect(storage.getState().machineListByServerId[scope.serverId]?.[0]?.activeAt).toBe(now - 20_286);
+  expect(storage.getState().machineListByServerId[scope.serverId]).toBe(before);
+  expect(readMachineActivity(storage.getState().machineListByServerId[scope.serverId]![0]!).activeAt).toBe(now - 20_286);
   expect(resolveMachineReachability(scope, storage.getState().machines.studio!)).toBe('reachable');
   expect(row().props.accessibilityLabel).toContain('settingsOverview.machineOnline');
   await act(async () => { recordMachineRequestFailed({ ...scope, machineId: retained.id }); });
@@ -301,8 +308,8 @@ it.each(['index', 'rail'] as const)('refreshes a retained offline %s roster row 
   await act(async () => { recordMachineRequestSucceeded({ ...scope, machineId: retained.id }); });
   expect(row().props.accessibilityLabel).toContain('settingsOverview.machineOnline');
   await act(async () => { withdrawMachinePresenceForScope(scope); });
-  // Re-resolving a live Machine reads quiet in place: neither "Unknown" nor a guessed Online/Offline.
-  expect(row().props.accessibilityLabel).not.toMatch(/common\.unknown|settingsOverview\.machineOnline|settingsOverview\.machineOffline/);
+  // Socket withdrawal supplies no new Machine fact; the last admitted answer remains.
+  expect(row().props.accessibilityLabel).toContain('settingsOverview.machineOnline');
   await act(async () => { captureMachinePresenceObservation(scope)([retained.id]); });
   expect(row().props.accessibilityLabel).toContain('settingsOverview.machineOnline');
 });
@@ -527,13 +534,14 @@ describe('All machines (the Settings door index)', () => {
         node.props?.testID === 'machines.index.header' &&
         typeof node.props?.title === 'string',
     )[0]!;
-    // The page is called Machines; the fleet's state is its purpose line (owner 11-05).
+    // The Needs-you row carries its reason once; the header describes the rest of the fleet.
     expect(header.props.title).toBe('settings.machines');
-    expect(header.props.description).toContain('machineAttention.phrases.diskFull');
+    expect(header.props.description).not.toContain('machineAttention.phrases.diskFull');
     // This file mocks Item, so the row's one action is read from the row it belongs to.
     const row = tree.findAll(
       (node) => node.props?.testID === 'machines.needs-you.srv_a.machine-a1',
     )[0]!;
+    expect(row.props.titleAccessory.props.children).toBe('machineAttention.words.diskFull');
     const action = (
       row.props.rightElement as React.ReactElement<{
         children: React.ReactElement<{ onPress: () => void }>;
@@ -549,6 +557,28 @@ describe('All machines (the Settings door index)', () => {
       ),
     );
     expect(routerPushSpy.mock.calls.at(-1)?.[0]).toContain('volumeId=v');
+  });
+
+  it('counts the current fleet before an archived creation removes its Machine from the display collection', async () => {
+    const text = await import('@/text');
+    vi.spyOn(text, 't').mockImplementation((key, params) => key === 'allMachines.machinesCount'
+      ? `${params && 'count' in params ? params.count : ''} Machines` : key);
+    const archived: ManagedMachineV1 = {
+      id: 'archived-creation', homeId: 'srv_a', custodianAccountId: 'owner',
+      launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Old build box', choices: {} },
+      controller: { machineId: 'controller', installationId: 'installation' },
+      allocation: 'confirmed-absent', creationState: 'active', desired: 'delete', desiredWhen: 'now',
+      intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+      enrolledMachineId: 'still-current', archivedAt: 1,
+    };
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
+      machine('current', 'Current box', 'current.local'), machine('still-current', 'Retained machine', 'retained.local'),
+    ] }], { managedByServerId: { srv_a: [archived] } });
+    const tree = await renderPage();
+    const count = tree.findHostByTestId('machines.index.count');
+    expect(count).not.toBeNull();
+    expect(findAllHostTestInstances(count!, () => true).flatMap(node => node.children.filter(child => typeof child === 'string')).join('')).toContain('2 Machines');
+    expect(tree.findAll(node => node.props.testID === 'machines.index.row.machine:srv_a:still-current')).toHaveLength(0);
   });
 
   it('opens retained pending compute in the same Home without ordinary Machine RPC glyphs', async () => {
@@ -689,6 +719,12 @@ describe('All machines (the Settings door index)', () => {
 
     expect(visible('machine-a1')).toBe(true);
     expect(visible('old-0')).toBe(false);
+    // Aggregate membership must consume the same live presence as the visible row badges.
+    await act(async () => {
+      storage.getState().applyMachineActivityUpdates([{ id: 'old-0', active: true, activeAt: Date.now() }], { sourceServerId: 'srv_a' });
+    });
+    expect(visible('old-0')).toBe(true);
+    expect(visible('old-1')).toBe(false);
     const show = tree.findAll(
       (node) =>
         node.props?.testID === 'machines.index.offline-action' &&

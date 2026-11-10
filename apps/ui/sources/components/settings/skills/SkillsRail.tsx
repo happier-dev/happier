@@ -318,7 +318,7 @@ export const SkillsListView = React.memo(function SkillsListView(
           onPress={() => open(SKILLS_UPDATES_ROUTE)}
         />
       ) : null}
-      {unavailable ? (
+      {unavailable && (rail || library.items.length > 0) ? (
         <View style={collectionListStyles.stateLine}>
           <SurfaceStateCard
             testID="skills.rail.error"

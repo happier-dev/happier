@@ -9,6 +9,7 @@ import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTe
 
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
 import {
+    buildMachineAddHref,
     buildMachineCollection,
     partitionMachineCollectionRailRows,
     machineCollectionHref,
@@ -48,7 +49,23 @@ function group(serverId: string, machines: Machine[], overrides: Partial<ActiveS
 
 afterEach(() => clearMachineRequestReachabilityForTest());
 
+it('keeps an explicit Home when the cloud entry opens outside the Machines collection', () => {
+    expect(buildMachineAddHref({ path: 'create', serverId: 'notice/home' }))
+        .toBe('/settings/machines/add?path=create&serverId=notice%2Fhome');
+});
+
 describe('machine collection rail partition', () => {
+    it('keeps history and session runners outside the current fleet offline fold', () => {
+        const collection = buildMachineCollection({ groups: [group('a', [
+            machine('current', { active: false }),
+            machine('previous-install', { active: false, replacedByMachineId: 'current' }),
+            machine('revoked', { active: false, revokedAt: 1 }),
+            machine('session-runner', { active: false, kind: 'ephemeral_session_runner' }),
+        ])], groupedByHome: false });
+        const rows = collection.sections.flatMap(section => section.rows);
+        expect(rows).toHaveLength(4);
+        expect(partitionMachineCollectionRailRows(rows, true).offline.map(row => row.machineId)).toEqual(['current']);
+    });
     it('keeps a shared managed guest with its custodian alongside shared ordinary Machines', () => {
         const access = { custodian: { accountId: 'alice', displayName: 'Alice' },
             role: 'use', resourceMode: 'plain', accessState: 'ready' } as const;
@@ -154,7 +171,9 @@ describe('machine collection rail partition', () => {
             groups: [group('a', [machine('offline')])], groupedByHome: false,
         }).sections[0]!.rows;
         expect(partitionMachineCollectionRailRows(rows, false)).toEqual({ inline: rows, offline: [] });
-        const online = [{ ...rows[0]!, online: true, status: 'online' as const }];
+        const online = buildMachineCollection({
+            groups: [group('a', [machine('online', { active: true, activeAt: Date.now() })])], groupedByHome: false,
+        }).sections[0]!.rows;
         expect(partitionMachineCollectionRailRows(online, true)).toEqual({ inline: online, offline: [] });
         expect(partitionMachineCollectionRailRows([], true)).toEqual({ inline: [], offline: [] });
     });

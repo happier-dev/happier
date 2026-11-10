@@ -400,6 +400,7 @@ const WIDGET_KEYS = {
  * `diagnosticCode` for QA channels.
  */
 const PLUGIN_RUNTIME_KEYS = {
+    local_artifact_failure: 'pluginRuntime.localArtifactFailure',
     timeout: 'ui.pluginUi.actionNoAnswer',
     plugin_action_outcome_unknown: 'ui.pluginUi.actionNoAnswer',
     plugin_daemon_unsupported: 'pluginSurfaces.originReason.daemon_unsupported',
@@ -517,6 +518,7 @@ type StreamPlayerMessageKey =
     | 'streamPlayer.status.decoderUnavailable';
 
 type PluginRuntimeMessageKey =
+    | 'pluginRuntime.localArtifactFailure'
     | 'ui.pluginUi.actionNoAnswer'
     | `pluginSurfaces.originReason.${'home_unreachable' | 'daemon_unsupported' | 'daemon_invalid_response' | 'daemon_unavailable' | 'activation_refused' | 'source_not_ready'}`
     | 'pluginRuntime.collectionConflict'

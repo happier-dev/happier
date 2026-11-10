@@ -11,6 +11,8 @@ import { createArtifactListHttpResponse } from '@/dev/testkit/harness/artifactSt
 import { isArtifactInventoryLoaded, PROMPT_LIBRARY_ARTIFACT_KINDS } from '@/sync/domains/artifacts/artifactInventory';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
+import { getSettingsStackScreenDefinitions } from '@/components/settings/navigation/settingsRouteRegistry';
+import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 
 const routerState = vi.hoisted(() => ({ pathname: '/settings/prompts', screenOptions: null as null | Record<string, unknown>, Body: null as React.ComponentType | null,
     params: {} as Record<string, string | string[]> }));
@@ -32,7 +34,6 @@ vi.mock('expo-router', async () => {
     };
 });
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
-vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({ ActivitySpinner: 'ActivitySpinner' }));
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 installDisconnectedServerSocketBoundary();
@@ -76,16 +77,18 @@ describe('PromptsLayoutRoute', () => {
     });
 
     it.each([
-        ['/settings/prompts/templates', 'promptLibrary.templates'],
-        ['/settings/prompts/docs/doc-1', 'promptLibrary.editPrompt'],
-        ['/settings/prompts', 'settings.prompts'],
-    ] as const)('titles the phone header for %s from the route registry', async (pathname, titleKey) => {
+        '/settings/prompts/templates',
+        '/settings/prompts/docs/doc-1',
+        '/settings/prompts',
+    ] as const)('leaves the phone header with its parent while the large page title names %s', async pathname => {
         routerState.pathname = pathname;
         const { t } = await import('@/text');
+        routerState.screenOptions = { ...getSettingsStackScreenDefinitions(t).find(screen => screen.name === 'prompts')!.options };
         const { default: PromptsLayoutRoute } = await import('./_layout');
-        await renderScreen(<PromptsLayoutRoute />);
+        await renderScreen(<NavigationLargeTitleProvider largeTitle><PromptsLayoutRoute /></NavigationLargeTitleProvider>);
 
-        expect(routerState.screenOptions?.headerTitle).toBe(t(titleKey));
+        expect(routerState.screenOptions?.headerTitle).toBe('');
+        expect(routerState.screenOptions?.headerLeft).toBeTypeOf('function');
     });
 
     it('keeps every prompt route unmounted until artifact heads are materialized', async () => {

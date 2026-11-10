@@ -10,6 +10,13 @@ import {
   resolveReasonCopy,
 } from './resolveReasonCopy';
 
+it('explains a local native artifact failure through the runtime reason owner', () => {
+  const copy = resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: 'local_artifact_failure' });
+  expect(copy.body).toBe(t('pluginRuntime.localArtifactFailure'));
+  expect(copy.diagnosticCode).toBe('local_artifact_failure');
+  expect(resolvePluginSurfaceStatePresentation({ state: 'failedRetry', reasonCode: 'local_artifact_failure' }).recoveryAction?.kind).toBe('retry');
+});
+
 describe('Preview sharing policy refusal copy', () => {
   it.each(SUPPORTED_LANGUAGE_CODES)('names only the refused port in %s', async language => {
     await preloadTranslations(language);

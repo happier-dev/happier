@@ -5,6 +5,7 @@ import { CODEX_ACP_DEP_ID } from '@happier-dev/protocol/installables';
 import { flushHookEffects, renderSettingsView } from '@/dev/testkit';
 import type { InstallableDepInstallerProps } from './InstallableDepInstaller';
 import { installMachineComponentCommonModuleMocks } from './machineComponentTestHelpers';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -123,9 +124,7 @@ describe('InstallableDepInstaller', () => {
         await screen.unmount();
     });
 
-    it('renders the last background update check in the existing installables UI', async () => {
-        const toLocaleStringSpy = vi.spyOn(Date.prototype, 'toLocaleString').mockReturnValue('Mar 10, 2026, 6:13 PM');
-
+    it('renders the last background update check through the app date presentation', async () => {
         const screen = await renderInstaller({
             depStatus: {
                 installed: true,
@@ -138,10 +137,9 @@ describe('InstallableDepInstaller', () => {
 
         const lastCheckedItem = screen.findByProps({ title: 'settingsAgents.authentication.lastCheckedTitle' });
         expect(lastCheckedItem).toBeTruthy();
-        expect(lastCheckedItem?.props.subtitle).toBe('Mar 10, 2026, 6:13 PM');
+        expect(lastCheckedItem?.props.subtitle).toBe(formatAsOfTime(1_773_164_020_808));
 
         await screen.unmount();
-        toLocaleStringSpy.mockRestore();
     });
 
     it('disables install actions when machine capability invocation is unavailable', async () => {

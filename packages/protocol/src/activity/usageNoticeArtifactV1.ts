@@ -20,16 +20,18 @@ export { AccountNoticePageV1Schema, PluginNoticePageV1Schema, ServiceHealthNotic
 import { HealthAlertIdentityV1Schema } from './healthAlertIdentityV1.js';
 import { DeploymentEnvironmentHealthAggregateV1Schema } from '../deployments/environmentHealthV1.js';
 import { DeploymentIdentifierV1Schema, DeploymentTimestampV1Schema } from '../deployments/deploymentIdentifiersV1.js';
+import { HealthCheckAlertsV1Schema } from '../deployments/healthCheckSourceV1.js';
 export { DeploymentHealthStatusV1Schema, DeploymentHealthRoleV1Schema, DeploymentHealthRoleEvidenceV1Schema,
   DeploymentHealthMemberV1Schema, DeploymentEnvironmentHealthAggregateV1Schema,
   type DeploymentHealthStatusV1, type DeploymentHealthRoleV1, type DeploymentHealthRoleEvidenceV1,
   type DeploymentHealthMemberV1, type DeploymentEnvironmentHealthAggregateV1 } from '../deployments/environmentHealthV1.js';
 export { HealthAlertIdentityV1Schema, healthAlertIdentityTupleV1, type HealthAlertIdentityV1 } from './healthAlertIdentityV1.js';
-export { HealthCheckSubjectV1Schema, HealthCheckSubjectV1ProtocolSchema, type HealthCheckSubjectV1 } from '../deployments/healthCheckSubjectV1.js';
+export { createHealthCheckSourceInstanceIdV1, HealthCheckSubjectV1Schema, HealthCheckSubjectV1ProtocolSchema, type HealthCheckSubjectV1 } from '../deployments/healthCheckSubjectV1.js';
 export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_KINDS_V1, HealthCheckKindV1Schema, HealthCheckStatusV1Schema,
   HealthCheckResultV1Schema, HealthCheckResultV1ProtocolSchema,
   type HealthCheckKindV1, type HealthCheckStatusV1, type HealthCheckResultV1 } from '../deployments/healthCheckV1.js';
 export { HealthCheckDefinitionV1Schema, HealthCheckSourceConfigV1Schema, HealthCheckSourceConfigV1ProtocolSchema,
+  HealthCheckAlertChannelV1Schema, HealthCheckAlertsV1Schema, type HealthCheckAlertChannelV1, type HealthCheckAlertsV1,
   HealthCheckSetupInputV1Schema, HealthCheckSetupInputV1ProtocolSchema, type HealthCheckSetupInputV1,
   HealthCheckSetupDraftV1Schema, HealthCheckSetupDraftV1ProtocolSchema, type HealthCheckSetupDraftV1,
   HealthCheckHttpConfigV1Schema, HealthCheckHttpConfigV1ProtocolSchema, type HealthCheckHttpConfigV1,
@@ -183,6 +185,7 @@ export const AccountNoticePushDataV1Schema = lazyZodSchema(() => z.strictObject(
 /** Delivery references an already committed C1 item; it never creates another. */
 export const ServiceHealthNoticeNotificationV1Schema = lazyZodSchema(() => z.strictObject({
   topic: z.literal('service_health'), type: z.enum(['blocked', 'update']),
+  healthPhase: z.optional(z.enum(['open', 'recovered'])),
   title: z.string().check(z.minLength(1)), body: z.optional(z.string()), data: AccountNoticePushDataV1Schema,
 }).check(z.refine(value => value.data.source.kind === 'host' && value.data.source.topic === 'service_health')));
 export type ServiceHealthNoticeNotificationV1 = z.infer<typeof ServiceHealthNoticeNotificationV1Schema>;
@@ -191,6 +194,7 @@ export type ServiceHealthNoticeNotificationV1 = z.infer<typeof ServiceHealthNoti
 export const CommittedServiceHealthDeliveryRequestV1Schema = lazyZodSchema(() => z.strictObject({
   machineId: z.string().check(z.minLength(1)), serverId: z.string().check(z.minLength(1)),
   artifactId: z.string().check(z.minLength(1)), revision: ArtifactRevisionV1Schema,
+  alerts: z.optional(HealthCheckAlertsV1Schema),
 }));
 export type CommittedServiceHealthDeliveryRequestV1 = z.infer<typeof CommittedServiceHealthDeliveryRequestV1Schema>;
 export const CommittedServiceHealthDeliveryResultV1Schema = lazyZodSchema(() => z.strictObject({
@@ -226,7 +230,8 @@ export function projectAccountNoticeInboxItemV1(input: Readonly<{
     view: inboxItemViewV1(header.type), title: header.title, context: header.body ?? null,
     createdAt: input.createdAt, read: header.readAt !== undefined,
     focus: { kind: 'notice' as const, id: artifactId, serverId }, pageRoute: input.pageRoute,
-    author: null, excerpt: header.body ?? header.excerpt ?? null,
+    // The generic Artifact excerpt contains the serialized notice envelope.
+    author: null, excerpt: header.body ?? null,
     source: { kind: 'account_notice', id: artifactId, serverId,
       ...(header.source.kind === 'plugin' ? { pluginId: header.source.pluginId } : {}),
       displayName: header.source.kind === 'plugin' ? input.pluginDisplayName ?? null : null } };

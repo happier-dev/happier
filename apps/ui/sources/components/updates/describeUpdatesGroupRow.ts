@@ -1,4 +1,5 @@
 import { t } from '@/text';
+import { partitionMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 import { planUpdateAll } from '@/updates/items/buildUpdatesSummary';
 import { isNewerVersion, type UpdateItem } from '@/updates/items/updateItem';
 import type { UpdatesGroup } from '@/updates/useUpdatesContentModel';
@@ -151,10 +152,13 @@ export function partitionUpdatesPageGroups(groups: readonly UpdatesGroup[]): Rea
 }> {
     const sections: UpdatesGroup[] = [];
     const quiet: UpdatesGroup[] = [];
-    const offline: UpdatesGroup[] = [];
+    const fleet = partitionMachineFleetPresence(groups, group => group.kind === 'machine' ? group.fleetPresence : null);
+    const offline = fleet.offline;
+    const offlineGroups = new Set(offline);
+    const onlineGroups = new Set(fleet.online);
     for (const group of groups) {
-        if (group.kind === 'machine' && group.online === false) offline.push(group);
-        else if (group.kind === 'machine' && group.online === true && isQuietMachineGroup(group)) quiet.push(group);
+        if (offlineGroups.has(group)) continue;
+        else if (onlineGroups.has(group) && isQuietMachineGroup(group)) quiet.push(group);
         else sections.push(group);
     }
     return { sections, quiet, offline };

@@ -3,7 +3,6 @@ import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph'
 import { useShallow } from 'zustand/react/shallow';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 
 import { useMachineAgentsByMachine } from '@/agents/machineAgents/useMachineAgents';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -52,7 +51,6 @@ import { resolveItemTextColumnInset } from '@/components/ui/lists/itemDensityMet
 import { Typography } from '@/constants/Typography';
 import { HappierDisclosure, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { useMachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -60,7 +58,8 @@ import { useIsMachineListSettled, useMachineListStatusForServer } from '@/sync/s
 import { getStorage } from '@/sync/domains/state/storage';
 import { resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { useMachinesCapabilitySnapshots } from '@/updates/machineCapabilitySnapshots';
@@ -69,7 +68,7 @@ import { buildRemoteMachineUpdateFacts } from '@/updates/remoteCliUpdateItems';
 import { useThisComputerCliUpdate } from '@/updates/useThisComputerCliUpdate';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
-import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
+import { resolveMachineFleetPresence, partitionMachineFleetPresence, type MachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { formatLastSeen } from '@/utils/sessions/sessionUtils';
@@ -92,6 +91,7 @@ export type FleetMachine = Readonly<{
   machine: Machine;
   name: string;
   online: boolean | null;
+  fleetPresence: MachineFleetPresence;
   thisComputer: boolean;
 }>;
 
@@ -159,6 +159,7 @@ export function useMachineFleetModel(owningServerId?: string) {
   const explicitServerId = owningServerId?.trim();
   const activeServer = useActiveServerSnapshot(!explicitServerId);
   const serverId = resolveServerProfileScopeIdForIdentifier(explicitServerId || activeServer.serverId);
+  const homeLabel = useHomeDisplayLabel(getServerProfileById(serverId));
   const identity = useServerCredentialAccountScopeBinding(serverId);
   const accountScope = identity.resolution.kind === 'bound' ? identity.resolution.scope : null;
   const allMachines = getStorage()(useShallow(state => resolveVisibleMachinesForActiveServerFromState(state, { serverId })));
@@ -172,20 +173,20 @@ export function useMachineFleetModel(owningServerId?: string) {
   const nowMs = useMachinePresenceNowMs(allMachines);
   const thisComputerMachineId = useThisComputerMachineId();
   const fleet = React.useMemo(() => {
-    // A replaced identity (the same computer before a reinstall) is not a machine to show or count.
-    const visible = allMachines.filter((machine) => !isMachineReplaced(machine) && isMachineVisibleForLaunchSelection(machine));
-    const names = resolveMachineDisplayNames(visible);
-    return orderFleetMachines(visible.map((machine) => {
-      const reachability = resolveMachineReachability(accountScope, machine, nowMs);
+    const visible = allMachines.map(machine => ({ machine, fleetPresence: resolveMachineFleetPresence(accountScope, machine, nowMs) }))
+      .filter(entry => entry.fleetPresence.member);
+    const names = resolveMachineDisplayNames(visible.map(entry => entry.machine));
+    return orderFleetMachines(visible.map(({ machine, fleetPresence }) => {
       return { key: JSON.stringify([serverId, machine.id]), serverId, machine,
-        name: names.get(machine.id) ?? machine.id, online: reachability === 'unknown' ? null : reachability === 'reachable', thisComputer: machine.id === thisComputerMachineId };
+        name: names.get(machine.id) ?? machine.id, fleetPresence, online: fleetPresence.online, thisComputer: machine.id === thisComputerMachineId };
     }));
   }, [accountScope, allMachines, nowMs, reachabilityRevision, serverId, thisComputerMachineId]);
   const attention = useMachineAttention([{ serverId, accountScope, serverName: '', status,
     machines: fleet.map((entry) => entry.machine) }]);
   const needs = React.useMemo(() => selectAttentionSubjects(attention.entries), [attention.entries]);
   const needsByKey = React.useMemo(() => new Map(needs.map((entry) => [entry.key, entry])), [needs]);
-  return { serverId, status, settled, refresh, fleet, needs, needsByKey };
+  const presence = React.useMemo(() => partitionMachineFleetPresence(fleet, entry => entry.fleetPresence), [fleet]);
+  return { serverId, homeLabel, status, settled, refresh, fleet, presence, needs, needsByKey };
 }
 
 function FleetBody(props: MachineWidgetBodyProps) {
@@ -233,8 +234,7 @@ function FleetBody(props: MachineWidgetBodyProps) {
   const byKey = new Map(fleet.map((entry) => [entry.key, entry]));
   const ordered = order.flatMap((key) => (byKey.get(key) ? [byKey.get(key)!] : []));
   const calm = ordered.filter((entry) => entry.online && !needsByKey.has(entry.key));
-  const offline = ordered.filter((entry) => entry.online === false);
-  const unknown = ordered.filter((entry) => entry.online === null);
+  const { offline, unknown } = partitionMachineFleetPresence(ordered, entry => entry.fleetPresence);
   const row = (entry: FleetMachine, compact: boolean) => (
     <FleetMachineRow key={entry.key} entry={entry} need={needsByKey.get(entry.key) ?? null} compact={compact} style={style}
       metrics={compact ? [] : metrics} onOpen={openMachine} testID={`${props.testID}.machine.${entry.machine.id}`} />

@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { useRecoveryKeyReminder } from '@/components/account/useRecoveryKeyReminder';
 import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
@@ -23,6 +25,19 @@ beforeEach(async () => { await homes.reset(); });
 it('gives the People page its own Back on a phone', async () => {
     const screen = await renderScreen(<InjectedAuthProvider credentials={null}><FriendsView /></InjectedAuthProvider>);
     expect(screen.findHostByTestId('people:back')).not.toBeNull();
+});
+
+it('leaves the pending account recovery reminder on Home when visiting People', async () => {
+    const serverId = await homes.addHome({ name: 'People', serverUrl: 'https://people-recovery.test', accountId: 'viewer' });
+    await homes.selectHomes([serverId]);
+    await TokenStorage.setRecoveryKeyReminderDismissed(false);
+    const credentials = { token: 'test-token', secret: Buffer.alloc(32, 7).toString('base64') };
+    const AccountShell = ({ children }: React.PropsWithChildren) => <InjectedAuthProvider credentials={credentials}>{children}</InjectedAuthProvider>;
+    const reminder = await renderHook(() => useRecoveryKeyReminder({ surface: 'banner' }), { wrapper: AccountShell });
+    await flushHookEffects({ cycles: 3 });
+    expect(reminder.getCurrent().needed).toBe(true);
+    const screen = await renderScreen(<AccountShell><FriendsView /></AccountShell>);
+    expect(screen.findByTestId('recovery-key-reminder')).toBeNull();
 });
 afterEach(async () => { setScreenSharingPrivacyActive(false); standardCleanup(); storage.setState(previous, true); await homes.reset(); });
 

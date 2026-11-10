@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
 import { storage } from '@/sync/domains/state/storageStore';
 import { settingsParse } from '@/sync/domains/settings/settings';
@@ -12,13 +13,15 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const viewport = vi.hoisted(() => ({ width: 1280, height: 800 }));
+
 await vi.hoisted(async () => {
     const { installSessionSettingsEntryModuleMocks } = await import('./sessionSettingsEntryTestHelpers');
     installSessionSettingsEntryModuleMocks({
         reactNative: async () => {
             const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
             return createReactNativeWebMock({
-                useWindowDimensions: () => ({ width: 1280, height: 800 }),
+                useWindowDimensions: () => viewport,
             });
         },
     });
@@ -43,12 +46,32 @@ sessionSettingsEntryState.settingsState = {
 const initialStorage = storage.getState();
 
 afterEach(() => {
+    viewport.width = 1280;
+    viewport.height = 800;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+    Object.defineProperty(Platform, 'isPad', { configurable: true, value: false });
     standardCleanup();
     storage.setState(initialStorage, true);
     resetSessionSettingsEntryState();
 });
 
 describe('Session composer settings (web features moved)', () => {
+    it.each([
+        { platform: 'ios', isPad: false, visible: false },
+        { platform: 'ios', isPad: true, visible: true },
+        { platform: 'web', isPad: false, visible: true },
+    ])('offers the right-pane preference only where panels apply ($platform, tablet=$isPad)', async ({ platform, isPad, visible }) => {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
+        Object.defineProperty(Platform, 'isPad', { configurable: true, value: isPad });
+        viewport.width = platform === 'ios' && !isPad ? 390 : 1280;
+        storage.setState({ settings: settingsParse(sessionSettingsEntryState.settingsState) });
+        const { default: SessionSettingsScreen } = await import('@/app/(app)/settings/session');
+        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
+
+        const rows = screen.findAllByType(Item).filter((item) => item.props.title === 'settingsAppearance.sessionsRightPaneDefaultOpen');
+        expect(rows).toHaveLength(visible ? 1 : 0);
+    });
+
     it('shows Enter-to-send and Message history inside Session composer settings (web)', async () => {
         storage.setState({ settings: settingsParse(sessionSettingsEntryState.settingsState) });
         const mod = await import('@/app/(app)/settings/session/composer');

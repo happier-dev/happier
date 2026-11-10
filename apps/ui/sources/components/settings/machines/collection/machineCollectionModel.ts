@@ -1,5 +1,6 @@
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
 import { describeMachineRuntimePresence, projectMachineManagedPresence, type MachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
+import { resolveMachineFleetPresence, partitionMachineFleetPresence, type MachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 import { describeMachineLockedReason, formatMachineDisplayNameParts, getMachineDisplayName, isMachineDisplayHydrating, resolveMachineDisplayNameParts } from '@/utils/sessions/machineDisplayNames';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import { buildMachineOwnershipGroups, describeMachineSharedOwnership, describeMachineSharedGroupTitle } from '@/sync/domains/machines/machineOwnershipGroups';
@@ -30,18 +31,22 @@ export type { MachineAddRoutePath };
  * Add a machine: the Machines collection's draft (lab `add-flows` M4). `path` opens that way first when
  * this device offers it — "set up this computer" entry points ask for `thisComputer`.
  */
-export function buildMachineAddHref(options: Readonly<{ path?: MachineAddRoutePath }> = {}): typeof MACHINES_ADD_ROUTE | `${typeof MACHINES_ADD_ROUTE}?${string}` {
-    return options.path ? `${MACHINES_ADD_ROUTE}?path=${encodeURIComponent(options.path)}` : MACHINES_ADD_ROUTE;
+export function buildMachineAddHref(options: Readonly<{ path?: MachineAddRoutePath; serverId?: string }> = {}): typeof MACHINES_ADD_ROUTE | `${typeof MACHINES_ADD_ROUTE}?${string}` {
+    const query = [options.path ? `path=${encodeURIComponent(options.path)}` : null,
+        options.serverId ? `serverId=${encodeURIComponent(options.serverId)}` : null].filter(Boolean).join('&');
+    return query ? `${MACHINES_ADD_ROUTE}?${query}` : MACHINES_ADD_ROUTE;
 }
 
 type MachineCollectionRowPresentation = Readonly<{
     serverId: string;
     /** The existing activity owner backs each row's independently subscribed presence. */
     presenceSource?: Readonly<{
-        machine: Parameters<typeof describeMachineRuntimePresence>[0];
+        machine: Parameters<typeof describeMachineRuntimePresence>[0] & Parameters<typeof resolveMachineFleetPresence>[1];
         managedPresence: MachineManagedPresence | null;
         scope?: Parameters<typeof describeMachineRuntimePresence>[3];
     }>;
+    /** Absent for a creation without an enrolled Machine; history is retained with member=false. */
+    fleetPresence?: MachineFleetPresence;
     /** The name the user gave the machine, else its host; told apart when two share it. */
     title: string;
     /** Reserve this Machine's row while its display metadata is being decrypted. */
@@ -125,13 +130,10 @@ export function partitionMachineCollectionRailRows(rows: readonly MachineCollect
     offline: readonly MachineCollectionRow[];
 }> {
     if (!foldOffline) return { inline: rows, offline: [] };
-    const inline: MachineCollectionRow[] = [];
-    const offline: MachineCollectionRow[] = [];
-    for (const row of rows) {
-        (row.status === 'offline' ? offline : inline).push(row);
-    }
+    const { offline } = partitionMachineFleetPresence(rows, row => row.fleetPresence);
     if (offline.length === 0) return { inline: rows, offline: [] };
-    return { inline, offline };
+    const folded = new Set(offline);
+    return { inline: rows.filter(row => !folded.has(row)), offline };
 }
 
 export function managedMachineConsentKey(serverId: string, managedId: string): string {
@@ -206,13 +208,17 @@ export function buildMachineCollection(input: Readonly<{
                 const name = getMachineDisplayName(machine) ?? machine.id;
                 const managedMachine = managedByMachineId.get(machine.id);
                 const managedPresence = projectMachineManagedPresence(machine, managedMachine);
-                const presence = describeMachineRuntimePresence(machine, nowMs, managedPresence, group.accountScope);
+                const fleetPresence = resolveMachineFleetPresence(group.accountScope, machine, nowMs);
+                const presence = describeMachineRuntimePresence(machine, nowMs, managedPresence, group.accountScope, fleetPresence.reachability);
                 // A daemon publication must not become part of this presentation row's equality.
                 // Retain only the facts this leaf renders, linked to the existing activity owner.
                 const presenceMachine = {
                     id: machine.id,
                     ...readMachineActivity(machine),
                     revokedAt: machine.revokedAt,
+                    kind: machine.kind,
+                    replacedByMachineId: machine.replacedByMachineId,
+                    replacedAt: machine.replacedAt,
                     presenceProtocolVersion: machine.presenceProtocolVersion,
                     managedInputRuntime: machine.managedInputRuntime,
                     ...('presence' in machine && machine.presence === null ? { presence: null } : {}),
@@ -225,6 +231,7 @@ export function buildMachineCollection(input: Readonly<{
                         : { kind: 'machine' as const, machineId: machine.id }),
                     serverId: group.serverId,
                     presenceSource: { machine: presenceMachine, managedPresence, scope: group.accountScope },
+                    fleetPresence,
                     ...(presence.showStatus ? { presenceWord: presence.label } : {}),
                     ...(isMachineDisplayHydrating(machine) ? { hydrating: true as const } : {}),
                     title: formatMachineDisplayNameParts(titleParts),

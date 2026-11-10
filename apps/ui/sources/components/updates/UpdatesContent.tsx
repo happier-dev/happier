@@ -260,7 +260,7 @@ export const UpdatesContent = React.memo(function UpdatesContent(props: Readonly
                 ) : (
                     <>
                         <SettingsPageHeader
-                            description={t('updates.pageDescription')}
+                            description={[t('updates.pageDescription'), model.homeLabel].filter(Boolean).join(' · ')}
                             actions={<SummaryActions model={model} presentation={presentation} />}
                             details={<ScreenSummary model={model} />}
                             detailsPlacement="column"

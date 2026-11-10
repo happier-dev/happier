@@ -18,7 +18,7 @@ vi.mock('react-native-unistyles', async () =>
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 await loadSyncSingletonForTests();
-const { useActiveHomeConnectionHealth } = await import('./useConnectionHealth');
+const { useActiveHomeConnectionHealth, useConnectionHealth } = await import('./useConnectionHealth');
 const { useActiveHomeUnavailable } = await import('./HomeReachabilityGate');
 const initialStorageState = storage.getState();
 let appliedHomeId = '';
@@ -48,6 +48,19 @@ function applyMachine(serverId: string, id: string, host: string, presence = { a
 }
 
 describe('useActiveHomeConnectionHealth', () => {
+    it('counts the same current persistent fleet in Account chrome and selected-Home health', async () => {
+        storage.getState().applyMachines([
+            createMachineFixture({ id: 'online', active: true, activeAt: 0 }),
+            createMachineFixture({ id: 'offline', active: false, activeAt: 0 }),
+            createMachineFixture({ id: 'previous', active: false, activeAt: 0, replacedByMachineId: 'online' }),
+        ], true, { sourceServerId: appliedHomeId, sourceAccountId: 'health-account' });
+        storage.getState().markMachineListSettled(appliedHomeId);
+        const hook = await renderHook(() => ({ active: useActiveHomeConnectionHealth(), selected: useConnectionHealth() }));
+        expect(hook.getCurrent().active).toMatchObject({ machineCount: 2, onlineCount: 1 });
+        expect(hook.getCurrent().selected).toMatchObject({ machineCount: 2, onlineCount: 1 });
+        expect(storage.getState().machineListByServerId[appliedHomeId]).toHaveLength(3);
+    });
+
     it('withdraws retained chrome presence without reporting offline and restores fresh offline truth', async () => {
         applyMachine(appliedHomeId, 'machine-a', 'applied-a', { active: false, activeAt: 1 });
         const hook = await renderHook(useActiveHomeConnectionHealth);

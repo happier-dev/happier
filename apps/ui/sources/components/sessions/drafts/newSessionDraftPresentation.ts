@@ -2,6 +2,7 @@ import { z } from 'zod/mini';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { SessionAuthoringExecutionTargetV2Schema } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { stripMarkdown } from '@happier-dev/protocol/messages/markdownPlainText';
 
 import type { NewSessionDraftProjection } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { getSessionDraftDocumentFieldValue } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
@@ -42,7 +43,7 @@ function safeFinalPathSegment(value: unknown): string | null {
 
 function firstPromptLine(value: string): string | null {
     for (const line of value.split(/\r?\n/)) {
-        const promptLine = readNonblankString(line);
+        const promptLine = readNonblankString(stripMarkdown(line));
         if (promptLine) return promptLine;
     }
     return null;

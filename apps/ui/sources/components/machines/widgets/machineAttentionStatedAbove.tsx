@@ -9,9 +9,9 @@ const StatedAboveContext = React.createContext<ReadonlySet<string>>(NONE);
 const keyOf = (target: Readonly<{ serverId: string; machineId: string }>) => `${target.serverId}\u0000${target.machineId}`;
 
 /**
- * A page that already says which machines need the person (the All machines "Needs you" list) tells the
+ * A page that already states a machine's reason (the All machines "Needs you" list or grid cards) tells the
  * widgets below it, so a widget on one of those machines does not say the same sentence and offer the same
- * button again. It lists the machines exactly as that list shows them. Outside it (Home, a Board, a machine
+ * button again. Its entries come from that presentation's owner. Outside it (Home, a Board, a machine
  * page) nothing is stated above, and a widget carries its full attention block.
  */
 export function MachineAttentionStatedAbove(props: Readonly<{ entries: readonly MachineAttentionEntry[]; children: React.ReactNode }>) {

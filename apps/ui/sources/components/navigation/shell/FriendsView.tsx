@@ -15,7 +15,6 @@ import { t } from '@/text';
 import { trackFriendsProfileView } from '@/track';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
-import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { FeedItemCard } from '@/components/inbox/cards/FeedItemCard';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
@@ -87,7 +86,6 @@ export const FriendsView = React.memo(function FriendsView(props: Readonly<{ hea
                     />
                 </NavigationBackChromeProvider>
             ) : null}
-            <RecoveryKeyReminderBanner />
 
             {!friendsIdentityReady ? (
                 <ItemGroup title={t('friends.title')}>

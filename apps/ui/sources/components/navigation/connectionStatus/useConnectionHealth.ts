@@ -22,13 +22,12 @@ import {
     subscribeAppliedActiveServerRuntimeAvailability,
 } from '@/sync/runtime/orchestration/connectionManager';
 import { useHomeViewSelectionSettings } from '@/hooks/server/useHomeViewSelectionSettings';
-import { resolveMachineReachability, type MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
+import { partitionMachineFleetPresence, resolveMachineFleetPresence, type MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
-import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
@@ -50,14 +49,7 @@ function isMachineReadyForConnectionHealth(machine: Readonly<{ daemonState?: unk
 }
 
 function resolveObservedMachinePresence(machines: readonly Machine[], scope: MachineReachabilityScope | null | undefined, nowMs: number) {
-    const onlineMachines: Machine[] = [];
-    let unknownCount = 0;
-    for (const machine of machines) {
-        const reachability = resolveMachineReachability(scope, machine, nowMs);
-        if (reachability === 'reachable') onlineMachines.push(machine);
-        else if (reachability === 'unknown') unknownCount += 1;
-    }
-    return { onlineMachines, unknownCount };
+    return partitionMachineFleetPresence(machines, machine => resolveMachineFleetPresence(scope, machine, nowMs));
 }
 
 export function useConnectionHealth() {
@@ -100,25 +92,25 @@ export function useConnectionHealth() {
     const activeSyncError = React.useMemo(() => {
         return selectSyncErrorForServer(syncError, activeServerSnapshot.serverId);
     }, [activeServerSnapshot.serverId, syncError]);
+    const machineGroupPresence = React.useMemo(() => (
+        activeSelectionMachineGroups.visibleMachineGroups.map(group => ({
+            group,
+            presence: group.status === 'loading' || group.status === 'signedOut' ? null
+                : resolveObservedMachinePresence(group.machines, group.accountScope, presenceNowMs),
+        }))
+    ), [activeSelectionMachineGroups.visibleMachineGroups, reachabilityRevision, presenceNowMs]);
 
     const primaryMachineLabel = React.useMemo(() => {
         const byId = new Map<string, (typeof activeSelectionMachineGroups.visibleMachineGroups)[number]['machines'][number]>();
-        for (const group of activeSelectionMachineGroups.visibleMachineGroups) {
-            if (group.status === 'loading' || group.status === 'signedOut') continue;
-            for (const machine of group.machines) {
-                if (machine.revokedAt) continue;
+        for (const { presence } of machineGroupPresence) {
+            if (!presence) continue;
+            for (const machine of [...presence.online, ...presence.offline, ...presence.unknown]) {
                 byId.set(machine.id, machine);
             }
         }
         if (byId.size !== 1) return null;
-        const machine = [...byId.values()][0] ?? null;
-        const metadata = machine?.metadata && typeof machine.metadata === 'object' ? machine.metadata as { displayName?: unknown; host?: unknown } : null;
-        const displayName = typeof metadata?.displayName === 'string' ? metadata.displayName.trim() : '';
-        if (displayName) return displayName;
-        const host = typeof metadata?.host === 'string' ? metadata.host.trim() : '';
-        if (host) return host;
-        return machine?.id ?? null;
-    }, [activeSelectionMachineGroups.visibleMachineGroups]);
+        return readPrimaryMachineLabel([...byId.values()][0]);
+    }, [machineGroupPresence]);
 
     const health = React.useMemo(() => {
         return resolveConnectionHealth({
@@ -127,8 +119,8 @@ export function useConnectionHealth() {
             endpointReason: endpointConnectivity.reason,
             hasSyncError: Boolean(activeSyncError),
             syncErrorKind: activeSyncError?.kind,
-            machineGroups: activeSelectionMachineGroups.visibleMachineGroups.map((group) => {
-                if (group.status === 'loading' || group.status === 'signedOut') {
+            machineGroups: machineGroupPresence.map(({ group, presence }) => {
+                if (!presence) {
                     return {
                         machineCount: null,
                         onlineCount: null,
@@ -136,21 +128,18 @@ export function useConnectionHealth() {
                     };
                 }
 
-                const visibleMachines = group.machines.filter((machine) => !machine.revokedAt);
                 const scope = group.accountScope;
-                const { onlineMachines, unknownCount } = resolveObservedMachinePresence(visibleMachines, scope, presenceNowMs);
                 return {
-                    machineCount: visibleMachines.length,
-                    onlineCount: onlineMachines.length,
-                    unknownCount,
-                    readyCount: onlineMachines.filter((machine) => isMachineSelectableForFleet(scope, machine, presenceNowMs) && isMachineReadyForConnectionHealth(machine)).length,
+                    machineCount: presence.online.length + presence.offline.length + presence.unknown.length,
+                    onlineCount: presence.online.length,
+                    unknownCount: presence.unknown.length,
+                    readyCount: presence.online.filter((machine) => isMachineSelectableForFleet(scope, machine, presenceNowMs) && isMachineReadyForConnectionHealth(machine)).length,
                     status: group.status,
                 };
             }),
         });
     }, [
-        activeSelectionMachineGroups.visibleMachineGroups,
-        reachabilityRevision,
+        machineGroupPresence,
         presenceNowMs,
         activeSyncError,
         endpointConnectivity.reason,
@@ -216,19 +205,19 @@ function useAppliedHomeMachineFacts(serverId: string, accountScope: ServerAccoun
             machineListByServerId: state.machineListByServerId,
             machineListStatusByServerId: state.machineListStatusByServerId,
         }, captureServerProfileScopeResolver());
-        return (machines ?? []).filter(isMachineVisibleForSelection);
+        return machines ?? [];
     }, [serverId]);
     const published = React.useRef<AppliedHomeMachineFacts | null>(null);
     const readSnapshot = React.useCallback((nowMs: number): AppliedHomeMachineFacts => {
-        const visible = readMachines().filter(machine => !machine.revokedAt);
-        const { onlineMachines, unknownCount } = resolveObservedMachinePresence(visible, accountScope, nowMs);
+        const presence = resolveObservedMachinePresence(readMachines(), accountScope, nowMs);
+        const current = [...presence.online, ...presence.offline, ...presence.unknown];
         const next: AppliedHomeMachineFacts = {
-            machineCount: visible.length,
-            onlineCount: onlineMachines.length,
-            unknownCount,
-            readyCount: onlineMachines.filter(machine => isMachineSelectableForFleet(accountScope, machine, nowMs)
+            machineCount: current.length,
+            onlineCount: presence.online.length,
+            unknownCount: presence.unknown.length,
+            readyCount: presence.online.filter(machine => isMachineSelectableForFleet(accountScope, machine, nowMs)
                 && isMachineReadyForConnectionHealth(machine)).length,
-            primaryMachineLabel: visible.length === 1 ? readPrimaryMachineLabel(visible[0]) : null,
+            primaryMachineLabel: current.length === 1 ? readPrimaryMachineLabel(current[0]) : null,
         };
         if (published.current === null || !areAppliedHomeMachineFactsEqual(published.current, next)) published.current = next;
         return published.current;

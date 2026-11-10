@@ -11,6 +11,7 @@ vi.mock('@/text', async () => {
 
 import type { UpdateItem } from '@/updates/items/updateItem';
 import type { UpdatesGroup } from '@/updates/useUpdatesContentModel';
+import { resolveMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 
 import { describeUpdatesGroupRow } from './describeUpdatesGroupRow';
 
@@ -33,7 +34,11 @@ const codex: UpdateItem = { ...cli, id: 'studio:agent:codex', subject: { kind: '
 const current = (item: UpdateItem): UpdateItem => ({ ...item, state: 'upToDate', action: { kind: 'none' }, latestVersion: item.currentVersion });
 
 function machine(items: UpdateItem[], overrides: Partial<UpdatesGroup> = {}): UpdatesGroup {
-    return { id: 'machine:studio', kind: 'machine', machineName: 'Studio', machineId: 'studio', online: true, lastSeenAt: null, items, ...overrides };
+    const group: UpdatesGroup = { id: 'machine:studio', kind: 'machine', machineName: 'Studio', machineId: 'studio', online: true, lastSeenAt: null, items, ...overrides };
+    return { ...group, fleetPresence: overrides.fleetPresence ?? resolveMachineFleetPresence(
+        group.online === null ? null : { serverId: 'home', accountId: 'account' },
+        { id: group.machineId ?? 'studio', active: group.online !== false, activeAt: 0 },
+    ) };
 }
 
 describe('describeUpdatesGroupRow — one row per machine, one state, at most one action', () => {

@@ -3,6 +3,7 @@ import type { InstallablesSummary } from '@/capabilities/installablesSummary';
 import { t } from '@/text';
 import type { ComputerUseSettingsV1 } from '@happier-dev/protocol/computer/v1';
 import { COMPUTER_PROVIDER_DISPLAY_NAMES } from '@/sync/domains/computer/computerProviderSettings';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 /** "Claude and Codex are ready": the agents the last inventory read found ready, from what the app holds. */
 export function describeMachineAgentsReady(titles: readonly string[]): string | null {
@@ -24,7 +25,7 @@ export function describeMachineSharingSummary(machine: Readonly<{ isShared?: boo
 /** "Checked <time>" from the persisted last Doctor snapshot; a machine never checked has no summary. */
 export function describeMachineDoctorSummary(snapshot: Readonly<{ cachedAt: number }> | null): string | undefined {
     if (!snapshot) return undefined;
-    return t('machineDetailPage.summaries.doctorChecked', { time: new Date(snapshot.cachedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) });
+    return t('machineDetailPage.summaries.doctorChecked', { time: formatAsOfTime(snapshot.cachedAt) });
 }
 
 /** The terminal multiplexer new sessions on this machine open in, by its own name. */

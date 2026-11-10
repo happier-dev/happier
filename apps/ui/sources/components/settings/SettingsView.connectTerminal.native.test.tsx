@@ -85,6 +85,15 @@ vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
 }));
 
+vi.mock('expo-application', () => ({
+    nativeApplicationVersion: '0.3.4', nativeBuildVersion: '42', applicationId: 'dev.happier.app',
+}));
+
+vi.mock('expo-updates', async () => ({
+    ...(await import('@/dev/testkit/mocks/expoUpdates')).createExpoUpdatesMock(),
+    runtimeVersion: '0.9.8-native',
+}));
+
 vi.mock('@/constants/Typography', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/constants/Typography')>();
     return {
@@ -209,6 +218,13 @@ beforeEach(() => {
 });
 
 describe('SettingsView (native connect terminal)', () => {
+    it('shows the installed native app version rather than the JavaScript config version', async () => {
+        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
+        for (let stage = 0; stage < 5; stage++) await flushDeferredSettingsDelay(25);
+        expect(screen.getTextContent()).toContain('0.3.4');
+    });
+
     it('shows terminal connect actions on native platforms', async () => {
         const { SettingsView } = await import('./SettingsView');
         const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');

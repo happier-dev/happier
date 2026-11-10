@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { resolveMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 import { describeMachineRuntimePresence } from '@/utils/sessions/machinePresenceLine';
 import { reconcileStableRows } from '@/hooks/session/reconcileStableRows';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
@@ -23,17 +24,20 @@ export function useMachineCollection(input: Omit<Parameters<typeof buildMachineC
 }
 
 /** Row badges and aggregate badges share the same canonical presence projection. */
-export function useMachineCollectionPresenceRows(rows: readonly MachineCollectionRow[]): readonly MachineCollectionRow[] {
+export function useMachineCollectionPresenceRows<Row extends MachineCollectionRow>(rows: readonly Row[]): readonly Row[] {
     const readMachines = React.useCallback(() => rows.flatMap(row => row.presenceSource ? [row.presenceSource.machine] : []), [rows]);
-    const previous = React.useRef<readonly MachineCollectionRow[]>(rows);
+    const previous = React.useRef<readonly Row[]>(rows);
     const readSnapshot = React.useCallback((nowMs: number) => {
         const next = rows.map(row => {
             const source = row.presenceSource;
             if (!source) return row;
-            const presence = describeMachineRuntimePresence(source.machine, nowMs, source.managedPresence, source.scope);
+            const connection = resolveMachineFleetPresence(source.scope, source.machine, nowMs);
+            const fleetPresence = row.fleetPresence?.member === connection.member && row.fleetPresence.online === connection.online
+                && row.fleetPresence.reachability === connection.reachability ? row.fleetPresence : connection;
+            const presence = describeMachineRuntimePresence(source.machine, nowMs, source.managedPresence, source.scope, fleetPresence.reachability);
             const presenceWord = presence.showStatus ? presence.label : undefined;
-            return row.online === presence.online && row.status === presence.status && row.presence === presence.label && row.presenceWord === presenceWord
-                ? row : { ...row, online: presence.online, status: presence.status, presence: presence.label, presenceWord };
+            return row.fleetPresence === fleetPresence && row.online === presence.online && row.status === presence.status && row.presence === presence.label && row.presenceWord === presenceWord
+                ? row : { ...row, fleetPresence, online: presence.online, status: presence.status, presence: presence.label, presenceWord };
         });
         previous.current = reconcileStableRows(previous.current, next, machineCollectionRowKey);
         return previous.current;

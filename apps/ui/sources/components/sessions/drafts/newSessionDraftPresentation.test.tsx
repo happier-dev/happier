@@ -6,11 +6,11 @@ import { buildNewSessionDraftRowPresentation, resolveNewSessionDraftAgentId } fr
 import { resolveRunnerDraftActivation } from './newSessionDraftDeletion';
 import { t } from '@/text';
 
-function draft(agentTarget: unknown): NewSessionDraftProjection {
+function draft(agentTarget: unknown, prompt = 'Review the project settings'): NewSessionDraftProjection {
     const document = NewSessionDraftDocumentV2Schema.parse({
             v: 2,
             composer: {
-                text: { mutationId: '00000000-0000-4000-8000-000000000001', value: 'Review the project settings' },
+                text: { mutationId: '00000000-0000-4000-8000-000000000001', value: prompt },
                 mentions: { mutationId: '00000000-0000-4000-8000-000000000002', value: [] },
                 attachments: { mutationId: '00000000-0000-4000-8000-000000000003', value: [] },
             },
@@ -39,6 +39,14 @@ function draft(agentTarget: unknown): NewSessionDraftProjection {
 }
 
 describe('new Session draft Agent presentation', () => {
+    it.each([
+        ['[capture-uw2eme.png](happier-ref:attachment/capture-uw2eme)', 'capture-uw2eme.png'],
+        ['\n# **Review** the [project](https://example.test/project)\nThen run checks', 'Review the project'],
+        ['---\n- Check `session_id`', 'Check session_id'],
+    ])('derives a readable plain title from the first prompt content (%s)', (prompt, title) => {
+        expect(buildNewSessionDraftRowPresentation(draft(undefined, prompt)).title).toBe(title);
+    });
+
     it('keeps retained malformed composer recovery visible with the existing fallback title and activation reference', () => {
         const publicRef = { v: 1, activationId: '00000000-0000-4000-8000-000000000015', createdOnDeviceLabel: 'Creator device' };
         const retained = {

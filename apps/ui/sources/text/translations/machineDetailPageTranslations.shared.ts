@@ -465,6 +465,7 @@ export const english = {
         columnStatus: "Status",
         allMachinesGroup: "All machines",
         offlineHidden: ({ count }: { count: number }) => count === 1 ? `1 machine is offline` : `${count} machines are offline`,
+        offlineListCount: ({ count }: { count: number }) => count === 1 ? `1 offline machine in this list` : `${count} offline machines in this list`,
         showOffline: "Show",
         hideOffline: "Hide",
         machinesCount: ({ count }: { count: number }) => count === 1 ? `1 Machine` : `${count} Machines`,

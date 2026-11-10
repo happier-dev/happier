@@ -16,6 +16,7 @@ import { useMachinePresenceSummary } from '@/components/sessions/model/useMachin
 import { MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineConnection';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 const styles = StyleSheet.create((theme) => ({
     identifier: {
@@ -131,7 +132,7 @@ export const MachineDaemonSection = React.memo(function MachineDaemonSection(pro
                     {typeof machine.daemonState.startedAt === 'number' && (
                         <Item
                             title={t('machine.startedAt')}
-                            detail={new Date(machine.daemonState.startedAt).toLocaleString()}
+                            detail={formatAsOfTime(machine.daemonState.startedAt)}
                             mode="info"
                             showChevron={false}
                         />

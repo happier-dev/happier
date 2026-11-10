@@ -84,12 +84,13 @@ export function describeMachineRuntimePresence(
     nowMs?: number,
     managedPresence?: MachineManagedPresence | null,
     scope?: MachineReachabilityScope | null,
+    connection?: 'reachable' | 'unreachable' | 'unknown',
 ): MachineRuntimePresence {
     if (machine.id && getDemoMachineRead({ serverId: scope?.serverId ?? getDemoModeServerId(), machineId: machine.id }))
         return { online: true, status: 'online', label: t('settingsOverview.machineOnline'), nextAction: null, showStatus: false };
     if (machine.presence === null) return { online: false, status: 'unknown', label: '', nextAction: null, showStatus: false };
     const activity = readMachineActivity(machine);
-    const reachability = machine.id ? resolveMachineReachability(scope, { ...machine, ...activity, id: machine.id }, nowMs) : 'unknown';
+    const reachability = connection ?? (machine.id ? resolveMachineReachability(scope, { ...machine, ...activity, id: machine.id }, nowMs) : 'unknown');
     const nativePresence = managedPresence ?? projectMachineManagedPresence(machine);
     return presentMachinePresence({ reachability, presenceOnline: isMachineOnline(machine, nowMs),
         lastSeenAt: activity.activeAt ?? null,

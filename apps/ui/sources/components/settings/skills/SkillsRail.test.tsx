@@ -41,6 +41,20 @@ function groupOf(screen: Awaited<ReturnType<typeof renderScreen>>, rowId: string
 
 afterEach(() => { standardCleanup(); resetPromptLibraryCatalogEngineForTests(); resetPromptLibraryCatalogSnapshotsForTests(); navigation.params = {}; vi.clearAllMocks(); });
 
+it.each(['rail', 'page'] as const)('shows one library failure and retry on the %s', async variant => {
+    const home = await createSkillsSurfaceHarness(`https://skills-one-failure-${variant}.test`);
+    const retry = vi.fn();
+    try {
+        const screen = await renderScreen(<SkillsList variant={variant}
+            library={library([], { status: 'unavailable', errorCode: 'transport_unavailable', retry })} />);
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const errors = screen.findAllByType(SurfaceStateCard).filter(node => node.props.kind === 'error');
+        expect(errors).toHaveLength(1);
+        await act(async () => errors[0]!.props.action.onPress());
+        expect(retry).toHaveBeenCalledOnce();
+    } finally { await standardCleanup(); await home.dispose(); }
+});
+
 it('keeps 139 rows mounted through unchanged catalog wakes and folder-name authority recovery', async () => {
     const home = await createSkillsSurfaceHarness('https://skills-row-mount-cost.test', [{ key: 'folders',
         value: { v: 1, folders: [{ id: 'writing', name: 'Writing', parentId: null }] } }]);

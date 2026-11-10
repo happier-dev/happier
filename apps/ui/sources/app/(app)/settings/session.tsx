@@ -296,7 +296,7 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                             showChevron={false}
                         />
                     </SettingAnchor>
-                    <SettingAnchor setting={SESSION_SETTINGS.settings.rightPaneDefaultOpen}>
+                    {panelsSupported ? <SettingAnchor setting={SESSION_SETTINGS.settings.rightPaneDefaultOpen}>
                         <Item
                             title={t(SESSION_SETTINGS.settings.rightPaneDefaultOpen.titleKey)}
                             subtitle={t('settingsAppearance.sessionsRightPaneDefaultOpenDescription')}
@@ -304,13 +304,13 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                                 <Switch
                                     value={sessionsRightPaneDefaultOpen}
                                     onValueChange={setSessionsRightPaneDefaultOpen}
-                                    disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
+                                    disabled={!uiMultiPanePanelsEnabled}
                                 />
                             }
-                            disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
+                            disabled={!uiMultiPanePanelsEnabled}
                             showChevron={false}
                         />
-                    </SettingAnchor>
+                    </SettingAnchor> : null}
                 </ItemGroup>
             </SettingSection>
 

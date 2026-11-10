@@ -34,7 +34,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 export const OverviewMachinesSection = React.memo(
   function OverviewMachinesSection(props: Readonly<{ testID: string }>) {
     const { theme } = useUnistyles();
-    const { status, settled, refresh, fleet, needs } = useMachineFleetModel();
+    const { homeLabel, status, settled, refresh, fleet, presence, needs } = useMachineFleetModel();
     const door = useMachinesDoor();
     const router = useRouter();
     const open = React.useCallback(
@@ -56,7 +56,7 @@ export const OverviewMachinesSection = React.memo(
     const calm = fleet.filter(
       (entry) => entry.online && !needKeys.has(entry.key),
     );
-    const offline = fleet.filter((entry) => !entry.online);
+    const offline = presence.offline;
     const failed = status === 'error' || status === 'signedOut';
     const reading = !failed && !settled && fleet.length === 0;
     const summary = reading || (failed && fleet.length === 0)
@@ -66,7 +66,7 @@ export const OverviewMachinesSection = React.memo(
           : describeRest(calm, offline, needs.length);
     const tone = resolveMachineAttentionWordColor(theme.colors);
     return (
-      <ItemGroup title={t('machines.widgets.machine_fleet')}>
+      <ItemGroup title={t('machines.widgets.machine_fleet')} description={homeLabel}>
         {fleet.length > 0 && (failed || status === 'loading') ? (
           <SurfaceFreshnessLine testID={`${props.testID}.freshness`} busy={status === 'loading'}
             reason={t(status === 'loading' ? 'machines.widgets.body.common.loading' : 'machines.widgets.body.common.readFailed')}

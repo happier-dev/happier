@@ -188,7 +188,7 @@ function NoticeDetailAdapter(props: DetailBodyProps) {
   const subject = readNoticeInvestigationSubject(entry.header, model.noticeInvestigation.isEligible(entry));
   const plugin = entry.header.source.kind === 'plugin'
     ? { id: entry.header.source.pluginId, name: item?.source.displayName ?? entry.header.source.pluginId } : undefined;
-  const content = ownPage ? <PageDetailAdapter {...props} plugin={plugin} /> : <InboxNoticeDetail title={item?.title ?? entry.header.title} body={item?.excerpt ?? entry.header.body ?? entry.header.excerpt ?? null}
+  const content = ownPage ? <PageDetailAdapter {...props} plugin={plugin} /> : <InboxNoticeDetail title={item?.title ?? entry.header.title} body={item?.excerpt ?? entry.header.body ?? null}
     source={item?.source.displayName ?? null} createdAt={item?.createdAt ?? entry.artifact.createdAt}
     serverId={props.focus.serverId} subject={subject} investigation={investigation}
     onDismiss={async () => { await model.dismissAccountNotice(entry); props.onClose(); }} />;

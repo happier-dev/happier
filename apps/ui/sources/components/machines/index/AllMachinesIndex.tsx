@@ -44,7 +44,8 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useMachineCollection } from '@/components/settings/machines/collection/useMachineCollection';
+import { useMachineCollection, useMachineCollectionPresenceRows } from '@/components/settings/machines/collection/useMachineCollection';
+import { partitionMachineFleetPresence, resolveMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 import { useReconciledStableRows } from '@/hooks/session/reconcileStableRows';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
@@ -56,7 +57,7 @@ import type { MachineAttentionEntry } from '@/components/machines/attention/coll
 import { useMachineAttention } from '@/sync/domains/machines/resources/useMachineAttention';
 import { MachinesNeedsYouList } from '@/components/machines/attention/MachinesNeedsYouList';
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
-import { describeFleetDescription, describeFleetTitle, readMachinePublishedResources, selectAttentionSubjects } from '@/components/machines/summary/machineResourceSentences';
+import { describeFleetDescription, describeFleetTitle, describeMachineAttentionWord, readMachinePublishedResources, selectAttentionSubjects, selectHeadlineReason } from '@/components/machines/summary/machineResourceSentences';
 import { MACHINE_CARD_METRICS_HEIGHT_PX, MachineCardBody } from './MachineCardBody';
 import { MachineSummaryStrip, machineSummaryMetricTitle } from '@/components/machines/summary/MachineSummaryStrip';
 import { useMachineSummaryFreshnessFacts } from '@/components/machines/summary/MachineSummaryFreshnessLine';
@@ -135,7 +136,8 @@ function AllMachinesIndexBody() {
     const sections = React.useMemo(() => collection.sections.filter(section => !section.archived), [collection.sections]);
     // What each machine publishes (plan 20): the fleet sentence and Needs you first.
     const attention = useMachineAttention(viewModel.visibleMachineGroups);
-    const needsYouSubjectKeys = useReconciledStableRows(selectAttentionSubjects(attention.entries).map(entry => entry.key), String);
+    const attentionSubjects = React.useMemo(() => selectAttentionSubjects(attention.entries), [attention.entries]);
+    const needsYouSubjectKeys = useReconciledStableRows(attentionSubjects.map(entry => entry.key), String);
     const needsYouKeys = React.useMemo(() => new Set(needsYouSubjectKeys), [needsYouSubjectKeys]);
     const fleetTitle = describeFleetTitle({ subjects: attention.entries, reportingCount: attention.reportingCount });
     const fleetDescription = describeFleetDescription({ subjects: attention.entries, reportingCount: attention.reportingCount, onlineCount: attention.onlineCount, nowMs });
@@ -183,18 +185,27 @@ function AllMachinesIndexBody() {
     const [answered, setAnswered] = React.useState(false);
     if (!answerPending && !answered) setAnswered(true);
     const holding = answerPending && !answered;
-    const items = holding ? NO_ITEMS : answeredItems;
+    const items = useMachineCollectionPresenceRows(holding ? NO_ITEMS : answeredItems);
+    const presence = React.useMemo(() => partitionMachineFleetPresence(items, item => item.fleetPresence), [items]);
+    // Archive/display ownership does not withdraw a current Machine from its Home's fleet.
+    // Only membership contributes to this total, so heartbeats need no second subscription here.
+    const fleetCount = React.useMemo(() => {
+        const { counts } = partitionMachineFleetPresence(viewModel.visibleMachineGroups.flatMap(group => group.machines
+            .map(machine => resolveMachineFleetPresence(group.accountScope, machine))), fact => fact);
+        return counts.online + counts.offline + counts.unknown;
+    }, [viewModel.visibleMachineGroups]);
     const searchable = items.length > SEARCH_THRESHOLD;
     const normalizedQuery = searchable && !besideList ? query.trim().toLocaleLowerCase() : '';
     // A long fleet keeps its offline machines out of the table until asked for, as the list column folds them
     // (real fleets carry dozens of retired or sleeping machines); a search still reaches every machine.
     const [showOffline, setShowOffline] = React.useState(false);
-    const offlineCount = React.useMemo(() => searchable ? items.filter(item => item.status === 'offline').length : 0, [items, searchable]);
+    const offlineCount = searchable ? presence.counts.offline : 0;
+    const offlineKeys = React.useMemo(() => new Set(presence.offline.map(readKey)), [presence]);
     const offlineFoldable = offlineCount > 0 && offlineCount < items.length && !normalizedQuery;
     const hideOffline = offlineFoldable && !showOffline;
-    const filter = React.useCallback((item: MachineIndexItem) => (!hideOffline || item.status !== 'offline') && (!normalizedQuery
+    const filter = React.useCallback((item: MachineIndexItem) => (!hideOffline || !offlineKeys.has(item.key)) && (!normalizedQuery
         || item.title.toLocaleLowerCase().includes(normalizedQuery)
-        || (item.host?.toLocaleLowerCase().includes(normalizedQuery) ?? false)), [hideOffline, normalizedQuery]);
+        || (item.host?.toLocaleLowerCase().includes(normalizedQuery) ?? false)), [hideOffline, normalizedQuery, offlineKeys]);
 
     const open = React.useCallback((key: string | null) => {
         const item = key ? items.find(candidate => candidate.key === key) : null;
@@ -228,8 +239,25 @@ function AllMachinesIndexBody() {
         openKey: null,
         onOpenChange: open,
     });
+    // Only the cards the Collection displays can state a reason above the dashboard.
+    // A read/access reason keeps its existing priority over resource attention.
+    const cardAttention = React.useMemo(() => {
+        const stated = new Map<string, MachineAttentionEntry>();
+        if (view !== 'grid') return stated;
+        const byMachine = new Map(attentionSubjects.map(entry => [entry.key, entry]));
+        for (const section of model.sections) {
+            for (const item of section.items) {
+                if (item.reason !== null) continue;
+                const key = presetMachineKey(item);
+                const entry = key === null ? undefined : byMachine.get(key);
+                if (entry) stated.set(item.key, entry);
+            }
+        }
+        return stated;
+    }, [attentionSubjects, model.sections, view]);
+    const cardAttentionEntries = React.useMemo(() => [...cardAttention.values()], [cardAttention]);
     const summarySetting = useMachineSummarySettingValue();
-    const anatomy = useMachineIndexAnatomy(view, summarySetting.style, summarySetting.metrics, deviceType === 'phone');
+    const anatomy = useMachineIndexAnatomy(view, summarySetting.style, summarySetting.metrics, deviceType === 'phone', cardAttention);
     // An open page keeps its online machines' summaries live (one batched demand for the whole fleet), owned by a
     // leaf so a hide or a window blur withdraws it without redrawing the page.
     const demandKeys = React.useMemo(() => items.flatMap(item => item.online && item.kind === 'machine'
@@ -240,16 +268,17 @@ function AllMachinesIndexBody() {
     const header = (
         <>
             <AllMachinesHeader
-                sentence={holding ? null : fleetTitle}
+                sentence={holding || needsYouKeys.size > 0 ? null : fleetTitle}
                 description={holding ? null : fleetDescription}
-                machineCount={holding ? null : items.length}
+                machineCount={holding ? null : fleetCount}
+                scopeLabel={viewModel.visibleMachineGroups.map(group => group.serverName).join(' · ')}
                 freshnessKeys={freshnessKeys}
                 view={view}
                 onViewChange={setView}
                 addMenu={besideList ? null : <AddMachineMenu options={addOptions} replaceInCollection={false} />}
                 phone={deviceType === 'phone'}
             />
-            {/* What needs you leads, once (plan 60 D5: the dashboard no longer repeats it); the Grid says it as its own cards. */}
+            {/* The list names each reason here; the grid states it in each machine's existing status line. */}
             {view === 'list' ? <MachinesNeedsYouList entries={holding ? NO_ATTENTION_ENTRIES : attention.entries} nowMs={nowMs} onOpen={openAttention} compact={deviceType === 'phone'} testID="machines.index.needs-you" /> : null}
             {/* Beside the machine list the list's own search finds every machine; a second field would repeat it. */}
             {searchable && !besideList ? (
@@ -293,7 +322,7 @@ function AllMachinesIndexBody() {
     const after = (
         <>
             {items.length > 0 ? (
-                <MachineAttentionStatedAbove entries={view === 'list' ? attention.entries : NO_ATTENTION_ENTRIES}>
+                <MachineAttentionStatedAbove entries={view === 'list' ? attention.entries : cardAttentionEntries}>
                     <ItemGroup header="none" surface="none" style={stylesheet.afterMachines}>
                         <MachinesDashboardArea fleet={fleet} attention={attention} />
                     </ItemGroup>
@@ -329,7 +358,7 @@ function AllMachinesIndexBody() {
                 empty={empty}
                 {...(offlineFoldable ? { footer: (
                     <SurfaceStateCard testID="machines.index.offline" size="line" kind="empty"
-                        title={t('allMachines.offlineHidden', { count: offlineCount })}
+                        title={t('allMachines.offlineListCount', { count: offlineCount })}
                         action={{ testID: 'machines.index.offline-action', label: showOffline ? t('allMachines.hideOffline') : t('allMachines.showOffline'),
                             onPress: () => setShowOffline(value => !value) }} />
                 ) } : {})}
@@ -375,6 +404,7 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
     description: string | null;
     /** `null` during the first load, so the count lands once with its groups. */
     machineCount: number | null;
+    scopeLabel: string;
     /** The online machines whose summaries the page shows: the facts line ends in Live or "As of 10:42 · Retry" for them (MPG-11). */
     freshnessKeys: readonly Readonly<{ serverId: string; machineId: string }>[];
     view: MachinesIndexView;
@@ -416,8 +446,8 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
                 alwaysShowTitle
                 title={t('settings.machines')}
                 // The page's generic purpose only stands while the fleet has nothing to say (owner 11-05).
-                description={props.sentence === null ? props.description ?? t('settingsMachines.pageDescription')
-                    : [props.sentence, props.description].filter(Boolean).join('. ')}
+                description={[props.sentence === null ? props.description ?? t('settingsMachines.pageDescription')
+                    : [props.sentence, props.description].filter(Boolean).join('. '), props.scopeLabel].filter(Boolean).join(' · ')}
                 meta={meta}
                 actions={props.phone ? props.addMenu : (
                     <View style={stylesheet.headerActions}>
@@ -441,10 +471,15 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
  * across where its figures would stand. The phone's list: work on the name's line, the strip (or why there is
  * none) beneath. The grid: the card body with its metric tiles.
  */
-function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummaryStyle, metrics: readonly MachineSummaryMetric[], phone: boolean): CollectionAnatomy<MachineIndexItem> {
+function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummaryStyle, metrics: readonly MachineSummaryMetric[], phone: boolean, cardAttention: ReadonlyMap<string, MachineAttentionEntry>): CollectionAnatomy<MachineIndexItem> {
     const language = usePreferredLanguage();
     const { theme } = useUnistyles();
-    return React.useMemo((): CollectionAnatomy<MachineIndexItem> => ({
+    return React.useMemo((): CollectionAnatomy<MachineIndexItem> => {
+        const description = (item: MachineIndexItem) => {
+            const entry = cardAttention.get(item.key);
+            return item.reason ?? (entry ? describeMachineAttentionWord(selectHeadlineReason(entry.attention)!) : item.presence);
+        };
+        return {
         glyph: (item) => <MachineIndexMark item={item} />,
         title: (item) => item.title,
         titleSuffix: (item) => item.facts,
@@ -471,7 +506,7 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         ...(view === 'grid' ? {
             title: (item: MachineIndexItem) => item.titleParts.name,
             titleSuffix: (item: MachineIndexItem) => [item.titleParts.hint, describeTag(item) ?? item.ownership].filter(Boolean).join(' · ') || null,
-            description: (item: MachineIndexItem) => item.reason ?? item.presence,
+            description,
             card: {
                 headerRight: (item: MachineIndexItem) => <MachineIndexUpdateAction item={item} />,
                 facts: (item: MachineIndexItem) => <MachineWorkCell item={item} offlineLabel={describeWhere(item)} />,
@@ -481,10 +516,11 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
                 } } : {}),
             },
         } : {}),
-        accessibilityLabel: (item) => [item.title, describeWhere(item), item.facts, item.presence].filter(Boolean).join(', '),
+        accessibilityLabel: (item) => [item.title, describeWhere(item), item.facts, view === 'grid' ? description(item) : item.presence].filter(Boolean).join(', '),
         testID: (item) => `machines.index.row.${item.key}`,
         columnTitles: { title: t('allMachines.columnMachine') },
-    }), [language, metrics, phone, style, theme.colors.text.secondary, view]);
+        };
+    }, [cardAttention, language, metrics, phone, style, theme.colors.text.secondary, view]);
 }
 
 /** The phone list's second line: the machine's strip under its name, or — when it shows none — why. */

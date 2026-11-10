@@ -6,6 +6,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import type { MachineCliUpdateFact } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { MachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 
 import { buildAgentCliUpdateItem, buildInstallableUpdateItem, buildProbeFailedItem } from './items/buildMachineUpdateItems';
 import type { UpdateItem } from './items/updateItem';
@@ -21,6 +22,9 @@ export type UpdatesGroup = Readonly<{
     machineName: string | null;
     machineId: string | null;
     online: boolean | null;
+    /** Connectivity membership is separate from permission to execute an update. */
+    fleetPresence?: MachineFleetPresence;
+    executionEligible?: boolean;
     /** When the machine was last seen (its own `activeAt`); `null` for this app and this computer. */
     lastSeenAt: number | null;
     items: readonly UpdateItem[];
@@ -133,13 +137,15 @@ export function buildMachineUpdateGroups(params: MachineUpdateGroupInputs): Read
     const remotes = params.machines
         ? buildRemoteMachineUpdateFacts(params.machines, machineId, params.runs, params.snapshots, params.accountScope) : [];
     const remoteRows = params.machineFacts
-        ? params.machineFacts.filter(machine => machine.id !== machineId && machine.metadataPresent).map(machine => ({
-            id: machine.id, name: null, online: machine.online, lastSeenAt: null,
+        ? params.machineFacts.filter(machine => machine.id !== machineId && (machine.metadataPresent || machine.fleetPresence.member)).map(machine => ({
+            id: machine.id, name: null, online: machine.online, fleetPresence: machine.fleetPresence,
+            lastSeenAt: null,
             ...buildRemoteMachineUpdateItem(machine, params.runs, params.snapshots.get(machine.id) ?? null),
         }))
         : remotes.map(remote => {
             const activeAt = readMachineActivity(remote.machine).activeAt;
-            return { id: remote.machine.id, name: remote.name, online: remote.online,
+            return { id: remote.machine.id, name: remote.name, online: remote.online, fleetPresence: remote.fleetPresence,
+                executionOnline: remote.executionOnline,
                 lastSeenAt: typeof activeAt === 'number' && activeAt > 0 ? activeAt : null, cliItem: remote.cliItem };
         });
     for (const remote of remoteRows) {
@@ -149,12 +155,14 @@ export function buildMachineUpdateGroups(params: MachineUpdateGroupInputs): Read
             machineName: remote.name,
             machineId: remote.id,
             online: remote.online,
+            fleetPresence: remote.fleetPresence,
+            executionEligible: remote.executionOnline === true,
             lastSeenAt: remote.lastSeenAt,
             items: [
                 remote.cliItem,
                 ...buildMachineRows({
                     machineId: remote.id,
-                    online: remote.online,
+                    online: remote.executionOnline,
                     agents: params.machineAgents.get(remote.id) ?? [],
                     snapshot: params.snapshots.get(remote.id) ?? null,
                     runs: params.runs,
@@ -167,7 +175,7 @@ export function buildMachineUpdateGroups(params: MachineUpdateGroupInputs): Read
     // request asks (a missing answer is "not checked"; a failed one is its own "Couldn't check" row).
     const requestedIds = [...new Set((buildMachineUpdateFactsRequest().requests ?? []).map((request) => request.id))];
     const uncheckedMachineCount = groups.filter((group) => (
-        group.machineId != null && group.online && !hasAnswered(params.snapshots.get(group.machineId) ?? null, requestedIds)
+        group.machineId != null && group.online && group.executionEligible !== false && !hasAnswered(params.snapshots.get(group.machineId) ?? null, requestedIds)
     )).length;
     let checkedAt: number | null = null;
     for (const group of groups) {

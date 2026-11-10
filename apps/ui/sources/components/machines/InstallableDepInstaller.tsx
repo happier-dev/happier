@@ -14,14 +14,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
-
-function formatTimestamp(ms: number): string {
-    try {
-        return new Date(ms).toLocaleString();
-    } catch {
-        return String(ms);
-    }
-}
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 export type InstallableDepInstallerProps = {
     machineId: string;
@@ -150,7 +143,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
             {typeof props.depStatus?.lastBackgroundUpdateCheckAtMs === 'number' && Number.isFinite(props.depStatus.lastBackgroundUpdateCheckAtMs) && (
                 <Item
                     title={t('settingsAgents.authentication.lastCheckedTitle')}
-                    subtitle={formatTimestamp(props.depStatus.lastBackgroundUpdateCheckAtMs)}
+                    subtitle={formatAsOfTime(props.depStatus.lastBackgroundUpdateCheckAtMs)}
                     icon={page ? undefined : <Icon name="clock" size={20} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />

@@ -13,8 +13,10 @@ import {
   RPC_ERROR_MESSAGES,
 } from '@happier-dev/protocol/rpcErrors';
 
-import { createDeferred, flushHookEffects, invokeTestInstanceHandler, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, findTestInstanceByTypeContainingText, flushHookEffects, invokeTestInstanceHandler, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { resolveMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import {
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
@@ -71,6 +73,7 @@ vi.mock(
 installDisconnectedServerSocketBoundary();
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
+await loadSyncSingletonForTests();
 await import('@/sync/domains/machines/resources/machineRpc');
 const { useMachineWidgetMachine } =
   await import('@/components/machines/widgets/machineWidgetKit');
@@ -893,6 +896,64 @@ describe('Vitals attention block', () => {
     // The state itself stays on the ring row.
     expect(screen.findByTestId('vitals.memory')).toBeTruthy();
   });
+
+  it.each([
+    { view: 'list', multiple: false, filtered: false },
+    { view: 'grid', multiple: false, filtered: false },
+    { view: 'grid', multiple: true, filtered: false },
+    { view: 'grid', multiple: true, filtered: true },
+  ] as const)('lets the $view needs-you presentation carry the memory warning once (multiple=$multiple, filtered=$filtered)', async ({ view, multiple, filtered }) => {
+    const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const serverId = getActiveServerSnapshot().serverId;
+    const sampledAt = Date.now();
+    storage.setState(state => ({ localSettings: { ...state.localSettings, machinesIndexViewV1: view } }));
+    const machines = (multiple ? ['m1', 'm2'] : ['m1']).map(id => createMachineFixture({ id, active: true, activeAt: sampledAt,
+      metadata: { ...createMachineFixture().metadata!, displayName: id, host: `${id}.local` },
+      daemonState: { resources: attentionResources } }));
+    if (filtered) machines.push(...Array.from({ length: 7 }, (_, index) => createMachineFixture({ id: `calm-${index}`,
+      active: true, activeAt: sampledAt, daemonState: { resources } })));
+    storage.getState().applyMachines(machines, true, { sourceServerId: serverId });
+    observeMachinePresenceForTest({ serverId, accountId: 'owner' }, machines.map(machine => machine.id));
+    boundary.rpc.mockResolvedValue({ state: 'reporting', sample: sample(sampledAt),
+      series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] }, attention: attentionResources.attention });
+    // DOM geometry is the boundary: the page's real viewport owner admits its visible dashboard bodies.
+    const contentNode = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 1600 }) };
+    const widgetNodes = new Map<string, typeof contentNode>();
+    const screen = await renderScreen(<AllMachinesIndex />, { createNodeMock: element => {
+      if (element.type === 'ScrollView') return { getInnerViewNode: () => contentNode };
+      const id = element.props.testID;
+      if (typeof id === 'string' && id.startsWith('machines.dashboard.widget.')) {
+        const node = widgetNodes.get(id) ?? { getBoundingClientRect: () => ({ left: 0, top: 100, width: 600, height: 220 }) };
+        widgetNodes.set(id, node);
+        return node;
+      }
+      return null;
+    } });
+    await act(async () => invokeTestInstanceHandler(screen.findHostByTestId('machines.index.collection:stage'), 'onLayout', {
+      nativeEvent: { layout: { x: 0, y: 0, width: 1200, height: 800 } },
+    }));
+    await vi.waitFor(() => expect(screen.findAllByType(MachineVitalsWidget).length).toBeGreaterThan(0));
+    if (filtered) {
+      const search = screen.findAll(node => node.props.testID === 'machines.index.search' && typeof node.props.onChangeText === 'function')[0]!;
+      await act(async () => search.props.onChangeText('m2'));
+      expect(screen.findByTestId(`machines.index.row.machine:${serverId}:m1`)).toBeNull();
+    }
+    if (view === 'grid') {
+      for (const id of filtered ? ['m2'] : multiple ? ['m1', 'm2'] : ['m1']) {
+        const rowId = `machines.index.row.machine:${serverId}:${id}`;
+        // Collection card content is beside its pressable, so inspect the painted description's host.
+        const description = screen.findHostByTestId(`${rowId}:description`)!;
+        expect.soft(description.props.children).toBe('machineAttention.words.memoryCritical');
+        expect.soft(screen.findByTestId(rowId)!.props.accessibilityLabel).toContain('machineAttention.words.memoryCritical');
+      }
+    } else expect(screen.getTextContent()).toContain('machineAttention.words.memoryCritical');
+    const header = screen.findByTestId('machines.index.header')!;
+    expect(findTestInstanceByTypeContainingText(header, 'Text', 'machineAttention.phrases.memoryCritical')).toBeUndefined();
+    expect(findTestInstanceByTypeContainingText(header, 'Text', 'machineAttention.fleet.count')).toBeUndefined();
+    const nextSteps = screen.findAll(node => typeof node.props.testID === 'string' && node.props.testID.endsWith('.nextStep'));
+    if (filtered) expect(nextSteps.length).toBeGreaterThan(0);
+    else expect(nextSteps).toHaveLength(0);
+  });
 });
 
 describe('Machines widget presentation', () => {
@@ -1210,14 +1271,11 @@ describe('Machines widget presentation', () => {
   });
 
   it('keeps online machines first with this computer leading, offline last, so calm rows never reorder by state', () => {
-    const entry = (id: string, online: boolean, thisComputer = false) => ({
-      key: id,
-      serverId: HOME,
-      machine: createMachineFixture({ id }),
-      name: id,
-      online,
-      thisComputer,
-    });
+    const entry = (id: string, online: boolean, thisComputer = false) => {
+      const machine = createMachineFixture({ id, active: online, activeAt: 0 });
+      const fleetPresence = resolveMachineFleetPresence({ serverId: HOME, accountId: 'widget-account' }, machine);
+      return { key: id, serverId: HOME, machine, name: id, online: fleetPresence.online, fleetPresence, thisComputer };
+    };
     expect(
       orderFleetMachines([
         entry('studio', false),

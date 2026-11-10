@@ -289,7 +289,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
         loadFailedBody: 'Try again in a moment. Nothing was lost.',
         retainedBody: "Couldn’t refresh. Showing the last loaded artifacts.",
         loadingBody: 'Still loading the rest.',
-        countSoFar: ({ count }) => `${count} loaded so far`,
+        countSoFar: ({ count }) => `${count} ${count === 1 ? 'artifact' : 'artifacts'} loaded so far`,
         noMatchSoFar: ({ query }) => `Nothing matches “${query}” yet`,
         quota: {
             accountTitle: 'Artifact storage is full',
