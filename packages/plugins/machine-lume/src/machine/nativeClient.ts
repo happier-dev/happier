@@ -145,22 +145,24 @@ export function createLumeNativeClient(options: { baseUrl: string; fetch?: typeo
     return result.success ? result.data.cachingEnabled ? 'enabled' : 'disabled' : 'unknown';
   }
 
+  async function readInventory(signal?: AbortSignal) {
+    // Omit storage: the platform limit covers all Lume locations on this Mac.
+    const response = await request('/lume/vms', 200, { method: 'GET', signal });
+    if (!(response instanceof Response)) return response;
+    try {
+      const inventory = readLumeCapacity(await response.json());
+      if (inventory) return inventory;
+    } catch { /* An unreadable inventory cannot establish capacity. */ }
+    return { kind: 'unknown' as const, reason: 'response' as const };
+  }
+
   const client = {
     async hostFacts(observedAt: number, signal?: AbortSignal) {
-      const configuration = await readConfiguration(signal);
+      const [configuration, inventory] = await Promise.all([readConfiguration(signal), readInventory(signal)]);
       return { cacheState: configurationCacheState(configuration),
-        localResources: await readLumeHostResources(observedAt, configuration) };
+        localResources: await readLumeHostResources(observedAt, configuration, inventory.kind === 'inventory' ? inventory.vms : undefined) };
     },
-    async inventory(signal?: AbortSignal) {
-      // Omit storage: the platform limit covers all Lume locations on this Mac.
-      const response = await request('/lume/vms', 200, { method: 'GET', signal });
-      if (!(response instanceof Response)) return response;
-      try {
-        const inventory = readLumeCapacity(await response.json());
-        if (inventory) return inventory;
-      } catch { /* An unreadable inventory cannot establish capacity. */ }
-      return { kind: 'unknown' as const, reason: 'response' as const };
-    },
+    inventory: readInventory,
     // OCI Distribution tags and token auth, observed against public GHCR on
     // 2026-10-08. No user credential, refresh token, blob download or catalog
     // cache: the registry is the native authority for full tagged references.
