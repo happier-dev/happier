@@ -23,6 +23,8 @@ import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOpti
 import { io } from 'socket.io-client';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { CapabilitiesDetectResponse } from '@/capabilities/types';
 
 vi.mock('socket.io-client', () => ({ io: vi.fn() }));
 
@@ -94,7 +96,19 @@ it.each([
       throw error;
     }
     let result: unknown;
-    if (call.method === `machine-1:${RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE}`
+    // The selected Machine's registry and Agent probe are RPC boundaries. Keep
+    // readiness, requester admission and Session birth on their real owners.
+    if (call.method === `machine-1:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`) {
+      result = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+        codex: { id: 'codex', title: 'Codex', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+      } } });
+    } else if (call.method === `machine-1:${RPC_METHODS.CAPABILITIES_DETECT}`) {
+      result = { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: {
+        installed: true, version: '1.2.3', latestVersion: null, update: { supported: false, command: null },
+        signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
+        install: { available: false, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
+      } } } } satisfies CapabilitiesDetectResponse;
+    } else if (call.method === `machine-1:${RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE}`
       || call.method === `machine-1:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`) {
       const request = SessionCreationTargetPreparationRequestV1Schema.parse(decoded.params);
       expect(request.directory).toEqual(input.directory);
@@ -176,8 +190,10 @@ it.each([
         expect(AxiosHeaders.from(config?.headers).get('Authorization')).toBe(`Bearer ${token}`);
         expect(body.request).toMatchObject({ v: 1, targetMachineId: 'machine-1', requestedAction: { v: 1, kind: 'send_now' }, content: { t: 'plain' } });
         expect(JSON.stringify(body.request.content)).toContain('hostOnboarding');
-        expect(events).toEqual([...(authoredPath && !checkout ? ['preflight'] : []),
-          'prepare', 'birth', 'machine-binding', 'content', 'spawn', 'onboarding']);
+        // An admitted explicit path reuses its prepared preflight result; a
+        // managed directory or new checkout needs native preparation instead.
+        expect(events).toEqual([authoredPath && !checkout ? 'preflight' : 'prepare',
+          'birth', 'machine-binding', 'content', 'spawn', 'onboarding']);
         return { status: 200, data: { v: 1, result: { status: 'accepted', localId: body.request.localId } } };
       }
       throw new Error(`Unexpected Home write ${path}`);
