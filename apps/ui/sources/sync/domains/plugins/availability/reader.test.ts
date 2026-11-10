@@ -1,4 +1,7 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import * as React from 'react';
+import { act } from 'react-test-renderer';
+import { createDeferred, renderHook } from '@/dev/testkit';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as availability from '@happier-dev/protocol/plugins/availability';
@@ -869,6 +872,75 @@ describe('Plugin Account Availability reader', () => {
             expect(publications.get(pluginId)).toBe(index < demandCount ? 1 : 0);
             if (index >= demandCount) expect(after.actionsById[`${pluginId}/read`]).toBe(before.actionsById[`${pluginId}/read`]);
         }
+    });
+
+    it.each([1, 4, 20])('publishes one catalog render for %s separately arriving declarations', async (count) => {
+        const source = PluginPortableReleaseManifestV1Schema.parse(JSON.parse(readFileSync(
+            resolve('../../apps/cli/assets/bundled-plugin-manifests/machine-vercel.json'), 'utf8')));
+        const arrivals = Array.from({ length: count }, () => createDeferred<void>());
+        const bundles = arrivals.map((arrival, index) => {
+            const manifest = { ...source, id: `com.acme.catalog-${index}` };
+            const declaration = { pluginId: manifest.id, pluginVersion: manifest.version,
+                packageName: `@acme/catalog-${index}`, displayName: manifest.id,
+                normalizedManifest: manifest, entriesById: projectPluginPortableUiDeclarationsV1(manifest) };
+            return { ...declaration, normalizedManifest: undefined, hasMachineProvisioners: true,
+                presentationManifest: { ...manifest, contributes: { ...manifest.contributes, machineProvisioners: [] } },
+                loadDeclaration: async () => { await arrival.promise; return declaration; } };
+        });
+        const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: bundles });
+        store.replace({ scope, snapshot: snapshot({ intentReads: [], snapshots: [], materializations: [] }) });
+        const reader = store.bind(scope);
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders++;
+            return React.useSyncExternalStore(reader.subscribe, reader.readUiProjectionInputs);
+        });
+        onTestFinished(() => hook.unmount());
+        const initialRenders = renders;
+        let publications = 0;
+        onTestFinished(reader.subscribe(() => { publications++; }));
+        const demand = reader.ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
+        const overlappingDemand = reader.ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
+        // Separate real arrival turns, so React batching cannot hide per-declaration publications.
+        for (const arrival of arrivals) await act(async () => { arrival.resolve(); await arrival.promise; });
+        await act(async () => { expect(await demand).toMatchObject({ kind: 'available', declarations: expect.any(Array) }); });
+        expect(await overlappingDemand).toEqual(await demand);
+        expect(reader.readCurrentAccountExecutionDeclarations()).toHaveLength(count);
+        expect.soft(publications).toBe(1);
+        expect.soft(renders - initialRenders).toBe(1);
+        await act(async () => { await reader.ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' }); });
+        expect.soft(publications).toBe(1);
+        expect.soft(renders - initialRenders).toBe(1);
+    });
+
+    it('retains successful catalog declarations when a sibling asset fails and retries only the failed asset', async () => {
+        const source = PluginPortableReleaseManifestV1Schema.parse(JSON.parse(readFileSync(
+            resolve('../../apps/cli/assets/bundled-plugin-manifests/machine-vercel.json'), 'utf8')));
+        const failure = new Error('Asset unavailable');
+        let fail = true;
+        const loads = [0, 0];
+        const bundles = loads.map((_, index) => {
+            const manifest = { ...source, id: `com.acme.retry-${index}` };
+            const declaration = { pluginId: manifest.id, pluginVersion: manifest.version,
+                packageName: `@acme/retry-${index}`, displayName: manifest.id,
+                normalizedManifest: manifest, entriesById: projectPluginPortableUiDeclarationsV1(manifest) };
+            return { ...declaration, normalizedManifest: undefined, hasMachineProvisioners: true,
+                presentationManifest: { ...manifest, contributes: { ...manifest.contributes, machineProvisioners: [] } },
+                loadDeclaration: async () => { loads[index]++; if (index === 1 && fail) throw failure; return declaration; } };
+        });
+        const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: bundles });
+        store.replace({ scope, snapshot: snapshot({ intentReads: [], snapshots: [], materializations: [] }) });
+        const reader = store.bind(scope);
+        let publications = 0;
+        onTestFinished(reader.subscribe(() => { publications++; }));
+        await expect(reader.ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' })).rejects.toBe(failure);
+        expect(reader.readCurrentAccountExecutionDeclarations().map(selection => selection.manifest.id)).toEqual(['com.acme.retry-0']);
+        expect(publications).toBe(1);
+        fail = false;
+        await reader.ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
+        expect(reader.readCurrentAccountExecutionDeclarations()).toHaveLength(2);
+        expect(loads).toEqual([1, 2]);
+        expect(publications).toBe(2);
     });
 
     it('discovers lazy browser-unreachable provisioners for fresh Accounts and honors disabled selections', async () => {

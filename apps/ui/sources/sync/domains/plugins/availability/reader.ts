@@ -2195,7 +2195,7 @@ function createBoundReader(input: Readonly<{
     readDerivedProjection: () => AvailabilityDerivedProjection | null;
     readUiProjectionInputs: () => PluginAccountUiProjectionInputs | null;
     readObservationSnapshot: (pluginId?: string) => object | null;
-    ensureBundledDeclaration: (pluginId: string) => Promise<void>;
+    ensureBundledDeclarations: (pluginIds: readonly string[]) => Promise<void>;
     ensureTargetDeclarations: (pluginId: string) => Promise<void>;
     loadMachineDeclarations?: (scope: ServerAccountScope, pluginId: string) => Promise<void>;
 }>): PluginAccountAvailabilityReader {
@@ -2245,7 +2245,7 @@ function createBoundReader(input: Readonly<{
         },
         ensureCurrentAccountExecution: async (pluginId: string) => {
             const current = input.readInitialFailure(pluginId) ?? readAccountExecutionSelection(input.readState(), input.scope, pluginId);
-            if (current.kind === 'unavailable' && current.code === 'plugin_ui_declaration_pending') await input.ensureBundledDeclaration(pluginId);
+            if (current.kind === 'unavailable' && current.code === 'plugin_ui_declaration_pending') await input.ensureBundledDeclarations([pluginId]);
             return input.readInitialFailure(pluginId) ?? readAccountExecutionSelection(input.readState(), input.scope, pluginId);
         },
         ensureAccountTargetDeclarations: async (pluginId: string) => {
@@ -2262,7 +2262,7 @@ function createBoundReader(input: Readonly<{
                     || selection.release === null && input.hostBundledUi?.some(bundle => bundle.pluginId === selection.manifest.id
                         && (family === 'machineProvisioners' ? bundle.hasMachineProvisioners
                             : family === 'deploymentTargets' ? bundle.hasDeploymentTargets : bundle.hasMachineRecipes) === true));
-            await Promise.all(candidates.map(selection => input.ensureBundledDeclaration(selection.manifest.id)));
+            await input.ensureBundledDeclarations(candidates.map(selection => selection.manifest.id));
             if (!readProjectionForScope(input.readState(), input.scope)) return { kind: 'unavailable', code: 'account_availability_scope_mismatch' };
             return { kind: 'available', declarations: readAccountExecutionSelections(input.readState(), input.scope, input.hostBundledUi ?? [])
                 .filter(selection => (selection.manifest.contributes[family]?.length ?? 0) > 0) };
@@ -2496,11 +2496,11 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
         listeners.add(listener);
         return () => listeners.delete(listener);
     };
-    const declarationLoads = new Map<string, Promise<void>>();
-    const ensureBundledDeclaration = (pluginId: string): Promise<void> => {
+    const declarationLoads = new Map<string, Promise<PreparedBundledUiDeclaration | undefined>>();
+    const loadBundledDeclaration = (pluginId: string): Promise<PreparedBundledUiDeclaration | undefined> => {
         const candidates = bundledUiByPluginId.get(pluginId);
         const bundle = candidates?.length === 1 ? candidates[0] : undefined;
-        if (!bundle?.loadDeclaration || bundle.normalizedManifest) return Promise.resolve();
+        if (!bundle?.loadDeclaration || bundle.normalizedManifest) return Promise.resolve(undefined);
         const pending = declarationLoads.get(pluginId);
         if (pending) return pending;
         const operation = Promise.resolve().then(() => bundle.loadDeclaration!()).then(declaration => {
@@ -2509,21 +2509,37 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
                 || declaration.normalizedManifest.version !== bundle.pluginVersion) {
                 throw Object.assign(new Error('Bundled Plugin UI declaration identity mismatch'), { code: 'plugin_ui_declaration_invalid' });
             }
-            const prepared = prepareBundledUiDeclarations([declaration])[0]!;
-            hostBundledUi = Object.freeze(hostBundledUi.map(current => current === bundle ? prepared : current));
-            bundledUiByPluginId = new Map(bundledUiByPluginId).set(pluginId, Object.freeze([prepared]));
-            if (publishDeclaration(pluginId)) notify();
-        }).finally(() => { declarationLoads.delete(pluginId); });
+            return prepareBundledUiDeclarations([declaration])[0]!;
+        }).catch(error => { declarationLoads.delete(pluginId); throw error; });
         declarationLoads.set(pluginId, operation);
         return operation;
     };
+    const ensureBundledDeclarations = async (pluginIds: readonly string[]): Promise<void> => {
+        // A catalog demand consumes the whole set. Keep acquisition shared, but
+        // publish once when that set settles instead of re-rendering on every asset arrival.
+        const declarations = await Promise.allSettled(pluginIds.map(loadBundledDeclaration));
+        let changed = false;
+        for (const result of declarations) {
+            if (result.status !== 'fulfilled' || !result.value) continue;
+            const prepared = result.value;
+            declarationLoads.delete(prepared.pluginId);
+            const bundle = bundledUiByPluginId.get(prepared.pluginId)?.[0];
+            // An overlapping individual or catalog demand may already have published this load.
+            if (bundle?.normalizedManifest) continue;
+            hostBundledUi = Object.freeze(hostBundledUi.map(current => current === bundle ? prepared : current));
+            bundledUiByPluginId = new Map(bundledUiByPluginId).set(prepared.pluginId, Object.freeze([prepared]));
+            changed = publishDeclaration(prepared.pluginId) || changed;
+        }
+        if (changed) notify();
+        const failure = declarations.find(result => result.status === 'rejected');
+        if (failure) throw failure.reason;
+    };
     const ensureTargetDeclarations = async (pluginId: string) => {
-        await Promise.all(hostBundledUi.filter(bundle => bundle.pluginId === pluginId || bundle.targetedPluginIds?.includes(pluginId))
-            .map(bundle => {
-                const current = state && readAccountExecutionSelection(state, state.scope, bundle.pluginId);
-                return current?.kind === 'unavailable' && current.code === 'plugin_ui_declaration_pending'
-                    ? ensureBundledDeclaration(bundle.pluginId) : Promise.resolve();
-            }));
+        await ensureBundledDeclarations(hostBundledUi.filter(bundle => {
+            if (bundle.pluginId !== pluginId && !bundle.targetedPluginIds?.includes(pluginId)) return false;
+            const current = state && readAccountExecutionSelection(state, state.scope, bundle.pluginId);
+            return current?.kind === 'unavailable' && current.code === 'plugin_ui_declaration_pending';
+        }).map(bundle => bundle.pluginId));
     };
     return Object.freeze({
         fail: (failure) => {
@@ -2650,7 +2666,7 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
                 readUiProjectionInputs: () => initialReadiness.readUiProjectionInputs(scoped)
                     ?? (state && areServerAccountScopesEqual(state.scope, scoped) ? derived?.uiInputs ?? null : null),
                 readObservationSnapshot,
-                ensureBundledDeclaration,
+                ensureBundledDeclarations,
                 ensureTargetDeclarations,
                 loadMachineDeclarations: input.loadMachineDeclarations,
             });
