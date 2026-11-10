@@ -8,16 +8,17 @@ import { resolveSessionFileStoreLaunchEnvironment } from '@happier-dev/plugin-sd
 import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from './sessionFileStoreDescriptor.js';
 
 export const PI_PROVIDER_SECRET_ENV_KEY = 'HAPPIER_PI_PROVIDER_API_KEY';
+export const PI_CONNECTED_ACCOUNT_MODEL_ENV = 'HAPPIER_PI_CONNECTED_ACCOUNT_MODEL';
 
 export const PI_DIRECT_AUTH_ENV_KEYS = Object.freeze([
-  ...PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.flatMap((row) => 'environmentKey' in row.native ? [row.native.environmentKey] : []),
-  'GEMINI_API_KEY',
+  ...PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.flatMap((row): readonly string[] => 'environmentKeys' in row.native ? row.native.environmentKeys : []),
+  ...PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.flatMap((row) => 'serviceAccount' in row.native ? [row.native.serviceAccount.environmentKey] : []),
   'OPENROUTER_API_KEY',
-  'KIMI_API_KEY',
 ] as const);
 
 const PI_INTERNAL_LAUNCH_ENV_KEYS = Object.freeze([
   PI_PROVIDER_SECRET_ENV_KEY,
+  PI_CONNECTED_ACCOUNT_MODEL_ENV,
   PI_THINKING_LEVEL_ENV,
   'PI_OFFLINE',
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,

@@ -1,12 +1,9 @@
+import { hostBoundaries } from './nativeProcess.test-support.js';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type { ConnectedAccountBindingEvent } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
-import type { PluginProtocolClientHandle, PluginProtocolClientSpec } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type {
   AgentExecutionRunRuntimeContextV1,
   AgentSessionOpenRequest,
@@ -21,73 +18,6 @@ import { PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID } from '../auth/services/reques
 import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '../auth/services/requestAuth/index.js';
 
 const openedSessions: AgentSessionRuntime[] = [];
-
-function hostBoundaries(signal = new AbortController().signal, sessionState: JsonValue = { sessionId: 'pi-shared' }) {
-  const subscriptions: { listener: (event?: ConnectedAccountBindingEvent) => void | Promise<void>; dispose: ReturnType<typeof vi.fn> }[] = [];
-  const getBinding = vi.fn<AgentSessionRuntimeContext['services']['connectedAccounts']['getBinding']>()
-    .mockResolvedValue(null);
-  let listener: ((record: unknown) => void | Promise<void>) | undefined;
-  let finish!: (result: PluginProcessResult) => void;
-  const exited = new Promise<PluginProcessResult>((resolve) => { finish = resolve; });
-  const disposeProcess = vi.fn(async () => {
-    finish({
-      termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
-      stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
-    });
-  });
-  // The native process speaks Pi RPC; preparation, assets, client and operations stay real.
-  const write = vi.fn(async (record: JsonValue) => {
-    if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('Expected Pi RPC command');
-    await listener?.({ type: 'response', id: record.id, command: record.type, success: true,
-      data: record.type === 'get_state' ? sessionState : { commands: [] } });
-  });
-  const handle: PluginProtocolClientHandle<'jsonStream'> = {
-    client: {
-      subscribe(handler) { listener = handler; return { dispose() { listener = undefined; } }; },
-      write,
-      dispose: disposeProcess,
-    },
-    process: { pid: 123, write: async () => {}, closeStdin: async () => {}, async waitForExit() { return (await this.wait()).termination; },
-    wait: () => exited,
-      onOutput: () => ({ dispose() {} }), dispose: disposeProcess },
-    wait: () => exited,
-    dispose: disposeProcess,
-  };
-  const spawn = vi.fn(async (_spec: Extract<PluginProtocolClientSpec, { kind: 'jsonStream' }>) => handle);
-  const context = {
-    signal,
-    services: {
-      logger: { debug() {}, info() {}, warn() {}, error() {} },
-      connectedAccounts: {
-        watch(_purpose: string, callback: (event: ConnectedAccountBindingEvent) => void | Promise<void>) {
-          let disposed = false;
-          const subscription = { listener: (event: ConnectedAccountBindingEvent = { kind: 'resync', authorityChanged: true }) => disposed ? undefined : callback(event), dispose: vi.fn(() => { disposed = true; }) };
-          subscriptions.push(subscription);
-          void callback({ kind: 'resync', authorityChanged: false });
-          return subscription;
-        },
-        getBinding,
-      },
-      exec: {
-        async run() { return {
-          termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
-          stdout: new TextEncoder().encode('0.82.1'), stderr: new Uint8Array(),
-          stdoutTruncated: false, stderrTruncated: false,
-        }; },
-        systemTools: { resolve: vi.fn(async () => ({
-          executable: { kind: 'systemTool', id: 'pi-cli' }, executablePath: '/fixture/pi',
-        })) },
-        clients: { spawn },
-      },
-    },
-    session: { id: 'pi-engine-session', services: {} },
-  // Only the Account and OS service members reached by these tests are supplied.
-  } as unknown as AgentSessionRuntimeContext;
-  return {
-    context, subscriptions, getBinding, spawn, write, disposeProcess,
-    async emit(record: JsonValue) { await listener?.(record); },
-  };
-}
 
 describe('Pi Agent runtime', () => {
   afterEach(async () => {
@@ -137,6 +67,27 @@ describe('Pi Agent runtime', () => {
         type: 'set_model', provider: 'openai-codex', modelId: 'gpt-6-luna',
       }));
     } finally { await session?.dispose(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('classifies a missing materialized Connected Account home without exposing launch values', async () => {
+    const boundary = hostBoundaries();
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    boundary.getBinding.mockImplementation(async purpose => purpose === PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID
+      ? { purpose, service, account: { service, accountId: 'primary' }, target: { kind: 'account', displayName: 'Primary' } } : null);
+    const failure: unknown = await createPiAgentRuntime().sessions.open({
+      kind: 'create', sessionId: 'pi-missing-home', cwd: '/workspace',
+      launchEnvironment: { values: { OPENAI_API_KEY: 'private-launch-value' }, unset: [] },
+      configuration: { mode: { value: null, updatedAtMs: 0 },
+        model: { value: 'openai-codex/gpt-6-luna', updatedAtMs: 1, selectionSource: 'explicit' },
+        permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} },
+    }, boundary.context).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'agent_startup_invalid_state', retryable: false,
+      details: { failureCause: { code: 'agent_startup_invalid_state', phase: 'client_start',
+        failureReason: 'unclassified_provider_error',
+        providerErrorMessage: 'Pi qualified Connected Account launch requires the pre-materialized agent dir' } },
+    });
+    expect(JSON.stringify(failure)).not.toContain('private-launch-value');
+    expect(boundary.spawn).not.toHaveBeenCalled();
   });
 
   it('bounds preparation inside the aggregate session-open lifecycle and disposes a late result', async () => {

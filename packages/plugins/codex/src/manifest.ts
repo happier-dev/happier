@@ -1,4 +1,5 @@
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
+import { OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE } from './connectedAccounts/service.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { OPENAI_CODEX_OAUTH_PROFILE } from './connectedAccounts/openAiCodexProfile.js';
 import { CODEX_ACCOUNT_USAGE_PROVIDER_ID } from './agent/auth/services/usage/identity.js';
@@ -27,6 +28,9 @@ import { shouldUseCodexDeferredBootstrap } from './agent/lifecycle/deferredStart
 import { readCodexMcpConfigServers } from './agent/mcp/configServers.js';
 import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
 import { createCodexAgentRuntime } from './agent/runtime/factory.js';
+import { CODEX_KEY_DECLARATIONS, CODEX_KEY_ENVIRONMENT_USES } from './agent/runtime/connectedAccountKeys.js';
+import { CODEX_PROVIDER_SECRET_ENV_KEY } from './agent/providerBinding/adapter.js';
+import { CODEX_NATIVE_UPSTREAM_CONFIG_ENV } from './agent/providerBinding/runtimeConfig.js';
 import {
   createCodexConnectedAccountNativeAuthCodec,
   createCodexConnectedServiceRuntimeAuthAdapter,
@@ -67,7 +71,7 @@ const {
 } = CODEX_AGENT_SETTINGS_CONTRIBUTION;
 
 export const CODEX_PLUGIN = definePlugin({
-  id: 'happier.agent.codex',
+  id: OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE.pluginId,
   version: '0.0.0',
   displayName: 'Codex',
   description: 'OpenAI Codex coding agent.',
@@ -88,7 +92,8 @@ export const CODEX_PLUGIN = definePlugin({
           { kind: 'systemTool', id: 'codex-cli' },
           { kind: 'managedDependency', id: 'codex-acp' },
         ],
-        envKeys: ['CODEX_HOME', 'CODEX_SQLITE_HOME'],
+        envKeys: ['CODEX_HOME', 'CODEX_SQLITE_HOME', CODEX_PROVIDER_SECRET_ENV_KEY, CODEX_NATIVE_UPSTREAM_CONFIG_ENV,
+          ...CODEX_KEY_ENVIRONMENT_USES.map(use => use.environmentKey)],
       },
     }, {
       id: 'openai-codex-oauth',
@@ -116,7 +121,7 @@ export const CODEX_PLUGIN = definePlugin({
     optional: [],
   },
   connectedAccountDescriptors: {
-    'openai-codex': {
+    [OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE.localId]: {
       declaration: {
         // The account people have is ChatGPT; "Codex" stays the agent's name.
         title: 'ChatGPT',
@@ -269,7 +274,7 @@ export const CODEX_PLUGIN = definePlugin({
           required: false,
           materializationKinds: ['files'],
           credentialKinds: ['oauth'],
-        }],
+        }, ...CODEX_KEY_DECLARATIONS],
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           skills: {
             delivery: 'session_dir', nativeDisable: 'supported', liveReload: 'supported', usageEvidence: 'reported',
@@ -377,6 +382,7 @@ export const CODEX_PLUGIN = definePlugin({
       },
       factory: createCodexAgentRuntime,
       connectedAccountLaunch: {
+        environmentUses: CODEX_KEY_ENVIRONMENT_USES,
         switchContinuity: {
           continuityMode: 'hot_apply',
           supportedTransitions: [

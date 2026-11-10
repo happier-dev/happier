@@ -1,11 +1,11 @@
 import type { AgentProviderBindingAdapter } from '@happier-dev/plugin-sdk/agents/runtime';
-import { PI_DIRECT_AUTH_ENV_KEYS, PI_PROVIDER_SECRET_ENV_KEY } from './launchEnvironment.js';
+import { PI_CONNECTED_ACCOUNT_MODEL_ENV, PI_DIRECT_AUTH_ENV_KEYS, PI_PROVIDER_SECRET_ENV_KEY } from './launchEnvironment.js';
 import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV, PI_REQUEST_AUTH_PRODUCER_VERSION_ENV } from './auth/services/requestAuth/env.js';
 
 export const PI_PROVIDER_ID = 'happier-provider';
 const SECRET_ENV_KEY = PI_PROVIDER_SECRET_ENV_KEY;
 export const PI_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
-  SECRET_ENV_KEY, ...PI_DIRECT_AUTH_ENV_KEYS, PI_REQUEST_AUTH_CAPABILITY_PATH_ENV, PI_REQUEST_AUTH_PRODUCER_VERSION_ENV,
+  SECRET_ENV_KEY, PI_CONNECTED_ACCOUNT_MODEL_ENV, ...PI_DIRECT_AUTH_ENV_KEYS, PI_REQUEST_AUTH_CAPABILITY_PATH_ENV, PI_REQUEST_AUTH_PRODUCER_VERSION_ENV,
 ]);
 
 // Pi models.json interprets only key/header values as native config expressions.

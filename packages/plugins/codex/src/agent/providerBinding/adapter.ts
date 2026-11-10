@@ -7,13 +7,14 @@ import type {
   AgentProviderBindingPrepared,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { areProviderContributionKeysEqualV1 } from '@happier-dev/plugin-sdk/providers';
+import { buildCodexNativeUpstreamProvider } from './runtimeConfig.js';
 
 type ProviderBindingMaterialization = Awaited<ReturnType<AgentProviderBindingAdapter['materialize']>>;
 type ProviderBindingEnvOverlay = Extract<ProviderBindingMaterialization, { kind: 'engineConfig' }>['env'];
 
-const CODEX_PROVIDER_SECRET_ENV_KEY = 'HAPPIER_CODEX_PROVIDER_API_KEY';
+export const CODEX_PROVIDER_SECRET_ENV_KEY = 'HAPPIER_CODEX_PROVIDER_API_KEY';
 const CODEX_PROVIDER_BINDING_ADAPTER_VERSION_V1 = 1;
-const CODEX_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
+export const CODEX_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
   CODEX_PROVIDER_SECRET_ENV_KEY,
   'OPENAI_API_KEY',
   'CODEX_API_KEY',
@@ -244,14 +245,9 @@ async function materializeCodexProviderBindingV1(
     }
   }
   const providerFields = {
-    name: 'Happier provider',
-    base_url: input.binding.endpoint.normalizedUrl,
-    wire_api: 'responses',
+    ...buildCodexNativeUpstreamProvider(input.binding.endpoint.normalizedUrl),
     ...credential.providerFields,
     ...(Object.keys(publicHeaders).length > 0 ? { http_headers: publicHeaders } : {}),
-    // These are fixed safe values, not feature toggles exposed to callers.
-    requires_openai_auth: false,
-    supports_websockets: false,
   } as const;
 
   return {

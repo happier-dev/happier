@@ -7,6 +7,27 @@ import {
 } from '@happier-dev/plugin-sdk/providers';
 
 const CODEX_PROVIDER_SECRET_ENV_KEY = 'HAPPIER_CODEX_PROVIDER_API_KEY';
+export const CODEX_NATIVE_UPSTREAM_CONFIG_ENV = 'HAPPIER_CODEX_NATIVE_UPSTREAM_CONFIG';
+
+/** Native Codex fields shared by Provider bindings and selected account keys. */
+export function buildCodexNativeUpstreamProvider(baseUrl: string) {
+  return { name: 'Happier provider', base_url: baseUrl, wire_api: 'responses',
+    requires_openai_auth: false, supports_websockets: false } as const;
+}
+
+/** Config overrides contain environment references, never credential values. */
+export function codexNativeUpstreamConfigOverrides(environment: Readonly<Record<string, string | undefined>>): string[] {
+  const config = readCodexNativeUpstreamConfig(environment);
+  if (!config) return [];
+  return [`model_provider=${JSON.stringify(config.modelProvider)}`, ...Object.entries(config.config).flatMap(([path, value]) =>
+    typeof value === 'string' ? [`${path}=${JSON.stringify(value)}`]
+      : Object.entries(value).map(([key, field]) => `${path}.${key}=${JSON.stringify(field)}`))];
+}
+
+export function readCodexNativeUpstreamConfig(environment: Readonly<Record<string, string | undefined>>): CodexProviderBindingEngineConfigV1 | null {
+  const raw = environment[CODEX_NATIVE_UPSTREAM_CONFIG_ENV];
+  return raw ? CodexProviderBindingEngineConfigV1Schema.parse(JSON.parse(raw)) : null;
+}
 const CODEX_MODEL_REASONING_EFFORT_KEY = 'model_reasoning_effort';
 const CUSTOM_CODEX_PROVIDER_KEY_PATTERN = /^happier_[a-f0-9]{32}$/u;
 const RESERVED_CODEX_PROVIDER_KEYS = new Set(['ollama', 'lmstudio']);

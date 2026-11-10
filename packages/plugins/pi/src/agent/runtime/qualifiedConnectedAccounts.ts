@@ -1,6 +1,7 @@
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { writeAtomicFile } from '@happier-dev/plugin-sdk/fs';
 import {
   CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
   CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
@@ -13,13 +14,12 @@ import type {
   AgentExecutionRunOpenRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { replacePiAuthConfig } from '../auth/services/authConfig.js';
-import { PI_DIRECT_AUTH_ENV_KEYS } from '../launchEnvironment.js';
+import { replacePiAuthConfig, replacePiNativeModelsConfig } from '../auth/services/authConfig.js';
+import { PI_CONNECTED_ACCOUNT_MODEL_ENV, PI_DIRECT_AUTH_ENV_KEYS } from '../launchEnvironment.js';
 import {
   PI_ANTHROPIC_API_KEY_PURPOSE_ID,
   PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
   PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-  PI_OPENAI_API_KEY_PURPOSE_ID,
   PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES,
 } from '../auth/services/qualifiedPurposes.js';
 import {
@@ -33,7 +33,6 @@ import {
 } from '../auth/services/requestAuth/purposes.js';
 import type { PiRequestAuthPurposeMap } from '../auth/services/requestAuth/source.js';
 
-const OPENAI_API_KEY_ENV_KEY = 'OPENAI_API_KEY';
 const ANTHROPIC_API_KEY_ENV_KEY = 'ANTHROPIC_API_KEY';
 
 type ConnectedAccounts = AgentRuntimeContext['services']['connectedAccounts'];
@@ -213,7 +212,6 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
     const bindingFor = (purpose: string) => bindings.find((entry) => entry.purpose === purpose)?.binding ?? null;
     const claudeSubscription = bindingFor(PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID);
     const openaiCodex = bindingFor(PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID);
-    const openai = bindingFor(PI_OPENAI_API_KEY_PURPOSE_ID);
     const anthropic = bindingFor(PI_ANTHROPIC_API_KEY_PURPOSE_ID);
     // Pi's authenticated registry advertises candidates, not ChatGPT account
     // entitlement. A fresh launch must not silently pick an arbitrary candidate.
@@ -248,14 +246,19 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
 
     const agentDir = readNonBlank(sourceLaunchEnvironment.values.PI_CODING_AGENT_DIR);
     if (!agentDir) {
-      throw new Error('Pi qualified Connected Account launch requires the pre-materialized agent dir');
+      const message = 'Pi qualified Connected Account launch requires the pre-materialized agent dir';
+      throw new PluginError({ code: 'agent_startup_invalid_state', retryable: false, message,
+        details: { failureCause: { code: 'agent_startup_invalid_state', phase: 'client_start',
+          failureReason: 'unclassified_provider_error', providerErrorMessage: message } },
+      });
     }
 
     const directEnvironment: Record<string, string> = {};
-    const directAuth: Partial<Record<'openai' | 'anthropic', Readonly<{
-      type: 'api_key';
-      key: string;
-    }>>> = {};
+    const directAuth: Record<string, Readonly<{ type: 'api_key'; key: string }>
+      | Readonly<{ type: 'oauth'; refresh: string; access: string; expires: number }>> = {};
+    const nativeProviders = new Set<string>();
+    const nativeModels: Record<string, Readonly<{ baseUrl: string }>> = {};
+    let requiresExplicitModel = false;
     const requestAuthPurposes: {
       -readonly [K in keyof PiRequestAuthPurposeMap]?: NonNullable<PiRequestAuthPurposeMap[K]>;
     } = {};
@@ -289,31 +292,61 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
       requestAuthPurposes['openai-codex'] =
         PI_REQUEST_AUTH_DECLARED_PURPOSES['openai-codex'];
     }
-    if (openai) {
-      const materialized = await connectedAccounts.materialize(
-        PI_OPENAI_API_KEY_PURPOSE_ID,
-        { kind: 'environment', keys: [OPENAI_API_KEY_ENV_KEY] },
-        { signal: input.context.signal, expectedAccount: openai.account },
-      );
-      const apiKey = readExactEnvironmentValue({
-        materialized,
-        key: OPENAI_API_KEY_ENV_KEY,
-      });
-      directEnvironment[OPENAI_API_KEY_ENV_KEY] = apiKey;
-      directAuth.openai = { type: 'api_key', key: apiKey };
+    for (const declaration of PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES) {
+      const binding = bindingFor(declaration.purpose);
+      if (!binding) continue;
+      const native = declaration.native;
+      nativeProviders.add(native.providerId);
+      if (!('environmentKeys' in native)) continue;
+      requiresExplicitModel ||= !('startupModel' in native);
+      const materialized = await connectedAccounts.materialize(declaration.purpose,
+        { kind: 'environment', keys: [...native.environmentKeys] },
+        { signal: input.context.signal, expectedAccount: binding.account });
+      if (materialized.kind !== 'environment') throw new Error(`Pi purpose ${declaration.purpose} expected environment materialization`);
+      // The service owns credential mode and decoding; the receiver only serializes native destinations.
+      const apiKey = readNonBlank(materialized.env[native.apiKeyEnvironmentKey]);
+      if ('serviceAccount' in native && !apiKey) {
+        const serviceAccount = native.serviceAccount;
+        const files = await connectedAccounts.materialize(declaration.purpose,
+          { kind: 'files', fileIds: [serviceAccount.fileId] },
+          { signal: input.context.signal, expectedAccount: binding.account });
+        const bytes = files.kind === 'files' ? files.files[serviceAccount.fileId] : undefined;
+        if (!bytes || !readNonBlank(materialized.env.GOOGLE_CLOUD_PROJECT)
+          || !readNonBlank(materialized.env.GOOGLE_CLOUD_LOCATION)) throw new Error('Pi Vertex credentials are unavailable');
+        const path = join(agentDir, serviceAccount.fileId);
+        await writeAtomicFile({ path, contents: bytes, mode: 0o600 });
+        Object.assign(directEnvironment, materialized.env, { [serviceAccount.environmentKey]: path });
+        nativeProviders.delete(native.providerId);
+        nativeProviders.add(serviceAccount.providerId);
+      } else {
+        if (!apiKey) throw new Error(`Pi purpose ${declaration.purpose} did not materialize its native credential`);
+        if ('oauthExchange' in native) {
+          // Pi owns the GitHub-to-Copilot exchange and account model catalog.
+          // Never send the GitHub grant as an inference bearer via its API-key slot.
+          directAuth[native.providerId] = { type: 'oauth', refresh: apiKey, access: '', expires: 0 };
+        } else {
+          Object.assign(directEnvironment, materialized.env);
+          directAuth[native.providerId] = { type: 'api_key', key: apiKey };
+        }
+      }
+      if ('baseUrlEnvironmentKey' in native) {
+        const baseUrl = readNonBlank(materialized.env[native.baseUrlEnvironmentKey]);
+        if (!baseUrl) throw new Error('Pi native provider base URL is unavailable');
+        nativeModels[native.providerId] = { baseUrl };
+      }
     }
-    if (anthropic) {
-      const materialized = await connectedAccounts.materialize(
-        PI_ANTHROPIC_API_KEY_PURPOSE_ID,
-        { kind: 'environment', keys: [ANTHROPIC_API_KEY_ENV_KEY] },
-        { signal: input.context.signal, expectedAccount: anthropic.account },
-      );
-      const apiKey = readExactEnvironmentValue({
-        materialized,
-        key: ANTHROPIC_API_KEY_ENV_KEY,
-      });
-      directEnvironment[ANTHROPIC_API_KEY_ENV_KEY] = apiKey;
-      directAuth.anthropic = { type: 'api_key', key: apiKey };
+    if (requiresExplicitModel && input.request) {
+      const model = readNonBlank(selectedModel?.value);
+      const separator = model?.indexOf('/') ?? -1;
+      if ((!model || separator < 1 || separator === model.length - 1
+        || !nativeProviders.has(model.slice(0, separator)))
+        && !(input.request.kind === 'resume' && (!model || model === 'default'))) {
+        throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
+          message: 'Choose an explicit model from a selected Pi Connected Account provider.',
+          details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
+            phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
+      }
+      if (model && model !== 'default') directEnvironment[PI_CONNECTED_ACCOUNT_MODEL_ENV] = model;
     }
 
     const requestAuthEnabled = Object.keys(requestAuthPurposes).length > 0;
@@ -335,12 +368,14 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
     // an empty object prevents stale native/provider credentials from
     // satisfying a request-auth-only binding.
     await replacePiAuthConfig({ agentDir, entries: directAuth });
+    if (Object.keys(nativeModels).length > 0) await replacePiNativeModelsConfig({ agentDir, providers: nativeModels });
 
     const launchEnvironment = mergeQualifiedLaunchEnvironment({
       source: sourceLaunchEnvironment,
       direct: directEnvironment,
       remove: [
         ...PI_DIRECT_AUTH_ENV_KEYS,
+        PI_CONNECTED_ACCOUNT_MODEL_ENV,
         ...(requestAuthEnabled
           ? []
           : [

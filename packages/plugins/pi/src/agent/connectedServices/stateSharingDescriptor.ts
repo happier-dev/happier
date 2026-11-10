@@ -1,3 +1,5 @@
+import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES } from '../auth/services/qualifiedPurposes.js';
+
 export const piConnectedServiceStateSharingDescriptor = {
   providerId: 'pi',
   providerSupportStatus: 'supported',
@@ -18,6 +20,6 @@ export const piConnectedServiceStateSharingDescriptor = {
   },
   authIsolation: {
     mode: 'materialized_home',
-    secretEntries: ['auth.json'],
+    secretEntries: ['auth.json', ...PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.flatMap(row => 'serviceAccount' in row.native ? [row.native.serviceAccount.fileId] : [])],
   },
 } as const;

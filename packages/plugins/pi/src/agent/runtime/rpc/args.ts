@@ -1,5 +1,6 @@
 import { PI_PROVIDER_ID } from '../../providerBinding.js';
 import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES } from '../../auth/services/qualifiedPurposes.js';
+import { PI_CONNECTED_ACCOUNT_MODEL_ENV } from '../../launchEnvironment.js';
 import { normalizePiThinkingLevel } from '../../../protocol/thinking.js';
 import {
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -12,7 +13,7 @@ const HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY = 'HAPPIER_CONNECTED_SERVICE_
 
 type PiConnectedServiceLaunchSelection = Readonly<{
   provider: string;
-  startupModel: string;
+  startupModel?: string;
   modelScope: string;
 }>;
 
@@ -28,7 +29,15 @@ function readString(value: unknown): string | null {
 
 function resolvePiLaunchSelectionForConnectedService(serviceId: string | null | undefined): PiConnectedServiceLaunchSelection | null {
   const row = PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.find((row) => row.service.localId === serviceId);
-  return row ? { provider: row.native.providerId, startupModel: row.native.startupModel, modelScope: row.native.modelScope } : null;
+  return row ? { provider: row.native.providerId,
+    ...('startupModel' in row.native ? { startupModel: row.native.startupModel } : {}), modelScope: row.native.modelScope } : null;
+}
+
+function readPreparedConnectedAccountModel(env: Readonly<Record<string, string | undefined>> | undefined): PiConnectedServiceLaunchSelection | null {
+  const model = env?.[PI_CONNECTED_ACCOUNT_MODEL_ENV];
+  if (!model) return null;
+  const separator = model.indexOf('/');
+  return { provider: model.slice(0, separator), startupModel: model.slice(separator + 1), modelScope: `${model.slice(0, separator)}/*` };
 }
 
 export function readPiConnectedServiceIdFromEnv(env: Readonly<Record<string, string | undefined>>): string | null {
@@ -73,7 +82,7 @@ export function buildPiRpcArgs(opts?: Readonly<{
 }>): readonly string[] {
   const launchSelection = opts?.providerModelId
     ? { provider: PI_PROVIDER_ID, startupModel: opts.providerModelId, modelScope: `${PI_PROVIDER_ID}/*` }
-    : resolvePiLaunchSelectionForConnectedService(opts?.connectedServiceId);
+    : readPreparedConnectedAccountModel(opts?.env) ?? resolvePiLaunchSelectionForConnectedService(opts?.connectedServiceId);
   const restrictedTools = buildPiToolsForPermissionMode(opts?.permissionMode);
   const tools = restrictedTools
     ? [...new Set([...restrictedTools, ...(opts?.happierToolsExtension?.toolNames ?? [])])]
@@ -93,8 +102,7 @@ export function buildPiRpcArgs(opts?: Readonly<{
       ? [
         '--provider',
         launchSelection.provider,
-        '--model',
-        launchSelection.startupModel,
+        ...(launchSelection.startupModel ? ['--model', launchSelection.startupModel] : []),
         '--models',
         launchSelection.modelScope,
       ]

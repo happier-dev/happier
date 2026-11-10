@@ -2229,8 +2229,12 @@ The development CLI's install, update, setup, remove, status and cancel commands
 dispatch compiled Action leaves. An explicit `--machine` selects the target;
 otherwise machine mutations use the captured Account's local Machine identity.
 Read-only local `--dry-run` planning remains separate from starting a job.
-CLI requests follow the configured Action approval policy, and vendor-recipe
-consent does not waive that policy. Terminal observation uses the same status
+The install Action normalizes vendor-recipe consent before building approval:
+approving installation also approves running the vendor installer when required.
+UI buttons and agent Actions consume that same operand. CLI `--yes` and
+`--allow-vendor-recipe` remain explicit pre-consent; CLI requests still follow
+the configured Action approval policy. Direct low-level installer calls retain
+their explicit consent requirement. Terminal observation uses the same status
 and cancellation Actions rather than a second local install-job client.
 
 Jobs and their recent history live in daemon memory. Closing an app surface or disconnecting

@@ -23,3 +23,10 @@ export async function replacePiAuthConfig(input: Readonly<{
     entries: input.entries,
   });
 }
+
+export async function replacePiNativeModelsConfig(input: Readonly<{
+  agentDir: string;
+  providers: Readonly<Record<string, Readonly<{ baseUrl: string }>>>;
+}>): Promise<void> {
+  await writeAtomicJsonFile({ path: join(input.agentDir, 'models.json'), value: { providers: input.providers }, mode: 0o600 });
+}

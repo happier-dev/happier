@@ -62,6 +62,12 @@ Static access expires normally, so a running child can need reconnect/relaunch.
 Actual installed-Node subscription routing remains a release-validation check;
 the fake-process composition does not prove vendor acceptance.
 
+Native consumers can request Code-key material and its regional Chat/Responses
+or Anthropic base URL from this same service materializer. An OAuth grant or
+Moonshot platform key cannot satisfy that Code-key request. The native Kimi
+access-token delivery remains separate, and neither route receives refresh
+credentials or starts another login.
+
 Demanded identity and usage retain upstream observations, including every
 supplied window/reset and separate extra-usage money. Missing allowance stays
 unavailable. Request auth produces selected headers, actual expiry and scalar
@@ -150,6 +156,29 @@ explicit Codex or mixed harness is refused for a Claude binding. Both audit
 stages share the admitted launch material. Neither integration receives refresh
 tokens. These static credentials are rematerialized on a new or restarted run;
 they do not renew inside an already-running native process.
+
+In 0.3 development, Oh My Pi's purpose rows in
+`packages/plugins/ohmypi/src/agent/auth/services/accountPurposes.ts` own native
+account delivery. The same preparation serves model listing, Sessions and finite
+Runs. Service plugins produce the credentials; OMP consumes their outputs without
+copying their codecs or taking refresh ownership. Subscription and paid-key
+purposes remain distinct, including xAI's separate native drivers and Muse's
+subscription bundle versus Meta inference key.
+
+The host prepares the selected native home. OMP's existing native serializer
+writes credential environment references into `models.yml`, so stored native
+login cannot override the selected account. Named native profile overrides are
+removed for that launch. The existing home overlay preserves native YAML settings
+and extensions while keeping auth databases, local environment files and selected
+model configuration private. Native-default launches retain their original home.
+A fresh selected-account launch requires an explicit model or returns the typed
+`model_selection_required` failure. Native candidate catalogs remain unverified
+until the canonical account catalog owner establishes account usability.
+
+Antigravity, Devin and Cursor require their receiver-specific credential and
+transport proofs before OMP purposes are activated. Vercel deployment credentials
+remain ineligible for inference; an AI Gateway connected-account producer is
+still required.
 
 FX's Codex route has no built-in default model. A ChatGPT Connected Account
 requires a resolved, nonblank model, including an inherited finite-run model.
@@ -1100,6 +1129,37 @@ Copilot Session reports `restart_required`. Their native resume contracts do not
 currently admit the successor Session; the active Session retains its prior model.
 Kilo uses its existing OpenAI model namespace policy for both initial and later
 model choices.
+
+The Claude, Codex, Kilo, Droid, Copilot, FX and CodeBuddy plugins consume Kimi
+Code keys through their existing native serializers. Kilo, Droid, Copilot, FX and
+CodeBuddy also consume paid xAI keys. Codex, Kilo, Droid, Copilot, FX, CodeBuddy
+and Qwen use the existing OpenAI-key service. Claude keeps its existing
+Anthropic-key route, while Kilo, Droid,
+Copilot and Qwen declare their own Anthropic-key purposes. Kilo and Qwen use the
+Gemini-key producer, and Qwen also consumes its service-account file and project
+facts for Vertex. Producer-exported service identities keep these declarations
+attached to the existing account owners. Gateway Provider connections remain a
+separate optional choice.
+
+CodeBuddy 2.181.0 does not provide a proven native Anthropic Messages serializer:
+its Anthropic environment and custom protocol settings still emit Chat payloads.
+Its native Anthropic account purpose therefore remains undeclared. Kimi's external
+Anthropic/OpenAI routes require authoritative model context metadata before native
+configuration can be written. Qwen's first Connected Account route requires an
+explicit model; its exact native history-path proof remains unavailable, so
+connected-account resume verification returns an explicit unsupported result.
+Native inventories and generated single-model overlays do not establish account
+entitlement. Frozen native model overlays retain the existing shared transition
+limitation: a restart-required model change is refused before the next prompt.
+
+Pi and OpenCode's qualified-purpose rows own native Connected Account delivery in
+0.3 development source. They consume producer-exported service identities and
+service materializations; no generic Provider-to-account source or receiver-side
+credential decoder is involved. Kimi Code key delivery preserves the selected
+region, and Vertex delivery preserves opaque service-account JSON in a private
+file with its project and location. GitHub grants occupy the native Copilot OAuth
+slot so the native driver owns the inference-token exchange and seat refusal.
+These routes remain separate choices from an optional gateway Provider connection.
 
 OpenCode's native model inventory likewise does not establish ChatGPT account
 entitlement. In 0.3 development, its native route decoder and shared catalog
@@ -2896,6 +2956,14 @@ without a native home, including OpenCode and Gemini, retains its native Session
 storage; its runtime owns resume against that storage. The temporary credential
 directory is not evidence of a relocated Session store. Missing catalog facts
 continue to fail the existing reachability check.
+
+In development 0.3, that continuity hook can also inspect a native Session through
+`nativeInspection.withDeclaredJsonRpcClient`, using the already-prepared launch
+environment and existing probe lifetime. Returning `{ ok: true, proof: 'native_session' }`
+proves resume reachability only. It supplies no file path or import authority;
+the file-copy path omits native inspection and requires a host-verified declared
+path for the legacy `{ ok: true }` result. Muse uses this protocol path to read
+the exact native UUID without acquiring or resuming a conversation.
 
 ## Adding a provider plugin
 

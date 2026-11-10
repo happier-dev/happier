@@ -1,3 +1,12 @@
+import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
+import { GROK_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-grok/connected-account-service';
+import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-gemini/connected-account-service';
+import { MUSE_ACCOUNT_SERVICE, META_API_KEY_ENV_KEY } from '@happier-dev/plugins-muse/connected-account-service';
+import { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-scm-github/connected-account-service';
+import { CLAUDE_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-claude/connected-account-service';
+import { OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-codex/connected-account-service';
+import { OPENAI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-openai/connected-account-service';
+
 export const PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID = 'anthropic-model-request' as const;
 export const PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID = 'openai-codex-model-request' as const;
 
@@ -12,10 +21,7 @@ export const PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES = Object.freeze([
       materialization: { kind: 'httpHeaders', origin: 'https://api.anthropic.com', headerNames: ['authorization'] },
       ownedHeaders: ['authorization', 'x-api-key'],
     },
-    service: Object.freeze({
-      pluginId: 'happier.agent.claude',
-      localId: 'claude-subscription',
-    }),
+    service: CLAUDE_CONNECTED_ACCOUNT_SERVICE,
     materializationKinds: Object.freeze(['httpHeaders', 'environment'] as const),
     credentialKinds: Object.freeze(['oauth', 'token'] as const),
   }),
@@ -26,32 +32,53 @@ export const PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES = Object.freeze([
       materialization: { kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['authorization', 'chatgpt-account-id'] },
       ownedHeaders: ['authorization', 'chatgpt-account-id'],
     },
-    service: Object.freeze({
-      pluginId: 'happier.agent.codex',
-      localId: 'openai-codex',
-    }),
+    service: OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE,
     materializationKinds: Object.freeze(['httpHeaders'] as const),
     credentialKinds: Object.freeze(['oauth'] as const),
   }),
   Object.freeze({
     purpose: PI_OPENAI_API_KEY_PURPOSE_ID,
-    native: { providerId: 'openai', startupModel: 'gpt-5.4', modelScope: 'openai/*', environmentKey: 'OPENAI_API_KEY' },
-    service: Object.freeze({
-      pluginId: 'happier.voice.openai',
-      localId: 'openai',
-    }),
+    native: { providerId: 'openai', startupModel: 'gpt-5.4', modelScope: 'openai/*', environmentKeys: ['OPENAI_API_KEY'], apiKeyEnvironmentKey: 'OPENAI_API_KEY' },
+    service: OPENAI_CONNECTED_ACCOUNT_SERVICE,
     materializationKinds: Object.freeze(['environment'] as const),
     credentialKinds: Object.freeze(['token'] as const),
   }),
   Object.freeze({
     purpose: PI_ANTHROPIC_API_KEY_PURPOSE_ID,
-    native: { providerId: 'anthropic', startupModel: 'claude-opus-5', modelScope: 'anthropic/*', environmentKey: 'ANTHROPIC_API_KEY' },
-    service: Object.freeze({
-      pluginId: 'happier.agent.claude',
-      localId: 'anthropic',
-    }),
+    native: { providerId: 'anthropic', startupModel: 'claude-opus-5', modelScope: 'anthropic/*', environmentKeys: ['ANTHROPIC_API_KEY'], apiKeyEnvironmentKey: 'ANTHROPIC_API_KEY' },
+    service: ANTHROPIC_CONNECTED_ACCOUNT_SERVICE,
     materializationKinds: Object.freeze(['environment'] as const),
     credentialKinds: Object.freeze(['token'] as const),
+  }),
+  Object.freeze({
+    purpose: 'kimi-api-key', service: KIMI_CONNECTED_ACCOUNT_SERVICE,
+    native: { providerId: 'kimi-coding', modelScope: 'kimi-coding/*',
+      environmentKeys: [KIMI_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV], apiKeyEnvironmentKey: KIMI_CODE_API_KEY_ENV,
+      baseUrlEnvironmentKey: KIMI_CODE_API_BASE_ENV },
+    materializationKinds: Object.freeze(['environment'] as const), credentialKinds: Object.freeze(['token'] as const),
+  }),
+  Object.freeze({
+    purpose: 'xai-api-key', service: GROK_CONNECTED_ACCOUNT_SERVICE,
+    native: { providerId: 'xai', modelScope: 'xai/*', environmentKeys: ['XAI_API_KEY'], apiKeyEnvironmentKey: 'XAI_API_KEY' },
+    materializationKinds: Object.freeze(['environment'] as const), credentialKinds: Object.freeze(['token'] as const),
+  }),
+  Object.freeze({
+    purpose: 'meta-inference', service: MUSE_ACCOUNT_SERVICE,
+    native: { providerId: 'meta', modelScope: 'meta/*', environmentKeys: [META_API_KEY_ENV_KEY], apiKeyEnvironmentKey: META_API_KEY_ENV_KEY },
+    materializationKinds: Object.freeze(['environment'] as const), credentialKinds: Object.freeze(['token'] as const),
+  }),
+  Object.freeze({
+    purpose: 'gemini', service: GEMINI_CONNECTED_ACCOUNT_SERVICE,
+    native: { providerId: 'google', modelScope: 'google/*', apiKeyEnvironmentKey: 'GEMINI_API_KEY',
+      environmentKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION'],
+      serviceAccount: { providerId: 'google-vertex', fileId: 'google-service-account.json', environmentKey: 'GOOGLE_APPLICATION_CREDENTIALS' } },
+    materializationKinds: Object.freeze(['environment', 'files'] as const), credentialKinds: Object.freeze(['token'] as const),
+  }),
+  Object.freeze({
+    purpose: 'github-copilot', service: GITHUB_CONNECTED_ACCOUNT_SERVICE,
+    native: { providerId: 'github-copilot', modelScope: 'github-copilot/*', environmentKeys: ['COPILOT_GITHUB_TOKEN'],
+      apiKeyEnvironmentKey: 'COPILOT_GITHUB_TOKEN', oauthExchange: true },
+    materializationKinds: Object.freeze(['environment'] as const), credentialKinds: Object.freeze(['oauth', 'token'] as const),
   }),
 ] as const);
 

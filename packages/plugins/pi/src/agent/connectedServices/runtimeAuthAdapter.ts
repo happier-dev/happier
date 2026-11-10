@@ -1,6 +1,8 @@
 import {
   classifyProviderLimitEvidence,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES, PI_REQUEST_AUTH_PURPOSE_ROWS } from '../auth/services/qualifiedPurposes.js';
 
 type RuntimeLimitCategory = ReturnType<typeof classifyProviderLimitEvidence>['category'];
 import type {
@@ -29,10 +31,7 @@ type PiRuntimeSelection = Readonly<{
 
 // Canonical qualified Plugin contribution keys of the bundled request-auth
 // services; released scalar ids are normalized by the host sanitize owner.
-const PI_REQUEST_AUTH_SERVICE_IDS = new Set([
-  'happier.agent.codex/openai-codex',
-  'happier.agent.claude/claude-subscription',
-]);
+const PI_REQUEST_AUTH_SERVICE_IDS = new Set(PI_REQUEST_AUTH_PURPOSE_ROWS.map(row => buildQualifiedPluginContributionKey(row.service)));
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -144,12 +143,10 @@ function readSelections(value: unknown): PiRuntimeSelection[] {
 
 function candidateServiceIdsForProvider(provider: string | null, serviceId: string | null): string[] {
   if (serviceId) return [serviceId];
-  // Canonical qualified Plugin contribution keys of the bundled services that
-  // back each pi provider.
-  if (provider === 'anthropic') return ['happier.agent.claude/claude-subscription', 'happier.agent.claude/anthropic'];
-  if (provider === 'openai-codex') return ['happier.agent.codex/openai-codex'];
-  if (provider === 'openai') return ['happier.voice.openai/openai'];
-  return [];
+  return PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.filter(row =>
+    row.native.providerId === provider
+    || ('serviceAccount' in row.native && row.native.serviceAccount.providerId === provider),
+  ).map(row => buildQualifiedPluginContributionKey(row.service));
 }
 
 function chooseSelection(params: Readonly<{

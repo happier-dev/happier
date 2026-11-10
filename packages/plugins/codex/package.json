@@ -6,6 +6,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./connected-account-service": {
+      "happier-source": "./src/connectedAccounts/service.ts",
+      "types": "./dist/connectedAccounts/service.d.ts",
+      "default": "./dist/connectedAccounts/service.js"
+    },
     "./happier-plugin-ui/connected-account-authentication": {
       "happier-source": "./src/connectedAccounts/account.ts",
       "default": "./dist/connectedAccounts/account.js"
@@ -471,7 +476,9 @@
     "@happier-dev/plugin-sdk": "0.0.0",
     "smol-toml": "^1.9.0",
     "ws": "8.21.1",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "@happier-dev/plugins-kimi": "0.0.0",
+    "@happier-dev/plugins-openai": "0.0.0"
   },
   "devDependencies": {
     "@types/ws": "8.18.1",
