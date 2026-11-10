@@ -6,17 +6,20 @@ const object = (value: unknown): value is Record<string, unknown> =>
 
 /** Add allocates one namespace from the current Compose and bindings; preview and apply derive the same names. */
 export function prepareDeploymentTemplateAdditionV1(input: DeploymentTemplateInstantiationPreparationInputV1): DeploymentTemplateInstantiationPreparationInputV1 {
-    if (input.intent !== 'add' || !input.current) return input;
+    if (input.intent !== 'add' && !input.reservedVariableNames?.length) return input;
     const { template, current } = input;
+    const currentSource = current?.source ?? {};
     const services = Object.keys(object(input.source.services) ? input.source.services : {});
     const variables = template.variables.map(variable => variable.key);
-    const occupiedServices = new Set(Object.keys(object(current.source.services) ? current.source.services : {}));
-    const occupiedVariables = new Set(current.content.bindings.filter(binding => binding.purpose === 'variable').map(binding => binding.name));
+    const occupiedServices = new Set(Object.keys(object(currentSource.services) ? currentSource.services : {}));
+    const occupiedVariables = new Set([...(current?.content.bindings ?? []).filter(binding => binding.purpose === 'variable').map(binding => binding.name),
+        ...(input.reservedVariableNames ?? [])]);
+    const selectedVolumes = new Set(input.volumeBindings?.map(binding => binding.source));
     const resources = Object.fromEntries(resourceKinds.map(kind => [kind, Object.entries(object(input.source[kind]) ? input.source[kind] : {})
         // An external resource is intentionally shared; its existing name remains authoritative.
-        .filter(([, value]) => !object(value) || !value.external).map(([name]) => name)])) as Record<typeof resourceKinds[number], string[]>;
+        .filter(([name, value]) => !(kind === 'volumes' && selectedVolumes.has(name)) && (!object(value) || !value.external)).map(([name]) => name)])) as Record<typeof resourceKinds[number], string[]>;
     const occupiedResources = Object.fromEntries(resourceKinds.map(kind => [kind,
-        new Set(Object.keys(object(current.source[kind]) ? current.source[kind] : {}))])) as Record<typeof resourceKinds[number], Set<string>>;
+        new Set(Object.keys(object(currentSource[kind]) ? currentSource[kind] : {}))])) as Record<typeof resourceKinds[number], Set<string>>;
     const available = (ordinal: number) => services.every(name => !occupiedServices.has(ordinal === 1 ? name : `${name}-${ordinal}`))
         && variables.every(name => !occupiedVariables.has(ordinal === 1 ? name : `${name}_${ordinal}`))
         && resourceKinds.every(kind => resources[kind].every(name => !occupiedResources[kind].has(ordinal === 1 ? name : `${name}-${ordinal}`)));

@@ -40,10 +40,11 @@ import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/ag
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 
 afterEach(() => vi.restoreAllMocks());
 
-it('persists two additions of the bundled default database with independent generated credentials', async () => {
+it.each([false, true])('persists independent generated credentials from a bundled database (reviewed mapping=%s)', async reviewedMapping => {
     const fixture = await createSavedSecretsCliHttpFixture();
     try {
         const credentials = await fixture.deps.readCredentialsFn?.();
@@ -54,10 +55,12 @@ it('persists two additions of the bundled default database with independent gene
         const entry: unknown = catalog.apps.find((entry: { itemId: string }) => entry.itemId === 'postgresql');
         if (!entry || typeof entry !== 'object' || !('app' in entry)) throw new Error('Expected bundled PostgreSQL');
         const app = DeploymentTemplateV1Schema.parse(entry.app);
+        const selectedCatalog = reviewedMapping ? { schemaVersion: 1, apps: [{ itemId: 'postgresql', app: { ...app,
+            generatedSecrets: app.generatedSecrets.map(secret => ({ ...secret, profile: { kind: 'author-code' } })) } }] } : catalog;
         const source: RegistrySourceDescriptorV1 = { id: 'apps', title: 'Apps', format: 'happier-catalog', kinds: ['app'],
             url: 'https://apps.test/catalog.json', enabled: true, addedAt: 1, origin: { kind: 'user' }, removable: true };
         const registry = createRegistryHostV1({ host: 'node', readSources: async () => [source], http: {
-            getJson: async () => ({ ok: true, value: catalog, fetchedAt: 1 }),
+            getJson: async () => ({ ok: true, value: selectedCatalog, fetchedAt: 1 }),
             getText: async () => { throw new Error('No text fetch'); }, getBytes: async () => { throw new Error('No binary fetch'); },
         } });
         const selected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await registry.execute('registries.items.read', {
@@ -84,7 +87,7 @@ it('persists two additions of the bundled default database with independent gene
         };
         const originalGet = axios.get.bind(axios);
         const originalRequest = axios.request.bind(axios);
-        vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(catalog));
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(selectedCatalog));
         vi.spyOn(axios, 'get').mockImplementation(async (url, config) => url.endsWith('/v1/account/entity-rows/prompt-library')
             ? { status: 200, data: PromptLibraryRowsListResponseV1Schema.parse({ status: 'listed',
                 rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1, content: key === 'registry-sources'
@@ -114,13 +117,28 @@ it('persists two additions of the bundled default database with independent gene
             if (definition.kind !== 'stored') throw new Error('Expected stored definition');
             const input = DeploymentTemplateInstantiateInputV1Schema.parse({ mode: 'apply', intent: 'add', serverId: 'home', machineId: 'target',
                 projectSourceId: 'project', templateRef: { sourceId: 'apps', itemId: 'postgresql', version: selected.summary.version!, ref: selected.payload.ref },
+                ...(reviewedMapping ? { appMappingCorrection: { document: JSON.stringify(app) } } : {}),
                 environment: { kind: 'existing', environmentId: current.environment.id, expectedRevision: current.environment.revision },
                 target: { kind: 'existing', targetLinkId: link.id, expectedRevision: link.revision, installationId: identity.installationId },
-                destination: { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest },
+                destination: ordinal === 1 ? { kind: 'stored' }
+                    : { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest },
                 bindings: [{ purpose: 'variable', name: 'DB_PASSWORD', phase: 'runtime', source: { kind: 'generated', key: 'DB_PASSWORD' } }],
-                generatedSecretAudience: { accountGrants: [], teamGrants: [], groupGrants: [] } });
+                ...(ordinal === 1 ? {} : { generatedSecretAudience: { accountGrants: [], teamGrants: [], groupGrants: [] } }) });
+            if (ordinal === 1) {
+                const stalePin = await fixture.inHome(() => templates.instantiate({ ...input, mode: 'preview',
+                    destination: { kind: 'stored', contentRevision: definition.contentRevision + 1,
+                        composeDigest: definition.composeDigest } }, { runtimeAccountId: 'account-cli-fixture' }));
+                expect(stalePin).toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
+                const staleEnvironment = await fixture.inHome(() => templates.instantiate({ ...input, mode: 'preview',
+                    environment: { kind: 'existing', environmentId: current.environment.id,
+                        expectedRevision: current.environment.revision + 1 } }, { runtimeAccountId: 'account-cli-fixture' }));
+                expect(staleEnvironment).toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
+                expect(fixture.writes).toHaveLength(0);
+            }
             const preview = await fixture.inHome(() => templates.instantiate({ ...input, mode: 'preview' }, { runtimeAccountId: 'account-cli-fixture' }));
             expect(preview).toMatchObject({ kind: 'preview', review: { generatedSecrets: [{ name: ordinal === 1 ? 'DB_PASSWORD' : 'DB_PASSWORD_2' }] } });
+            const prepared = await fixture.inHome(() => templates.prepare(input, { runtimeAccountId: 'account-cli-fixture' }));
+            expect(prepared.input).toEqual(input);
             const result = await fixture.inHome(() => templates.instantiate(input, { runtimeAccountId: 'account-cli-fixture' }));
             expect(result).toMatchObject({ kind: 'applied', savedSecrets: [{ name: ordinal === 1 ? 'DB_PASSWORD' : 'DB_PASSWORD_2' }] });
         }
@@ -142,6 +160,7 @@ it('persists two additions of the bundled default database with independent gene
         expect(stored.template?.exports?.DATABASE_URL).toMatchObject({ service: 'database-2',
             env: { DATABASE_URL: 'postgres://${DB_USER_2}:${DB_PASSWORD_2}@database-2:5432/${DB_NAME_2}' } });
         expect(fixture.writes).toHaveLength(2);
+        expect(fixture.writes[0]).toMatchObject({ accountGrants: [], teamGrants: [], groupGrants: [] });
         expect(fixture.opened(fixture.writes[0]!)?.value === fixture.opened(fixture.writes[1]!)?.value).toBe(false);
     } finally { await fixture.close(); }
 });
@@ -446,7 +465,17 @@ it('prepares a catalog upgrade from the recorded pin and keeps local edits and b
         environment: { kind: 'existing', environmentId: current.environment.id, expectedRevision: current.environment.revision },
         target: { kind: 'existing', targetLinkId: link.id, expectedRevision: link.revision, installationId: identity.installationId },
         destination: { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest }, bindings: [] });
-    const upgradeResult = await templates.instantiate(input, { runtimeAccountId: 'owner' });
+    const executor = createActionExecutor({
+        resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('Metadata reader owns this query'); },
+            async () => ({ ok: true, environment: { id: current.environment.id, projectSourceId: 'project', purpose: 'standard' } })),
+        isActionApprovalRequired: () => false,
+        prepareDeploymentTemplateInstantiation: request => templates.prepare(request.input, request.context, request.executeCanonicalAction),
+        deploymentTemplateInstantiate: (input, context) => templates.instantiate(input, context),
+    });
+    const context = { serverId: 'home', runtimeAccountId: 'owner', surface: 'cli' as const,
+        authority: 'account_automation' as const, actionCaller: { kind: 'host' as const }, actionRequestId: 'upgrade-app',
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'deployments.bindings.set': ['cli'] } }) };
+    const upgradeResult = await executor.execute('deployments.templates.instantiate', input, context);
     expect(proposed, JSON.stringify(upgradeResult)).toHaveLength(1);
     const prepared = DeploymentEnvironmentContentV1Schema.parse(proposed[0]);
     if (prepared.definition.kind !== 'stored') throw new Error('Expected stored candidate');
@@ -456,7 +485,7 @@ it('prepares a catalog upgrade from the recorded pin and keeps local edits and b
     expect(requests.some(url => url.includes(`/${oldCommit}/templates/compose/app.yaml`))).toBe(true);
     expect(requests.some(url => url.includes(`/${newCommit}/templates/compose/app.yaml`))).toBe(true);
     baselineAvailable = false;
-    expect(await templates.instantiate(input, { runtimeAccountId: 'owner' })).toMatchObject({ ok: false, errorCode: 'template_source_unavailable' });
+    expect(await executor.execute('deployments.templates.instantiate', input, context)).toMatchObject({ ok: false, errorCode: 'template_source_unavailable' });
     expect(proposed).toHaveLength(1);
 });
 

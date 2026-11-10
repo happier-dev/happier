@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ScmCommitOidSchema } from './commitPublication.js';
 import { ScmPullRequestSummarySchema } from './pullRequests.js';
@@ -14,3 +14,15 @@ export const ScmRepositoryFilesPullRequestPartialV1Schema = lazyZodSchema(() => 
   pullRequest: z.optional(ScmPullRequestSummarySchema),
 }));
 export type ScmRepositoryFilesPullRequestPartialV1 = z.infer<typeof ScmRepositoryFilesPullRequestPartialV1Schema>;
+
+export const ScmRepositoryFilesPullRequestSuccessV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('pullRequest'),
+  pullRequest: ScmPullRequestSummarySchema,
+  headCommit: ScmCommitOidSchema,
+  branchName: z.string().check(z.minLength(1)),
+}));
+export type ScmRepositoryFilesPullRequestSuccessV1 = z.infer<typeof ScmRepositoryFilesPullRequestSuccessV1Schema>;
+export const ScmRepositoryFilesPullRequestResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  ScmRepositoryFilesPullRequestPartialV1Schema, ScmRepositoryFilesPullRequestSuccessV1Schema,
+]));
+export type ScmRepositoryFilesPullRequestResultV1 = z.infer<typeof ScmRepositoryFilesPullRequestResultV1Schema>;

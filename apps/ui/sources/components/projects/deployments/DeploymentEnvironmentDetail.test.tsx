@@ -153,6 +153,7 @@ const noReview = { pendingId: null, request: () => {}, open: () => {} };
 
 it.each(['update_available', 'removed_from_source', 'unchecked'] as const)(
   'opens the owning review or source repair from the Environment catalog notice (%s)', async state => {
+    await homes.switchAccount(scope.serverId, scope.accountId, { currentAccount: true });
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
     const { createPromptLibraryCatalogBoundary } = await import('@/dev/testkit/harness/promptLibraryCatalogBoundary');
@@ -185,14 +186,34 @@ it.each(['update_available', 'removed_from_source', 'unchecked'] as const)(
         schemaVersion: 1, title: 'App', compose: { document: 'services:\n  app:\n    image: nginx:2\n', profiles: [], services: ['app'] },
         variables: [], generatedSecrets: [], domains: [], volumes: [],
       } }] }));
-    await answerExternalActionAccountForHome(homes, scope.serverId, { actionId: 'registries.updates.check',
+    const observedChecks: string[] = [];
+    const boundaryTrace: string[] = [];
+    const boundary = await answerExternalActionAccountForHome(homes, scope.serverId, { actionId: 'registries.updates.check',
       machineId: member.machineId, installationId: member.installationId, tokenEpoch: 0, requesterInvocation: 'none', execute: async raw => {
         const input = REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check'].parse(raw);
         if (input.kind !== 'app') throw new Error('Expected app update demand');
         // The remote host is the process boundary; its real finite registry checker decides the observation.
-        return checkRegistryAppUpdatesV1({ http: upstreamHttp }, { environments: input.environments,
+        const checked = await checkRegistryAppUpdatesV1({ http: upstreamHttp }, { environments: input.environments,
           readEnvironment: async () => detail, readSources: async () => [{ ...source, origin: { kind: 'user' }, removable: true }] });
+        observedChecks.push(...checked.results.map(result => result.upstream.state === 'unchecked'
+          ? `${result.upstream.state}:${result.upstream.reason.state}` : result.upstream.state));
+        return checked;
       } });
+    const handle = boundary.handle.bind(boundary);
+    boundary.handle = async (url, init) => {
+      const request = `${init?.method ?? 'GET'} ${url.pathname}`;
+      try {
+        const response = await handle(url, init);
+        boundaryTrace.push(`${request}:${response?.status ?? 'unhandled'}`);
+        return response;
+      } catch (error) {
+        const issues = error && typeof error === 'object' && 'issues' in error && Array.isArray(error.issues)
+          ? error.issues.map(issue => issue && typeof issue === 'object'
+            ? { code: 'code' in issue ? issue.code : null, path: 'path' in issue ? issue.path : null } : null) : [];
+        boundaryTrace.push(`${request}:${error instanceof Error ? error.name : 'unknown'}:${JSON.stringify(issues)}`);
+        throw error;
+      }
+    };
     const account = await captureLazyActionAccountContext(scope.serverId);
     storage.setState({ settingsScope: account.accountLifetime.scope, profileScope: account.accountLifetime.scope });
     storage.getState().activateProfileScope(account.accountLifetime.scope);
@@ -205,6 +226,9 @@ it.each(['update_available', 'removed_from_source', 'unchecked'] as const)(
       phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={account.accountLifetime} /></ModalProvider>);
     try {
       const banner = 'project-deployments.environment.attention.catalogUpdate';
+      await waitForHomeGovernance(() => expect(observedChecks, JSON.stringify({ boundaryTrace,
+        requests: [...new Set(homes.requests.map(request => `${request.method} ${request.path.split('?')[0]}`))] }))
+        .toContain(state === 'unchecked' ? 'unchecked:auth_failed' : state));
       await waitForContent(screen, `${banner}.action`);
       await screen.pressByTestIdAsync(`${banner}.action`);
       await waitForContent(screen, state === 'update_available' ? 'project-deployments.add.review' : 'project-deployments.template.sources.view');

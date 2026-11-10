@@ -172,7 +172,7 @@ export function DeploymentAddReview(props: Readonly<{
             {preflight.status === 'ready' && preflight.repositoryChange ? preflight.repositoryChange.files.map(file =>
               <View key={file.path} testID="project-deployments.template.repositoryDiff">
                 <Item title={file.path} mode="info" />
-                <DiffViewer mode="text" oldText={file.before ?? ''} newText={file.content} />
+                <DiffViewer mode="text" oldText={file.before ?? ''} newText={file.content ?? ''} />
               </View>) : null}
             {read.kind === 'ready' && !props.update ? <>
               <DeploymentTemplateChoices template={read.app} lifetime={props.lifetime} value={choices} onChange={setChoices}

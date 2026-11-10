@@ -1,5 +1,5 @@
 import { RegistryAppMappingV1Schema } from '../registries/registryAppMappingV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
@@ -27,7 +27,7 @@ import { ScmHostingRepositoryIdentityV1Schema } from '../scm/hostingRepositoryId
 import { ScmCommitOidSchema } from '../scm/commitPublication.js';
 import { ScmRepositoryContainedSubdirV1Schema } from '../scm/repositoryClone.js';
 import { ScmPullRequestSummarySchema } from '../scm/pullRequests.js';
-import { ScmRepositoryFilesPullRequestPartialV1Schema } from '../scm/repositoryFilesPullRequest.js';
+import { ScmRepositoryFilesPullRequestResultV1Schema } from '../scm/repositoryFilesPullRequest.js';
 
 const existingEnvironment = lazyZodSchema(() => z.strictObject({ kind: z.literal('existing'), environmentId: id, expectedRevision: revision }));
 const createEnvironment = lazyZodSchema(() => z.strictObject({ kind: z.literal('create'), name: StoredAppPresetInputV1Schema.shape.name, requestKey: id,
@@ -148,7 +148,7 @@ export const DeploymentTemplateInstantiationReviewV1Schema = lazyZodSchema(() =>
   capacity: z.optional(DeploymentTemplateCapacityReviewV1Schema),
   deploy: z.optional(deploy),
   repositoryChange: z.optional(z.strictObject({ ...repositoryDestination.shape,
-    files: z.array(z.strictObject({ path: ScmRepositoryContainedSubdirV1Schema, before: z.nullable(z.string()), content: z.string() })) })),
+    files: z.array(z.strictObject({ path: ScmRepositoryContainedSubdirV1Schema, before: z.nullable(z.string()), content: z.nullable(z.string()) })) })),
 }));
 export type DeploymentTemplateInstantiationReviewV1 = z.infer<typeof DeploymentTemplateInstantiationReviewV1Schema>;
 
@@ -167,7 +167,7 @@ export const DeploymentTemplateInstantiationPartialV1Schema = lazyZodSchema(() =
   kind: z.literal('partial'), environmentId: z.optional(id), revision: z.optional(revision),
   targetLinkId: z.optional(id), definition: z.optional(storedPin), savedSecrets,
   phase: z.enum(['generation', 'repository', 'environment', 'target', 'bindings', 'metadata', 'domains', 'deploy']), errorCode: id,
-  repositoryChange: z.optional(ScmRepositoryFilesPullRequestPartialV1Schema),
+  repositoryChange: z.optional(ScmRepositoryFilesPullRequestResultV1Schema),
   requiredFact: z.optional(z.string()), remedy: z.optional(z.string()),
   failure: z.optional(DeploymentDomainFailureDetailsV1Schema),
   deployment: z.optional(DeploymentReceiptAcceptedResultV1Schema),

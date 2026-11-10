@@ -1,6 +1,7 @@
 import axios from '@/api/client/credentialAxios';
 import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import { createHash } from 'node:crypto';
+import { posix } from 'node:path';
 import type { ActionExecutorContext, ActionExecutorDeps, DeploymentTemplateInstantiateInputV1,
     DeploymentTemplateInstantiateResultV1, DeploymentArtifactContentReferenceV1,
     DeploymentTemplateInstantiationReviewV1, StoredAppPresetInputV1, DeploymentDeployIntentInputV1,
@@ -11,13 +12,13 @@ import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/
 import { DeploymentDomainMutationResultV1Schema, DeploymentEnvironmentCreateResultV1Schema,
     DeploymentBindingsSetResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, areDeploymentTemplateReviewFactsEqualV1,
-    readDeploymentTemplateDeployIntentV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+    readDeploymentTemplateDeployIntentV1, buildCatalogAppTemplateBindings } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { DeploymentReceiptAcceptedResultV1Schema, DeploymentReceiptSettlementFailureDetailsV1Schema,
     projectDeploymentReceiptSettlementAcceptedResultV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
-import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, registryContentRefEqualV1, RegistryFetchErrorV1 } from '@happier-dev/protocol/registries';
+import { RegistryFetchErrorV1 } from '@happier-dev/protocol/registries';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentTemplateSetInputV1Schema,
@@ -30,7 +31,6 @@ import type { StoredCredentials } from '@/persistence';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
-import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { admitStoredComposeDefinition, parseNativeComposeSource, storedComposeDefinitionDigest } from '@/workspaces/projectSetup/nativeComposeSource';
 import { createDeploymentTemplateGeneratedSecretForHost, validateDeploymentTemplateGeneratedSecretProfileForHost } from './generatedSecretForHost';
@@ -38,7 +38,13 @@ import type { DeploymentCreationDefaultRequestForHost, DeploymentCreationDefault
 import { createPublishCatalogPreparation } from '@/workspaces/publishProject';
 import { readDeploymentAuthorizationFailure } from '../deploymentAuthorizationFailure';
 import { projectDeploymentFailure } from '../deploymentFailure';
+import { readPinnedDeploymentTemplateForHost } from './readPinnedTemplateForHost';
+import type { CliAdmittedProjectRowsReader } from '@/session/actions/cliActionDeps/projectAdmission';
+import { resolveAdmittedRepositoryWorkspace, validateAdmittedRepositoryWorkspace } from '@/workspaces/admittedRepositoryWorkspace';
+import { prepareRepositoryFilesPullRequest, openRepositoryFilesPullRequest, type RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
+import { REPOSITORY_FILES_PULL_REQUEST_CHILDREN_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 const refuse = (failure: string | ActionExecuteFailure): never => {
     const code = typeof failure === 'string' ? failure : failure.errorCode;
@@ -49,7 +55,7 @@ const deploymentTemplateBindingsChildRole = 'template.bindings';
 function deploymentTemplateReviewedChildren(review: DeploymentTemplateInstantiationReviewV1): HostReviewedChildrenPreparationV1 {
     const children = review.domains.map(domain => ({ action: 'deployments.domains.add' as const,
         role: deploymentTemplateDomainChildRole(domain.key) }));
-    return { children: [{ action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, role: deploymentTemplateBindingsChildRole }, ...children, ...(review.deploy ? [{ action: 'deployments.deploy' as const,
+    return { children: [{ action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, role: deploymentTemplateBindingsChildRole }, ...children, ...(review.repositoryChange ? REPOSITORY_FILES_PULL_REQUEST_CHILDREN_V1 : []), ...(review.deploy ? [{ action: 'deployments.deploy' as const,
         role: 'template.deploy' }] : [])] };
 }
 function failure(errorCode: string, error?: unknown): ActionExecuteFailure {
@@ -85,6 +91,9 @@ type Host = Readonly<{
     assertCurrent(context: ActionExecutorContext): Promise<void>;
     headers(context: ActionExecutorContext, actionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>): Promise<Readonly<Record<string, string>>>;
     storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
+    sharedRepositoryWorkspace?: Readonly<{ readWorkspaceRows: CliAdmittedProjectRowsReader; readSource: NonNullable<ActionExecutorDeps['projectSourcesRead']> }>;
+    repositoryFiles?: (cwd: string, context: ActionExecutorContext,
+        executeCanonicalAction?: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>) => RepositoryFilesPullRequestHost;
     deploy?(input: DeploymentDeployIntentInputV1, context: ActionExecutorContext, source?: Readonly<{ id: string; revision: number }>): ReturnType<NonNullable<ActionExecutorDeps['deploymentAction']>>;
     readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
     readCreationDefaultInputs(request: DeploymentCreationDefaultRequestForHost): Promise<DeploymentCreationDefaultInputsForHost>;
@@ -105,14 +114,9 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         if (source.source.id !== projectSourceId || !source.canManage) return refuse('source_access_denied');
         return source;
     }
-    async function readPinnedTemplate(input: Pick<DeploymentTemplateInstantiateInputV1, 'templateRef'>, context: ActionExecutorContext) {
-        const registry = createCliRegistryHostV1({ credentials: host.credentials, signal: context.signal,
-            operationContext: host.savedSecretOperationContext });
-        const selected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await registry.execute('registries.items.read', {
-            kind: 'app', sourceId: input.templateRef.sourceId, itemId: input.templateRef.itemId, version: input.templateRef.version })).item;
-        if (selected.payload.kind !== 'app' || selected.payload.state !== 'ready') return refuse('template_needs_review');
-        if (!registryContentRefEqualV1(selected.payload.ref, input.templateRef.ref)) return refuse('template_changed');
-        return selected.payload.app;
+    async function readPinnedTemplate(input: Pick<DeploymentTemplateInstantiateInputV1, 'templateRef' | 'appMappingCorrection'>, context: ActionExecutorContext) {
+        return readPinnedDeploymentTemplateForHost(input.templateRef, { credentials: host.credentials, signal: context.signal,
+            operationContext: host.savedSecretOperationContext }, input.appMappingCorrection);
     }
     const preparePublishEntry = createPublishCatalogPreparation({
         async readSelection(input, context) {
@@ -131,7 +135,8 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
     });
     async function prepareInput(input: TemplatePreparationInput, context: ActionExecutorContext,
         actionId: DeploymentCreationDefaultRequestForHost['actionId'] = 'deployments.templates.instantiate',
-        creationReview?: DeploymentTemplateInstantiationReviewV1) {
+        creationReview?: DeploymentTemplateInstantiationReviewV1,
+        executeCanonicalAction?: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>) {
         // Receiver identity is checked before any fetch, entropy, Artifact or native acquisition.
         if (input.serverId !== host.serverId || input.environment.kind === 'create'
             && input.environment.controllerMachineId !== undefined
@@ -145,16 +150,17 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             ? await host.readEnvironment({ environmentId: input.environment.environmentId, context }) : undefined;
         // Catalog preview may still be resolving creation defaults. An authored
         // controller or persisted Environment always owns the original root.
-        if (current && current.environment.controllerMachineId !== host.machineId
+        if (current && input.destination.kind !== 'repositoryPullRequest' && current.environment.controllerMachineId !== host.machineId
             || input.target && await host.readInstallation(input.machineId, context) !== input.target.installationId) return refuse('target_mismatch');
         if (current) {
             const target = input.target ?? refuse('target_mismatch');
             if (input.environment.kind !== 'existing' || current.environment.id !== input.environment.environmentId
                 || current.environment.projectSourceId !== input.projectSourceId || !current.environment.capabilities.manage
                 || !current.environment.capabilities.manageBindings) return refuse('deployment_access_denied');
-            if (current.environment.revision !== input.environment.expectedRevision || current.content.definition.kind !== 'stored'
-                || !('contentRevision' in input.destination) || current.content.definition.contentRevision !== input.destination.contentRevision
-                || current.content.definition.composeDigest !== input.destination.composeDigest) return refuse('deployment_conflict');
+            if (current.environment.revision !== input.environment.expectedRevision
+                || current.content.definition.kind !== (input.destination.kind === 'repositoryPullRequest' ? 'repository' : 'stored')
+                || 'contentRevision' in input.destination && (current.content.definition.kind !== 'stored' || current.content.definition.contentRevision !== input.destination.contentRevision
+                    || current.content.definition.composeDigest !== input.destination.composeDigest)) return refuse('deployment_conflict');
             if (target.kind === 'existing') {
                 const selectedTarget = target;
                 const link = current.targetLinks.find(item => item.targetLink.id === selectedTarget.targetLinkId)?.targetLink;
@@ -167,8 +173,37 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         }
         const template = await readPinnedTemplate(input, context);
         const sourceDocument = await parseNativeComposeSource(template.compose.document);
-        const existingSource = current?.content.definition.kind === 'stored' ? await parseNativeComposeSource(current.content.definition.document) : undefined;
-        const currentInput = current && existingSource ? { content: current.content, source: existingSource } : undefined;
+        let repositoryFiles: RepositoryFilesPullRequestHost | undefined;
+        let repositoryCwd: string | undefined;
+        let existingDocument = current?.content.definition.kind === 'stored' ? current.content.definition.document : undefined;
+        let repositoryPublicFiles: { path: string; content: string }[] | undefined;
+        if (input.destination.kind === 'repositoryPullRequest') {
+            const destination = input.destination;
+            const ports = host.sharedRepositoryWorkspace ?? refuse('workspace_unavailable');
+            if (!current || current.content.definition.kind !== 'repository' || !source) return refuse('source_changed');
+            if (current.content.definition.compose?.path !== destination.composePath) return refuse('source_changed');
+            const resolved = await resolveAdmittedRepositoryWorkspace({ workspace: destination.workspace,
+                expected: { projectSourceId: source.source.id, sourceRevision: destination.sourceRevision, repository: destination.repository },
+                context, readWorkspaceRows: ports.readWorkspaceRows, fallbackActionId: actionId });
+            if ('ok' in resolved) return refuse(resolved);
+            if (resolved.kind !== 'resolved') return refuse(resolved.reason);
+            if (resolved.workspace.machineId !== host.machineId) return refuse('target_mismatch');
+            repositoryCwd = resolved.workspace.rootPath;
+            repositoryFiles = host.repositoryFiles?.(repositoryCwd, context, executeCanonicalAction) ?? refuse('credential_scope_denied');
+            const native = await validateAdmittedRepositoryWorkspace({ workspace: resolved.workspace,
+                projectSourceId: source.source.id, sourceRevision: destination.sourceRevision, repository: destination.repository,
+                baseCommit: destination.baseCommit, context, readSource: ports.readSource, admittedSource: source.source,
+                readScmStatus: () => repositoryFiles!.executeScm('scm.status.snapshot', { cwd: repositoryCwd, includeWorktreeStatus: false }) });
+            if ('ok' in native) return refuse(native);
+            if (native.kind !== 'validated') return refuse(native.reason);
+            const before = await prepareRepositoryFilesPullRequest({ cwd: repositoryCwd, ...destination,
+                files: [{ path: destination.composePath, content: '' }] }, repositoryFiles);
+            existingDocument = before.files[0]?.before ?? refuse('compose_missing');
+            repositoryPublicFiles = [];
+        }
+        const existingSource = existingDocument ? await parseNativeComposeSource(existingDocument) : undefined;
+        const currentInput = current && existingSource ? { content: current.content, source: existingSource,
+            ...(repositoryPublicFiles ? { publicFiles: repositoryPublicFiles } : {}) } : undefined;
         const recorded = resolveDeploymentTemplateInstantiationBaselineRefV1({ templateRef: input.templateRef, source: sourceDocument, current: currentInput,
             intent: input.intent });
         const baselineTemplate = recorded ? await readPinnedTemplate({ templateRef: recorded }, context).catch(error => {
@@ -177,6 +212,13 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             }) : undefined;
         const baseline = recorded && baselineTemplate ? { templateRef: recorded,
             source: await parseNativeComposeSource(baselineTemplate.compose.document), publicFiles: baselineTemplate.compose.publicFiles } : undefined;
+        if (input.destination.kind === 'repositoryPullRequest' && repositoryFiles && repositoryCwd && currentInput) {
+            const destination = input.destination;
+            const paths = [...new Set([...(template.compose.publicFiles ?? []), ...(baseline?.publicFiles ?? [])].map(file => file.path))];
+            const before = await prepareRepositoryFilesPullRequest({ cwd: repositoryCwd, ...destination,
+                files: paths.map(path => ({ path: posix.join(posix.dirname(destination.composePath), path), content: '' })) }, repositoryFiles);
+            currentInput.publicFiles = before.files.flatMap((file, index) => file.before === null ? [] : [{ path: paths[index]!, content: file.before }]);
+        }
         // Snapshot the existing sampler once, only when declared memory needs it.
         // No new collection, timer, freshness budget or Docker-filesystem guess.
         const sample = template.minimumResources?.memoryBytes !== undefined && input.target && input.machineId === host.machineId
@@ -185,14 +227,18 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             ...(sample ? { targetResources: { sampledAt: sample.sampledAt,
                 ...(sample.memory.reported ? { memoryBytes: sample.memory.totalBytes } : {}) } } : {}),
             ...(currentInput ? { current: { ...currentInput, ...(baseline ? { baseline } : {}) } } : {}),
-            bindings: input.bindings, connectTo: input.connectTo, replace: input.replace, domainBindings: input.domainBindings };
+            bindings: input.bindings, connectTo: input.connectTo, replace: input.replace, domainBindings: input.domainBindings,
+            volumeBindings: input.volumeBindings };
         const prepared = prepareDeploymentTemplateInstantiationV1(prepareInput);
         const candidateDefinition = { kind: 'stored' as const,
             composeDigest: storedComposeDefinitionDigest(prepared),
             document: prepared.document, profiles: prepared.profiles, services: prepared.services,
             ...(prepared.publicFiles === undefined ? {} : { publicFiles: prepared.publicFiles }),
             ...(prepared.primaryService ? { primaryService: prepared.primaryService } : {}) };
-        const contentRevision = resolveDeploymentStoredDefinitionRevisionV1(current?.content.definition, candidateDefinition);
+        // Repository proposals use the stored parser for review only; they do not
+        // transition the Environment's definition owner to stored content.
+        const contentRevision = resolveDeploymentStoredDefinitionRevisionV1(
+            input.destination.kind === 'repositoryPullRequest' ? undefined : current?.content.definition, candidateDefinition);
         if (contentRevision === null) return refuse('deployment_conflict');
         const definition = { ...candidateDefinition, contentRevision };
         await admitStoredComposeDefinition(definition);
@@ -221,7 +267,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             document: prepared.document,
             profiles: prepared.profiles, services: prepared.services, ...(prepared.primaryService ? { primaryService: prepared.primaryService } : {}),
             bindings: prepared.bindings, generatedSecrets: prepared.generatedSecrets, domains: prepared.domains,
-            capacity: prepared.capacity,
+            capacity: prepared.capacity, connectToServices: prepared.connectToServices,
             ...(prepared.publicFiles === undefined ? {} : { publicFiles: prepared.publicFiles }),
             ...(input.deploy ? { deploy: input.deploy } : {}),
             ...(prepared.template.firstRunSetup ? { firstRunSetup: prepared.template.firstRunSetup } : {}),
@@ -229,17 +275,26 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 ...(creationReview?.creationDefaultsBasis ?? defaultInputs.reviewBasis
                     ? { creationDefaultsBasis: creationReview?.creationDefaultsBasis ?? defaultInputs.reviewBasis } : {}) } : {}),
             ...(template.minimumResources ? { minimumResources: template.minimumResources } : {}) };
+        const repositoryReview = input.destination.kind === 'repositoryPullRequest' && repositoryFiles && repositoryCwd
+            ? await prepareRepositoryFilesPullRequest({ cwd: repositoryCwd, ...input.destination,
+                files: [{ path: input.destination.composePath, content: prepared.document },
+                    ...[...new Set([...(currentInput?.publicFiles ?? []), ...(prepared.publicFiles ?? [])].map(file => file.path))]
+                        .map(path => ({ path: posix.join(posix.dirname(input.destination.kind === 'repositoryPullRequest' ? input.destination.composePath : ''), path),
+                            content: prepared.publicFiles?.find(file => file.path === path)?.content ?? null }))] }, repositoryFiles) : undefined;
+        if (repositoryReview && input.destination.kind === 'repositoryPullRequest') review.repositoryChange = { ...input.destination,
+            files: repositoryReview.files.map(({ path, before, content }) => ({ path, before, content })) };
         // Source access and ownership belong to this admission. Later finite writes
         // consume these facts and stop only on the admitted invocation's cancellation.
         const contentAuthority = { owner: projectOwner, async assertCurrent() { context.signal?.throwIfAborted(); } };
-        return { input, current, prepared, prepareInput, definition, review, name, defaults, content, contentAuthority,
+        return { input, current, prepared, prepareInput, definition, review, name, defaults, content, contentAuthority, repositoryReview,
             source: source ? { id: source.source.id, revision: source.source.revision } : undefined };
     }
     function prepare(raw: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext,
-        creationReview?: DeploymentTemplateInstantiationReviewV1) {
+        creationReview?: DeploymentTemplateInstantiationReviewV1,
+        executeCanonicalAction?: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>) {
         return prepareInput(DeploymentTemplateInstantiateInputV1Schema.parse(raw), context,
             context.externalActionExecutionAuthorization?.binding.actionId === 'deployments.environments.create'
-                ? 'deployments.environments.create' : 'deployments.templates.instantiate', creationReview);
+                ? 'deployments.environments.create' : 'deployments.templates.instantiate', creationReview, executeCanonicalAction);
     }
     /** P40's catalog create is an adapter into this same P45 preparation and apply owner. */
     function fromCreate(input: DeploymentEnvironmentCreateIntentInputV1): TemplatePreparationInput {
@@ -258,20 +313,23 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
     }
     async function instantiate(raw: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext,
         reviewed?: DeploymentTemplateInstantiationReviewV1,
-        creationReview?: DeploymentTemplateInstantiationReviewV1): Promise<DeploymentTemplateInstantiateResultV1 | ActionExecuteFailure> {
+        creationReview?: DeploymentTemplateInstantiationReviewV1,
+        executeCanonicalAction?: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>): Promise<DeploymentTemplateInstantiateResultV1 | ActionExecuteFailure> {
         try {
-            const plan = await prepare(raw, context, creationReview);
+            const plan = await prepare(raw, context, creationReview, executeCanonicalAction);
             if (reviewed && !areDeploymentTemplateReviewFactsEqualV1(reviewed, plan.review)) return failure('deployment_conflict');
-            return projectTemplateResult(await instantiatePrepared(plan, context));
+            return projectTemplateResult(await instantiatePrepared(plan, context, executeCanonicalAction));
         } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
     }
-    async function instantiatePrepared(plan: Awaited<ReturnType<typeof prepareInput>>, context: ActionExecutorContext): Promise<TemplatePreparationResult> {
+    async function instantiatePrepared(plan: Awaited<ReturnType<typeof prepareInput>>, context: ActionExecutorContext,
+        executeCanonicalAction?: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>): Promise<TemplatePreparationResult> {
         const savedSecrets: SavedSecrets = [];
         let phase: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }>['phase'] = 'generation';
         let environmentId: string | undefined; let revision: number | undefined; let targetLinkId: string | undefined;
         let appliedDefinition: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'applied' }>['definition'] | undefined;
         let unknownSecret: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }>['unknownSecret'];
         let deployment: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }>['deployment'];
+        let repositoryChange: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }>['repositoryChange'];
         let effectIssued = false;
         try {
             if (plan.input.mode === 'preview') return { kind: 'preview', review: plan.review };
@@ -280,12 +338,14 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             const { input } = plan;
             const createContent = (content: unknown, kind: string) => host.createContent(content, kind, context, plan.contentAuthority);
             const bindings: StoredAppPresetInputV1['bindings'] = [...plan.prepared.bindings];
+            const generatedSecretAudience = input.generatedSecretAudience
+                ?? buildCatalogAppTemplateBindings(plan.prepareInput.template).generatedSecretAudience;
             for (const secret of plan.prepared.generatedSecrets) {
                 context.signal?.throwIfAborted();
                 effectIssued = true;
                 try {
                     const source = await createDeploymentTemplateGeneratedSecretForHost({ name: `${plan.name} · ${secret.name}`, profile: secret.profile,
-                        audience: input.generatedSecretAudience ?? refuse('invalid_parameters'),
+                        audience: generatedSecretAudience ?? refuse('invalid_parameters'),
                         expectedScopeKey: resolveAccountSettingsScopeKey(host.credentials), signal: context.signal ?? new AbortController().signal,
                         readCredentials: async () => host.credentials,
                         operationContext: host.savedSecretOperationContext });
@@ -300,9 +360,6 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             }
             const finalPrepared = prepareDeploymentTemplateInstantiationV1({ ...plan.prepareInput, bindings });
             const defaults = plan.defaults;
-            const candidateDefinition = { kind: 'stored' as const, contentRevision: plan.definition.contentRevision, composeDigest: plan.definition.composeDigest };
-            let content = DeploymentEnvironmentContentV1Schema.parse(plan.current ? plan.content
-                : { ...plan.content, template: { ...finalPrepared.template, definition: candidateDefinition } });
             const commitBindings = async (set: DeploymentEnvironmentDetailV1['content']['bindings']) => {
                 const applied = await reviewedChild.invoke({ action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
                     role: deploymentTemplateBindingsChildRole, input: normalizeStrictJsonValue({ serverId: input.serverId,
@@ -320,6 +377,32 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 if (!parsed.ok) return refuse(parsed.error);
                 environmentId = parsed.environmentId; revision = parsed.revision;
             };
+            if (input.destination.kind === 'repositoryPullRequest') {
+                phase = 'repository';
+                const repositoryReview = plan.repositoryReview ?? refuse('workspace_unavailable');
+                const files = host.repositoryFiles?.(repositoryReview.cwd, context, executeCanonicalAction) ?? refuse('credential_scope_denied');
+                effectIssued = true;
+                const published = await openRepositoryFilesPullRequest(repositoryReview, files);
+                repositoryChange = published;
+                if (published.kind === 'partial') return { kind: 'partial', phase, errorCode: published.errorCode,
+                    environmentId: plan.current!.environment.id, revision: plan.current!.environment.revision,
+                    savedSecrets, repositoryChange: published };
+                const current = plan.current ?? refuse('deployment_unavailable');
+                environmentId = current.environment.id; revision = current.environment.revision;
+                const merged = new Map(current.content.bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
+                for (const binding of finalPrepared.bindings) merged.set(environmentSecretBindingIdentityV1(binding), binding);
+                const content = DeploymentEnvironmentContentV1Schema.parse({ ...current.content, bindings: [...merged.values()] });
+                phase = 'bindings';
+                await commitBindings(content.bindings);
+                phase = 'metadata';
+                const metadata = await commitTemplateMetadata(DeploymentEnvironmentContentV1Schema.parse({ ...content,
+                    template: { ...finalPrepared.template, definition: current.content.definition } }), environmentId, revision, input, context, plan.contentAuthority);
+                return { kind: 'pullRequest', environmentId, revision: metadata.revision, savedSecrets,
+                    pullRequest: published.pullRequest, headCommit: published.headCommit, branchName: published.branchName };
+            }
+            const candidateDefinition = { kind: 'stored' as const, contentRevision: plan.definition.contentRevision, composeDigest: plan.definition.composeDigest };
+            let content = DeploymentEnvironmentContentV1Schema.parse(plan.current ? plan.content
+                : { ...plan.content, template: { ...finalPrepared.template, definition: candidateDefinition } });
             phase = 'environment';
             effectIssued = true;
             const artifact = await createContent(content, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1);
@@ -364,17 +447,8 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             if (input.environment.kind === 'existing') {
                 phase = 'metadata';
                 const finalContent = DeploymentEnvironmentContentV1Schema.parse({ ...content, template: { ...finalPrepared.template, definition: appliedDefinition } });
-                const body = DeploymentEnvironmentTemplateSetInputV1Schema.parse({ serverId: context.externalActionExecutionAuthorization?.binding.serverIdentityId ?? input.serverId,
-                    environmentId, expectedRevision: revision, ...await createContent(finalContent, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1) });
-                const path = `/v1/deployments/environments/${encodeURIComponent(body.environmentId)}/template`;
-                const headers = await host.headers(context, 'deployments.templates.instantiate', { method: 'POST', path, body });
-                const response = await axios.request<unknown>({ method: 'POST', url: `${host.serverHttpBaseUrl}${path}`, headers, data: body,
-                    signal: context.signal, validateStatus: () => true }).catch(error => refuse(classifyHomeDomainHttpMutationFailureV1({
-                        error, issued: true, aborted: context.signal?.aborted === true })));
-                const result = DeploymentEnvironmentCreateResultV1Schema.safeParse(response.data);
-                if (!result.success) return refuse('outcome_unknown');
-                if (!result.data.ok) return refuse(result.data.error);
-                environmentId = result.data.environmentId; revision = result.data.revision;
+                const result = await commitTemplateMetadata(finalContent, environmentId!, revision!, input, context, plan.contentAuthority);
+                environmentId = result.environmentId; revision = result.revision;
             }
             if (input.deploy) {
                 phase = 'deploy';
@@ -451,10 +525,25 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 ...(domainFailure?.success ? { failure: domainFailure.data } : {}),
                 ...(environmentId ? { environmentId, revision } : {}), ...(targetLinkId ? { targetLinkId } : {}),
                 ...(deployment ? { deployment } : {}),
+                ...(repositoryChange ? { repositoryChange } : {}),
                 ...(appliedDefinition ? { definition: appliedDefinition } : {}), ...(unknownSecret ? { unknownSecret } : {}) };
             return authorizationFailure || diagnostic.failureCause
                 ? { ...diagnostic, details: partial, effectAttempted: true } : partial;
         }
+    }
+    async function commitTemplateMetadata(content: DeploymentEnvironmentDetailV1['content'], environmentId: string, revision: number,
+        input: TemplatePreparationInput, context: ActionExecutorContext, authority: Parameters<Host['createContent']>[3]) {
+        const body = DeploymentEnvironmentTemplateSetInputV1Schema.parse({ serverId: context.externalActionExecutionAuthorization?.binding.serverIdentityId ?? input.serverId,
+            environmentId, expectedRevision: revision, ...await host.createContent(content, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, context, authority) });
+        const path = `/v1/deployments/environments/${encodeURIComponent(body.environmentId)}/template`;
+        const headers = await host.headers(context, 'deployments.templates.instantiate', { method: 'POST', path, body });
+        const response = await axios.request<unknown>({ method: 'POST', url: `${host.serverHttpBaseUrl}${path}`, headers, data: body,
+            signal: context.signal, validateStatus: () => true }).catch(error => refuse(classifyHomeDomainHttpMutationFailureV1({
+                error, issued: true, aborted: context.signal?.aborted === true })));
+        const result = DeploymentEnvironmentCreateResultV1Schema.safeParse(response.data);
+        if (!result.success) return refuse('outcome_unknown');
+        if (!result.data.ok) return refuse(result.data.error);
+        return result.data;
     }
     function projectCreateResult(result: TemplatePreparationResult) {
         if ('kind' in result && result.kind === 'partial') return { ok: false as const, effectAttempted: true,
@@ -497,9 +586,10 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 return projectCreateResult(result);
             } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
-        async prepare(input: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext) {
+        async prepare(input: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext,
+            executeCanonicalAction?: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>) {
         try {
-            const plan = await prepare(input, context);
+            const plan = await prepare(input, context, undefined, executeCanonicalAction);
             return { input: DeploymentTemplateInstantiateInputV1Schema.parse(plan.input), preview: normalizeStrictJsonValue(plan.review),
                 hostReviewedChildren: admittedPreparation(plan, false) };
         }

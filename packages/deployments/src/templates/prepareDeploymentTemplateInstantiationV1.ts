@@ -7,16 +7,20 @@ export type DeploymentTemplateInstantiationPreparationInputV1 = Readonly<{
     template: DeploymentTemplateV1; templateRef: TemplateRef; intent?: DeploymentTemplateInstantiateInputV1['intent'];
     /** Parsed by P41's source syntax owner, never a separately interpreted template language. */
     source: Record<string, unknown>;
-    current?: Readonly<{ content: DeploymentEnvironmentContentV1; source: Record<string, unknown>;
+    current?: Readonly<{ content: DeploymentEnvironmentContentV1; source: Record<string, unknown>; publicFiles?: DeploymentTemplateV1['compose']['publicFiles'];
         baseline?: Readonly<{ templateRef: TemplateRef; source: Record<string, unknown> }> & Pick<DeploymentTemplateV1['compose'], 'publicFiles'> }>;
     bindings: StoredAppPresetInputV1['bindings']; connectTo?: Readonly<{ service: string }>;
+    /** Bindings consumed alongside this Add reserve names without copying their custody. */
+    reservedVariableNames?: readonly string[];
     replace?: readonly string[]; domainBindings?: Readonly<NonNullable<DeploymentTemplateInstantiateInputV1['domainBindings']>>;
+    volumeBindings?: Readonly<NonNullable<DeploymentTemplateInstantiateInputV1['volumeBindings']>>;
     /** One finite receiver sampler snapshot; absent facts remain unknown. */
     targetResources?: Readonly<{ sampledAt: number; memoryBytes?: number }>;
 }>;
 export type PreparedDeploymentTemplateInstantiationV1 = Readonly<{
     document: string; profiles: string[]; services: string[]; primaryService?: string;
     bindings: EnvironmentVariableBindingV1[];
+    connectToServices: string[];
     generatedSecrets: Readonly<{ name: string; phase: 'build' | 'runtime'; key: string; profile: DeploymentTemplateSecretProfileV1 }>[];
     domains: (DeploymentTemplateV1['domains'][number] & { hostname: string })[];
     capacity: DeploymentTemplateCapacityReviewV1;
@@ -61,6 +65,43 @@ function environment(value: unknown): Record<string, unknown> {
     return Object.fromEntries(entries);
 }
 
+/** A reviewed mount name changes the Compose source and the retained backup inventory together. */
+function prepareVolumeBindings(input: DeploymentTemplateInstantiationPreparationInputV1): DeploymentTemplateInstantiationPreparationInputV1 {
+    if (!input.volumeBindings?.length) return input;
+    const names = new Map<string, string>();
+    const declared = new Set(input.template.volumes.map(volume => volume.id));
+    for (const binding of input.volumeBindings) {
+        if (!declared.has(binding.templateVolumeId) || names.has(binding.templateVolumeId)) {
+            return refuse('template_needs_review');
+        }
+        names.set(binding.templateVolumeId, binding.source);
+    }
+    const source = structuredClone(input.source);
+    const rename = (name: string) => names.get(name) ?? name;
+    if (source.volumes !== undefined) {
+        const definitions: Record<string, unknown> = {};
+        for (const [name, definition] of Object.entries(record(source.volumes))) {
+            const selected = rename(name);
+            if (Object.hasOwn(definitions, selected) && !equal(definitions[selected], definition)) return refuse('template_resource_conflict');
+            definitions[selected] = definition;
+        }
+        source.volumes = definitions;
+    }
+    for (const value of Object.values(record(source.services))) {
+        const service = record(value);
+        if (Array.isArray(service.volumes)) service.volumes = service.volumes.map(mount => {
+            if (typeof mount === 'string') {
+                const separator = mount.indexOf(':');
+                return separator < 0 ? mount : `${rename(mount.slice(0, separator))}${mount.slice(separator)}`;
+            }
+            const entry = record(mount);
+            return typeof entry.source === 'string' ? { ...entry, source: rename(entry.source) } : entry;
+        });
+    }
+    return { ...input, source, template: { ...input.template,
+        volumes: input.template.volumes.map(volume => ({ ...volume, id: rename(volume.id) })) } };
+}
+
 /** Add-only/metadata composition needs no historical source; replacing an existing service does. */
 export function resolveDeploymentTemplateInstantiationBaselineRefV1(
     input: Pick<DeploymentTemplateInstantiationPreparationInputV1, 'templateRef' | 'source' | 'current' | 'intent'>,
@@ -75,7 +116,7 @@ export function resolveDeploymentTemplateInstantiationBaselineRefV1(
 
 /** One inert plan for preview/apply. P41 admits the output; Actions alone create refs and write content. */
 export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTemplateInstantiationPreparationInputV1): PreparedDeploymentTemplateInstantiationV1 {
-    input = prepareDeploymentTemplateAdditionV1(input);
+    input = prepareDeploymentTemplateAdditionV1(prepareVolumeBindings(input));
     const { template } = input;
     const source = structuredClone(input.source);
     const declaredServices = record(source.services);
@@ -93,7 +134,8 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
     if (baseline && !equal(baseline.templateRef, recorded)) return refuse('template_changed');
     const document = input.current ? structuredClone(input.current.source) : {};
     const fileMap = (files: DeploymentTemplateV1['compose']['publicFiles']) => Object.fromEntries((files ?? []).map(file => [file.path, file.content]));
-    const currentFiles = input.current?.content.definition.kind === 'stored' ? input.current.content.definition.publicFiles : undefined;
+    const currentDefinition = input.current?.content.definition;
+    const currentFiles = input.current?.publicFiles ?? (currentDefinition?.kind === 'stored' ? currentDefinition.publicFiles : undefined);
     const selectedFiles = fileMap(template.compose.publicFiles);
     const incumbentFiles = fileMap(currentFiles);
     let mergedFiles: Record<string, unknown>;
@@ -230,11 +272,13 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
         (entries ?? []).filter(entry => !replacedServices.has(entry.service) && Object.hasOwn(mergedServices, entry.service));
     const data = [...retainMetadata(previousTemplate?.data), ...(template.data ? [template.data] : [])];
     const health = [...retainMetadata(previousTemplate?.health), ...(template.health ?? [])];
+    const volumes = [...retainMetadata(previousTemplate?.volumes), ...template.volumes];
     const templateServices = [...new Set([...(previousTemplate?.services ?? []), ...selectedServices])]
         .filter(service => Object.hasOwn(mergedServices, service));
-    return { document: JSON.stringify(document), ...(publicFiles.length ? { publicFiles } : {}), profiles, services, ...(primaryService ? { primaryService } : {}), bindings, generatedSecrets, domains, capacity,
+    return { connectToServices: input.current ? Object.keys(record(input.current.source.services)) : [], document: JSON.stringify(document), ...(publicFiles.length ? { publicFiles } : {}), profiles, services, ...(primaryService ? { primaryService } : {}), bindings, generatedSecrets, domains, capacity,
         template: { templateRef: input.templateRef, services: templateServices,
             ...(health.length ? { health } : {}),
+            ...(volumes.length ? { volumes } : {}),
             ...(data.length ? { data } : {}), ...(template.exports ? { exports: template.exports } : {}),
             ...(template.loginFields ? { loginFields: template.loginFields } : {}), ...(template.firstRunSetup ? { firstRunSetup: template.firstRunSetup } : {}) } };
 }

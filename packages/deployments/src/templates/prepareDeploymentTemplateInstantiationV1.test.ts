@@ -43,13 +43,12 @@ describe('stored template preparation', () => {
         expect(prepared.template.volumes).toEqual([expect.objectContaining({ id: 'application-data', target: '/var/lib/postgresql/data' })]);
     });
 
-    it('preserves repository augmentation files across template additions and refuses conflicting replacements', () => {
+    it('preserves admitted repository files across template additions and refuses conflicting replacements', () => {
         const existing = current();
         const publicFiles = [{ path: 'files/previous.conf', content: 'retained template configuration' }];
-        const repository = { ...existing, content: { ...existing.content,
+        const repository = { ...existing, publicFiles, content: { ...existing.content,
             definition: { kind: 'repository' as const, ref: 'main', compose: {
                 path: 'nested/compose.yaml', profiles: [], services: ['app'],
-                augmentation: { document: JSON.stringify(existing.source), publicFiles },
             } } } };
         const addition = { path: 'files/database.conf', content: 'database configuration' };
         const selected = { ...template, compose: { ...template.compose, publicFiles: [addition] } };

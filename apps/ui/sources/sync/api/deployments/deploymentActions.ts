@@ -3,7 +3,7 @@ import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYM
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DeploymentTemplateInstantiateResultV1Schema, type DeploymentTemplateInstantiateInputV1, type DeploymentMoveToRepositoryInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTemplateInstantiateResultV1Schema, DeploymentMoveToRepositoryResultV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1, type DeploymentTemplateInstantiateInputV1, type DeploymentMoveToRepositoryInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentTemplateInstantiationPartialV1, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -74,7 +74,7 @@ export async function recoverUiDeploymentActionResult(params: Readonly<{
 /** Account-bound storage and the existing Machine Action transport; no UI native effects. */
 export function createUiDeploymentActionDeps(account: LazyActionAccountContext): Pick<ActionExecutorDeps,
     'deploymentAction' | 'resolveEnvironmentApprovalScope' | 'prepareDeploymentEnvironmentCreate'
-    | 'deploymentPrepare' | 'deploymentTemplateInstantiate' | 'prepareDeploymentTemplateInstantiation'> & Readonly<{
+    | 'deploymentPrepare' | 'deploymentTemplateInstantiate' | 'prepareDeploymentTemplateInstantiation' | 'deploymentMoveToRepository'> & Readonly<{
         readEnvironmentController(input: Readonly<{ serverId: string; environmentId: string }>, context: ActionExecutorContext):
             Promise<Readonly<{ ok: true; machineId: string }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
     }> {
@@ -118,8 +118,8 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             ...(response.failure.details === undefined ? {} : { details: response.failure.details }) };
         return response.value;
     }
-    const readEnvironmentController = async (input: Readonly<{ serverId: string; environmentId: string }>, context: ActionExecutorContext) => {
-        const read = await storage('deployments.environments.get', input, context);
+    const readEnvironmentController = async ({ serverId, environmentId }: Readonly<{ serverId: string; environmentId: string }>, context: ActionExecutorContext) => {
+        const read = await storage('deployments.environments.get', { serverId, environmentId }, context);
         if ('errorCode' in read) return read;
         const current = DeploymentEnvironmentGetResultV1Schema.parse(read);
         return current.ok ? { ok: true as const, machineId: current.environment.controllerMachineId } : failure(current.error);
@@ -137,6 +137,17 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         return approval.success ? approval.data : DeploymentTemplateInstantiateResultV1Schema.parse(result.result);
     };
+    const moveToRepository: NonNullable<ActionExecutorDeps['deploymentMoveToRepository']> = async (input, context) => {
+        account.assertCurrent();
+        if (!areServerProfileIdentifiersEquivalent(input.serverId, account.serverId)) return failure('action_account_scope_changed');
+        const selected = await resolveDeploymentMoveToRepositoryExecutionMachineIdV1(input,
+            createUiDeploymentWorkspaceMachineReader(account, context));
+        if (!selected.ok) return selected;
+        const result = await machine(DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, input, context, selected.machineId);
+        if (!result.ok) return result;
+        const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
+        return approval.success ? approval.data : DeploymentMoveToRepositoryResultV1Schema.parse(result.result);
+    };
     return { readEnvironmentController, resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(storage),
         deploymentPrepare: async (input, context) => {
             const selected = await createUiDeploymentWorkspaceMachineReader(account, context)(input.workspace);
@@ -147,6 +158,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             return approval.success ? approval.data : DeploymentPrepareResultV1Schema.parse(result.result);
         },
         deploymentTemplateInstantiate: instantiateTemplate,
+        deploymentMoveToRepository: moveToRepository,
         prepareDeploymentTemplateInstantiation: async ({ input, context }) => {
             const preview = await instantiateTemplate({ ...input, mode: 'preview' }, context);
             if ('ok' in preview) return preview;

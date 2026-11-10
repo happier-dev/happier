@@ -4,6 +4,7 @@ import { resolveLocalServiceDomainActionRpcBinding } from '@happier-dev/protocol
 import { LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
 import { resolveApprovalReplayRoute } from './approvalReplayRoute';
+import { executeMachineActionAtDaemon } from './executeMachineActionAtDaemon';
 import { createUiPreparedSessionBirthV1 } from './preparedSessionBirth';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, isAccountModeDowngradeUnverifiedError, readRpcRequestDisposition } from '@happier-dev/sync-client';
@@ -77,7 +78,7 @@ import {
   sessionUsageLimitSwitchAccountNow, sessionUsageLimitConsumeResetCredit,
   type SessionUsageLimitRecoveryOperationResult,
 } from '@/sync/ops/sessionUsageLimitRecovery';
-import { completeActionResult, createActionExecutor, readHostReviewedParentV1, settleActionOutput } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutor, readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectSessionReferenceFailure, resolveServerIdForSession } from '@happier-dev/protocol/actions/executor/sessionScope';
 import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { createUiTargetActionApprovalReplay } from './targetActionApprovalReplay';
@@ -397,9 +398,10 @@ import { listProjectsForActions } from './listProjects';
 import { createUiProjectPagesList } from './projectPagesAction';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
 import { createProjectSourceTeamMoveDeps } from '@/sync/api/projects/projectSourceTeamMove';
-import { createUiDeploymentActionDeps, recoverUiDeploymentActionResult } from '@/sync/api/deployments/deploymentActions';
-import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { createUiDeploymentActionDeps, createUiDeploymentWorkspaceMachineReader, recoverUiDeploymentActionResult } from '@/sync/api/deployments/deploymentActions';
+import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentBackupConfigureInputV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { canUsePrivateProjectAccountAction, createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import { setProjectVisibilityV1 } from '@happier-dev/protocol/projects/projectVisibilityV1';
@@ -535,12 +537,7 @@ function projectSessionModelTransitionFailure(transition: Extract<SessionModelTr
     ok: false as const,
     errorCode: transition.status,
     error: transition.status,
-    details: {
-      status: transition.status,
-      activeSelection: transition.activeSelection,
-      requestedSelection: transition.requestedSelection,
-      ...(transition.reason ? { reason: transition.reason } : {}),
-    },
+    details: transition,
   };
 }
 
@@ -1002,7 +999,25 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const selected = await resolveDeploymentTemplateExecutionMachineIdV1(input.data, async selector => {
         const loaded = await readEnvironment('deployments.environments.get', selector, args.context);
         return 'errorCode' in loaded ? loaded : DeploymentEnvironmentGetResultV1Schema.parse(loaded);
-      });
+      }, async ({ workspace }) => accountContext ? createUiDeploymentWorkspaceMachineReader(accountContext, args.context)(workspace)
+        : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' });
+      if (!selected.ok) return selected;
+      requestedMachineId = selected.machineId;
+    }
+    if (readAdmittedActionId(args.actionId, args.input) === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1) {
+      const input = DeploymentMoveToRepositoryInputV1Schema.safeParse(pluginInput);
+      if (!input.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      const selected = await resolveDeploymentMoveToRepositoryExecutionMachineIdV1(input.data,
+        createUiDeploymentWorkspaceMachineReader(accountContext, args.context));
+      if (!selected.ok) return selected;
+      requestedMachineId = selected.machineId;
+    }
+    if (readAdmittedActionId(args.actionId, args.input) === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1) {
+      const input = DeploymentBackupConfigureInputV1Schema.safeParse(pluginInput);
+      if (!input.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      if (!deploymentActionDeps) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      const selected = await deploymentActionDeps.readEnvironmentController(input.data, args.context);
       if (!selected.ok) return selected;
       requestedMachineId = selected.machineId;
     }
@@ -3976,6 +3991,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
               isCurrent: () => account.accountLifetime.isCurrent() && composerSubmission.isCurrent(),
             });
             if (!uploaded) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
+            if ('ok' in uploaded) return uploaded;
             const { reconcileBrowserContextPictures } = await import('@/sync/domains/session/input/browserContext');
             input = { ...input, message: composerSubmission.legacyAttachments.originalMessage,
               structuredInput: { v: 1, ...input.structuredInput, sessionAttachments: uploaded.map(attachment => attachment.attachmentHandle),
@@ -4986,16 +5002,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     };
   };
 
-  const executeMachineActionAtDaemon = async (actionId: ActionId, input: unknown, context: ActionExecutorContext, confirmInFlow = false): Promise<ActionExecuteResult> => {
-    if (context.externalActionCredential || context.externalActionExecutionAuthorization || context.rpcSessionAuthorization) {
-      return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-    }
-    const spec = getActionSpec(actionId);
-    const parsed = spec.inputSchema.safeParse(input);
-    if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    const result = await executeMachineOwnedAction({ actionId, input: parsed.data, context, confirmInFlow });
-    return settleActionOutput(actionId, completeActionResult(result));
-  };
+  const executeMachineAction = (actionId: ActionId, input: unknown, context: ActionExecutorContext, confirmInFlow = false) =>
+    executeMachineActionAtDaemon(actionId, input, context, (requestedActionId, actionInput) =>
+      executeMachineOwnedAction({ actionId: requestedActionId, input: actionInput, context,
+        confirmInFlow: requestedActionId === actionId && confirmInFlow }));
 
   const executeAction = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext, confirmInFlow = false) => {
     const resolved = resolveContext(context, input, actionId);
@@ -5008,7 +5018,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return await executor.executeAdmittedClientAction(actionId, input, resolved);
     }
     return resolved.surface !== 'plugin' && isMachineOwnedAdmissionAction(actionId, input)
-      ? await executeMachineActionAtDaemon(actionId, input, resolved, confirmInFlow)
+      ? await executeMachineAction(actionId, input, resolved, confirmInFlow)
       : await executor.execute(actionId, input, confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, resolved) : resolved);
   };
   return {
@@ -5055,7 +5065,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         if (review?.kind === 'settled') return review;
         return { kind: 'ready',
           ...(review?.operation ? { operation: review.operation } : {}),
-          invocation: { run: () => executeMachineActionAtDaemon(actionId, input, resolved) } };
+          invocation: { run: () => executeMachineAction(actionId, input, resolved) } };
       }
       return await executor.prepare(actionId, input, resolved, options);
     },
