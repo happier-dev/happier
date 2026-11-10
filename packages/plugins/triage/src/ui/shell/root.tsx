@@ -1655,7 +1655,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         break;
       }
       case 'switchView':
-        if (taskAudience !== undefined && operation.view === 'board') return { status: 'unavailable' };
         chooseCollectionView(operation.view); break;
       case 'setGroupExpanded': return chooseDoneExpanded(operation.expanded);
       case 'openDetail': {
@@ -1852,7 +1851,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         ...sourcePanel.commands.filter(({ operation }) => operation.kind !== 'loadMoreSourceItems')].map(({ title, operation }): CurrentUiCommandDeclarationV1 => ({
         title, command: { kind: 'executeAction', action: triageSourcePanelActionIdV1(operation), input: { mountId, operation } },
       })),
-      ...(taskAudience === undefined ? [command(text('plugins.triage.currentContext.board', 'Switch to Board'), { kind: 'switchView', view: 'board' })] : []),
+      command(text('plugins.triage.currentContext.board', 'Switch to Board'), { kind: 'switchView', view: 'board' }),
       command(text('plugins.triage.currentContext.list', 'Switch to List'), { kind: 'switchView', view: 'list' }),
       ...(creatingTask
         ? taskDraftWrite.busy ? [] : [command(text('plugins.triage.tasks.cancel', 'Cancel'), { kind: 'closeDetail' })]
@@ -2339,7 +2338,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           else if (id === 'manage-sources') executeMountedOperation({ kind: 'setSourceManagementOpen', open: true });
         },
       }}
-      {...(taskAudience !== undefined || nothingToArrange ? {} : { views: {
+      {...(nothingToArrange ? {} : { views: {
         label: text('plugins.triage.surface.view.label', 'View'),
         value: collectionView,
         options: [
@@ -2595,7 +2594,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           anatomy={anatomy}
           accessibilityLabel={pageTitle}
           title={pageTitle}
-          presentation={taskAudience === undefined && collectionView === 'board' ? 'board' : 'table'}
+          presentation={collectionView === 'board' ? 'board' : 'table'}
           // The first run is a page to read, not a list to scan: it scrolls with the page, toolbar included, so the
           // lower sources and the steps stay reachable on a phone. A populated list keeps its one scroller.
           {...(state.kind === 'configureSources' || empty?.kind === 'taskFirstRun' ? { scroll: 'page' as const } : {})}

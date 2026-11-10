@@ -9,7 +9,7 @@ import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextF
 import type { PluginUiTestkit, PluginUiTestkitOpenSurfaceInput } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface, type PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import type { PluginUiContextEnrichmentV1, RenderSurface } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiContextEnrichmentV1, PluginUiUpdateEntityDragDropRequestV1, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
     TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
@@ -494,7 +494,8 @@ async function mountSurface(
     harness: ReturnType<typeof createHarness>,
     instanceId: string,
     context: Parameters<typeof createSurfaceContextFixture>[0] = {},
-    options: Readonly<{ subPath?: string; launchInput?: Parameters<typeof createPluginUiTestkit>[0]['launchInput']; recordSurfaceOpens?: boolean; directAccountData?: boolean }> = {},
+    options: Readonly<{ subPath?: string; launchInput?: Parameters<typeof createPluginUiTestkit>[0]['launchInput']; recordSurfaceOpens?: boolean; directAccountData?: boolean;
+        dragDropRequests?: PluginUiUpdateEntityDragDropRequestV1[] }> = {},
 ): Promise<PluginUiTestkit> {
     // Mounting starts the window's first cycle, so the whole mount is driven
     // inside `act` — otherwise the render the cycle causes lands after the
@@ -537,6 +538,13 @@ async function mountSurface(
                 overlays: true,
             }),
             handlers: {
+                ...(options.dragDropRequests === undefined ? {} : {
+                    updateEntityDragDrop: async ({ request }: Readonly<{ request: PluginUiUpdateEntityDragDropRequestV1 }>) => {
+                        options.dragDropRequests?.push(request);
+                        return { accepted: true };
+                    },
+                    watchEntityDragDrop: async () => ({ dispose() {} }),
+                }),
                 ...(options.recordSurfaceOpens ? { openSurface: (request: PluginUiTestkitOpenSurfaceInput) => {
                     harness.surfaceOpens.push(request);
                 } } : {}),
@@ -976,6 +984,36 @@ describe('the mounted PRs & Issues surface', () => {
         await act(async () => { expect(await select(null)).toEqual({ status: 'applied' }); });
         expect(catalogReads()).toBe(readsBeforeClear);
         expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))?.selectedViewId).toBeNull();
+    });
+
+    it('reaches assignable status columns through the Tasks page View chooser and returns to its list', async () => {
+        const harness = createHarness({ tasks: true });
+        const dragDropRequests: PluginUiUpdateEntityDragDropRequestV1[] = [];
+        const shell = await mountSurface(renderShellSurface, harness, 'tasks-status-board', sourceContextFixture(harness), {
+            subPath: 'tasks,everyone', dragDropRequests,
+        });
+        await settleWindow('view', shell);
+        const stage = document.querySelector('[data-testid="triage-shell-fill:stage"]');
+        expect(stage).not.toBeNull();
+        // RNW's native layout event is the existing Collection harness's platform boundary.
+        const onLayout: unknown = Reflect.get(stage!, '__reactLayoutHandler');
+        if (typeof onLayout !== 'function') throw new Error('Missing RNW Collection layout boundary');
+        await act(async () => { onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 1000 } } }); });
+        expect(document.querySelector('[data-testid="triage-shell-fill:column:started"]')).toBeNull();
+        await act(async () => { await shell.press(await shell.getByRole('radio', { name: 'Board' })); });
+        await vi.waitFor(() => {
+            expect(document.querySelector('[data-testid="triage-shell-fill:column:started"]')).not.toBeNull();
+            expect(document.querySelector('[data-testid="triage-shell-fill:column:completed"]')).not.toBeNull();
+        });
+        const targets = dragDropRequests.filter(request => request.kind === 'mountTarget').filter(request => request.targetId === 'task-status');
+        expect(targets).toHaveLength(5);
+        await act(async () => { await shell.press(await shell.getByRole('radio', { name: 'List' })); });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="triage-shell-fill:column:started"]')).toBeNull());
+        for (const target of targets) expect(dragDropRequests).toContainEqual({ kind: 'unmount', mountId: target.mountId });
+        await executePublishedPresentationCommand(shell, harness, operation => operation.kind === 'switchView' && operation.view === 'board');
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="triage-shell-fill:column:started"]')).not.toBeNull());
+        await executePublishedPresentationCommand(shell, harness, operation => operation.kind === 'switchView' && operation.view === 'list');
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="triage-shell-fill:column:started"]')).toBeNull());
     });
 
     it.each([false, true])('offers both Q1 views on the same lens and keeps the legacy Tasks entrance navigable (legacy=%s)', async legacy => {
