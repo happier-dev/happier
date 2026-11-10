@@ -14,7 +14,7 @@ import { createCliPromptLibraryStore } from './promptLibraryStore';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
-import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import * as persistence from '@/persistence';
 import { refreshDemandedActivePromptLibraryCatalog } from './hydratePromptLibraryCatalog';
 
@@ -166,10 +166,9 @@ describe('CLI prompt catalog acknowledged mutation publication', () => {
     vi.spyOn(axios,'get').mockImplementation(async url=>{
       const path=new URL(String(url)).pathname;
       if(path==='/v1/account/encryption/currentness')return {status:200,data:{mode:'plain',version:1,settingsVersion:7,signingKeyFingerprint:null,contentKeyFingerprint:null,updatedAt:1}};
-      expect(String(url)).toBe(base+'/v1/account/saved-secrets/resources/materials');
-      return {status:200,data:{resources:[{resourceId:'proof-secret',encryptionMode:'plain',recipientEnvelope:null,
-        entry:{ref,source:'shared_resource',relationship:'owner',name:'Proof',kind:'token',revision:7,materialStatus:'ready',capabilities:{use:true,rename:true,rotate:true,manageAccess:true,delete:true}},
-        storedContent:sealSavedSecretResourceStoredContentV1({resourceId:'proof-secret',mode:'plain',content:{v:1,name:'Proof',kind:'token',value:'private-proof-value'}})}]}};
+      expect(String(url)).toBe(base+'/v1/account/saved-secrets/resources');
+      return {status:200,data:SharedSavedSecretListOutputV1Schema.parse({resources:[{
+        ref,source:'shared_resource',relationship:'owner',name:'Proof',kind:'token',revision:7,materialStatus:'ready',capabilities:{use:true,rename:true,rotate:true,manageAccess:true,delete:true}}]})};
     });
     vi.spyOn(axios,'post').mockImplementation(async(url,body)=>{
       expect(String(url)).toBe(base+'/v1/account/entity-rows/prompt-library/registry-sources');
@@ -180,7 +179,6 @@ describe('CLI prompt catalog acknowledged mutation publication', () => {
     const store=createCliPromptLibraryStore({credentials,operationContext});
     await store.writeRecord({expectedRevision:1,record:{key:'registry-sources',value:{v:2,disabledSourceIds:[],sources:[{id:'proof-source',title:'Proof',format:'git',kinds:['skill'],url:'https://github.com/a/b',enabled:true,addedAt:0,token:{secretRef:ref}}]}}});
     expect(sent[0]).toMatchObject({referencedSavedSecretIds:[ref],savedSecretRevisions:[{resourceId:'proof-secret',expectedRevision:7}]});
-    expect(JSON.stringify(sent)).not.toContain('private-proof-value');
     await store.writeRecord({expectedRevision:2,record:{key:'registry-sources',value:{v:2,disabledSourceIds:[],sources:[]}}});
     expect(sent[1]).not.toHaveProperty('referencedSavedSecretIds');expect(sent[1]).not.toHaveProperty('savedSecretRevisions');
   });

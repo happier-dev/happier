@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse, createActionExecutor } from '@happier-dev/protocol';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryCatalogKeyV1Schema, PromptLibraryRowMutationV1Schema, type PromptLibraryRowMutationV1, type PromptStackRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import type { PromptFoldersV1 } from '@happier-dev/protocol/prompts/library/promptFoldersV1';
 import type { PromptInvocationEntryV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 import type { PromptExternalLinkEntryV1 } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
 import { AccountSettingsV2UpdateRequestSchema, type AccountSettingsV2UpdateRequest } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
@@ -9,6 +10,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encod
 import type { RegistrySourceV1 } from '@happier-dev/protocol/registries';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { artifactReadResponse } from '@/testkit/http/artifactHome';
 import { removeTempDir } from '@/testkit/fs/tempDir';
 import { readSettings, updateSettings } from '@/persistence';
 import { getServerProfile } from '@/server/serverProfiles';
@@ -81,6 +83,8 @@ describe('CLI Action prompt catalog admission', () => {
     let retirementObserved: boolean;
     let artifactCreationFails: boolean;
     let registrySources: Readonly<{ v: 2; disabledSourceIds: string[]; sources: RegistrySourceV1[] }> | null;
+    let folders: PromptFoldersV1;
+    let foldersRevision: number;
     const createdArtifacts = new Map<string, Readonly<Record<string, unknown>>>();
     const requests: string[] = [];
     const externalLinkWrites: PromptLibraryRowMutationV1[] = [];
@@ -104,11 +108,18 @@ describe('CLI Action prompt catalog admission', () => {
             else if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) data = { status: 'listed', rows: [{ key: 'invocations', revision: 7,
                 content: { t: 'plain', v: { key: 'invocations', value: { v: 1, entries } } } },
                 ...PromptLibraryCatalogKeyV1Schema.options.filter(key => key !== 'invocations').map(key => ({ key,
-                    revision: key === 'external-links' ? externalLinkRevision : key === 'coding' ? codingRevision : 1,
-                    content: key === 'external-links' && externalLinks !== null
+                    revision: key === 'external-links' ? externalLinkRevision : key === 'coding' ? codingRevision : key === 'folders' ? foldersRevision : 1,
+                    content: key === 'folders' ? { t: 'plain', v: { key, value: folders } } : key === 'external-links' && externalLinks !== null
                         ? { t: 'plain', v: { key, value: { v: 1, links: externalLinks } } }
                         : key === 'coding' && codingStack !== null ? { t: 'plain', v: { key, value: codingStack } }
                         : key === 'registry-sources' && registrySources !== null ? { t: 'plain', v: { key, value: registrySources } } : null }))] };
+            else if (path === `${PROMPT_LIBRARY_ROWS_ROUTE_V1}/folders` && request.method === 'POST') {
+                const mutation = PromptLibraryRowMutationV1Schema.parse(JSON.parse(body));
+                if (mutation.expectedRevision !== foldersRevision) { status = 409; data = { status: 'conflict', revision: foldersRevision }; }
+                else if (mutation.content?.t !== 'plain' || mutation.content.v.key !== 'folders') {
+                    status = 400; data = { status: 'invalid-stored-content' };
+                } else { folders = mutation.content.v.value; data = { status: 'updated', revision: ++foldersRevision, cursor: foldersRevision }; }
+            }
             else if (path === `${PROMPT_LIBRARY_ROWS_ROUTE_V1}/coding` && request.method === 'POST') {
                 const mutation = PromptLibraryRowMutationV1Schema.parse(JSON.parse(body));
                 stackWrites.push(mutation);
@@ -144,6 +155,12 @@ describe('CLI Action prompt catalog admission', () => {
                 createdArtifacts.set(written.id, { ...written, ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain',
                     headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
                 data = { id: written.id, headerVersion: 1, bodyVersion: 1 };
+            }
+            else if (path === '/v1/artifacts/read' && request.method === 'POST') {
+                data = artifactReadResponse(JSON.parse(body), id => {
+                    const row = createdArtifacts.get(id);
+                    return row ? { ...row, id } : null;
+                }).data;
             }
             else if (path === '/v1/artifacts' && request.method === 'GET') data = [...createdArtifacts.values()];
             else if (path.startsWith('/v1/artifacts/') && createdArtifacts.has(path.split('/').at(-1)!)) {
@@ -189,6 +206,8 @@ describe('CLI Action prompt catalog admission', () => {
         retirementObserved = false;
         artifactCreationFails = false;
         registrySources = null;
+        folders = { v: 1, folders: [{ id: 'owned-folder', name: 'Owned folder' }] };
+        foldersRevision = 1;
         createdArtifacts.clear();
         gitFixture.enabled = false;
         requests.length = 0;
@@ -206,26 +225,39 @@ describe('CLI Action prompt catalog admission', () => {
     const publish = () => publication.setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(rawSettings), rawSettings,
         settingsVersion, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: scope.resolveAccountSettingsScopeKey(credentials) });
     const createDeps = () => factory.createCliActionDeps({ token, credentials, sessionId: 'session', mode: 'plain', ctx: null, serverId: 'alpha', serverHttpBaseUrl: url });
-    it.each(['doc', 'bundle'] as const)('persists authenticated %s updates through the real CLI dependency and Artifact transport', async kind => {
+    it.each([
+        { kind: 'doc', warm: true }, { kind: 'bundle', warm: true },
+        { kind: 'doc', warm: false }, { kind: 'bundle', warm: false },
+        { kind: 'doc', warm: 'late' }, { kind: 'bundle', warm: 'late' },
+    ] as const)('persists authenticated $kind folder updates with warm=$warm through the CLI Action', async ({ kind, warm }) => {
         const id = `prompt-${kind}`;
+        const skillMarkdown = '---\nname: sample\ndescription: A useful skill\n---\nnew';
         createdArtifacts.set(id, { id, ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain',
             header: encodePlainArtifactStoredContent({ v: 1, kind: `prompt_${kind}.v2`, title: 'Original',
                 ...(kind === 'bundle' ? { bundleSchemaId: 'skills.skill_md_v1' } : {}) }),
             body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, createdAtMs: 1, updatedAtMs: 1,
                 ...(kind === 'doc' ? { markdown: 'old' } : { entries: [{ path: 'SKILL.md', contentBase64: 'b2xk', contentKind: 'utf8' }] }) }) }),
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
-        publish();
-        const deps = createDeps();
-        const request = { artifactId: id, title: 'Updated', expectedRevision: { headerVersion: 1, bodyVersion: 1 } };
-        const result = kind === 'doc' ? await deps.promptDocUpdate!({ ...request, markdown: 'new' })
-            : await deps.promptBundleUpdate!({ ...request, skillMarkdown: 'new' });
-        expect(result).toMatchObject({ ok: true, artifactId: id, revision: { headerVersion: 2, bodyVersion: 2 } });
+        if (warm === true) publish();
+        const executor = createActionExecutor(createDeps());
+        if (warm === 'late') publish();
+        const request = { artifactId: id, title: 'Updated', folderId: 'owned-folder', expectedRevision: { headerVersion: 1, bodyVersion: 1 } };
+        const context = { surface: 'cli' as const, bypassApprovals: true };
+        const missingFolder = kind === 'doc'
+            ? await executor.execute('prompt_doc.update', { ...request, folderId: 'missing', markdown: 'new' }, context)
+            : await executor.execute('prompt_bundle.update', { ...request, folderId: 'missing', skillMarkdown }, context);
+        expect(missingFolder).toMatchObject({ ok: false, errorCode: 'folder_not_found' });
+        expect(createdArtifacts.get(id)?.headerVersion).toBe(1);
+        const result = kind === 'doc' ? await executor.execute('prompt_doc.update', { ...request, markdown: 'new' }, context)
+            : await executor.execute('prompt_bundle.update', { ...request, skillMarkdown }, context);
+        expect(result).toMatchObject({ ok: true, result: { ok: true, artifactId: id, revision: { headerVersion: 2, bodyVersion: 2 } } });
         const stored = createdArtifacts.get(id)!;
         expect(decodePlainArtifactStoredContent(String(stored.header))).toMatchObject({ title: 'Updated' });
         const content = decodePlainArtifactStoredContent(String(stored.body));
         if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') throw new Error('Missing persisted Artifact body');
         expect(JSON.parse(content.body)).toMatchObject(kind === 'doc' ? { markdown: 'new' }
-            : { entries: [{ path: 'SKILL.md', contentBase64: 'bmV3', contentKind: 'utf8' }] });
+            : { entries: [{ path: 'SKILL.md', contentBase64: Buffer.from(skillMarkdown).toString('base64'), contentKind: 'utf8' }] });
+        expect(folders.artifactHeadersById?.[id]).toMatchObject({ folderId: 'owned-folder' });
         expect(settingsWrites).toEqual([]);
     });
 

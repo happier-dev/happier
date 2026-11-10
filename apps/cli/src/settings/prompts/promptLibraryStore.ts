@@ -39,14 +39,19 @@ export function createCliPromptLibraryStore(input: Readonly<{
   const base = (operation?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()).replace(/\/+$/, '');
   const scopeKey = runWithServerHttpBaseUrl(base, () => resolveAccountSettingsScopeKey(input.credentials));
   const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+  // Finite CLI operations own captured credentials even before Settings warms.
+  // Only a store borrowing an incumbent publication inherits that lifetime;
+  // later publication cannot retire or retarget a cold credential-bound store.
+  const usesActiveSnapshot = !operation && getActiveAccountSettingsSnapshot() !== null;
   const readSnapshot = () => operation ? operation.readSnapshot() : getActiveAccountSettingsSnapshot();
   const headers = { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${input.credentials.token}`,
     'Content-Type': 'application/json' };
   const assertCurrent = () => {
     input.signal?.throwIfAborted();
-    if (readSnapshot()?.scopeKey !== scopeKey || (operation
-      ? operation.credentials.token !== input.credentials.token
-      : getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken)) {
+    if (operation ? operation.readSnapshot()?.scopeKey !== scopeKey
+      || operation.credentials.token !== input.credentials.token
+      : usesActiveSnapshot && (getActiveAccountSettingsSnapshot()?.scopeKey !== scopeKey
+        || getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken)) {
       throw Object.assign(new Error('Captured Prompt library Account retired'), { code: 'scope-retired' });
     }
   };
@@ -61,7 +66,8 @@ export function createCliPromptLibraryStore(input: Readonly<{
     const incumbent = readSnapshot();
     // A network read or durable cleanup receipt advances the existing Settings
     // owner, never a retired Account lifetime or an already newer winner.
-    if (incumbent?.scopeKey !== scopeKey || (!operation && getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken)) return;
+    if (incumbent?.scopeKey !== scopeKey || (!operation && (!usesActiveSnapshot
+      || getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken))) return;
     const next = { ...incumbent, source: 'network' as const, rawSettings: raw,
       settings: accountSettingsParse(raw), settingsVersion: version, loadedAtMs: Date.now() };
     if (operation) await operation.replaceAccountSettings(next);
