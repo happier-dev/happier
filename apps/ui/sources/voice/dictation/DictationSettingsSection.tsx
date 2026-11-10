@@ -248,15 +248,6 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
       iconName: 'link',
     },
   ];
-  const selectEngine = (id: string) => {
-    if (id === selectedId) return;
-    const voice = applyVoiceDictationEngineChoice(props.voice, voiceProviderRegistry, id,
-      resolveLocalNeuralExecutionPolicy({ requestedExecution: props.voice.dictation.stt.localNeural.execution }).preferredExecution);
-    if (!voice) return;
-    setReadinessCheck((current) => current?.status === 'checking' ? current : null);
-    props.setVoice(voice);
-  };
-
   const projectReadiness = (settings: typeof readinessSettings) => resolveVoiceDictationReadiness({
     connectedPurposes,
     registry: voiceProviderRegistry, settings, platform,
@@ -270,18 +261,35 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
   const readinessForEngine = (id: string): VoiceRoleReadiness | null => {
     if (id === selectedId) return readiness;
     const voice = applyVoiceDictationEngineChoice(props.voice, voiceProviderRegistry, id,
-      resolveLocalNeuralExecutionPolicy({ requestedExecution: props.voice.dictation.stt.localNeural.execution }).preferredExecution);
+      resolveLocalNeuralExecutionPolicy({ requestedExecution: props.voice.dictation.stt.localNeural.execution, platformOs: platform }).preferredExecution);
     return voice ? projectReadiness({ ...accountSettings, voice }) : null;
+  };
+  const engineChoices = engineOptions.map((option) => {
+    const engineReadiness = readinessForEngine(option.id);
+    return {
+      ...option,
+      readiness: engineReadiness,
+      // Setup still needs selection to expose model/credential controls. A
+      // disabled speech service cannot use those controls until policy changes.
+      selectable: engineReadiness !== null && engineReadiness.code !== 'server_feature_disabled',
+    };
+  });
+  const selectEngine = (id: string) => {
+    if (id === selectedId || !engineChoices.find((option) => option.id === id)?.selectable) return;
+    const voice = applyVoiceDictationEngineChoice(props.voice, voiceProviderRegistry, id,
+      resolveLocalNeuralExecutionPolicy({ requestedExecution: props.voice.dictation.stt.localNeural.execution, platformOs: platform }).preferredExecution);
+    if (!voice) return;
+    setReadinessCheck((current) => current?.status === 'checking' ? current : null);
+    props.setVoice(voice);
   };
 
   return {
-    engineOptions, selectedId, theme, providerControlRef, selectEngine, providerSpec, providerSpecs, selectedStt,
+    engineOptions: engineChoices, selectedId, theme, providerControlRef, selectEngine, providerSpec, providerSpecs, selectedStt,
     dictation, setDictation, setReadinessCheck, localAdapter, openMenu, setOpenMenu,
     isCheckingReadiness, checkSetup, checkedReadiness, recoveryActionHandler, handleRecoveryAction,
     readinessCheckKey: JSON.stringify([nativeModelSelection.providerId, nativeModelSelection.packId, rawAuthorizationKey]),
     isCurrentReadinessCheck,
     readiness,
-    readinessForEngine,
   };
 }
 
@@ -293,7 +301,7 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
     engineOptions, selectedId, theme, providerControlRef, selectEngine, providerSpec, providerSpecs, selectedStt,
     dictation, setDictation, setReadinessCheck, localAdapter, openMenu, setOpenMenu,
     isCheckingReadiness, checkSetup, recoveryActionHandler, handleRecoveryAction, readiness,
-    readinessCheckKey, isCurrentReadinessCheck, readinessForEngine,
+    readinessCheckKey, isCurrentReadinessCheck,
   } = useVoiceDictationReadinessModel(props);
   // Always-on card readiness (lab D): the model's passive check runs when this page opens and whenever
   // the engine, model pack or credential it checks changes. The hub reads the same model and never
@@ -335,7 +343,7 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
       >
         {engineOptions.map((option) => {
           const selected = option.id === selectedId;
-          const engineReadiness = readinessForEngine(option.id);
+          const engineReadiness = option.readiness;
           // The readiness owner decides the tone; the engine row says the condition in that tone.
           const engineTone = resolveVoiceReadinessTone(engineReadiness);
           const needsYou = engineReadiness && engineTone && engineTone !== 'ready' && engineTone !== 'unknown'
@@ -358,6 +366,7 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
               accessibilityRole="radio"
               webRole="radio"
               selected={selected}
+              disabled={!option.selectable}
               pressableRef={selected ? providerControlRef : undefined}
               rightElement={selected ? <Icon name="check-circle" size={22} color={theme.colors.text.primary} /> : null}
               showChevron={false}

@@ -190,6 +190,7 @@ describe('DictationSettingsSection', () => {
   it('keeps a fresh daemon Dictation choice on its current engine while Account speech policy is off', async () => {
     storageBoundary.platformOs = 'web';
     onTestFinished(() => { storageBoundary.platformOs = 'ios'; });
+    expect(voiceSettingsDefaults.dictation.stt.localNeural.assetId).toBeNull();
     const { DictationSettingsSection } = await import('./DictationSettingsSection');
     const setVoice = vi.fn();
     const screen = await renderScreen(<DictationSettingsSection
@@ -202,6 +203,38 @@ describe('DictationSettingsSection', () => {
     await act(async () => { row.props.onPress?.(); });
     expect(setVoice).not.toHaveBeenCalled();
     expect(row.props.disabled).toBe(true);
+
+    await act(async () => {
+      screen.tree.update(<DictationSettingsSection
+        voice={voiceSettingsDefaults}
+        setVoice={setVoice}
+        executionMachineId="dictation-machine"
+        localAvailability={{ ...localAvailability, daemon: { ...localAvailability.daemon, modelState: 'missing' } }}
+      />);
+    });
+    const enabledRow = findRenderedItem(screen.tree, 'settings.voice.dictation.engine.local_neural');
+    expect(enabledRow.props.disabled).toBe(false);
+    await act(async () => { enabledRow.props.onPress?.(); });
+    expect(setVoice).toHaveBeenCalledOnce();
+    expect(setVoice.mock.calls[0]?.[0].dictation.stt.localNeural.assetId)
+      .toBe('sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8');
+  });
+
+  it('keeps native-device Dictation setup selectable when daemon speech policy is off', async () => {
+    const { DictationSettingsSection } = await import('./DictationSettingsSection');
+    const setVoice = vi.fn();
+    const screen = await renderScreen(<DictationSettingsSection
+      voice={voiceSettingsDefaults}
+      setVoice={setVoice}
+      executionMachineId={null}
+      localAvailability={{ ...localAvailability, daemon: { ...localAvailability.daemon, featureEnabled: false } }}
+    />);
+    const row = findRenderedItem(screen.tree, 'settings.voice.dictation.engine.local_neural');
+    expect(row.props.disabled).toBe(false);
+    await act(async () => { row.props.onPress?.(); });
+    expect(setVoice).toHaveBeenCalledOnce();
+    expect(setVoice.mock.calls[0]?.[0].dictation.stt.localNeural.assetId)
+      .toBe('sherpa-onnx-streaming-zipformer-en-2023-06-26');
   });
 
   it('seeds an external provider default envelope atomically with an explicit Dictation selection', async () => {
