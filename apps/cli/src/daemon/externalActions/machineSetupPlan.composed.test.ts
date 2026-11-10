@@ -35,7 +35,7 @@ it('keeps the receiving current-copy plan owner through the actual credentialed 
     { surface: 'rpc', authority: 'present_user', externalActionTarget: { kind: 'machine', machineId: 'guest' } });
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
     desiredRevision: 2, sources: desired.sources, exclusions: [],
-    support: [{ sourceIndex: 1, itemIndex: 0, status: 'unsupported', reason: 'required_fact_unavailable' }],
+    support: [{ sourceIndex: 1, itemIndex: 0, status: 'unverifiable', reason: 'required_fact_unavailable' }],
   } });
   expect({ metadataReads, writes, selfRpc, catalogReads }).toEqual({ metadataReads: 1, writes: 0, selfRpc: 0, catalogReads: 0 });
 });

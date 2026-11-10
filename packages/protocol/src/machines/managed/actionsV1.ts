@@ -161,7 +161,8 @@ export const MachineSetupPlanResultV1Schema = lazyZodSchema(() => z.strictObject
   /** Presentation only: exact referenced declarations already read by this target Plan. */
   recipeTitles: z.optional(z.array(z.strictObject({ ref: MachineRecipeReferenceV1Schema, title: PluginLocalizedStringV2Schema }))),
   support: z.array(z.strictObject({ sourceIndex: revision(), itemIndex: revision(),
-    status: MachineSetupObservationStatusV1Schema, reason: z.optional(MachineSetupObservationReasonV1Schema) })),
+    status: MachineSetupObservationStatusV1Schema, reason: z.optional(MachineSetupObservationReasonV1Schema),
+    requiredFact: z.optional(id()) })),
   recipePlans: z.optional(z.array(MachineSetupRecipePlanV1Schema)),
   appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),
   appReviews: z.optional(z.array(MachineSetupAppReviewV1Schema)),

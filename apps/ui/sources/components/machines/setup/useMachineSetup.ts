@@ -385,6 +385,8 @@ export type MachineSetupRecipeRow = Readonly<{
     status: RecipeStatus | null;
     /** The owner's typed reason when the state needs one (unsupported, unchecked). */
     reason: MachineSetupPlanResultV1['support'][number]['reason'] | null;
+    /** The missing fact selected by the native owner, when it is known. */
+    requiredFact: string | null;
     /** The Plan source that holds it, so the row can name the preset it came from. */
     sourceIndex: number;
     /** From the Machine's preset (changed through the preset), or added on this Machine (removable here). */
@@ -424,6 +426,7 @@ export function readMachineSetupRecipes(
                 title: plan.recipeTitles?.find(entry => sameRef(entry.ref, ref))?.title ?? null,
                 status: checked?.status ?? observed?.status ?? null,
                 reason: (checked ?? observed)?.reason ?? null,
+                requiredFact: checked?.requiredFact ?? null,
                 sourceIndex,
                 fromPreset: source.kind !== 'direct',
                 removable: source.kind === 'direct',

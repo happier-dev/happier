@@ -427,7 +427,7 @@ describe('Machine setup current-copy plan entry', () => {
         definition: { from: 'compose', document: 'services: {}', profiles: [], services: [] }, bindings: [],
       } }] } },
     ] }, { surface: 'cli', authority: 'present_user' })).toMatchObject({ ok: true, result: {
-      support: [{ sourceIndex: 0, itemIndex: 0, status: 'unsupported' }],
+      support: [{ sourceIndex: 0, itemIndex: 0, status: 'unverifiable', reason: 'required_fact_unavailable' }],
       review: { target, administratorRequired: null, downtime: 'unknown' },
     } });
     for (const setupScriptAffects of ['none', 'dockerEngine'] as const) {
@@ -796,7 +796,7 @@ describe('Machine setup current-copy plan entry', () => {
     expect(await executor.execute('machines.setup.plan', { homeId: 'home', machineId: 'guest' },
       { surface: 'cli', authority: 'present_user' })).toMatchObject({ ok: true, result: {
       desiredRevision: 2, sources: desired.sources, exclusions: [],
-      support: [{ sourceIndex: 1, itemIndex: 0, status: 'unsupported', reason: 'required_fact_unavailable' }],
+      support: [{ sourceIndex: 1, itemIndex: 0, status: 'unverifiable', reason: 'required_fact_unavailable' }],
     } });
     expect(reads).toBe(1);
     expect(writes).toBe(0);

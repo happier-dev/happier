@@ -14,8 +14,9 @@ including scoped local changes, has no `voice/attemptPresentation.ts` contract.
 
 ## Machine Setup prerequisite presentation (unreleased 0.3)
 
-An unperformed Setup item check is `unverifiable`; positively observed native
-`unsupported` results retain that classification. The target Plan's support
+An unperformed Setup item check is `unverifiable`, and an unimplemented native
+declaration check is `unavailable`; positively observed native `unsupported`
+results retain that classification. The target Plan's support
 projection optionally carries `requiredFact` from its selected native blocker,
 without guessing a fact for an unperformed check. This is presentation metadata
 and does not enter the Apply operand. Matching development Protocol, CLI and UI

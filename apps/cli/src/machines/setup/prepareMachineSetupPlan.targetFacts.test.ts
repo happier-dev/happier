@@ -14,6 +14,38 @@ import { prepareMachineSetupPlanV1 } from './prepareMachineSetupPlan';
 import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
 
 describe('Machine setup target facts through P10 observation', () => {
+  it.each(['unavailable', 'unsupported', 'unimplemented'] as const)('publishes the selected %s native prerequisite without changing its classification', async status => {
+    const definition = MachineRecipeV1Schema.parse({ id: 'prerequisite', revision: '1', title: 'Prerequisite',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, steps: [status === 'unsupported' ? {
+        id: 'inspect', kind: 'serviceUnit', unit: 'fixture.service', enabled: true, running: true,
+      } : {
+        id: 'inspect', kind: 'command', executable: 'fixture-effect', args: [],
+        check: { executable: 'fixture-check', args: [], unsatisfiedExitCodes: [1] },
+        ...(status === 'unimplemented' ? { requiredFacts: [{ kind: 'administrator' }] } : {}),
+      }] });
+    const pluginId = 'com.example.machine-tools';
+    const current = await getMachineSetupDesiredV1({ read: async () => ({ status: 'ready', metadata: {}, metadataVersion: 0 }),
+      compareAndSwap: async () => { throw new Error('Planning cannot mutate'); } });
+    const result = await prepareMachineSetupPlanV1({ current,
+      input: { homeId: 'home', machineId: 'guest', mode: 'effects', sources: [{ kind: 'direct', setup: { items: [{
+        kind: 'setupRecipe', selection: { ref: { pluginId, recipeId: definition.id, revision: definition.revision }, inputs: {} },
+      }] } }] },
+      readRecipes: async () => [{ id: `${pluginId}/${definition.id}`, pluginId, pluginVersion: '1.0.0', definition }],
+      runNative: async command => {
+        if (status === 'unsupported') {
+          expect(command.executable).toBe('systemctl');
+          return { code: 0, stdout: 'LoadState=loaded\nUnitFileState=masked\nActiveState=inactive\n', stderr: '' };
+        }
+        expect(command.executable).toBe('fixture-check');
+        return { code: 1, stdout: '', stderr: '', errorCode: 'ENOENT' };
+      },
+    });
+    expect(result).toMatchObject({ support: [{ sourceIndex: 0, itemIndex: 0, status: status === 'unimplemented' ? 'unavailable' : status,
+      reason: 'required_fact_unavailable', requiredFact: status === 'unsupported' ? 'serviceEnablement'
+        : status === 'unimplemented' ? 'administrator' : 'commandExecutable',
+    }] });
+  });
+
   it('prepares a descriptor program from exact role inputs without manufacturing a recipe selection or applying effects', async () => {
     const recipe = MachineRecipeV1Schema.parse({ id: 'native-membership', revision: '1', title: 'Native membership',
       inputSchema: { type: 'object', properties: { profile: { type: 'string' }, enabled: { type: 'boolean' } },

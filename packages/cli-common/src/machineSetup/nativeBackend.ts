@@ -37,13 +37,15 @@ function assertPortableFileTarget(path: string) {
 }
 
 /** New declaration capabilities stay unavailable until this native owner implements them. */
-function hasUnsupportedNativeDeclaration(step: MachineRecipeStepV1, secretGrants = false): boolean {
-    if (step.requiredFacts?.some(fact => fact.kind !== 'kernel' && fact.kind !== 'journalReadGroup' && !(fact.kind === 'init' && fact.system === 'systemd'))) return true;
-    if (step.kind === 'command' && (step.affects !== undefined || step.remove !== undefined)) return true;
-    return step.kind === 'file' && (step.probe !== undefined && step.probe.kind !== 'sshd' && step.probe.kind !== 'fail2ban' && step.probe.kind !== 'audit'
+function unavailableNativeDeclarationFacts(step: MachineRecipeStepV1, secretGrants = false): MachineSetupStepObservationV1['facts'] | undefined {
+    const requiredFact = step.requiredFacts?.find(fact => fact.kind !== 'kernel' && fact.kind !== 'journalReadGroup' && !(fact.kind === 'init' && fact.system === 'systemd'));
+    if (requiredFact) return { requiredFact: requiredFact.kind };
+    if (step.kind === 'command' && (step.affects !== undefined || step.remove !== undefined)) return {};
+    if (step.kind === 'file' && (step.probe !== undefined && step.probe.kind !== 'sshd' && step.probe.kind !== 'fail2ban' && step.probe.kind !== 'audit'
         || typeof step.validate === 'object' && step.validate.kind !== 'sshd' && step.validate.kind !== 'fail2ban'
         || step.content !== undefined && step.content.kind !== 'literal' && step.content.kind !== 'jsonMerge' && step.content.kind !== 'iniKeys'
-            && !((secretGrants || step.lifetime === 'invocation') && step.content.kind === 'secretGrant'));
+            && !((secretGrants || step.lifetime === 'invocation') && step.content.kind === 'secretGrant'))) return {};
+    return undefined;
 }
 
 async function directoryOwnershipMatches(step: DirectoryStep, owner: Readonly<{ uid: number; gid: number }>): Promise<boolean> {
@@ -323,7 +325,8 @@ export function createMachineSetupNativeBackend(options: Readonly<{
                 options.signal?.throwIfAborted();
                 if (step.kind === 'kernel') return await observeNativeBinfmt(step, run);
                 if (step.kind === 'reboot') return await observeReboot(step);
-                if (hasUnsupportedNativeDeclaration(step, options.materializeSecretGrant !== undefined)) return { stepId: step.id, status: 'unsupported', reason: 'required_fact_unavailable', facts: {} };
+                const unavailable = unavailableNativeDeclarationFacts(step, options.materializeSecretGrant !== undefined);
+                if (unavailable) return { stepId: step.id, status: 'unavailable', reason: 'required_fact_unavailable', facts: unavailable };
                 const missing = await prerequisites(step);
                 if (missing) return missing;
                 if (step.kind === 'firewall') { await requireProtectedDaemon(); return await firewall.observe(step); }
@@ -385,7 +388,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
                 if ((await run('systemctl', ['--no-block', 'reboot'])).code !== 0) throw new MachineSetupEffectError('native_effect_failed');
                 return;
             }
-            if (hasUnsupportedNativeDeclaration(step, options.materializeSecretGrant !== undefined)) throw new MachineSetupEffectError('required_fact_unavailable');
+            if (unavailableNativeDeclarationFacts(step, options.materializeSecretGrant !== undefined)) throw new MachineSetupEffectError('required_fact_unavailable');
             const missing = await prerequisites(step);
             if (missing) throw new MachineSetupEffectError(missing.reason === 'needs_admin_to_check' ? 'needs_admin_to_check' : 'required_fact_unavailable');
             if (step.kind === 'firewall') { await requireProtectedDaemon(); await firewall.apply(step); return; }
@@ -528,7 +531,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
             } : undefined);
         },
         async stage(step) {
-            if (hasUnsupportedNativeDeclaration(step, options.materializeSecretGrant !== undefined)) throw new MachineSetupEffectError('required_fact_unavailable');
+            if (unavailableNativeDeclarationFacts(step, options.materializeSecretGrant !== undefined)) throw new MachineSetupEffectError('required_fact_unavailable');
             const missing = await prerequisites(step);
             if (missing) throw new MachineSetupEffectError(missing.reason === 'needs_admin_to_check' ? 'needs_admin_to_check' : 'required_fact_unavailable');
             await requireProtectedDaemon();

@@ -44,6 +44,24 @@ async function fixture() {
 }
 const basis = { kind: 'bootstrap' as const, managedId: 'm-a', operationId: 'op-a', admittedInputDigest: 'a'.repeat(64) };
 
+it.each(['prerequisite', 'command-impact'] as const)('keeps an unimplemented %s check unavailable and refuses effects without native execution', async declaration => {
+    const calls: MachineSetupNativeCommand[] = [];
+    const backend = createMachineSetupNativeBackend({ run: async command => {
+        calls.push(command);
+        throw new Error('An unimplemented declaration must not run native work');
+    } });
+    const step: MachineRecipeStepV1 = { id: 'unimplemented-check', kind: 'command', executable: 'fixture-effect', args: [],
+        check: { executable: 'fixture-check', args: [], unsatisfiedExitCodes: [1] },
+        ...(declaration === 'prerequisite' ? { requiredFacts: [{ kind: 'administrator' as const }] } : { affects: 'none' as const }),
+    };
+    const observation = await backend.observe(step);
+    expect(observation).toEqual({ stepId: step.id, status: 'unavailable', reason: 'required_fact_unavailable',
+        facts: declaration === 'prerequisite' ? { requiredFact: 'administrator' } : {} });
+    await expect(backend.apply(step)).rejects.toMatchObject({ reasonCode: 'required_fact_unavailable' });
+    await expect(backend.stage!(step)).rejects.toMatchObject({ reasonCode: 'required_fact_unavailable' });
+    expect(calls).toEqual([]);
+});
+
 it('preserves an unconfirmed native process stop instead of flattening it to cancellation', async () => {
     const controller = new AbortController();
     const refusal = Object.assign(new Error('Native tree termination is unconfirmed'), { code: 'plugin_exec_termination_incomplete' });

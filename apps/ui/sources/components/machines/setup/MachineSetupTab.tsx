@@ -391,6 +391,9 @@ function MachineSetupRoot(
                     }
                     editable={editable}
                     busy={setup.pending !== null}
+                    onRetry={() => {
+                      void setup.check();
+                    }}
                     onReapply={() => {
                       void setup.prepare({ kind: 'reapply' });
                     }}
@@ -684,6 +687,7 @@ function RecipeRow(
     presetName: string | null;
     editable: boolean;
     busy: boolean;
+    onRetry: () => void;
     onReapply: () => void;
     onRemove?: () => void;
   }>,
@@ -703,9 +707,10 @@ function RecipeRow(
         : recipe.status === 'unavailable' || recipe.status === 'unverifiable'
           ? t('machinePresets.setup.tab.recipeUnchecked')
           : null;
-  // A recipe that can't run here says why, in the setup owner's words, and leads to its one next step (Remove…).
-  const blocked = recipe.status === 'unsupported' || recipe.status === 'unavailable' || recipe.status === 'unverifiable';
-  const why = blocked ? describeMachineSetupReason(recipe.reason) : null;
+  const unchecked = recipe.status === 'unavailable' || recipe.status === 'unverifiable';
+  const blocked = recipe.status === 'unsupported' || unchecked;
+  const reason = blocked ? describeMachineSetupReason(recipe.reason) : null;
+  const why = reason && recipe.requiredFact ? `${reason} (${recipe.requiredFact})` : reason;
   return (
     <Item
       testID={`machine-setup-recipe:${recipe.key}`}
@@ -715,7 +720,16 @@ function RecipeRow(
       showChevron={false}
       accessoryLayout="adaptive"
       rightElement={
-        !props.editable ? undefined : blocked && props.onRemove ? (
+        !props.editable ? undefined : unchecked ? (
+          <RoundButton
+            testID={`machine-setup-recipe-retry:${recipe.key}`}
+            size="small"
+            display="secondary"
+            title={t('common.retry')}
+            disabled={props.busy}
+            onPress={props.onRetry}
+          />
+        ) : recipe.status === 'unsupported' && props.onRemove ? (
           <RoundButton
             testID={`machine-setup-recipe-remove:${recipe.key}`}
             size="small"

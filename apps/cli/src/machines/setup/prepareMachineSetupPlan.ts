@@ -82,7 +82,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   const support: MachineSetupPlanResultV1['support'] = sources.flatMap((source, sourceIndex) =>
     (source.setup.items ?? []).flatMap((item, itemIndex) => item.kind !== 'app'
       && !executing.has(`${sourceIndex}:${itemIndex}`)
-      ? [] : [{ sourceIndex, itemIndex, status: 'unsupported', reason: 'required_fact_unavailable' }]));
+      ? [] : [{ sourceIndex, itemIndex, status: 'unverifiable', reason: 'required_fact_unavailable' }]));
   const recipePlans: NonNullable<MachineSetupPlanResultV1['recipePlans']> = [];
   let targetFacts: Promise<MachineRecipeTargetFactsV1> | undefined;
   const readTargetFacts = () => targetFacts ??= (async () => {
@@ -165,13 +165,17 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     const reason = blocked ? MachineSetupObservationReasonV1Schema.safeParse(blocked.reason) : undefined;
     const entry = support.find(entry => entry.sourceIndex === sourceIndex && entry.itemIndex === itemIndex)!;
     entry.status = blocked?.status ?? (plan.nativeFacts.some(fact => fact.status === 'drifted') ? 'drifted' : 'satisfied');
-    if (blocked) entry.reason = reason?.success ? reason.data : 'required_fact_unavailable';
+    if (blocked) {
+      entry.reason = reason?.success ? reason.data : 'required_fact_unavailable';
+      if (typeof blocked.facts.requiredFact === 'string' && blocked.facts.requiredFact.trim())
+        entry.requiredFact = blocked.facts.requiredFact;
+    }
     else delete entry.reason;
   }
   const review = input.mode ? (() => {
     const executingSetups = executionSources ?? sources.map(source => source.setup);
     const unsupportedScriptCheck = executingSetups.some(setup => setup.scripts?.some(script => script.body && script.check?.requiredFacts?.length));
-    const incomplete = support.some(entry => entry.status === 'unsupported' || entry.status === 'unavailable')
+    const incomplete = support.some(entry => entry.status === 'unsupported' || entry.status === 'unavailable' || entry.status === 'unverifiable')
       || support.length !== recipePlans.length || unsupportedScriptCheck;
     let possible = requiresSessionRefresh !== undefined;
     let unknown = incomplete;

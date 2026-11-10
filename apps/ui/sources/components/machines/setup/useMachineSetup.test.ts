@@ -66,14 +66,15 @@ describe('readMachineSetupRecipes', () => {
     ]);
   });
 
-  it('carries the owner reason for a recipe that is not supported here, so the row can say why', () => {
+  it('carries the selected missing fact with an unchecked recipe so its row can explain what is unavailable', () => {
     const plan = MachineSetupPlanResultV1Schema.parse({
       desiredRevision: 1, exclusions: [],
       sources: [{ kind: 'direct', setup: { items: [item(docker)] } }],
-      support: [{ sourceIndex: 0, itemIndex: 0, status: 'unsupported', reason: 'required_fact_unavailable' }],
+      support: [{ sourceIndex: 0, itemIndex: 0, status: 'unavailable', reason: 'required_fact_unavailable', requiredFact: 'packageManager' }],
     });
-    expect(readMachineSetupRecipes(plan, null).map((row) => [row.status, row.reason, row.removable]))
-      .toEqual([['unsupported', 'required_fact_unavailable', true]]);
+    expect(readMachineSetupRecipes(plan, null)).toMatchObject([
+      { status: 'unavailable', reason: 'required_fact_unavailable', requiredFact: 'packageManager', removable: true },
+    ]);
   });
 
   it('shows nothing until the setup has been read', () => {

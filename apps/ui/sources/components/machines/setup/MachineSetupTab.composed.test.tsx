@@ -425,7 +425,7 @@ describe('Machine → Setup tab (P-M1)', () => {
     await screen.pressByTestIdAsync('store.software.review.cancel');
     await screen.unmount();
   });
-  it('names unsupported recipes from Account declarations even when the Machine plan has no title', async () => {
+  it.each(['unverifiable', 'unavailable', 'unsupported'] as const)('names %s recipes and offers the owner’s recovery action', async (status) => {
     const home = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example',
       serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
     const serverId = resolveServerProfileScopeIdForIdentifier(home);
@@ -449,9 +449,11 @@ describe('Machine → Setup tab (P-M1)', () => {
     });
     replacePluginAccountAvailabilityProjection({ scope: { serverId, accountId: 'owner' },
       snapshot: { availabilityCursor: 1, intentReads: [{ pluginId: PLUGIN_MANIFEST.id, response }], materializations: [], snapshots: [] } });
-    const current = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 1, exclusions: [],
+    let current = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 1, exclusions: [],
       sources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: { ref, inputs: {} } }] } }],
-      support: [{ sourceIndex: 0, itemIndex: 0, status: 'unsupported', reason: 'required_fact_unavailable' }],
+      support: [{ sourceIndex: 0, itemIndex: 0, status,
+        reason: status === 'unsupported' ? 'private_scope_unenforceable' : 'required_fact_unavailable',
+        ...(status === 'unavailable' ? { requiredFact: 'packageManager' } : {}) }],
     });
     harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
       const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
@@ -463,8 +465,22 @@ describe('Machine → Setup tab (P-M1)', () => {
     await waitForHomeGovernance(() => {
       const row = screen.tree.findAll(node => node.props?.testID === 'machine-setup-recipe:0.0' && node.props.title !== undefined)[0];
       expect(row?.props.title).toBe('Docker Engine');
-      expect(row?.props.subtitle).toContain('Not supported on this machine');
+      expect(row?.props.subtitle).toContain(status === 'unsupported' ? 'Not supported on this machine' : 'Couldn’t be checked');
+      if (status === 'unavailable') expect(row?.props.subtitle).toContain('packageManager');
     });
+    if (status === 'unsupported') {
+      expect(screen.findByTestId('machine-setup-recipe-remove:0.0')).not.toBeNull();
+      expect(screen.findByTestId('machine-setup-recipe-retry:0.0')).toBeNull();
+    } else {
+      expect(screen.findByTestId('machine-setup-recipe-remove:0.0')).toBeNull();
+      expect(screen.findByTestId('machine-setup-recipe-more:0.0')).toBeNull();
+      expect(screen.findByTestId('machine-setup-recipe-retry:0.0')).not.toBeNull();
+      current = MachineSetupPlanResultV1Schema.parse({ ...current,
+        support: [{ sourceIndex: 0, itemIndex: 0, status: 'satisfied' }] });
+      await screen.pressByTestIdAsync('machine-setup-recipe-retry:0.0');
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-recipe-retry:0.0')).toBeNull());
+      expect(harness.requests.some(request => request.path === '/v1/actions/machines.setup.apply')).toBe(false);
+    }
     await screen.unmount();
   });
   it('lists bundled setup presets beside saved presets and reviews their exact source through the existing tab', async () => {
