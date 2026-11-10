@@ -1,11 +1,11 @@
 import { createRequire } from 'node:module';
 import { realpathSync, writeSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { withDependencyConsumption } from '../utils/proc/dependency_refresh.mjs';
-import { probeRuntimeImport } from '../utils/proc/runtimeImportProbe.mjs';
+import { describeRuntimeImportFailure, probeRuntimeImport } from '../utils/proc/runtimeImportProbe.mjs';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 const self = fileURLToPath(import.meta.url);
@@ -27,11 +27,12 @@ export const ENTRY_GRAPHS = Object.freeze([
   { id: 'protocol-service-placement-actions', entry: 'packages/protocol/src/actions/specs/projectServicePlacement.ts', cwd: 'packages/protocol' },
   { id: 'protocol-managed-credential-delivery', entry: 'packages/protocol/src/machines/managed/credentialDeliveryV1.ts', cwd: 'packages/protocol' },
   { id: 'protocol-service-placement', entry: 'packages/protocol/src/workspaces/projectServicePlacementV1.ts', cwd: 'packages/protocol' },
-  { id: 'protocol-import-cycles', entry: 'apps/cli/scripts/importCycleGuard.mjs', cwd: '.', args: ['--protocol'] },
+  { id: 'protocol-import-cycles', entry: 'apps/cli/scripts/importCycleGuard.mjs', cwd: '.', args: ['--protocol'],
+    diagnosticSourceRoot: 'packages/protocol/src' },
   { id: 'sdk-browser', entry: 'packages/sdk/scripts/validateBrowserConsumer.mjs', cwd: 'packages/sdk' },
 ]);
 
-export async function loadEntryGraph(graph, { signal, repoDir = repo, env = process.env } = {}) {
+export async function loadEntryGraph(graph, { signal, repoDir = repo, env = process.env, traceImports = false } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'hstack-entry-load-'));
   try {
     // Each graph is actual installed-module consumption, after host admission.
@@ -61,19 +62,57 @@ export async function loadEntryGraph(graph, { signal, repoDir = repo, env = proc
           sourceEnv = invocation.env ?? {};
         } finally { await loader.unregister(); }
       }
+      if (traceImports) nodeArgs.push('--import', fileURLToPath(new URL('./import-trace.mjs', import.meta.url)));
       const entrypoint = graph.args ? join(repoDir, graph.entry) : ui
         ? createRequire(join(repo, 'apps/ui/package.json')).resolve('vitest/vitest.mjs') : self;
       const result = await probeRuntimeImport({ entrypoint,
-        args: graph.args ?? (ui ? ['run', '--config', join(repoDir, 'apps/ui/vitest.config.ts'), 'sources/agents/catalog/catalog.test.ts']
+        args: graph.args ?? (ui ? ['run', '--config', join(repoDir, 'apps/ui/vitest.config.ts'),
+          ...(traceImports ? ['--reporter', fileURLToPath(new URL('./ui-import-trace.mjs', import.meta.url))] : []),
+          'sources/agents/catalog/catalog.test.ts']
           : [`--child=${graph.id}`, `--repo-dir=${repoDir}`]),
         nodeArgs,
         cwd: join(repoDir, graph.cwd), signal,
-        env: { ...readerEnv, ...sourceEnv, HAPPIER_STACK_REPO_DIR: repoDir, HAPPIER_HOME_DIR: home, HAPPIER_STACK_CLI_HOME_DIR: home,
+        env: { ...readerEnv, ...sourceEnv, HAPPIER_ENTRY_IMPORT_TRACE: traceImports ? join(home, 'imports.jsonl') : undefined,
+          HAPPIER_ENTRY_IMPORT_FAILURE: traceImports ? join(home, 'failure.json') : undefined,
+          HAPPIER_STACK_REPO_DIR: repoDir, HAPPIER_HOME_DIR: home, HAPPIER_STACK_CLI_HOME_DIR: home,
           HAPPIER_SERVER_LIGHT_DATA_DIR: home, TSX_DISABLE_CACHE: '1',
           ...(graph.tsconfig ? { TSX_TSCONFIG_PATH: join(repoDir, graph.tsconfig) } : {}),
           HAPPIER_CLI_DIST_INTEGRITY_PROBE: '1', HAPPIER_CLI_RUNTIME_DISABLE: '1', HAPPIER_CLI_UPDATE_CHECK: '0' },
       });
+      let importEdges;
+      if (traceImports) {
+        const recorded = await readFile(join(home, 'imports.jsonl'), 'utf8').catch(error => {
+          if (error.code === 'ENOENT') return '';
+          throw error;
+        });
+        importEdges = recorded.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+        if (ui && result.status === 'failed') {
+          const failure = await readFile(join(home, 'failure.json'), 'utf8').catch(error => {
+            if (error.code === 'ENOENT') return null;
+            throw error;
+          });
+          if (failure) {
+            const error = JSON.parse(failure);
+            Object.assign(result, describeRuntimeImportFailure(
+              `${error.name ?? 'Error'}${error.code ? ` [${error.code}]` : ''}: ${error.message}\n${error.stack ?? ''}`,
+              join(repoDir, graph.entry)));
+          }
+        }
+      }
+      // The cycle guard analyzes source instead of importing it. Consume its
+      // authored cycle diagnostics here, alongside native loader diagnostics.
+      const cycle = graph.diagnosticSourceRoot && result.status === 'failed'
+        ? result.loadError?.message.split('New cycle 1:')[1]?.split(/New cycle \d+:/)[0] : null;
+      const eagerRead = cycle?.match(/Eager read: (.+) -> (.+) \(([^)]+)\)/);
+      const failureImportPath = cycle ? [...cycle.matchAll(/^  - (.+)$/gm)]
+        .map(match => join(repoDir, graph.diagnosticSourceRoot, match[1])) : undefined;
+      if (eagerRead) {
+        result.firstFailingModule = join(repoDir, graph.diagnosticSourceRoot, eagerRead[1]);
+        result.loadError = { ...result.loadError, code: 'runtime_import_cycle', symbol: eagerRead[3] };
+      }
       return { graph: graph.id, entry: graph.entry, basis: 'current-source', ...result,
+        ...(traceImports ? { importEdges } : {}),
+        ...(failureImportPath?.length ? { failureImportPath } : {}),
         firstFailingModule: result.firstFailingModule === self ? graph.entry : result.firstFailingModule };
     });
   } catch (error) {

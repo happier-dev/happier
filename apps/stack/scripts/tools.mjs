@@ -21,6 +21,7 @@ const TOOL_SCRIPTS = {
   bench: 'scripts/bench.mjs',
   'managed-lima': 'scripts/managed_lima.mjs',
   'iroh-relay': 'scripts/iroh_relay.mjs',
+  'load-sentinel': 'scripts/load_sentinel.mjs',
 };
 
 async function runTool(rootDir, scriptRel, forwarded) {
@@ -53,7 +54,7 @@ async function main() {
   if (wantsHelp(argv, { flags }) || !cmd || cmd === 'help') {
     printResult({
       json,
-      data: { commands: ['setup-pr', 'review-pr', 'import', 'review', 'edison', 'bench', 'managed-lima', 'iroh-relay'] },
+      data: { commands: ['setup-pr', 'review-pr', 'import', 'review', 'edison', 'bench', 'managed-lima', 'iroh-relay', 'load-sentinel'] },
       text: [
         '[tools] usage:',
         '  hstack tools setup-pr --repo=<pr-url|number> [--dev|--start] [--json] [-- ...]',
@@ -64,6 +65,7 @@ async function main() {
         '  hstack tools bench catalog | run [--concurrency=1] [--workload=ID | -- COMMAND [ARG...]]',
         '  hstack tools managed-lima setup|status|doctor|start|stop|shell|ssh-config --instance=NAME [--profile=balanced] [--json]',
         '  hstack tools iroh-relay install|status|stop [--json]',
+        '  hstack tools load-sentinel --board=<handoff-board-path>',
       ].join('\n'),
     });
     return;

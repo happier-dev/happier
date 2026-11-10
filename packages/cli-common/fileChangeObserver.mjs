@@ -6,28 +6,32 @@ export const DEFAULT_FILE_CHANGE_CATCH_UP_MS = 1_000;
  * own meaningful snapshot and catch-up budget. Register before observing and
  * recheck after arming so a release between observation and sleep is not lost.
  */
-export function createFileChangeObserver(directories, { isRelevant } = {}) {
+export function createFileChangeObserver(directories, { isRelevant, recursive = false, persistent = false, onError } = {}) {
   const watchers = new Map();
   let onChange = null;
   const observe = () => {
     for (const directory of directories) {
       if (watchers.has(directory)) continue;
       try {
-        const watcher = watch(directory, { persistent: false }, (_event, filename) => {
+        const watcher = watch(directory, { persistent, recursive }, (_event, filename) => {
           if (!isRelevant || isRelevant(directory, filename)) onChange?.();
         });
         watchers.set(directory, watcher);
-        watcher.on('error', () => {
+        watcher.on('error', error => {
           watcher.close();
           watchers.delete(directory);
+          onError?.(error);
           onChange?.();
         });
-      } catch {
+      } catch (error) {
+        if (onError) onError(error);
         // Missing directories/unsupported watching use the owner's catch-up.
       }
     }
   };
   return {
+    // Event-only consumers own their debounce; unlike wait(), this never polls.
+    subscribe(listener) { onChange = listener; observe(); },
     // wait arms before rechecking the snapshot. Uncontended reads must not
     // reconfigure native filesystem watching and interrupt Metro notifications.
     capture(readSnapshot) { return readSnapshot(); },
@@ -58,6 +62,6 @@ export function createFileChangeObserver(directories, { isRelevant } = {}) {
         if (signal?.aborted) abort();
       });
     },
-    close() { for (const watcher of watchers.values()) watcher.close(); watchers.clear(); },
+    close() { onChange = null; for (const watcher of watchers.values()) watcher.close(); watchers.clear(); },
   };
 }

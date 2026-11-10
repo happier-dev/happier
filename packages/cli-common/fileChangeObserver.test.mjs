@@ -4,8 +4,24 @@ import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import test from 'node:test';
 import { setImmediate as nextTurn } from 'node:timers/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { createTempFixture } from '../../apps/stack/scripts/testkit/core/temp_fixture.mjs';
 
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from './fileChangeObserver.mjs';
+
+test('recursive subscriptions push nested source changes without catch-up polling', async t => {
+  const fixture = await createTempFixture(t);
+  await mkdir(fixture.path('nested'));
+  const changed = Promise.withResolvers();
+  const observer = createFileChangeObserver([fixture.root], {
+    recursive: true, isRelevant: (_directory, name) => String(name).endsWith('.mjs'),
+  });
+  try {
+    observer.subscribe(changed.resolve);
+    await writeFile(fixture.path('nested/source.mjs'), 'export {};');
+    await changed.promise;
+  } finally { observer.close(); }
+});
 
 test('uncontended snapshots do not watch; waits arm, recheck and reuse their subscription', async (t) => {
   const handles = [];
