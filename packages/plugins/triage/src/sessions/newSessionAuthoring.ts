@@ -1,6 +1,6 @@
 import type { PluginUiHostApi, PluginUiSessionPlacementCandidateV1 } from '@happier-dev/plugin-sdk/ui';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
-import { readTriageActionLaunchModeV1, type TriageActionV1 } from '../settings/actions.js';
+import { hasTriageActionInstructionSourceV1, readTriageActionLaunchModeV1, type TriageActionV1 } from '../settings/actions.js';
 import { planTriageActionDeliveryV1 } from './actionDelivery.js';
 import type { TriageActionCheckoutResolutionV1, TriageActionExecutionPlacementV1 } from './actionLaunch.js';
 import type { TriageEntrySessionStartRequestV1 } from './entrySessionStartController.js';
@@ -8,7 +8,12 @@ import { projectTriagePreparedWorkspaceSelectionInputV1 } from '../ui/header/new
 import { projectTriageNewSessionFailureV1, requestTriageNewSessionSeed, type TriageNewSessionSeedV1, type TriageNewSessionSeedHostV1, type TriageNewSessionSeedResultV1 } from '../ui/header/newSessionSeedCommand.js';
 import type { TriageEntryAttachmentDraftV1 } from '../composer/mutationPlan.js';
 
-export function triageActionDefaultSeedV1(action: TriageActionV1): NonNullable<TriageNewSessionSeedV1['actionDefault']> {
+/**
+ * The draft's "save as this action's default" configurator, or nothing for an action with no fixed prompt (Ask):
+ * that question is typed each time, so there is no prompt to save and it cannot start without one.
+ */
+export function triageActionDefaultSeedV1(action: TriageActionV1): TriageNewSessionSeedV1['actionDefault'] {
+    if (!hasTriageActionInstructionSourceV1(action.target)) return undefined;
     return { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, configuredActionId: action.actionId,
         label: action.label, launchMode: readTriageActionLaunchModeV1(action) };
 }

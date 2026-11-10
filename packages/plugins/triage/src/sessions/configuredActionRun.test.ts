@@ -472,6 +472,41 @@ describe('configured action execution through the shared Session owner', () => {
         expect(JSON.stringify(seeds[0])).toContain('receipt');
     });
 
+    // Owner 2026-11-10 (PR-ACTIONS-1110): an action with no fixed prompt (Ask) is a question typed each time, so its
+    // draft opens without the save-as-default configurator; an action with a prompt keeps it. Decided from the record.
+    it.each([
+        ['no fixed prompt', { promptInvocationId: null }, false],
+        ['a seeded prompt', { promptInvocationId: null, seededFallbackInstruction: 'Fix this.' }, true],
+    ] as const)('seeds the action-default configurator only for an action with %s', async (_name, prompt, configurable) => {
+        const subject = { kind: 'deploymentReceipt', serverId: 'server-a', environmentId: 'environment', deploymentId: 'receipt' } as const;
+        const seeds: Array<Record<string, unknown>> = [];
+        const host = {
+            version: () => ({ methods: ['openNewSession'] }),
+            context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
+            openNewSession: async (seed: Record<string, unknown>) => { seeds.push(seed); },
+            executeAction: async (id: string) => {
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return { ...catalog, actions: [
+                    { ...action, actionId: 'question', label: 'Question', target: { kind: 'agent', ...prompt, delivery: 'compose' } },
+                ] };
+                if (id === 'deployments.receipts.get') return { ok: true,
+                    deployment: createDeploymentReceiptHeaderV1({ id: 'receipt', environmentId: 'environment' }) };
+                if (id === 'artifact.get') return { artifact: null };
+                if (id === 'localServices.launcher.snapshot') return { v: 1, machineId: 'chosen', updatedAt: 1, targets: [] };
+                if (id === 'projects.list') return { items: [], truncated: false };
+                throw new Error(`Unexpected host Action ${id}`);
+            },
+        };
+        const input = parseHandoffInput({ v: 1, handoff: { task: 'investigate', configuredActionId: 'question',
+            context: { kind: 'failure', subject, machine: { serverId: 'server-a', machineId: 'chosen' } },
+            evidence: [{ kind: 'failure', subject }],
+            sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'configured' } });
+        const result = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
+            input.handoff, { entries: [], signal: new AbortController().signal });
+        expect(result.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
+        expect(seeds).toHaveLength(1);
+        expect('actionDefault' in seeds[0]!).toBe(configurable);
+    });
+
     // Live D1 (AGENT-ACTIONS-UI-1107-LIVE): a working-copy record on a receipt whose controller has no saved folder
     // looped on "Choose where to investigate". Owner ruling 16:50Z: an unresolved placement opens the composer.
     it.each(['compose', 'send'] as const)('opens the prefilled composer for a working-copy record with no folder (%s)', async delivery => {
