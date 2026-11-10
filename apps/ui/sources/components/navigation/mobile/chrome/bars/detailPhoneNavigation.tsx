@@ -117,7 +117,7 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
         native={input.native} surfaceId={input.address} preferences={preferences} activeId={input.activeId}
         open={moreOpen} onOpenChange={setMoreOpen} onSelect={input.select} onCustomize={customize}
         activeTrigger={foldedActive ? { title: foldedActive.count ? `${foldedActive.title}, ${foldedActive.count}` : foldedActive.title,
-            icon: foldedActive.icon } : null}
+            name: foldedActive.title, icon: foldedActive.icon } : null}
         pinnedEntries={onBar.map(entry => ({ id: entry.id, title: entry.title, icon: entry.icon, kind: entry.navigation.kind,
             pinned: true, pinnable: true, disabled: Boolean(entry.disabledReason), subtitle: entry.count }))}
         entries={behindMore.map(entry => {
@@ -171,7 +171,7 @@ export function DetailPhoneMoreMenu(props: Readonly<{
     pinnedEntries?: readonly DetailPhoneMoreEntry[];
     activeId: string;
     /** A folded bar's selected item, named by its More (the only control it shows). */
-    activeTrigger: Readonly<{ title: string; icon: IconName }> | null;
+    activeTrigger: Readonly<{ title: string; name: string; icon: IconName }> | null;
     open: boolean;
     onOpenChange: (open: boolean) => void;
     onSelect: (id: string) => void;
@@ -203,5 +203,7 @@ export function DetailPhoneMoreMenu(props: Readonly<{
         matchTriggerWidth={false} placement="top" trigger={({ open: expanded, toggle }) => props.native
             ? <View collapsable={false} testID={props.nativeAnchorTestID} style={{ width: 0, height: 0 }} />
             : <CockpitTabBarAction testID={`${prefix}-tab-more`} label={props.activeTrigger?.title ?? t('common.more')}
+                // Folded into a page's own bar, More stands for the open tab: it names it, as the bar's selected tab does.
+                {...(props.activeTrigger === null ? {} : { visibleLabel: props.activeTrigger.name, namesItselfWhenSelected: true })}
                 icon={props.activeTrigger?.icon ?? 'dots-three'} selected={props.activeTrigger !== null} expanded={expanded} onPress={toggle} />} />;
 }

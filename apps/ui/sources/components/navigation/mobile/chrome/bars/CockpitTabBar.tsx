@@ -345,6 +345,10 @@ type CockpitTabBarActionProps = Readonly<{
     expanded?: boolean;
     /** The open surface lives behind this action (a tool opened from More): it reads as the active tab. */
     selected?: boolean;
+    /** Standing for the open item, it names it with labels off, as a selected tab with `namesItselfWhenSelected` does. */
+    namesItselfWhenSelected?: boolean;
+    /** The visible name when the accessible `label` carries more (a count read after the name). */
+    visibleLabel?: string;
     onPress: () => void;
 }>;
 
@@ -383,8 +387,8 @@ export const CockpitTabBarActionView = React.forwardRef<View, CockpitTabBarActio
             <View style={styles.iconContainer}>
                 <ChromeGlyph name={props.icon} size={metrics.iconSize} active={props.selected === true} />
             </View>
-            {metrics.showLabels ? (
-                <Text style={[styles.label, props.selected ? styles.labelActive : styles.labelInactive]}>{props.label}</Text>
+            {metrics.showLabels || (props.selected === true && props.namesItselfWhenSelected === true) ? (
+                <Text style={[styles.label, props.selected ? styles.labelActive : styles.labelInactive]}>{props.visibleLabel ?? props.label}</Text>
             ) : null}
         </HappierPressable>
     );
