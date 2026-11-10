@@ -2,7 +2,6 @@ import * as React from 'react';
 import { UsageAccountingMetricSchema } from '@happier-dev/protocol/inputs/usageQuery';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import {
   StackedSeriesChart,
   type HappierSeries,
@@ -41,7 +40,7 @@ import {
   type UsageBodyProps,
   isUsageReadOutstanding,
   UsageBodyReading,
-  resolveUsageChartPlotPx,
+  useUsageChartPlotPx,
 } from './usageBodyKit';
 import { UsageRiverStyleBody } from './UsageChartStyleBodies';
 
@@ -61,7 +60,6 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   const { theme } = useUnistyles();
   const chartTheme = useUsagePluginTheme();
   const view = useUsageAnalyticsView(props.slice, props.query);
-  const presentation = useWidgetPresentation();
   const areaInk = useUsageSeriesAreaInk();
   const byModel = props.query.breakdown.includes('model');
   const cost = metric === 'cost';
@@ -150,8 +148,10 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   });
   const hasChart = series.length > 0 && (cost || sourceSeries.length > 0 || mix?.hasData === true);
   const details = useUsageChartDetails(t(`usage.widgets.${props.id}`), hasChart);
+  // The plot takes what the frame declares after its chrome, decided before the first paint (sweep 1110 #9).
+  const height = useUsageChartPlotPx(120);
   if ((series.length === 0 || (!cost && !sourceSeries.length && !mix?.hasData)) && isUsageReadOutstanding(props.slice, ['accounting']))
-    return <UsageBodyReading testID={`${props.testID}.loading`} shape={{ kind: 'chart', plotPx: resolveUsageChartPlotPx(presentation?.geometry, 120) }}
+    return <UsageBodyReading testID={`${props.testID}.loading`} shape={{ kind: 'chart', plotPx: height }}
       waitingOn={{ slice: props.slice, sources: ['accounting'] }} />;
   if ((series.length === 0 || (!cost && !sourceSeries.length && !mix?.hasData)) && isUsageReadFailed(props.slice, ['accounting']))
     return <UsageBodyReadFailed slice={props.slice} sources={['accounting']} testID={props.testID} onRetry={props.model.refresh} />;
@@ -163,8 +163,6 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
         reason={t('usage.board.page.flowEmptyReason')}
       />
     );
-  // The plot takes what the frame leaves after its chrome (wrapped legend and coverage note included).
-  const height = resolveUsageChartPlotPx(presentation?.geometry, 120);
   return (
     <View style={{ gap: theme.space.s10 }} testID={`${props.testID}.flow`}>
       <StackedSeriesChart

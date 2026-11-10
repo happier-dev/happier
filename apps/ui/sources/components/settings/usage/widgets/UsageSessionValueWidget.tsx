@@ -137,7 +137,6 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   );
   return (
     <View style={styles.body} testID={`${props.testID}.value`}>
-      {outside}
       <UsageWorkAutopsy {...props} testID={`${props.testID}.autopsy`} />
       {showScatter ? plots.map(plot => {
         const usedSlots = slots.filter(agentId => plot.rows.some(row => slotOf(row) === agentId));
@@ -257,6 +256,9 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
         </View>
         );
       })}
+      {/* Sessions this view has not counted yet follow the counted ones: Browse is the ledger's next step, not a
+          label above its value (sweep 1110 #25). */}
+      {outside}
       <Text style={[styles.note, sectionStyle]}>
         {t('usage.board.work.judgement')}
       </Text>

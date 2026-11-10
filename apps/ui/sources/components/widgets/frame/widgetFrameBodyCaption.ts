@@ -27,12 +27,6 @@ export const WidgetFrameBodyMetaContext = React.createContext<
   ((meta: React.ReactNode) => void) | null
 >(null);
 
-/**
- * The stretched cell's whole room (a group's shorter column), read beside the body's own box: a body that wants
- * to fill it (a chart) reads this one fact; every other body keeps ignoring a taller partner.
- */
-export const WidgetFrameCellHeightContext = React.createContext<number | undefined>(undefined);
-
 export function useWidgetFrameBodyMeta(meta: React.ReactNode): void {
   const lend = React.useContext(WidgetFrameBodyMetaContext);
   React.useEffect(() => {

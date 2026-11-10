@@ -180,9 +180,7 @@ export function UsageFilterBar(
       ))}
     </>
   );
-  const trailing = (
-    <>
-      {props.onMetricChange ? (
+  const metricToggle = props.onMetricChange ? (
         <View style={styles.segment}>
           <SegmentedTabBar
             testIDPrefix={`${props.testID}.metric`}
@@ -193,12 +191,12 @@ export function UsageFilterBar(
             accessibilityLabel={t('usage.board.page.metricLabel')}
           />
         </View>
-      ) : null}
-      {/* Shown in Tokens and Cost alike (labs d2views, d2top, d2work): a Tokens page still shows basis-dependent
-          money, and a chip that came and went with the toggle reshaped the bar under the pointer (R135 call 2). */}
-      {costFilter ? <SelectionListFilterChip filter={costFilter} currentUiContextCommandScope={costFilter.testID} /> : null}
-    </>
-  );
+      ) : null;
+  // Shown in Tokens and Cost alike (labs d2views, d2top, d2work): a Tokens page still shows basis-dependent
+  // money, and a chip that came and went with the toggle reshaped the bar under the pointer (R135 call 2).
+  const costChip = costFilter ? <SelectionListFilterChip filter={costFilter} currentUiContextCommandScope={costFilter.testID} /> : null;
+  // A phone's row wraps: Tokens/Cost stays on the first line and the basis follows it.
+  const trailing = <>{metricToggle}{costChip}</>;
   const period = (
     <View style={phone ? styles.periodPhone : styles.period}>
       <SegmentedTabBar
@@ -237,7 +235,11 @@ export function UsageFilterBar(
       </View>
       {/* What the widgets show and in which money sit on their own right-aligned row on every view, so a view without
           Tokens/Cost keeps the bar's shape and the page never moves on arrival (R138). */}
-      {props.onMetricChange || costFilter ? <View testID={`${props.testID}.trailing`} style={styles.trailing}>{trailing}</View> : null}
+      {/* The basis leads and Tokens/Cost holds the trailing edge: the basis arrives when its read answers (and leaves when
+          there is one basis), so it grows leftward and never moves the toggle under the pointer (sweep 1110 #26). */}
+      {props.onMetricChange || costFilter ? <View testID={`${props.testID}.trailing`} style={styles.trailing}>
+        {costChip}{metricToggle}
+      </View> : null}
     </View>
   );
 }

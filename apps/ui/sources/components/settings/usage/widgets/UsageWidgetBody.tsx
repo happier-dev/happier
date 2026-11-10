@@ -14,8 +14,7 @@ import { useUsageRetryCommand } from './usageMountedControls';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { useUsageWidgetModel } from './usageWidgetBatch';
 import { useUsageQueryActions } from './useUsageQueryActions';
-import { UsageDailyWidget, resolveUsageDailyChartShape } from './UsageDailyWidget';
-import { useDeviceType } from '@/utils/platform/responsive';
+import { UsageDailyWidget, useUsageDailyChartShape } from './UsageDailyWidget';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { UsagePeriodSummaryWidget } from './UsagePeriodSummaryWidget';
@@ -171,11 +170,12 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
   // A first read holds the room of the shape that lands (Period summary's figures, the Coach's strip), so the
   // widgets below it do not move when the facts arrive; every other body holds three list rows.
   const presentation = useWidgetPresentation();
-  const phone = useDeviceType() === 'phone';
+  // The same declared plot the settled chart draws, decided before the first paint (sweep 1110 #8).
+  const dailyShape = useUsageDailyChartShape();
   const readingShape = props.id === 'usage_period_summary' ? { kind: 'summary' as const }
     : props.id === 'usage_capacity' ? { kind: 'capacity' as const }
     : props.id === 'usage_coach' && isUsageCoachStrip(presentation) ? { kind: 'strip' as const }
-    : props.id === 'usage_daily' ? resolveUsageDailyChartShape(presentation, phone) : undefined;
+    : props.id === 'usage_daily' ? dailyShape : undefined;
   if (!query)
     return (
       <SurfaceStateCard

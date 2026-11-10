@@ -10,7 +10,7 @@ import { WidgetFrameBodyRowsContext } from '@/components/widgets/frame/widgetFra
 import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
-import { resolveUsageDailyChartShape, UsageDailyWidget } from './UsageDailyWidget';
+import { UsageDailyWidget } from './UsageDailyWidget';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { resetPlayedEntrancesForTests } from '../usageEntrance';
 import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
@@ -61,12 +61,6 @@ describe('Daily period chart', () => {
     expect(chart.props.barMotion.entrance).toBeUndefined();
     expect(chart.props.barMotion.change).toBeDefined();
     expect(chart.props.series[0].points.map((point: { y: number }) => point.y)).toEqual([10, 30]);
-  });
-  it('gives the plot the room a taller partner leaves in its cell', () => {
-    const presentation = { size: 'tall', geometry: { width: 500, height: 368 } } as Parameters<typeof resolveUsageDailyChartShape>[0];
-    expect(resolveUsageDailyChartShape(presentation, false).plotPx).toBe(252);
-    expect(resolveUsageDailyChartShape(presentation, false, 270).plotPx).toBe(522);
-    expect(resolveUsageDailyChartShape(presentation, true, 270).plotPx).toBeLessThanOrEqual(252);
   });
   it.each([true, false])('names date buckets in the shown calendar for accessibility and exact values, retaining their semantic identity (by Agent: %s)', async (byAgent) => {
     const props = fixture([10, 30], start + 2 * day, byAgent);
