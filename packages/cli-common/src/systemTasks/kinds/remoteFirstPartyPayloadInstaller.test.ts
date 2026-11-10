@@ -208,6 +208,14 @@ describe('installRemoteFirstPartyComponent', () => {
     let runningChild: ReturnType<typeof spawn> | undefined;
     let childExited: Promise<void> | undefined;
     try {
+      const nativeLsof = (await execFileAsync('/bin/sh', ['-c', 'command -v lsof'])).stdout.trim();
+      const tools = join(home, 'tools');
+      await mkdir(tools);
+      // Keep real open-file evidence while excluding unrelated worker mount warnings;
+      // diagnostic refusal is exercised at the shared census owner.
+      await writeFile(join(tools, 'lsof'), '#!/bin/sh\nexec "$retention_native_lsof" -w "$@"\n', { mode: 0o755 });
+      vi.stubEnv('PATH', `${tools}:${process.env.PATH}`);
+      vi.stubEnv('retention_native_lsof', nativeLsof);
       for (const id of ['0.6.0', '0.7.0', '0.8.0', '0.9.0', '1.0.0', '1.1.0', '1.2.0', 'local-stable-1792190545251']) {
         await mkdir(join(versions, id), { recursive: true });
         await writeFile(join(versions, id, 'happier'), id);

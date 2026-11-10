@@ -9,8 +9,37 @@
  * Inspect the whole payload: the executable and its loaded support files can differ.
  */
 export const FIRST_PARTY_VERSION_USE_SHELL_FUNCTIONS = `observe_version_use() {
-  if ! version_commands="$(ps -A -ww -o args= 2>&1)"; then return 1; fi
+  # Linux hidepid can silently omit other users from an otherwise successful ps.
+  if [ -d /proc ]; then
+    version_mounts="$(cat /proc/mounts 2>/dev/null)" || return 1
+    version_proc_visible=false
+    while read -r version_device version_mount version_fs version_options version_rest; do
+      if [ "$version_mount" = /proc ] && [ "$version_fs" = proc ]; then
+        case ",$version_options," in
+          *,hidepid=0,*|*,hidepid=off,*) ;;
+          *,hidepid=*) return 1;;
+        esac
+        version_proc_visible=true
+      fi
+    done <<EOF
+$version_mounts
+EOF
+    [ "$version_proc_visible" = true ] || return 1
+  fi
+  version_owner_uid="$(id -u 2>/dev/null)" || return 1
+  case "$version_owner_uid" in ''|*[!0-9]*) return 1;; esac
+  if ! version_commands="$(ps -A -ww -o uid=,args= 2>&1)"; then return 1; fi
   [ -n "$version_commands" ] || return 1
+  # Member launches name current/, and unprivileged lsof cannot see their files.
+  version_install_root="\${1%/versions}"
+  while read -r version_uid version_args; do
+    case "$version_uid" in ''|*[!0-9]*) return 1;; esac
+    if [ "$version_uid" != "$version_owner_uid" ]; then
+      case "$version_args" in *"$version_install_root/"*) return 1;; esac
+    fi
+  done <<EOF
+$version_commands
+EOF
   # +D expands to individual search terms; unused files are expected, not
   # observation failures. -Q ignores those misses while preserving real errors.
   if version_usage="$(lsof -Q -Fn +D "$1" 2>&1)"; then

@@ -9,6 +9,37 @@ import { pruneRetainedVersions } from './pruneRetainedVersions.js';
 describe('installed payload retention', () => {
   afterEach(() => vi.unstubAllEnvs());
 
+  it.skipIf(process.platform !== 'linux').each([
+    { name: 'another UID using current', uid: 1001, mountOptions: 'rw', unreadable: false, sibling: false, retain: true },
+    { name: 'hidepid process table', uid: 1000, mountOptions: 'rw,hidepid=2', unreadable: false, sibling: false, retain: true },
+    { name: 'unreadable proc mounts', uid: 1000, mountOptions: 'rw', unreadable: true, sibling: false, retain: true },
+    { name: 'same UID with unused old version', uid: 1000, mountOptions: 'rw,hidepid=0', unreadable: false, sibling: false, retain: false },
+    { name: 'another UID in a sibling install', uid: 1001, mountOptions: 'rw,hidepid=off', unreadable: false, sibling: true, retain: false },
+  ])('requires complete process visibility before pruning: $name', async ({ uid, mountOptions, unreadable, sibling, retain }) => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-version-visibility-'));
+    const versions = join(home, 'cli', 'versions');
+    try {
+      const tools = join(home, 'tools');
+      await mkdir(tools);
+      // Only OS process/filesystem queries are mocked; pruning and its warning stay real.
+      await writeFile(join(tools, 'id'), '#!/bin/sh\nprintf "1000\\n"\n', { mode: 0o755 });
+      await writeFile(join(tools, 'ps'), `#!/bin/sh\nprintf '%s\\n' '${uid} ${join(home, sibling ? 'cli-sibling' : 'cli', 'current', 'happier')} agent-launch'\n`, { mode: 0o755 });
+      await writeFile(join(tools, 'cat'), `#!/bin/sh\n[ "$1" = /proc/mounts ] || exit 2\nprintf '%s\\n' 'proc /proc proc ${mountOptions} 0 0'\nexit ${unreadable ? 1 : 0}\n`, { mode: 0o755 });
+      await writeFile(join(tools, 'lsof'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      vi.stubEnv('PATH', tools);
+      for (const id of ['1.0.0', '2.0.0', '3.0.0']) await mkdir(join(versions, id), { recursive: true });
+      const warnings: string[] = [];
+      const result = await pruneRetainedVersions({
+        componentId: 'happier-cli', processEnv: { ...process.env, HAPPIER_FIRST_PARTY_INSTALL_HOME: home },
+        orderedVersionIdsNewestFirst: ['3.0.0', '2.0.0', '1.0.0'], currentVersionId: '3.0.0', previousVersionId: '2.0.0',
+        onWarning: message => { warnings.push(message); },
+      });
+      expect(result).toEqual({ keptVersionIds: ['3.0.0', '2.0.0'], prunedVersionIds: retain ? [] : ['1.0.0'], skippedVersionIds: retain ? ['1.0.0'] : [] });
+      expect((await readdir(versions)).sort()).toEqual(retain ? ['1.0.0', '2.0.0', '3.0.0'] : ['2.0.0', '3.0.0']);
+      expect(warnings).toEqual(retain ? [expect.stringContaining('retained')] : []);
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+
   it.skipIf(process.platform === 'win32').each(['support.so', '', null])('takes one native census per prune while protecting scripts and open payload paths: %s', async (openRelativePath) => {
     const home = await mkdtemp(join(tmpdir(), 'happier-version-census-'));
     const versions = join(home, 'cli', 'versions');
@@ -18,9 +49,9 @@ describe('installed payload retention', () => {
       const censusLog = join(home, 'census.log');
       await mkdir(tools);
       // Native commands are the OS boundary; the shell, policy and removals stay real.
-      await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf "ps\\n" >> "$census_log"\nprintf "%s\\n" "external-node $script_path"\n', { mode: 0o755 });
+      await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf "ps\\n" >> "$census_log"\nprintf "%s\\n" "$(id -u) external-node $script_path"\n', { mode: 0o755 });
       await writeFile(join(tools, 'lsof'), '#!/bin/sh\nprintf "lsof\\n" >> "$census_log"\nif [ -n "$open_path" ]; then printf "p1234\\nn%s\\n" "$open_path"; fi\n# +D includes unused files: lsof reports a failed search unless -Q is selected.\ncase " $* " in *" -Q "*) exit 0;; *) exit 1;; esac\n', { mode: 0o755 });
-      vi.stubEnv('PATH', tools);
+      vi.stubEnv('PATH', `${tools}:${process.env.PATH}`);
       vi.stubEnv('census_log', censusLog);
       vi.stubEnv('script_path', join(versions, '1.0.0', 'entry.mjs'));
       vi.stubEnv('open_path', openRelativePath === null ? '' : join(versions, '2.0.0', openRelativePath));
@@ -54,8 +85,8 @@ describe('installed payload retention', () => {
       await mkdir(tools);
       // lsof is the genuine OS boundary; retain real retention and filesystem effects.
       await writeFile(join(tools, 'lsof'), `#!/bin/sh\nprintf '%s' '${output}'\nexit ${status}\n`, { mode: 0o755 });
-      await writeFile(join(tools, 'ps'), `#!/bin/sh\nprintf fixture-process\nexit ${psStatus}\n`, { mode: 0o755 });
-      vi.stubEnv('PATH', tools);
+      await writeFile(join(tools, 'ps'), `#!/bin/sh\nprintf "%s\\n" "$(id -u) fixture-process"\nexit ${psStatus}\n`, { mode: 0o755 });
+      vi.stubEnv('PATH', `${tools}:${process.env.PATH}`);
       for (const id of ['1.0.0', '2.0.0', '3.0.0']) await mkdir(join(versions, id), { recursive: true });
       const result = await pruneRetainedVersions({
         componentId: 'happier-cli', processEnv: { ...process.env, HAPPIER_FIRST_PARTY_INSTALL_HOME: home },

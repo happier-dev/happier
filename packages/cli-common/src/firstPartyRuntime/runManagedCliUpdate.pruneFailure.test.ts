@@ -50,7 +50,7 @@ describe('runManagedCliUpdate after commit', () => {
     const tools = join(homeDir, 'tools');
     await mkdir(tools);
     // Native observation is the boundary: no active argv match, unavailable lsof.
-    await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf fixture-process\n', { mode: 0o755 });
+    await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf "%s\\n" "$(id -u) fixture-process"\n', { mode: 0o755 });
     await writeFile(join(tools, 'lsof'), '#!/bin/sh\nexit 127\n', { mode: 0o755 });
     vi.stubEnv('PATH', `${tools}:${process.env.PATH}`);
     const env = { HAPPIER_HOME_DIR: homeDir };
@@ -76,6 +76,14 @@ describe('runManagedCliUpdate after commit', () => {
   });
 
   it('records a proven update as succeeded when pruning an old version fails, and reports the prune as a warning', async () => {
+    if (process.platform !== 'win32') {
+      const tools = join(homeDir, 'tools');
+      await mkdir(tools);
+      // This case reaches the filesystem EIO boundary; native census diagnostics
+      // have separate coverage and must not stop it before removal is attempted.
+      await writeFile(join(tools, 'lsof'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      vi.stubEnv('PATH', `${tools}:${process.env.PATH}`);
+    }
     const env = { HAPPIER_HOME_DIR: homeDir };
     for (const versionId of ['0.9.0', '1.0.0']) {
       await installVersionedPayload({ componentId: 'happier-cli', versionId, processEnv: env, payloadRoot: await createPayload(homeDir, versionId) });

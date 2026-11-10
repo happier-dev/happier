@@ -21,7 +21,7 @@ describe('remote first-party install layout', () => {
     try {
       const tools = join(home, 'tools');
       await mkdir(tools);
-      await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf fixture-process\n', { mode: 0o755 });
+      await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf "%s\\n" "$(id -u) fixture-process"\n', { mode: 0o755 });
       await writeFile(join(tools, 'lsof'), unavailable ? '#!/bin/sh\nexit 127\n' : '#!/bin/sh\nprintf "p1234\\nn%s\\n" "$active_path"\n', { mode: 0o755 });
       for (const id of ['1.0.0', '2.0.0', '3.0.0']) await mkdir(join(layout.versionsDir, id), { recursive: true });
       await symlink('versions/3.0.0', layout.currentPath);
@@ -47,7 +47,7 @@ describe('remote first-party install layout', () => {
       const tools = join(home, 'tools');
       const censusLog = join(home, 'census.log');
       await mkdir(tools);
-      await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf "ps\\n" >> "$census_log"\nprintf "%s\\n" "external-node $script_path"\n', { mode: 0o755 });
+      await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf "ps\\n" >> "$census_log"\nprintf "%s\\n" "$(id -u) external-node $script_path"\n', { mode: 0o755 });
       await writeFile(join(tools, 'lsof'), '#!/bin/sh\nprintf "lsof\\n" >> "$census_log"\nprintf "p1234\\nn%s\\n" "$open_path"\n', { mode: 0o755 });
       for (const id of ids) await mkdir(join(layout.versionsDir, id), { recursive: true });
       await writeFile(join(layout.versionsDir, '1.0.0', 'entry.mjs'), 'export {};');
