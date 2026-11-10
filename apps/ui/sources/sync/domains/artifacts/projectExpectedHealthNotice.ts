@@ -15,7 +15,7 @@ export function projectExpectedHealthNotice(entry: AccountNoticeArtifact, operat
     for (const operation of operations) {
         const snapshot = operation.snapshot, ref = snapshot.domainRef;
         if (snapshot.state !== 'running' || snapshot.observation || operation.isUnavailableProjection
-            || operation.observation === 'unavailable' || snapshot.scope.accountId !== scope.accountId
+            || operation.observation !== 'available' || snapshot.scope.accountId !== scope.accountId
             || !areServerProfileIdentifiersEquivalent(operation.serverId, scope.serverId)
             || !ref || !('serverId' in ref) || !areServerProfileIdentifiersEquivalent(ref.serverId, scope.serverId)) continue;
         let kind: ExpectedHealthOperation['kind'] | undefined;
@@ -25,10 +25,14 @@ export function projectExpectedHealthNotice(entry: AccountNoticeArtifact, operat
                 : subject.kind === 'deployment' || subject.kind === 'adopted' ? subject : null;
             if (service?.machineId === ref.subject.machineId && service.serviceId === ref.subject.serviceId) kind = ref.operation;
         } else if (ref.kind === 'deployment') {
-            const environmentId = subject.kind === 'deployment' || subject.kind === 'environment' && subject.condition === 'health'
-                ? subject.environmentId : subject.kind === 'healthCheck' && subject.subject.kind === 'environment'
-                    ? subject.subject.environmentId : null;
-            if (environmentId === ref.environmentId) kind = 'deploy';
+            const expected = ref.expectedDown;
+            if (!expected) continue;
+            const service = subject.kind === 'healthCheck' && subject.subject.kind === 'machineService' ? subject.subject
+                : subject.kind === 'deployment' || subject.kind === 'adopted' ? subject : null;
+            if (service?.machineId === expected.machineId && expected.serviceIds.includes(service.serviceId)) kind = expected.operation;
+            if (subject.kind === 'domain' && subject.condition === 'domain_probe_failed'
+                && expected.domains.some(domain => domain.environmentId === subject.environmentId
+                    && domain.targetLinkId === subject.targetLinkId && domain.domainId === subject.domainId)) kind = expected.operation;
         } else if (ref.kind === 'machineReboot' && ref.basis?.dispatchStarted && ref.machineId === snapshot.scope.machineId) {
             const service = subject.kind === 'healthCheck' && subject.subject.kind === 'machineService' ? subject.subject
                 : subject.kind === 'deployment' || subject.kind === 'adopted' ? subject : null;

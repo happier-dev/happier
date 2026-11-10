@@ -42,7 +42,7 @@ import type { DeploymentArtifactDocumentV1, DeploymentDomainContentV1 } from '@h
 import { createNativeCaddyRoutes, createNativeCaddyAdminExchange } from '@/machines/reachability/nativeCaddyRoutes';
 import { materializeCaddyDomainRouteV1, type CaddyDomainRouteInput } from './caddyRouteMaterialization';
 import { selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork, selectDomainCaddyPlacements,
-    readDomainCaddyStartFirstLegs, selectDomainIngressMembers } from './domainRouteSelection';
+    readDomainCaddyStartFirstLegs, readExpectedDownDomainReferencesForHost, selectDomainIngressMembers } from './domainRouteSelection';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createDeploymentSourceMaterializationPort } from './exactCommitRelease';
@@ -424,11 +424,19 @@ it.skipIf(process.platform === 'win32')('reads the complete Domain inventory int
     ] });
     expect(cursors).toEqual([undefined, 'page-2']);
     expect(opened).toEqual(['web-content', 'api-content', 'alias-content']);
+    expect(await readExpectedDownDomainReferencesForHost(input)).toEqual(['web', 'api', 'alias'].map(domainId => ({
+        environmentId: 'environment', targetLinkId: 'link', domainId, machineId: 'a', installationId: 'installed-a' })));
     expect(JSON.stringify(selected)).not.toContain('native-only-hash');
     expect(JSON.stringify(selected)).not.toContain('native-only-certificate');
     expect(JSON.stringify(selected)).not.toContain('native-only-private-key');
     const single = (domains: typeof headers) => async () => DeploymentDomainListResultV1Schema.parse({ ok: true,
         environmentId: 'environment', revision: 1, domains, nextCursor: null });
+    const twoEdges = { ...headers[0]!, placements: ['edge-a', 'edge-b'].map(machineId => ({
+        ...headers[0]!.placements![0]!, placement: { ...placement('web'), machineId, installationId: `installed-${machineId}` },
+    })) };
+    expect(await readExpectedDownDomainReferencesForHost({ ...input, list: single([twoEdges]) })).toEqual(
+        ['edge-a', 'edge-b'].map(machineId => ({ environmentId: 'environment', targetLinkId: 'link', domainId: 'web',
+            machineId, installationId: `installed-${machineId}` })));
     for (const incomplete of [{ ...headers[0]!, placements: undefined },
         { ...headers[0]!, targetLinkId: 'retired-link', placements: undefined }, { ...headers[0]!, state: 'removing' as const },
         { ...headers[0]!, placements: headers[0]!.placements!.map(capture => ({ ...capture, desired: false })) },
@@ -446,6 +454,8 @@ it.skipIf(process.platform === 'win32')('reads the complete Domain inventory int
         .toMatchObject({ kind: 'unavailable', reason: 'deployment_content_unavailable', domainIds: ['web'] });
     const remote = { ...headers[0]!, targetLinkId: 'retired-link', placements: headers[0]!.placements!.map(capture => ({ ...capture,
         desired: false, placement: { ...capture.placement, machineId: 'remote', targetLinkId: 'retired-link' } })) };
+    expect(await readExpectedDownDomainReferencesForHost({ ...input, list: single([remote]) })).toEqual([]);
+    expect(await readExpectedDownDomainReferencesForHost({ ...input, list: single([headers[0]!]), open: async () => null })).toBeNull();
     expect(await readDomainCaddyStartFirstLegs({ ...input, list: single([remote]), open: async () => {
         throw new Error('An explicitly remote capture cannot open local content');
     } })).toEqual({ kind: 'ready', legs: [] });

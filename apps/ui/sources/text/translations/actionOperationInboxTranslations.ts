@@ -1,5 +1,10 @@
+import type { InboxExpectedHealthOperationV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
+
+const expectedOperationLabels = { stop: 'stop', restart: 'restart', deploy: 'deployment', reboot: 'reboot', backup: 'backup' } satisfies Record<InboxExpectedHealthOperationV1['kind'], string>;
+
 export const actionOperationInboxTranslations = {
     actionOperations: {
+        expectedDuring: ({ operation }: { operation: InboxExpectedHealthOperationV1['kind'] }) => `Expected during ${expectedOperationLabels[operation]}`,
         sections: {
             inProgress: 'In progress',
             needsAttention: 'Needs attention',

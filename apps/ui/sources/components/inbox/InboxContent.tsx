@@ -123,7 +123,8 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
     // Where it comes from leads the line, unless the title already says it.
     const source = item.source.displayName && item.source.displayName !== item.title ? item.source.displayName : null;
     return <InboxWorkRow testID={item.focus.kind === 'execution_run' ? `inbox.run.${item.focus.id}`
-        : item.focus.kind === 'managed_machine' ? `inbox.machine-deletion.${item.focus.id}` : `inbox.item.${item.key}`} title={item.title} facts={[source, fact]}
+        : item.focus.kind === 'managed_machine' ? `inbox.machine-deletion.${item.focus.id}` : `inbox.item.${item.key}`} title={item.title}
+        facts={[source, item.expectedDuring ? t('inbox.actionOperations.expectedDuring', { operation: item.expectedDuring.kind }) : null, fact]}
         byline={byline}
         selected={props.selected} showDivider={props.showDivider} narrow={props.narrow}
         phase={item.phase ?? (item.view === 'needs_you' ? 'attention' : 'finished')} status={item.workStatus}

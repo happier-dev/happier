@@ -1,4 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
+import { configuration } from '@/configuration';
+import { resolveOwnServerDeploymentIdentityForHost } from './paths';
+import { createOwnServerExpectedDownPublisher } from './expectedDown';
 import { readDeploymentOutputValidation } from '../../outputValidation';
 import { projectDeploymentFailure } from '../../deploymentFailure';
 import { DeploymentReceiptFailureV1Schema, type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
@@ -90,8 +93,25 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
         initial.signal.throwIfAborted();
         const before = member(target.machineId);
         const beforeRevision = receipt.deployment.revision;
+        // Children retain their native job, not this controller's local operation
+        // publisher. The admitted serial phase owns its interruption projection.
+        const selected = selectedDeploymentId === receipt.deployment.id ? receipt : admitted.selected;
+        const approval = selected?.content.ownServer?.approvedInputBasis;
+        const identity = context.operationOwnerUpdate && (phase === 'activate' || phase === 'restore')
+            && approval && approval.ownServer?.rollout !== 'startFirst'
+            ? await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
+                serverId: host.serverId, environmentId: receipt.deployment.environmentId }).catch(() => undefined) : undefined;
+        const expectation = identity ? createOwnServerExpectedDownPublisher({ serverId: host.serverId,
+            environmentId: receipt.deployment.environmentId, targetLinkId: receipt.deployment.targetLinkId,
+            deploymentId: receipt.deployment.id, machineId: target.machineId, installationId: target.installationId,
+            environmentInstanceId: identity.environmentInstanceId, operation: 'deploy', context,
+            readDomains: affectedServices => host.readExpectedDownDomains?.({ environmentId: receipt.deployment.environmentId,
+                targetLinkId: receipt.deployment.targetLinkId, affectedServices, context }) ?? Promise.resolve(null) }) : undefined;
+        if (expectation && approval) await expectation(approval.runtimeProjections?.find(projection =>
+            projection.machineId === target.machineId && projection.installationId === target.installationId)?.services ?? approval.services);
         const dispatched = await host.dispatchMember!({ request, machineId: target.machineId,
             installationId: target.installationId, phase, selectedDeploymentId });
+        await expectation?.([]);
         await read();
         if (!current()) return dispatched;
         const observed = member(target.machineId);

@@ -1,9 +1,9 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
 export { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { SessionDraftAddressV1Schema } from '../drafts/sessionDrafts.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { ComposerRefV1Schema } from '../plugins/ui/composerRef.js';
@@ -82,7 +82,7 @@ const InboxReadGroupSchema = z.strictObject({ key: z.string(), root: z.discrimin
 // The mounted Inbox owns classification and navigation. This closed read projection
 // carries its admitted rows without copying source content or becoming another builder.
 export const InboxExpectedHealthOperationV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.enum(['stop', 'restart', 'deploy', 'reboot']),
+  kind: z.enum(['stop', 'restart', 'deploy', 'reboot', 'backup']),
   operation: z.strictObject({ serverId: z.string().check(z.minLength(1)), machineId: z.string().check(z.minLength(1)),
     operationId: z.string().check(z.minLength(1)) }),
 }));

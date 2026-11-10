@@ -3,6 +3,7 @@ import type { ActionOperationProjection } from '../actionOperations/actionOperat
 import { createServiceHealthNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import { readAccountNoticeArtifactHeader, type AccountNoticeArtifact } from './usageNoticeArtifacts';
 import { projectExpectedHealthNotice } from './projectExpectedHealthNotice';
+import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
 const scope = { serverId: 'home', accountId: 'account-a' };
 function notice(): AccountNoticeArtifact {
@@ -36,6 +37,7 @@ describe('readable operation explanation for the existing C1 condition', () => {
         for (const operation of [
             { ...current, serverId: 'other' },
             { ...current, isUnavailableProjection: true },
+            { ...current, observation: 'reconnecting' as const },
             { ...current, snapshot: { ...current.snapshot, scope: { ...current.snapshot.scope, accountId: 'other' } } },
             { ...current, snapshot: { ...current.snapshot, state: 'succeeded' as const, settledAt: 2 } },
             { ...current, snapshot: { ...current.snapshot, observation: { kind: 'outcome_uncertain' as const, code: 'action_outcome_unknown' } } },
@@ -57,21 +59,46 @@ describe('readable operation explanation for the existing C1 condition', () => {
                 domainRef: { ...ref, subject: { kind: 'machineService', machineId: 'machine', serviceId: 'another' } } } }], scope)).toBe(entry);
         }
     });
-    it('uses the existing Deployment operation for its Environment health, keeping other conditions independent', () => {
+    it('keeps aggregate Environment health independent while explaining exact deployed services', () => {
         const entry = notice(), current = reboot();
         const operation: ActionOperationProjection = { ...current, snapshot: { ...current.snapshot,
-            domainRef: { kind: 'deployment', serverId: scope.serverId, environmentId: 'environment', deploymentId: 'deployment' } } };
+            domainRef: { kind: 'deployment', serverId: scope.serverId, environmentId: 'environment', deploymentId: 'deployment',
+                expectedDown: { operation: 'deploy', targetLinkId: 'link', machineId: 'machine', installationId: 'installation',
+                    serviceIds: ['instance/web'], domains: [] } } } };
         expect(projectExpectedHealthNotice(entry, [operation], scope).expectedDuring?.kind).toBe('deploy');
         const source = { kind: 'host' as const, topic: 'service_health' as const,
             subject: { kind: 'environment' as const, environmentId: 'environment', targetLinkId: 'link', condition: 'health' as const } };
         const environment = { ...entry, header: { ...entry.header, source } };
-        expect(projectExpectedHealthNotice(environment, [operation], scope).expectedDuring?.kind).toBe('deploy');
+        expect(projectExpectedHealthNotice(environment, [operation], scope)).toBe(environment);
         for (const subject of [
             { kind: 'environment' as const, environmentId: 'another', targetLinkId: 'link', condition: 'health' as const },
             { kind: 'backup' as const, environmentId: 'environment', check: 'run' as const },
         ]) {
             const other = { ...entry, header: { ...entry.header, source: { ...source, subject } } };
             expect(projectExpectedHealthNotice(other, [operation], scope)).toBe(other);
+        }
+    });
+    it('reads exact backup subjects through the operation wire reader and withdraws expectation after settlement', () => {
+        const entry = notice(), current = reboot();
+        const snapshot = ActionOperationSnapshotV1Schema.parse({ ...current.snapshot, scope: { ...current.snapshot.scope, machineId: 'controller' }, actionId: 'deployments.backups.run',
+            domainRef: { kind: 'deployment', serverId: scope.serverId, environmentId: 'environment', deploymentId: 'deployment',
+                expectedDown: { operation: 'backup', targetLinkId: 'link', machineId: 'machine', installationId: 'installation',
+                    serviceIds: ['instance/web'], domains: [{ environmentId: 'environment', targetLinkId: 'link',
+                        domainId: 'domain', machineId: 'machine', installationId: 'installation' }] } } });
+        const operation = { ...current, snapshot };
+        expect(projectExpectedHealthNotice(entry, [operation], scope).expectedDuring?.kind).toBe('backup');
+        const domain = { ...entry, header: { ...entry.header, source: { kind: 'host' as const, topic: 'service_health' as const,
+            subject: { kind: 'domain' as const, environmentId: 'environment', targetLinkId: 'link', domainId: 'domain',
+                condition: 'domain_probe_failed' as const } } } };
+        expect(projectExpectedHealthNotice(domain, [operation], scope).expectedDuring?.kind).toBe('backup');
+        expect(projectExpectedHealthNotice(domain, [{ ...operation, snapshot: { ...snapshot, state: 'failed', settledAt: 2 } }], scope)).toBe(domain);
+        const ref = snapshot.domainRef;
+        if (ref?.kind !== 'deployment' || !ref.expectedDown) throw new Error('Expected admitted backup subjects');
+        for (const expectedDown of [undefined, { ...ref.expectedDown, serviceIds: [], domains: [] },
+            { ...ref.expectedDown, serviceIds: ['another-service'], domains: [] }]) {
+            const other = { ...operation, snapshot: { ...snapshot, domainRef: { ...ref, expectedDown } } };
+            expect(projectExpectedHealthNotice(entry, [other], scope)).toBe(entry);
+            expect(projectExpectedHealthNotice(domain, [other], scope)).toBe(domain);
         }
     });
     it('explains only the exact retained Domain probe subject, never certificate or another link', () => {

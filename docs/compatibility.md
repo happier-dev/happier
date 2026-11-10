@@ -2000,6 +2000,16 @@ The inspected moving 0.2 predecessor (`48d42d420446e3d90e1a4587ccd6e4794d00a79e`
 has the same unknown-field-drop outer issue policy and no cause leaf; no
 compatibility adapter or client update floor is required.
 
+Unreleased 0.3 `SessionModelTransitionResultV1` failure variants also retain this
+optional closed `failureCause`. The live configuration adapter projects native
+diagnostics through the primary Session issue owner; coordinator failure and
+reconciliation results, prompt settlement, and Action details retain that cause.
+JSON-RPC request codes remain integer `providerErrorCode` values, not HTTP
+statuses. These closed transition readers require matching development source;
+older results without the leaf remain valid. The inspected 0.2 frontier
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no corresponding transition
+contract. This adds no wire epoch, persistence migration, authority or retry rule.
+
 The unreleased 0.3 `SessionSpawnLaunchErrorV1` admits an optional closed
 `agentIsolationRefusal` diagnostic for member preparation. It retains the
 owner's setup reason, native preparation phase, available setup reason code and

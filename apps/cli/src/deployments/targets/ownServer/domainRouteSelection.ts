@@ -1,3 +1,4 @@
+import type { MachineDeploymentDomainReferenceV1 } from '@happier-dev/protocol/machines/machineDeploymentDomainReferenceV1';
 import type { NativeCaddyObservationResult } from '@happier-dev/cli-common/machineSetup';
 import { readCloudflareNamedControllerSelection } from '@happier-dev/cli-common/relayAccess';
 import { accessProviderRefsEqualV1, type MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
@@ -129,17 +130,15 @@ export type DomainCaddyStartFirstLegsResult = Readonly<{ kind: 'ready'; legs: re
     | Readonly<{ kind: 'unavailable' | 'conflict' | 'unknown' | 'cancelled'; reason: string; domainIds: readonly string[] }>;
 type DomainContentReference = Pick<DeploymentDomainHeaderV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>;
 
-/** One finite read of the Environment's complete Domain custody. Only the native
- * owner classifies installed replica routes; edge private-origin proxies remain
- * unchanged while local replicas switch. Missing custody never means no routes. */
-export async function readDomainCaddyStartFirstLegs(input: Readonly<{
+type DomainInventoryInput = Readonly<{
     serverId: string; environmentId: string; targetLinkId: string;
-    machineId: string; installationId: string; dockerEngineId: string; affectedServices: readonly string[];
     list(request: DeploymentDomainListInputV1, signal?: AbortSignal): Promise<ReturnType<typeof DeploymentDomainListResultV1Schema.parse>>;
     open(artifactId: string, signal?: AbortSignal): Promise<DeploymentArtifactDocumentV1 | null>;
-    routes: Pick<ReturnType<typeof createNativeCaddyRoutes>, 'readStartFirstLeg'>;
     signal?: AbortSignal;
-}>): Promise<DomainCaddyStartFirstLegsResult> {
+}>;
+
+export async function readDeploymentDomainInventoryForHost(input: Pick<DomainInventoryInput, 'serverId' | 'environmentId' | 'list' | 'signal'>): Promise<Readonly<{ kind: 'ready'; domains: readonly DeploymentDomainHeaderV1[] }>
+    | Exclude<DomainCaddyStartFirstLegsResult, { kind: 'ready' }>> {
     const domains: DeploymentDomainHeaderV1[] = [];
     let cursor: string | undefined;
     let revision: number | undefined;
@@ -155,6 +154,10 @@ export async function readDomainCaddyStartFirstLegs(input: Readonly<{
         domains.push(...page.domains);
         cursor = page.nextCursor ?? undefined;
     } while (cursor !== undefined);
+    return { kind: 'ready', domains };
+}
+
+function createDomainContentReader(input: DomainInventoryInput) {
     // A Domain's public/private captures commonly share one Artifact. Reuse
     // the one exact opened revision inside this finite operation only.
     const content = new Map<string, ReturnType<typeof readDeploymentDomainArtifactV1>>();
@@ -167,6 +170,52 @@ export async function readDomainCaddyStartFirstLegs(input: Readonly<{
         content.set(key, opened);
         return opened;
     };
+    return readContent;
+}
+
+/** Exact retained Domain subjects whose declared backend is interrupted by this operation. */
+export async function readExpectedDownDomainReferencesForHost(input: DomainInventoryInput & Readonly<{
+    affectedServices: readonly string[];
+}>): Promise<readonly MachineDeploymentDomainReferenceV1[] | null> {
+    const inventory = await readDeploymentDomainInventoryForHost(input);
+    if (inventory.kind !== 'ready') return null;
+    const readContent = createDomainContentReader(input);
+    const affected = new Set(input.affectedServices);
+    const references: MachineDeploymentDomainReferenceV1[] = [];
+    for (const domain of inventory.domains) {
+        if (domain.deletedAtMs !== undefined || domain.state === 'removing') continue;
+        const placements = new Set<string>();
+        for (const capture of domain.placements ?? []) {
+            if (!capture.desired || capture.placement.targetLinkId !== input.targetLinkId) continue;
+            const opened = await readContent(capture.content);
+            if (!opened.ok) return null;
+            if (!affected.has(opened.content.target.service)) continue;
+            const identity = JSON.stringify([capture.placement.machineId, capture.placement.installationId]);
+            if (placements.has(identity)) continue;
+            placements.add(identity);
+            references.push({ environmentId: input.environmentId, targetLinkId: input.targetLinkId, domainId: domain.id,
+                machineId: capture.placement.machineId, installationId: capture.placement.installationId });
+        }
+    }
+    return references;
+}
+
+
+/** One finite read of the Environment's complete Domain custody. Only the native
+ * owner classifies installed replica routes; edge private-origin proxies remain
+ * unchanged while local replicas switch. Missing custody never means no routes. */
+export async function readDomainCaddyStartFirstLegs(input: Readonly<{
+    serverId: string; environmentId: string; targetLinkId: string;
+    machineId: string; installationId: string; dockerEngineId: string; affectedServices: readonly string[];
+    list(request: DeploymentDomainListInputV1, signal?: AbortSignal): Promise<ReturnType<typeof DeploymentDomainListResultV1Schema.parse>>;
+    open(artifactId: string, signal?: AbortSignal): Promise<DeploymentArtifactDocumentV1 | null>;
+    routes: Pick<ReturnType<typeof createNativeCaddyRoutes>, 'readStartFirstLeg'>;
+    signal?: AbortSignal;
+}>): Promise<DomainCaddyStartFirstLegsResult> {
+    const inventory = await readDeploymentDomainInventoryForHost(input);
+    if (inventory.kind !== 'ready') return inventory;
+    const { domains } = inventory;
+    const readContent = createDomainContentReader(input);
     const affected = new Set(input.affectedServices);
     const legs: NativeCaddyStartFirstLeg[] = [];
     for (const domain of domains) {

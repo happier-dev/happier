@@ -314,7 +314,7 @@ describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-
         const screen = await renderScreen(<InboxContent model={createModel({ needsYou: false, extraItems: [item] })}
             view="updates" />, { wrapper: PagePresentation });
         const row = screen.tree.findAllByType(InboxWorkRow).find(row => row.props.title === 'Service down');
-        expect(row?.props.facts).toContain('Expected during backup');
+        expect(row?.props.facts).toContain('inbox.actionOperations.expectedDuring');
         await screen.unmount();
     });
     it('renders Machine reachability in Updates independently of operation custody', async () => {

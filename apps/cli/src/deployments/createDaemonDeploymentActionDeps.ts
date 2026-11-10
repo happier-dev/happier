@@ -310,9 +310,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         if (!artifactId) return refuse('action_forbidden');
         return { artifactId };
     };
-    const open = async (id: string, context: ActionExecutorContext) => {
+    const open = async (id: string, context: ActionExecutorContext,
+        authorizationHeaders: ArtifactRequestAuthorizationHeaders = artifactAuthorization(context)) => {
         await assertCurrent(context);
-        const authorizationHeaders = artifactAuthorization(context);
         return atHome(() => artifacts.read(id, { signal: context.signal, prepareRecipients: false,
             includeSharedAudience: false, authorizationHeaders }));
     };
@@ -1132,7 +1132,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     || !isDeepStrictEqual(candidate.input.services, request.services)
                     || !isDeepStrictEqual(candidate.content.services, request.services)
                     || (candidate.input.whenBusy ?? 'refuse') !== (request.whenBusy ?? 'refuse')) return failure('target_mismatch');
-                const opened = readDeploymentReceiptArtifactV1(candidate.input, await open(candidate.input.contentArtifactId, request.context));
+                const opened = readDeploymentReceiptArtifactV1(candidate.input, await open(candidate.input.contentArtifactId,
+                    request.context, candidateArtifactAuthorization(request.context)));
                 if (!opened.ok) return failure(opened.error);
                 if (!isDeepStrictEqual(opened.content, candidate.content)) return failure('target_mismatch');
                 return candidate;
@@ -1149,7 +1150,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     const created = await atHome(async () => createDeploymentArtifactForHost({ artifacts,
                         owner: environment.environment.owner,
                         assertCurrent: assertCandidateCurrent, content: { prepareRecipients: true,
-                        ...await candidateIdentity(request.environmentId, request.context, 'receipt', environment.environment, request.admittedTemplateSource),
+                        ...await candidateIdentity(request.environmentId, request.context, 'receipt', environment.environment,
+                            request.admittedTemplateSource ?? (sourceIntent.kind === 'repository'
+                                ? { id: sourceIntent.projectSourceId, revision: sourceIntent.sourceRevision } : undefined)),
                         header: createDeploymentReceiptArtifactHeaderV1(environment.content.name, initial),
                         body: JSON.stringify(initial), signal: request.context.signal,
                         beforeWrite: assertCandidateCurrent, authorizationHeaders: candidateArtifactAuthorization(request.context),
@@ -1950,18 +1953,21 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const authorsCandidate = !('contentArtifactId' in originalInput);
                 let preparationEnvironment: DeploymentEnvironmentDetailV1 | undefined;
                 let preparationPromotion: Awaited<ReturnType<typeof readStoredPromotionCandidateForHost>> | undefined;
+                let preparedCandidate: Readonly<{ title: string; content: DeploymentContentV1 }> | undefined;
                 let input: OwnServerDeploymentReviewRequest['input'];
                 const createCandidate = async (environment: DeploymentEnvironmentDetailV1, content: DeploymentContentV1) => {
                     const context = originalRequest.context;
+                    const header = createDeploymentReceiptArtifactHeaderV1(environment.content.name, content);
                     const created = await atHome(async () => createDeploymentArtifactForHost({ artifacts,
                         owner: environment.environment.owner,
                         assertCurrent: () => assertEnvironmentContentOwnerCurrent({ environmentId: environment.environment.id, context }, environment.environment.owner),
                         content: { prepareRecipients: true,
                             ...await candidateIdentity(environment.environment.id, context, 'receipt', environment.environment),
-                            header: createDeploymentReceiptArtifactHeaderV1(environment.content.name, content),
+                            header,
                             body: JSON.stringify(content), signal: context.signal,
                             beforeWrite: () => assertCurrent(context), authorizationHeaders: candidateArtifactAuthorization(context),
                         } }));
+                    preparedCandidate = { title: header.title, content };
                     return { contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
                         contentBodyVersion: created.revision.bodyVersion };
                 };
@@ -2042,6 +2048,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         ...(originalInput.requestKey ? { requestKey: originalInput.requestKey } : {}),
                         ...(originalInput.whenBusy ? { whenBusy: originalInput.whenBusy } : {}) }, preparationEnvironment);
                     if (!candidate.ok) return candidate;
+                    preparedCandidate = { title: createDeploymentReceiptArtifactHeaderV1(preparationEnvironment.content.name,
+                        candidate.content).title, content: candidate.content };
                     if (captured && (!sameStrictJsonValue(candidate.content.sourceIntent, captured.sourceIntent)
                         || candidate.content.sourceMethod !== captured.sourceMethod
                         || !isDeepStrictEqual(candidate.content.services, captured.services)
@@ -2052,7 +2060,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const request = { ...originalRequest, input };
                 if (request.input.serverId !== host.serverId) return failure('server_scope_mismatch');
                 await assertCurrent(request.context);
-                const candidate = readDeploymentReceiptArtifactV1(request.input, await open(request.input.contentArtifactId, request.context));
+                const candidate = preparedCandidate ? { ok: true as const, ...preparedCandidate }
+                    : readDeploymentReceiptArtifactV1(request.input, await open(request.input.contentArtifactId,
+                        request.context, candidateArtifactAuthorization(request.context)));
                 if (!candidate.ok) return failure(candidate.error);
                 const environment = preparationEnvironment ?? await targetHostReaders.readEnvironment({
                     environmentId: request.input.environmentId, context: request.context });

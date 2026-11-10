@@ -33,6 +33,10 @@ import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 import { buildOwnServerDeploymentReceipt } from './buildReceipt';
 import { executeOwnServerRollout } from './ownServerRollout';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { readDeploymentChildResult } from '../../deploymentChild';
 import { prepareRollbackForHost } from '../../prepareRollbackForHost';
@@ -43,6 +47,7 @@ import { createOwnServerDeploymentTargetForHost, type OwnServerDeploymentTargetF
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 it.each([
+    { autoRestore: false, members: 2, baseline: true, expectedDown: true, failure: 'machine_unavailable', restores: 2, state: 'failed' },
     { autoRestore: false, members: 1, baseline: true, rollback: true, thrownFailure: 'rpc', failure: 'RPC_FORBIDDEN', restores: 0, state: 'failed' },
     { autoRestore: false, members: 1, baseline: true, rollback: true, thrownFailure: 'rpc-carrier', failure: 'RPC_FORBIDDEN', restores: 0, state: 'failed' },
     { autoRestore: false, members: 1, baseline: true, rollback: true, thrownFailure: 'untyped', failure: 'deployment_failed', restores: 0, state: 'failed' },
@@ -67,8 +72,21 @@ it.each([
     { autoRestore: false, members: 1, baseline: true, migrationPolicy: 'rollbackCodeOnly', failure: 'machine_unavailable', restores: 1, state: 'failed' },
     { autoRestore: true, members: 2, baseline: true, migrationPolicy: 'ask', failure: 'machine_unavailable', restores: 0, state: 'failed' },
     { autoRestore: true, members: 2, baseline: true, restoreBackupId: 'recorded-backup', failure: 'backup_required', restores: 0, state: 'failed' },
-] as const)('honors automatic restore=$autoRestore for $members member(s) after $failure (baseline=$baseline, server=$serverCancellation, unknownAck=$childUnknownAck, placement=$advancePlacement, bindings=$editBindings, retry=$retryAfterEnvironmentEdit, migration=$migrationPolicy)', async scenario => {
+] as const)('honors automatic restore=$autoRestore for $members member(s) after $failure (baseline=$baseline, server=$serverCancellation, unknownAck=$childUnknownAck, placement=$advancePlacement, bindings=$editBindings, retry=$retryAfterEnvironmentEdit, migration=$migrationPolicy, expected=$expectedDown)', async scenario => {
     const { autoRestore, members, baseline, failure, restores, state } = scenario;
+    const expectedDown = 'expectedDown' in scenario;
+    const operationScope = { accountId: 'account-expected', machineId: 'controller' };
+    const operationStore = createActionOperationStore();
+    const blocked: Array<{ machineId: string; resume(): void }> = [];
+    if (expectedDown) {
+        const settings = await persistence.readSettings();
+        const profile: ServerProfile = { id: 'home', name: 'Home', serverUrl: 'https://rollout-home.test',
+            webappUrl: 'https://rollout-home.test', createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+            homeConnectionDescriptorAuthority: 'exact', homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1,
+                homeServerIdentityId: 'srv_rollout_home', canonicalServerUrl: 'https://rollout-home.test', revision: 1,
+                endpoints: [{ kind: 'https', url: 'https://rollout-home.test' }] }) };
+        vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { home: profile } });
+    }
     const advancePlacement = 'advancePlacement' in scenario && scenario.advancePlacement;
     const editBindings = 'editBindings' in scenario && scenario.editBindings;
     const retryAfterEnvironmentEdit = 'retryAfterEnvironmentEdit' in scenario && scenario.retryAfterEnvironmentEdit;
@@ -136,9 +154,14 @@ it.each([
         },
         runtime: { async acquire() { throw new Error('Controller must not acquire remote native custody'); } },
         async dispatchBuild() { return cancelledChild(); },
+        async readExpectedDownDomains() { return [{ environmentId: environment.environment.id, targetLinkId: link.id,
+            domainId: 'domain', machineId: 'edge-c', installationId: 'edge-installation' }]; },
         // Only Home storage and the remote native response are substituted.
         async dispatchMember({ machineId, installationId, phase, selectedDeploymentId }) {
             phases.push(phase);
+            if (expectedDown && (phase === 'activate' || phase === 'restore')) {
+                await new Promise<void>(resume => blocked.push({ machineId, resume }));
+            }
             if ('serverCancellation' in scenario && phase === scenario.serverCancellation) {
                 return cancelledChild();
             }
@@ -205,8 +228,42 @@ it.each([
         expect(request.input).toEqual(acceptedRequest);
         expect(request.receipt.revision).not.toBe(executionRequest.receipt.revision);
     }
-    const executed = retryAfterEnvironmentEdit ? createOwnServerDeploymentTargetForHost(host).execute(executionRequest)
-        : executeOwnServerRollout(host, request, { ...structuredClone({ environment, link, receipt }), signal: controller.signal });
+    let completed = false;
+    const runRollout = (selected: OwnServerDeploymentRequest) => executeOwnServerRollout(host, selected,
+        { ...structuredClone({ environment, link, receipt }), signal: controller.signal });
+    const executed = (async () => {
+        if (!expectedDown) return retryAfterEnvironmentEdit
+            ? createOwnServerDeploymentTargetForHost(host).execute(executionRequest) : runRollout(request);
+        const spec = getActionSpec('deployments.deploy');
+        const runner = createActionOperationRunner({ store: operationStore,
+            generateOperationId: () => receipt.deployment.actionOperationId,
+            resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }) });
+        let outcome: Awaited<ReturnType<typeof runRollout>> | undefined;
+        await runner.observe({ actionId: spec.id, scope: operationScope, input: request.input,
+            execute: async ({ publishOwnerUpdate, operationAcceptance }) => {
+                outcome = await runRollout({ ...request, context: { ...request.context, operationAcceptance,
+                    operationOwnerUpdate: { update: publishOwnerUpdate } } });
+                return outcome.ok ? { ok: true, result: outcome } : outcome;
+            } });
+        if (!outcome) throw new Error('Expected the real rollout to settle');
+        return outcome;
+    })().finally(() => { completed = true; });
+    if (expectedDown) {
+        while (!completed) {
+            await vi.waitFor(() => expect(completed || blocked.length > 0).toBe(true));
+            const child = blocked.shift();
+            if (!child) continue;
+            try {
+                const snapshot = ActionOperationSnapshotV1Schema.parse(operationStore.get(operationScope, receipt.deployment.actionOperationId));
+                expect(snapshot).toMatchObject({ state: 'running', domainRef: { kind: 'deployment', expectedDown: {
+                    operation: 'deploy', machineId: child.machineId, installationId: `installation-${child.machineId}`,
+                    serviceIds: [`${createHash('sha256').update('srv_rollout_home').digest('hex')}--${environment.environment.id}/app`],
+                    domains: [{ domainId: 'domain', machineId: 'edge-c', installationId: 'edge-installation' }],
+                } } });
+            } finally { child.resume(); }
+        }
+        expect(operationStore.get(operationScope, receipt.deployment.actionOperationId)?.state).not.toBe('running');
+    }
     const outcome = await executed;
     expect(outcome).toMatchObject('cleanupFailure' in scenario
         ? { ok: false, errorCode: scenario.cleanupFailure, error: expect.stringContaining(scenario.cleanupFailure) }
