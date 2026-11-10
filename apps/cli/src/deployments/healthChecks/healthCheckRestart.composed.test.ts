@@ -22,13 +22,16 @@ import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/
 
 afterEach(() => vi.restoreAllMocks());
 
-it('cold-adopts retained health subscriptions for a new occurrence, preserves settled failure and admits recovery once', async () => {
+it.each(['admitted', 'rejoined', 'rejected', 'inbox', 'default'] as const)(
+    'cold-adopts %s health subscriptions, starts only opted-in admitted openings, and preserves settled failure across restart', async mode => {
     const notices = createPlainAccountArtifactHttpBoundary();
     const caller = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
     const sourceCustody = { kind: 'managed' as const, immutableGenerationId: 'retained-generation', installSource: 'archive' as const };
     const sourceInstanceId = 'health:retained-service';
     const sourceConfig: HealthCheckSourceConfigV1 = { v: 1,
         subject: { kind: 'machineService', machineId: caller.machineId, serviceId: 'web' },
+        ...(mode === 'default' ? {} : { investigation: mode === 'inbox' ? { mode: 'inbox' as const }
+            : { mode: 'auto_start' as const, configuredActionId: 'investigate-retained' } }),
         checks: [{ checkId: 'http', kind: { pluginId: caller.pluginId, localId: 'http' },
             binding: { kind: 'healthCheck' }, config: { endpoint: 'https://example.test/private-health', expectStatus: 200 },
             periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }] };
@@ -38,6 +41,7 @@ it('cold-adopts retained health subscriptions for a new occurrence, preserves se
             triggerKind: 'pluginEvent' as const, eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(randomUUID()) };
         return { automationId: binding.automationId, triggerId: binding.triggerId, triggerRevision: 1, eventRef,
             sourceSelectorId: binding.sourceSelectorId, sourceContractVersion: 1,
+            observationOnly: { kind: 'observationOnly' },
             observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: caller },
             payloadSchema: healthTransition.jsonSchema,
             storedDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding,
@@ -56,6 +60,7 @@ it('cold-adopts retained health subscriptions for a new occurrence, preserves se
     const admissions: ReturnType<typeof AutomationEventAdmitInputV1Schema.parse>[] = [];
     const statuses: ReturnType<typeof AutomationEventSourceStatusReportV1Schema.parse>[] = [];
     const reads: string[] = [];
+    const handoffs: unknown[] = [];
     let now = 1000;
     let httpStatus = 503;
     const http: HttpService = { async requestStream(input) {
@@ -96,6 +101,15 @@ it('cold-adopts retained health subscriptions for a new occurrence, preserves se
                 await createConfiguredHealthCheckNotices({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://health-notices.test',
                     machineId: caller.machineId, readEnvironment: async () => { throw new Error('service_has_no_environment'); },
                     readService: async () => detail.kind === 'service' ? detail.service : null,
+                    executeAction: async (ref, input) => {
+                        if (ref.localId === 'actions/read-v1') return { v: 1, kind: 'choices', defaultActionId: 'investigate-retained', actions: [{
+                            label: 'Investigate retained service', selection: { configuredActionId: 'investigate-retained',
+                                sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured' },
+                        }] };
+                        handoffs.push(input);
+                        return { v: 1, handoff: { kind: 'sendResult', session: { serverId: 'home', sessionId: 'investigation' },
+                            result: { status: 'accepted', localId: 'health-investigation' } } };
+                    },
                 })(observation);
             },
             // Remote admission/status HTTP and native Machine detail are the
@@ -109,7 +123,9 @@ it('cold-adopts retained health subscriptions for a new occurrence, preserves se
                 if (actionId !== 'automation.event.admit' || !('input' in request)) throw new Error('unexpected_event_transport');
                 const input = AutomationEventAdmitInputV1Schema.parse(request.input);
                 admissions.push(input);
-                return { results: input.definitions.map(() => ({ kind: 'admitted', runId: randomUUID(), checkpointSafe: true })),
+                return { results: input.definitions.map(() => mode === 'rejected'
+                    ? { kind: 'skipped', reason: 'occurrenceRejected', checkpointSafe: true }
+                    : { kind: mode === 'rejoined' ? 'rejoined' : 'admitted', runId: randomUUID(), checkpointSafe: true }),
                     continuation: { kind: 'ready', accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } } };
             } },
         });
@@ -146,6 +162,11 @@ it('cold-adopts retained health subscriptions for a new occurrence, preserves se
     expect(admissions.map(value => value.eventRef.localId), JSON.stringify(statuses)).toEqual(['health-check-failed']);
     expect(notices.rows.size).toBe(1);
     expect(notices.writes).toHaveBeenCalledTimes(1);
+    const starts = mode === 'admitted' || mode === 'rejoined';
+    expect(handoffs).toEqual(starts ? [expect.objectContaining({ handoff: expect.objectContaining({
+        task: 'investigate', context: expect.objectContaining({ kind: 'healthAlert' }),
+        evidence: [expect.objectContaining({ kind: 'alert', notice: expect.objectContaining({ artifactId: [...notices.rows.keys()][0] }) })],
+    }) })] : []);
     initial.abort.abort();
     let release!: () => void;
     let readStarted!: () => void;
@@ -171,6 +192,7 @@ it('cold-adopts retained health subscriptions for a new occurrence, preserves se
     expect(admissions[1]?.payload).toMatchObject({ transition: 'recovered' });
     expect(notices.rows.size).toBe(1);
     expect(notices.writes).toHaveBeenCalledTimes(2);
+    expect(handoffs).toHaveLength(starts ? 1 : 0);
     expect(decodePlainArtifactStoredContent([...notices.rows.values()][0]!.header)).toMatchObject({
         healthPhase: 'recovered', source: { subject: { kind: 'healthCheck', subject: sourceConfig.subject, checkId: 'http' } },
     });

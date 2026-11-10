@@ -28,7 +28,7 @@ const subject = {
 
 // Only the host's settlement transport is substituted; the real SDK mount, shared tiles/fields
 // and the canonical setup-input schema decide what the setup modal receives.
-async function mount(launchInput: JsonValue) {
+async function mount(launchInput: JsonValue, handlers: Parameters<typeof createPluginUiTestkit>[0]['handlers'] = {}) {
   const settled: unknown[] = [];
   await act(async () => {
     mounted = await createPluginUiTestkit({
@@ -42,6 +42,7 @@ async function mount(launchInput: JsonValue) {
       adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
       launchInput,
       handlers: {
+        ...handlers,
         settleEphemeralInput: async ({ settlement }) => {
           settled.push(settlement);
         },
@@ -70,6 +71,230 @@ async function addButton(page: PluginUiTestkit) {
   return await page.getByRole('button', { name: 'Add check' });
 }
 
+it('preserves the saved subject alert destination when adding another check without sending on open', async () => {
+  const calls: unknown[] = [];
+  const alerts = { channels: [{ channelId: 'happier.channel.slack/alerts', destination: {
+    connectionId: 'production-slack', endpoint: { kind: 'shared', audience: 'shared', id: 'slack:T1:channel:C1' },
+  } }], phases: ['open', 'recovered'] };
+  const { page, settled } = await mount({ initialInput: { v: 1, subject, alerts } }, {
+    executeAction: async request => { calls.push(request); return { items: [] }; },
+  });
+  expect(calls).toEqual([]);
+  await expect(page.getByText('Alerts')).resolves.toBeDefined();
+  await act(async () => {
+    const tcp = (await page.getAllByRole('radio')).find(target => target.name?.startsWith('TCP'));
+    expect(tcp).toBeDefined();
+    await page.press(tcp!);
+  });
+  await type('Host', 'db.internal');
+  await type('Port', '5432');
+  await act(async () => { await page.press(await addButton(page)); });
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({ alerts }) })]);
+  expect(calls).toEqual([]);
+});
+
+it('maps a named Kuma monitor through the saved check setup without accepting a payload subject', async () => {
+  const { page, settled } = await mount({ initialInput: { v: 1, subject } });
+  await act(async () => {
+    const tile = (await page.getAllByRole('radio')).find(target => target.name?.startsWith('Uptime Kuma'));
+    expect(tile).toBeDefined();
+    await page.press(tile!);
+  });
+  await type('Monitor ID', '7');
+  await act(async () => { await page.press(await addButton(page)); });
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({ subject,
+    checks: [expect.objectContaining({ kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'uptime-kuma' },
+      config: { monitorId: '7' }, binding: { kind: 'healthCheck' } })] }) })]);
+});
+
+it('maps a Gatus endpoint with an empty group and requires its name before saving', async () => {
+  const { page, settled } = await mount({ initialInput: { v: 1, subject } });
+  await act(async () => {
+    const tile = (await page.getAllByRole('radio')).find(target => target.name?.startsWith('Gatus'));
+    expect(tile).toBeDefined();
+    await page.press(tile!);
+  });
+  expect((await addButton(page)).state?.disabled).toBe(true);
+  await type('Endpoint name', 'Shop');
+  await act(async () => { await page.press(await addButton(page)); });
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
+    checks: [expect.objectContaining({ kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'gatus' },
+      config: { endpointGroup: '', endpointName: 'Shop' }, consecutiveFailuresBeforeAlerting: 1 })],
+  }) })]);
+});
+
+it('checks a saved Domain through its declared finite Action and preserves its result when a retry is unavailable', async () => {
+  const calls: unknown[] = [];
+  let refuse = false;
+  const check = { checkId: 'public-http', kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'http' },
+    binding: { kind: 'domain', domainId: 'shop-domain', targetLinkId: 'shop-target', condition: 'domain_probe_failed' },
+    config: {}, periodMs: 60_000, consecutiveFailuresBeforeAlerting: 2 };
+  const environment = { kind: 'environment', environmentId: 'production' };
+  const { page } = await mount({ initialInput: { v: 1, subject: environment, checks: [check] } }, {
+    executeAction: async ({ action, input }) => {
+      calls.push({ action, input });
+      if (typeof action === 'object' && action.localId === 'health/kinds') return [{
+        pluginId: MACHINE_SERVICES_PLUGIN_ID, id: 'http', title: 'HTTP', action: 'health/http',
+        configSchema: { type: 'object', additionalProperties: false, properties: {} },
+      }];
+      if (refuse) throw new Error('observer unavailable');
+      return { status: 'up', observedAt: 1000, evidence: { v: 1, items: [{
+        source: { kind: 'alert', label: 'Domain check' }, author: { kind: 'process' }, text: 'HTTP status 200',
+      }] } };
+    },
+  });
+  expect(calls).toEqual([]);
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Check now' })); });
+  expect(calls).toEqual([expect.objectContaining({ action: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/kinds' } }),
+    expect.objectContaining({ action: 'action.invoke', input: expect.objectContaining({
+      action: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/http' },
+      input: expect.objectContaining({ checkId: 'public-http', sourceInstanceId: expect.stringMatching(/^health:/) }),
+    }) })]);
+  await expect(page.getByText('Up')).resolves.toBeDefined();
+  refuse = true;
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Check now' })); });
+  await expect(page.getByText('Up')).resolves.toBeDefined();
+  await expect(page.getByText('The check could not run. Try again when its Machine is available.')).resolves.toBeDefined();
+});
+
+it('adds a declared contributed kind with its closed configuration through the same saved setup', async () => {
+  const calls: unknown[] = [];
+  const { page, settled } = await mount({ initialInput: { v: 1, subject } }, {
+    executeAction: async request => {
+      calls.push(request);
+      return [{ pluginId: 'com.example.health', id: 'external-health', title: 'External service', action: 'health/read',
+        configSchema: { type: 'object', additionalProperties: false, properties: { monitorId: { type: 'string' } }, required: ['monitorId'] } }];
+    },
+  });
+  expect(calls).toEqual([]);
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'More checks' })); });
+  await expect(page.getByText('External service')).resolves.toBeDefined();
+  expect((await addButton(page)).state?.disabled).toBe(true);
+  await type('Configuration', '{"monitorId":"shop","endpoint":"https://other.example"}');
+  expect((await addButton(page)).state?.disabled).toBe(true);
+  await type('Configuration', '{"monitorId":"shop"}');
+  await act(async () => { await page.press(await addButton(page)); });
+  expect(calls).toHaveLength(1);
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({ subject,
+    checks: [expect.objectContaining({ kind: { pluginId: 'com.example.health', localId: 'external-health' },
+      config: { monitorId: 'shop' }, binding: { kind: 'healthCheck' } })] }) })]);
+});
+
+it('enables the default Domain checks only after accepting cadence and preserves sibling checks', async () => {
+  const sibling = { checkId: 'database', kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'tcp' },
+    binding: { kind: 'healthCheck' }, config: { host: 'db.internal', port: 5432 }, periodMs: 300_000, consecutiveFailuresBeforeAlerting: 3 };
+  const environment = { kind: 'environment', environmentId: 'production' };
+  const domain = { domainId: 'public-domain', targetLinkId: 'serving-target' };
+  const { page, settled } = await mount({ initialInput: { v: 1, subject: environment, domain, checks: [sibling] } });
+  expect(settled).toEqual([]);
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Enable checks' })); });
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
+    subject: environment, checks: [sibling,
+      expect.objectContaining({ kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'http' }, config: {},
+        binding: { kind: 'domain', ...domain, condition: 'domain_probe_failed' }, periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 }),
+      expect.objectContaining({ kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'certificate' }, config: {},
+        binding: { kind: 'domain', ...domain, condition: 'certificate_renewal_failed' }, periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 })],
+  }) })]);
+});
+
+it('replaces a Domain condition producer with a monitor while retaining its check identity and certificate sibling', async () => {
+  const domain = { domainId: 'public-domain', targetLinkId: 'serving-target' };
+  const http = { checkId: 'public-http', kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'http' },
+    binding: { kind: 'domain', ...domain, condition: 'domain_probe_failed' }, config: {},
+    periodMs: 300_000, consecutiveFailuresBeforeAlerting: 3 };
+  const certificate = { ...http, checkId: 'public-certificate', kind: { ...http.kind, localId: 'certificate' },
+    binding: { ...http.binding, condition: 'certificate_renewal_failed' } };
+  const { page, settled } = await mount({ initialInput: { v: 1,
+    subject: { kind: 'environment', environmentId: 'production' }, domain, checks: [http, certificate] } });
+  await act(async () => {
+    const kuma = (await page.getAllByRole('radio')).find(target => target.name?.startsWith('Uptime Kuma'));
+    expect(kuma).toBeDefined();
+    await page.press(kuma!);
+  });
+  await type('Monitor ID', '7');
+  await act(async () => { await page.press(await addButton(page)); });
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({ checks: [
+    expect.objectContaining({ checkId: 'public-http', kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'uptime-kuma' },
+      binding: http.binding, config: { monitorId: '7' } }), certificate,
+  ] }) })]);
+});
+
+it('keeps a saved monitor address hidden until person reveal and copies only its accepted POST method', async () => {
+  const calls: unknown[] = [];
+  const copied: string[] = [];
+  const endpointId = 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA';
+  const { page } = await mount({ initialInput: { v: 1, subject, checks: [{ checkId: 'shop-monitor',
+    kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'uptime-kuma' }, binding: { kind: 'healthCheck' },
+    config: { monitorId: '7', webhookEndpointId: endpointId, observingSince: 100 }, periodMs: 60_000, consecutiveFailuresBeforeAlerting: 2 }] } }, {
+    executeAction: async ({ action, input }) => {
+      calls.push({ action, input });
+      return { webhookEndpointId: endpointId, revision: 1, publicUrl: 'https://happier.example/private-monitor-route' };
+    },
+    writeClipboard: async ({ value }) => { copied.push(value); },
+  });
+  expect(calls).toEqual([]);
+  expect(document.body.textContent).not.toContain('private-monitor-route');
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Reveal address' })); });
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Copy POST command' })); });
+  expect(copied).toEqual(["curl -fsS -X POST 'https://happier.example/private-monitor-route'"]);
+  expect((await page.getAllByRole('button')).some(button => button.name === 'Copy GET command')).toBe(false);
+});
+
+it('reveals the heartbeat address only on request and rotates it through the contributed Action', async () => {
+  const calls: unknown[] = [];
+  const copied: string[] = [];
+  const endpointId = 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA';
+  const { page } = await mount({ initialInput: { v: 1, subject, checks: [{ checkId: 'heartbeat',
+    kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'heartbeat' }, binding: { kind: 'healthCheck' },
+    config: { graceMs: 60_000, webhookEndpointId: endpointId }, periodMs: 60_000, consecutiveFailuresBeforeAlerting: 2 }] } }, {
+    executeAction: async ({ action, input }) => {
+      calls.push({ action, input });
+      return action === 'plugin.webhook.endpoint.read'
+        ? { webhookEndpointId: endpointId, revision: 1, publicUrl: 'https://happier.example/secret-capability' }
+        : input !== null && typeof input === 'object' && !Array.isArray(input) && input.operation === 'revoke'
+          ? { kind: 'revoked', webhookEndpointId: endpointId, revision: 3 }
+          : { kind: 'rotated', webhookEndpointId: endpointId, revision: 2 };
+    },
+    writeClipboard: async ({ value }) => { copied.push(value); },
+  });
+  expect(calls).toEqual([]);
+  expect(document.body.textContent).not.toContain('secret-capability');
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Reveal address' })); });
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Copy POST command' })); });
+  expect(copied).toEqual(["curl -fsS -X POST 'https://happier.example/secret-capability'"]);
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Rotate address' })); });
+  expect(calls).toEqual([expect.objectContaining({ action: 'plugin.webhook.endpoint.read' }),
+    expect.objectContaining({ action: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/heartbeat/manage' },
+      input: expect.objectContaining({ operation: 'rotate', webhookEndpointId: endpointId, checkId: 'heartbeat', expectedRevision: 1 }) })]);
+  expect(document.body.textContent).not.toContain('secret-capability');
+  await expect(page.getByRole('button', { name: 'Reveal address' })).resolves.toBeDefined();
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Revoke address' })); });
+  expect(calls.at(-1)).toMatchObject({ action: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/heartbeat/manage' },
+    input: { operation: 'revoke', webhookEndpointId: endpointId, expectedRevision: 2 } });
+  expect((await page.getAllByRole('button')).some(button => button.name === 'Reveal address')).toBe(false);
+  expect(document.body.textContent).not.toContain('secret-capability');
+});
+
+it('keeps automatic investigation as an explicit source-local choice when adding a check', async () => {
+  const investigation = { mode: 'auto_start', configuredActionId: 'investigate-production' };
+  const { page, settled } = await mount({ initialInput: { v: 1, subject } });
+  await act(async () => {
+    const automatic = (await page.getAllByRole('radio')).find(target => target.name?.startsWith('Start investigation'));
+    expect(automatic).toBeDefined();
+    await page.press(automatic!);
+  });
+  await type('Configured investigation', investigation.configuredActionId);
+  await act(async () => {
+    const tcp = (await page.getAllByRole('radio')).find(target => target.name?.startsWith('TCP'));
+    expect(tcp).toBeDefined();
+    await page.press(tcp!);
+  });
+  await type('Host', 'db.internal');
+  await type('Port', '5432');
+  await act(async () => { await page.press(await addButton(page)); });
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({ investigation }) })]);
+});
+
 it('authors one TCP check for the prebound watched service and settles the canonical setup input', async () => {
   const { page, settled } = await mount({ initialInput: { v: 1, subject } });
   await act(async () => {
@@ -93,6 +318,7 @@ it('authors one TCP check for the prebound watched service and settles the canon
       input: {
         v: 1,
         subject,
+        investigation: { mode: 'inbox' },
         checks: [
           {
             checkId: 'tcp',
@@ -100,7 +326,7 @@ it('authors one TCP check for the prebound watched service and settles the canon
             binding: { kind: 'healthCheck' },
             config: { host: 'db.internal', port: 5432 },
             periodMs: 60_000,
-            consecutiveFailuresBeforeAlerting: 2,
+            consecutiveFailuresBeforeAlerting: 1,
           },
         ],
       },

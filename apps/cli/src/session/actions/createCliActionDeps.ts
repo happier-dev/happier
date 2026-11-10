@@ -7,6 +7,7 @@ import { prepareDeploymentTargetEnablementRetention } from '@/deployments/target
 import { resolveSessionInputTargetMachineId } from '@/session/services/sessionInputAdmissionIdentity';
 import { createCliOccurrenceAction } from './cliActionDeps/occurrences';
 import { createPrepareDeployment } from '@/workspaces/prepareDeployment';
+import { resolveAdmittedRepositoryWorkspace } from '@/workspaces/admittedRepositoryWorkspace';
 import { createCombinedMachineSetupActionDeps, createMachineSetupApplyDispatcher } from '@/machines/setup/composeMachineSetup';
 import { readRequesterAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -52,7 +53,8 @@ import { createCliArtifactsActionDeps } from './cliActionDeps/artifacts';
 import { createCliBotTemplateActionDeps } from './cliActionDeps/botTemplates';
 import { createCliMachineInventoryActionDeps } from './cliActionDeps/machineInventory';
 import { createCliWorkflowRunStorage } from './workflowRunStorage';
-import { createCliWorkflowFamily } from './workflowFamily';
+import { createCliWorkflowFamily, type CliWorkflowFamilyHost } from './workflowFamily';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { hasStoredSessionCredentialProvenance } from '@/persistence';
 import { createCliSpawnActionDeps } from '@/session/creation/cliActionDeps';
 import { createCliAwarenessActionDeps } from './cliActionDeps/awareness';
@@ -118,6 +120,7 @@ import { randomUUID } from 'node:crypto';
 import type { SessionPullRequestBindingInputV1 } from '@happier-dev/channels-protocol/v1';
 import { DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol';
 import { resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { DeploymentMoveToRepositoryResultV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 
 
@@ -587,6 +590,12 @@ export function createCliActionDeps(params: CliActionDepsParams,
         const { createConfiguredHealthCheckNotices } = await import('@/deployments/deploymentServiceHealthNotices');
         const health = await createConfiguredHealthCheckNotices({ credentials: params.credentials!, serverId: projectHomeId,
           serverHttpBaseUrl: todoHomeBaseUrl, machineId: observation.caller.machineId,
+          executeAction: async (action, input, options) => {
+            if (!params.invokeContributedAction) return { ok: false, errorCode: 'target_unavailable', effectAttempted: false };
+            const result = await params.invokeContributedAction({ action, input, context: { signal: options?.signal },
+              ...(options?.signal ? { signal: options.signal } : {}) });
+            return StrictJsonValueSchema.parse(result);
+          },
           readEnvironment: (environmentId, signal) => readOpenedDeploymentEnvironment(environmentId, { signal }),
           readService: async (subject, signal) => {
             const { MachineServicesDetailResultV1Schema } = await import('@happier-dev/protocol/actions/specs/machine/services');
@@ -796,11 +805,35 @@ export function createCliActionDeps(params: CliActionDepsParams,
         && roleAccountLifetimeToken === getActiveAccountSettingsSnapshotLifetimeToken()) }
     : undefined;
   const workflowRunStorageHost = createCliWorkflowRunStorage(params, resolveCurrentSessionValue, resolveServerRequestHeaders, normalizeStringValue);
-  const { workflowTriggers, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort, prepareWorkflowRunStartApproval,
-    startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations } = createCliWorkflowFamily(params, {
+  const workflowFamilyHost: CliWorkflowFamilyHost = {
     ...(nativeAccount ? { nativeAccount } : {}), deploymentAction: (...args) => actionDeps.deploymentAction!(...args),
     roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, sessionRead, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, readProjectRows, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId,
-  }, workflowRunStorageHost);
+  };
+  const workflowFamily = createCliWorkflowFamily(params, workflowFamilyHost, workflowRunStorageHost);
+  const { workflowTriggers, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort, prepareWorkflowRunStartApproval,
+    startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations } = workflowFamily;
+  params.registerWorkflowTriggerList?.(async (input, context) => {
+    const requester = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization);
+    if (context?.externalActionExecutionAuthorization && !requester) {
+      throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+    }
+    // Approval replay restores its requester after this executor was constructed.
+    // Rebind the same family at its Artifact/Automation boundaries for this read.
+    const family = requester && (requester.credentials.token !== params.token
+      || requester.serverHttpBaseUrl !== params.serverHttpBaseUrl)
+      ? createCliWorkflowFamily({ ...params, credentials: requester.credentials, token: requester.credentials.token,
+        serverHttpBaseUrl: requester.serverHttpBaseUrl,
+        serverIdentityId: requester.authorization.binding.serverIdentityId,
+        admittedAccountEncryptionMode: requester.accountEncryptionCurrentness.mode,
+        savedSecretOperationContext: requester.savedSecretOperationContext,
+        isCredentialCurrent: requester.isCurrent, workflowRequesterCustody: undefined, workflowAction: undefined,
+      }, { ...workflowFamilyHost, roleArtifactStore: createCredentialedAccountArtifactStore(requester.credentials),
+        nativeAccount: { accountId: requester.authorization.binding.accountId, serverId: projectHomeId,
+          isCurrent: requester.isCurrent },
+      }, workflowRunStorageHost) : workflowFamily;
+    if (!family.workflowTriggers) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+    return family.workflowTriggers.list(input, context);
+  });
   const spawnActionDeps = createCliSpawnActionDeps(params, { callMachineAction, isSameActionHomeId, machineReferenceServerUrl, normalizeStringValue, prepareAccountRoleOverrides, prepareSourceKeyAfterCommit, projectHomeId, readAccountRoleOverrides, readRecord, readRoleSources, resolveServerRequestHeaders, roleSettingsProvider, workflowTriggers });
   const machineInventoryDeps = createCliMachineInventoryActionDeps(params, { callMachineAction, inventoryDeps });
   const artifactsDeps = createCliArtifactsActionDeps(params, { artifactCallerContext, callMachineAction, homeAccountId, readRawRoleSettings, mutateRawAccountSettings, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveWorkspacePublishCaller, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore,
@@ -860,6 +893,44 @@ export function createCliActionDeps(params: CliActionDepsParams,
   });
   const { sessionPermissionModeSet, ...permissionActionDeps } = createCliPermissionActionDeps(params, { callSessionActionRpc, readSessionActionRpcOrigin, resolveServerRequestHeaders, resolveTransportForSession, resumeInactiveSessionTransport, withProjectHome });
   const readAdmittedProjectRows = createCliAdmittedProjectRowsReader({ widgetHomeId, projectAccountAdmission, readProjectRows, assertProjectRequesterCurrent });
+  const readRepositoryWorkspaceMachine = async (
+    workspace: Parameters<typeof resolveAdmittedRepositoryWorkspace>[0]['workspace'], context: ActionExecutorContext, actionId: string,
+  ): ReturnType<typeof resolveDeploymentTemplateExecutionMachineIdV1> => {
+    const selected = await resolveAdmittedRepositoryWorkspace({ workspace, context,
+      readWorkspaceRows: readAdmittedProjectRows, fallbackActionId: actionId });
+    if (!('kind' in selected)) return selected;
+    return selected.kind === 'resolved' ? { ok: true, machineId: selected.workspace.machineId }
+      : executionRunActionFailure(selected.reason);
+  };
+  const dispatchOriginalDeploymentRoot = async (
+    actionId: Parameters<typeof dispatchOriginalAccountAction>[0]['actionId'], input: unknown, context: ActionExecutorContext,
+    readMachine: () => ReturnType<typeof resolveDeploymentTemplateExecutionMachineIdV1>,
+  ) => {
+    const workflow = context.actionCaller?.kind === 'workflowRun';
+    if (!params.credentials || context.externalActionCredential || context.externalActionExecutionAuthorization
+      || context.rpcSessionAuthorization || context.actionCaller && context.actionCaller.kind !== 'host' && !workflow)
+      return executionRunActionFailure('deployment_executor_unavailable');
+    if (!context.actionRequestId || context.runtimeAccountId && context.runtimeAccountId !== homeAccountId)
+      return executionRunActionFailure('admission_unavailable');
+    const publisherMachineId = params.machineActionDirectTargetTransport?.machineId;
+    const installedWorkflow = workflow && publisherMachineId && params.serverIdentityId
+      && params.externalActionMachineRequestPrivateKey && params.externalActionMachineInstallationId
+      ? { context, machineId: publisherMachineId, installationId: params.externalActionMachineInstallationId,
+          privateKey: params.externalActionMachineRequestPrivateKey } : undefined;
+    if (workflow && !installedWorkflow) return executionRunActionFailure('admission_unavailable');
+    const selected = await readMachine();
+    if (!selected.ok) return selected;
+    return dispatchOriginalAccountAction({ actionId, input, requestId: context.actionRequestId,
+      target: { kind: 'machine', machineId: selected.machineId }, credentials: params.credentials,
+      ...(installedWorkflow ? { authority: 'account_automation' as const, installedWorkflow }
+        : { authority: context.authority,
+          invocation: { caller: { kind: 'host' as const }, surface: context.surface ?? 'cli', authority: context.authority ?? 'account_automation' } }),
+      serverHttpBaseUrl: todoHomeBaseUrl,
+      ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
+      ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
+      ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
+      ...(context.signal ? { signal: context.signal } : {}) });
+  };
 
   const projectDeps = createCliProjectActionDeps(params, { readAdmittedProjectRows, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, assertProjectRequesterCurrent, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome });
   const machineResourceDeps = createCliMachineResourceActionDeps(params, { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, machineRebootReferences,
@@ -984,35 +1055,23 @@ export function createCliActionDeps(params: CliActionDepsParams,
         managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction }, prepared);
     },
     ...(params.prepareDeploymentTemplateInstantiation ? { prepareDeploymentTemplateInstantiation: params.prepareDeploymentTemplateInstantiation } : {}),
+    deploymentMoveToRepository: params.deploymentMoveToRepository ?? (async (input, context) => {
+      const actionId = 'deployments.environments.moveToRepository';
+      const execution = await dispatchOriginalDeploymentRoot(actionId, input, context,
+        () => resolveDeploymentMoveToRepositoryExecutionMachineIdV1(input,
+          workspace => readRepositoryWorkspaceMachine(workspace, context, actionId)));
+      if (!execution.ok) return execution;
+      const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
+      if (approval.success && approval.data.actionId === actionId) return approval.data;
+      const output = DeploymentMoveToRepositoryResultV1Schema.safeParse(execution.result);
+      return output.success ? output.data : executionRunActionFailure('invalid_action_output');
+    }),
     deploymentTemplateInstantiate: params.deploymentTemplateInstantiate ?? (async (input, context) => {
-      const workflow = context.actionCaller?.kind === 'workflowRun';
-      if (!params.credentials || context.externalActionCredential || context.externalActionExecutionAuthorization
-        || context.rpcSessionAuthorization || context.actionCaller && context.actionCaller.kind !== 'host' && !workflow)
-        return executionRunActionFailure('deployment_executor_unavailable');
-      if (!context.actionRequestId || context.runtimeAccountId && context.runtimeAccountId !== homeAccountId)
-        return executionRunActionFailure('admission_unavailable');
-      const publisherMachineId = params.machineActionDirectTargetTransport?.machineId;
-      const installedWorkflow = workflow && publisherMachineId && params.serverIdentityId
-        && params.externalActionMachineRequestPrivateKey && params.externalActionMachineInstallationId
-        ? { context, machineId: publisherMachineId, installationId: params.externalActionMachineInstallationId,
-            privateKey: params.externalActionMachineRequestPrivateKey } : undefined;
-      if (workflow && !installedWorkflow) return executionRunActionFailure('admission_unavailable');
-      const selected = await resolveDeploymentTemplateExecutionMachineIdV1(input, async request => {
+      const actionId = 'deployments.templates.instantiate';
+      const execution = await dispatchOriginalDeploymentRoot(actionId, input, context, () => resolveDeploymentTemplateExecutionMachineIdV1(input, async request => {
         const loaded = await deploymentStorage('deployments.environments.get', request, context);
         return 'errorCode' in loaded ? loaded : DeploymentEnvironmentGetResultV1Schema.parse(loaded);
-      });
-      if (!selected.ok) return selected;
-      const actionId = 'deployments.templates.instantiate';
-      const execution = await dispatchOriginalAccountAction({ actionId, input, requestId: context.actionRequestId,
-        target: { kind: 'machine', machineId: selected.machineId }, credentials: params.credentials,
-        ...(installedWorkflow ? { authority: 'account_automation' as const, installedWorkflow }
-          : { authority: context.authority,
-            invocation: { caller: { kind: 'host' as const }, surface: context.surface ?? 'cli', authority: context.authority ?? 'account_automation' } }),
-        serverHttpBaseUrl: todoHomeBaseUrl,
-        ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
-        ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
-        ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
-        ...(context.signal ? { signal: context.signal } : {}) });
+      }, request => readRepositoryWorkspaceMachine(request.workspace, context, actionId)));
       if (!execution.ok) return execution;
       const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
       if (approval.success && approval.data.actionId === actionId) return approval.data;

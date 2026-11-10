@@ -76,15 +76,38 @@ export type HealthCheckDefinitionV1 = z.infer<typeof HealthCheckDefinitionV1Sche
 
 function hasConsistentChecks(source: Readonly<{ subject: z.infer<typeof HealthCheckSubjectV1Schema>;
     checks: readonly Pick<HealthCheckDefinitionV1, 'checkId' | 'binding'>[] }>): boolean {
+    const domainConditions = source.checks.flatMap(check => check.binding.kind === 'domain'
+        ? [JSON.stringify([check.binding.domainId, check.binding.targetLinkId, check.binding.condition])] : []);
     return new Set(source.checks.map(check => check.checkId)).size === source.checks.length
+        && new Set(domainConditions).size === domainConditions.length
         && (source.subject.kind === 'environment' || source.checks.every(check => check.binding.kind === 'healthCheck'));
 }
 
+/** Saved delivery choices contain references, never provider credentials. */
+export const HealthCheckAlertChannelV1Schema = lazyZodSchema(() => z.strictObject({
+    channelId: keyword,
+    /** Provider-owned, non-secret destination references returned by its setup Action. */
+    destination: z.optional(PluginJsonValueV2Schema),
+}));
+export type HealthCheckAlertChannelV1 = z.infer<typeof HealthCheckAlertChannelV1Schema>;
+export const HealthCheckAlertsV1Schema = lazyZodSchema(() => z.strictObject({
+    channels: z.array(HealthCheckAlertChannelV1Schema),
+    phases: z.array(z.enum(['open', 'recovered'])),
+}));
+export type HealthCheckAlertsV1 = z.infer<typeof HealthCheckAlertsV1Schema>;
+
 /** Assignment stays on the existing Automation materialization, outside sourceConfig. */
-export const HealthCheckSourceConfigV1Schema = lazyZodSchema(() => z.strictObject({
+export const HealthCheckSourceConfigV1BaseSchema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1), subject: HealthCheckSubjectV1Schema,
     checks: z.array(HealthCheckDefinitionV1Schema).check(z.minLength(1)),
-}).check(z.refine(hasConsistentChecks)));
+    /** Absent on retained sources; an explicit empty selection stays off. */
+    alerts: z.optional(HealthCheckAlertsV1Schema),
+    investigation: z.optional(z.discriminatedUnion('mode', [
+        z.strictObject({ mode: z.literal('inbox') }),
+        z.strictObject({ mode: z.literal('auto_start'), configuredActionId: id }),
+    ])),
+}));
+export const HealthCheckSourceConfigV1Schema = lazyZodSchema(() => HealthCheckSourceConfigV1BaseSchema.check(z.refine(hasConsistentChecks)));
 export type HealthCheckSourceConfigV1 = z.infer<typeof HealthCheckSourceConfigV1Schema>;
 export const HealthCheckSourceConfigV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSourceConfigV1Schema));
 
@@ -121,17 +144,40 @@ const setupChecksByKind = lazyDefinition(() => ({
     heartbeat: setupCheck('heartbeat', z.partial(HealthCheckHeartbeatConfigV1Schema, { webhookEndpointId: true })),
 } satisfies Record<HealthCheckKindV1, z.ZodMiniType>));
 
+// Keep native configuration validation in its existing arms. Contributed kinds
+// carry JSON to their catalog schema at host setup, including same-plugin kinds.
+const contributedSetupCheck = lazyZodSchema(() => {
+    const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    const otherPlugin = new RegExp(`^(?!${escape(HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1)}$)[\\s\\S]+$`, 'u');
+    const otherKind = new RegExp(`^(?!(?:${HEALTH_CHECK_KINDS_V1.map(escape).join('|')})$)[\\s\\S]+$`, 'u');
+    return z.strictObject({ ...HealthCheckDefinitionV1Schema.shape,
+        kind: z.intersection(asProtocolZod(PluginContributionIdentityV1Schema), z.union([
+            z.strictObject({ pluginId: z.string().check(z.regex(otherPlugin)), localId: z.string() }),
+            z.strictObject({ pluginId: z.literal(HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1), localId: z.string().check(z.regex(otherKind)) }),
+        ])),
+    });
+});
+
 /** Built-in authoring validates kind-specific input before endpoint enrollment.
  * Saved sourceConfig remains open to installed qualified check kinds. */
-export const HealthCheckSetupInputV1Schema = lazyZodSchema(() => z.strictObject({
-    ...HealthCheckSourceConfigV1Schema.shape,
-    checks: z.array(z.union(HEALTH_CHECK_KINDS_V1.map(kind => setupChecksByKind[kind]))).check(z.minLength(1)),
-}).check(z.refine(hasConsistentChecks)));
+export const HealthCheckSetupInputV1BaseSchema = lazyZodSchema(() => z.strictObject({
+    ...HealthCheckSourceConfigV1BaseSchema.shape,
+    checks: z.array(z.union([...HEALTH_CHECK_KINDS_V1.map(kind => setupChecksByKind[kind]), contributedSetupCheck])).check(z.minLength(1)),
+}));
+export const HealthCheckSetupInputV1Schema = lazyZodSchema(() => HealthCheckSetupInputV1BaseSchema.check(z.refine(hasConsistentChecks)));
 export type HealthCheckSetupInputV1 = z.infer<typeof HealthCheckSetupInputV1Schema>;
 export const HealthCheckSetupInputV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSetupInputV1Schema));
 
-/** A renderer launch may contain only its prebound watched subject. */
-export const HealthCheckSetupDraftV1Schema = lazyZodSchema(() => z.partial(z.strictObject(HealthCheckSetupInputV1Schema.shape)));
+/** Launch intent names the admitted Domain; cadence is accepted in the setup editor. */
+export const HealthCheckDomainSetupIntentV1Schema = lazyZodSchema(() => z.strictObject({ domainId: id, targetLinkId: id }));
+export type HealthCheckDomainSetupIntentV1 = z.infer<typeof HealthCheckDomainSetupIntentV1Schema>;
+export const HealthCheckDomainSetupIntentV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckDomainSetupIntentV1Schema));
+
+/** Draft-only Domain intent is never persisted in the saved source. */
+export const HealthCheckSetupDraftV1Schema = lazyZodSchema(() => z.strictObject({
+    ...z.partial(HealthCheckSetupInputV1BaseSchema).shape,
+    domain: z.optional(HealthCheckDomainSetupIntentV1Schema),
+}).check(z.refine(draft => !draft.domain || draft.subject?.kind === 'environment')));
 export type HealthCheckSetupDraftV1 = z.infer<typeof HealthCheckSetupDraftV1Schema>;
 export const HealthCheckSetupDraftV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSetupDraftV1Schema));
 
@@ -145,8 +191,14 @@ export type HealthCheckTransitionV1 = z.infer<typeof HealthCheckTransitionV1Sche
 export const HealthCheckTransitionV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckTransitionV1Schema));
 
 /** User Action operands reference saved checks; callers cannot replace endpoints or policy. */
+export const HealthCheckSourceSelectorV1Schema = lazyZodSchema(() => z.strictObject({
+    sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
+}));
+export type HealthCheckSourceSelectorV1 = z.infer<typeof HealthCheckSourceSelectorV1Schema>;
+export const HealthCheckSourceSelectorV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSourceSelectorV1Schema));
+
 export const SavedHealthCheckSelectorV1Schema = lazyZodSchema(() => z.strictObject({
-    sourceInstanceId: AutomationEventSourceInstanceIdV1Schema, checkId: id,
+    ...HealthCheckSourceSelectorV1Schema.shape, checkId: id,
 }));
 export type SavedHealthCheckSelectorV1 = z.infer<typeof SavedHealthCheckSelectorV1Schema>;
 export const SavedHealthCheckSelectorV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SavedHealthCheckSelectorV1Schema));

@@ -37,6 +37,7 @@ import { createProjectSourceInTx } from '../../../../server/sources/app/projects
 import { makeShareEligibleForTest } from '../../../../server/sources/testkit/shareEligibility.testkit';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { monitorDefinitions } from '../../../../../packages/plugins/machine-services/src/monitorDefinitions';
 
 async function adopted(sourceConfig: HealthCheckSourceConfigV1, observerMachineId = 'subject') {
     const caller = { pluginId: 'happier.machine.services', machineId: observerMachineId, materializationId: 'installed' };
@@ -80,6 +81,132 @@ const definition = (kind: string, config: HealthCheckSourceConfigV1['checks'][nu
 });
 
 describe('saved source finite native producer binding', () => {
+    it('enrolls a selected monitor handler and stores only its endpoint identity on the admitted mapping', async () => {
+        const sourceConfig: HealthCheckSourceConfigV1 = { v: 1,
+            subject: { kind: 'machineService', machineId: 'subject', serviceId: 'service' },
+            checks: [definition('uptime-kuma', { monitorId: '7' })] };
+        const f = await adopted(sourceConfig);
+        const enroll = vi.fn(async () => ({ webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA' }));
+        const service = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
+            readObserver: () => f.observer, openDomainArtifact: async () => null, now: () => 400,
+            readKinds: () => [{ pluginId: f.seed.plugin.id, id: 'uptime-kuma', title: 'Uptime Kuma',
+                action: 'health/uptime-kuma', configSchema: monitorDefinitions['uptime-kuma'].configSchema.jsonSchema }],
+            enrollHeartbeat: enroll,
+        }).bind(f.seed, { actions: { execute: vi.fn() } as unknown as ActionsService, http: {} as HttpService })!;
+        const request = { sourceInstanceId: 'health:subject', sourceConfig, heartbeatContributionId: 'health-heartbeat',
+            capabilityWebhookContributions: { 'uptime-kuma': 'health-uptime-kuma' } };
+        const saved = await service.setup(request);
+        expect(saved.checks[0]?.config).toEqual({ monitorId: '7', webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA', observingSince: 400 });
+        expect(enroll).toHaveBeenCalledWith(expect.objectContaining({ checkId: 'uptime-kuma',
+            heartbeatContributionId: 'health-uptime-kuma' }), expect.any(AbortSignal));
+    });
+    it('admits a source-local automatic investigation against the live Triage catalog when saving', async () => {
+        const sourceConfig: HealthCheckSourceConfigV1 = { v: 1,
+            subject: { kind: 'machineService', machineId: 'subject', serviceId: 'service' },
+            checks: [definition('tcp', { host: '127.0.0.1', port: 80 })] };
+        const f = await adopted(sourceConfig);
+        let available = false;
+        const execute = vi.fn(async () => ({ v: 1, kind: 'choices', defaultActionId: null,
+            actions: available ? [{ label: 'Investigate production', selection: { configuredActionId: 'investigate-production',
+                sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured' } }] : [] }));
+        const service = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
+            readObserver: () => f.observer, openDomainArtifact: async () => null,
+        }).bind(f.seed, { actions: { execute } as unknown as ActionsService, http: {} as HttpService })!;
+        await expect(service.setup({ sourceInstanceId: 'health:subject', sourceConfig,
+            heartbeatContributionId: 'health-heartbeat' })).resolves.toEqual(sourceConfig);
+        expect(execute).not.toHaveBeenCalled();
+        const automatic = { ...sourceConfig, investigation: { mode: 'auto_start' as const, configuredActionId: 'investigate-production' } };
+        await expect(service.setup({ sourceInstanceId: 'health:subject', sourceConfig: automatic,
+            heartbeatContributionId: 'health-heartbeat' })).rejects.toMatchObject({ code: 'health_check_investigation_unavailable' });
+        available = true;
+        await expect(service.setup({ sourceInstanceId: 'health:subject', sourceConfig: automatic,
+            heartbeatContributionId: 'health-heartbeat' })).resolves.toEqual(automatic);
+    });
+    it('dispatches a declared contributed kind using its saved selector and lends the source to that producer', async () => {
+        const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', serverId: 'server', controllerMachineId: 'observer' });
+        const kind = { pluginId: 'com.example.health', localId: 'external-health' };
+        const sourceConfig: HealthCheckSourceConfigV1 = { v: 1,
+            subject: { kind: 'environment', environmentId: environment.id },
+            checks: [{ ...definition('external', { monitorId: 'service-a' }), kind }] };
+        const f = await adopted(sourceConfig, 'observer');
+        const observed = { status: 'up' as const, observedAt: 1000,
+            evidence: { v: 1 as const, items: [{ source: { kind: 'alert' as const, label: 'External monitor' },
+                author: { kind: 'process' as const }, text: 'Healthy' }] } };
+        const configSchema = { type: 'object' as const, additionalProperties: false,
+            properties: { monitorId: { type: 'string' as const } }, required: ['monitorId'] };
+        const host = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: (caller, occurrence) =>
+            caller.pluginId === f.seed.plugin.id && occurrence === f.seed.occurrenceId ? f.owner : null,
+            readObserver: () => f.observer, openDomainArtifact: async () => null,
+            resolveSourceOwner: () => ({ caller: f.seed.resolveCurrentPluginMaterializationRef!()!, occurrenceId: f.seed.occurrenceId }),
+            readKinds: () => [{ pluginId: kind.pluginId, id: kind.localId, title: 'External health', action: 'observe-health', configSchema }],
+        });
+        // Contributed Action transport is the external plugin boundary. Its
+        // producer reads the real adopted source through the host-stamped caller.
+        const execute = vi.fn(async (action: unknown, value: unknown) => {
+            if (action === 'deployments.environments.get') return { ok: true, environment, targetLinks: [] };
+            expect(action).toEqual({ pluginId: kind.pluginId, localId: 'observe-health' });
+            expect(value).toEqual({ sourceInstanceId: 'health:subject', checkId: 'external' });
+            const producer = host.bind({ ...f.seed, plugin: { id: kind.pluginId, version: '1.0.0' },
+                contribution: { id: 'observe-health', qualifiedId: `${kind.pluginId}/actions/observe-health` },
+                resolveCurrentPluginMaterializationRef: () => ({ pluginId: kind.pluginId,
+                    machineId: 'observer', materializationId: 'external' }),
+                caller: { kind: 'plugin', pluginId: f.seed.plugin.id, occurrenceId: f.seed.occurrenceId,
+                    contribution: f.seed.contribution, sourceCustody: f.seed.sourceCustody!,
+                    materialization: f.seed.resolveCurrentPluginMaterializationRef!()! },
+            }, { actions: { execute } as unknown as ActionsService, http: {} as HttpService })!;
+            const saved = await producer.readSource({ sourceInstanceId: 'health:subject' });
+            expect(saved).toEqual(sourceConfig);
+            return observed;
+        });
+        const service = host.bind(f.seed, { actions: { execute } as unknown as ActionsService, http: {} as HttpService })!;
+        expect(await service.read({ sourceInstanceId: 'health:subject', checkIds: ['external'] }))
+            .toEqual([{ checkId: 'external', result: observed }]);
+        expect(f.readStoredDefinitions).toHaveBeenCalledTimes(1);
+        await expect(service.read({ sourceInstanceId: 'health:subject', checkIds: ['missing'] }))
+            .rejects.toMatchObject({ code: 'health_check_kind_unavailable' });
+    });
+
+    it('executes generic Environment endpoint checks from its controller without a Domain or watched service', async () => {
+        const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', serverId: 'server', controllerMachineId: 'observer' });
+        const server = createServer(socket => socket.end());
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('TCP listener required');
+        const dns = vi.spyOn(Resolver.prototype, 'resolve').mockResolvedValue(['192.0.2.1']);
+        try {
+            const sourceConfig: HealthCheckSourceConfigV1 = { v: 1, subject: { kind: 'environment', environmentId: environment.id }, checks: [
+                definition('http', { endpoint: 'https://app.example.test/ready', expectStatus: 204 }),
+                definition('certificate', { endpoint: 'https://app.example.test/ready', expectStatus: 204 }),
+                definition('tcp', { host: '127.0.0.1', port: address.port }),
+                definition('dns', { hostname: 'app.example.test', recordType: 'A', expectedAnswer: '192.0.2.1' }),
+            ] };
+            const f = await adopted(sourceConfig, 'observer');
+            // Environment admission, HTTP transport and DNS are external boundaries;
+            // adopted config, selector binding and all finite producers remain real.
+            const execute = vi.fn(async (id: string) => {
+                expect(id).toBe('deployments.environments.get');
+                return { ok: true as const, environment, targetLinks: [] };
+            });
+            const http = { requestStream: async () => ({ status: 204, finalUrl: 'https://app.example.test/ready', headers: {},
+                chunks: (async function* () {})(), dispose: async () => {} }),
+                request: async () => ({ status: 204, finalUrl: 'https://app.example.test/ready', headers: {}, body: new Uint8Array(),
+                    tlsPeer: { url: 'https://app.example.test/ready', notBefore: 0, notAfter: 5000, fingerprint256: 'aa' } }),
+            } as unknown as HttpService;
+            const service = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
+                readObserver: () => f.observer, now: () => 1000,
+                openDomainArtifact: async () => { throw new Error('Generic checks have no Domain'); },
+            }).bind(f.seed, { actions: { execute } as unknown as ActionsService, http })!;
+            const results = await service.read({ sourceInstanceId: 'health:subject', checkIds: ['http', 'certificate', 'tcp', 'dns'] });
+            expect(results.map(value => [value.checkId, value.result.status])).toEqual([
+                ['http', 'up'], ['certificate', 'up'], ['tcp', 'up'], ['dns', 'up'],
+            ]);
+            expect(execute).toHaveBeenCalledTimes(1);
+            expect(f.readStoredDefinitions).toHaveBeenCalledTimes(1);
+            expect(results.every(value => value.result.evidence.items.some(item => item.text.includes('sameMachine')))).toBe(true);
+            expect(JSON.stringify(results)).not.toContain('app.example.test');
+        } finally { dns.mockRestore(); await new Promise<void>(resolve => server.close(() => resolve())); }
+    });
+
     it('withdraws retained service health when its observer occurrence retires', async () => {
         const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
         const sourceConfig: HealthCheckSourceConfigV1 = { v: 1,

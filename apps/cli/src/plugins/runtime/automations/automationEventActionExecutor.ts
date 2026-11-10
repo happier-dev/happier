@@ -60,6 +60,8 @@ export type AutomationEventActionTransport = Readonly<{
 }>;
 
 export type CommittedAutomationEventObservationV1 = Readonly<{
+  /** Canonical E2 result; observation-only rejected occurrences may still publish notices. */
+  admitted: boolean;
   caller: PluginMachineMaterializationRefV1;
   definition: AutomationEventSourceDefinitionV1;
   observation: AutomationEventAdmitInputV1;
@@ -575,7 +577,8 @@ export function createAutomationEventActionExecutor(params: Readonly<{
               sourceConfig: definition.sourceConfig, observationTransport: definition.observationTransport });
             if (committedSources.has(sourceKey)) continue;
             committedSources.add(sourceKey);
-            await params.onCommittedObservation({ caller: materialization.data, definition,
+            await params.onCommittedObservation({ admitted: outcome.kind === 'admitted' || outcome.kind === 'rejoined',
+              caller: materialization.data, definition,
               observation: admissionInput.data, signal });
           }
         }

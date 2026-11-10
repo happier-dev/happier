@@ -26,7 +26,7 @@ export type ConfiguredHealthCheckNoticeHost = Readonly<{
     executeAction?: TriageSessionHandoffHostV1['executeAction'];
 }>;
 
-/** The observer already settled thresholds and E2 admitted this occurrence.
+/** The observer settled thresholds and E2 stamped this occurrence's admission.
  * C1 alone decides equal updates, private retention and notification opening. */
 export function createConfiguredHealthCheckNotices(host: ConfiguredHealthCheckNoticeHost) {
     const store = createCredentialedAccountArtifactStore(host.credentials);
@@ -92,7 +92,7 @@ export function createConfiguredHealthCheckNotices(host: ConfiguredHealthCheckNo
             body: `Saved health check ${recovered ? 'recovered' : 'failed'}.`, signal: input.signal,
         } satisfies Parameters<typeof store.writeNotice>[0];
         const committed = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => store.writeNotice(notice));
-        try { await deliver({ receipt: committed, signal: input.signal, controllerMachineId }); }
+        try { await deliver({ receipt: committed, signal: input.signal, controllerMachineId, alerts: source.data.alerts }); }
         catch (error) {
             if (!input.signal.aborted) logger.infoFile('[deploymentHealth] Check notice delivery unavailable', {
                 errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_delivery_failed',

@@ -1,7 +1,9 @@
 import { definePlugin, HEALTH_CHECK_KINDS_V1, HealthCheckTcpConfigV1ProtocolSchema,
     HealthCheckDnsConfigV1ProtocolSchema, HealthCheckHeartbeatConfigV1ProtocolSchema,
     type HealthCheckKindContributionV1, type HealthCheckKindV1 } from '@happier-dev/plugin-sdk';
+import { PluginWebhookHeartbeatManageInputV1ProtocolSchema, PluginWebhookHeartbeatManageResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import { systemdRuntime } from './systemd.js';
+import { healthCatalogActions } from './healthCatalog.js';
 import { composeRuntime } from './compose.js';
 import { HealthCheckSourceConfigV1ProtocolSchema, HealthCheckSetupInputV1ProtocolSchema,
     HealthCheckHttpConfigV1ProtocolSchema } from '@happier-dev/plugin-sdk';
@@ -31,11 +33,11 @@ export const plugin = definePlugin({
     resources: Object.fromEntries(locales.map(locale => [`i18n-${locale.toLowerCase()}`,
         { kind: 'asset' as const, path: `assets/i18n/${locale}.json`, contentType: 'application/json' }])),
     ui: { renderers: [{ id: 'health-setup', kind: 'reactNative', artifact: 'health-setup',
-        requiredHostMethods: ['settleEphemeralInput'] }],
+        requiredHostMethods: ['settleEphemeralInput', 'executeAction', 'writeClipboard'] }],
         translations: locales.map(locale => ({ locale, resourceId: `i18n-${locale.toLowerCase()}` })) },
     entrypoints: { daemon: './.happier-plugin/daemon.js' },
     activation: { events: [], configuration: { automationEventSources: true } },
-    actions: { ...savedHealthActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
+    actions: { ...healthCatalogActions, ...savedHealthActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
         [HEALTH_SETUP_OPEN_ACTION_ID]: {
             title: 'Open health check setup', scopes: ['global', 'machine'], surfaces: ['ui', 'plugin'], dangerLevel: 'safe',
             placementBindings: [],
@@ -56,15 +58,36 @@ export const plugin = definePlugin({
                 placeholder: '{"kind":"machineService","machineId":"…","serviceId":"…"}' },
             { path: 'checks', title: 'Health checks', widget: 'json', required: true,
                 placeholder: '[{"checkId":"tcp","kind":{"pluginId":"happier.machine.services","localId":"tcp"},"binding":{"kind":"healthCheck"},"config":{"host":"127.0.0.1","port":8080},"periodMs":300000,"consecutiveFailuresBeforeAlerting":1}]' },
+            { path: 'investigation.mode', title: 'When a check needs attention', widget: 'select', defaultValue: 'inbox',
+                options: [{ value: 'inbox', label: 'Show in Inbox' }, { value: 'auto_start', label: 'Start investigation' }] },
+            { path: 'investigation.configuredActionId', title: 'Configured investigation', widget: 'text',
+                description: 'Use an existing investigate Action from PRs & Issues, including its saved Machine, workspace and Agent choices.',
+                visibleWhen: { op: 'eq', path: 'investigation.mode', value: 'auto_start' },
+                requiredWhen: { op: 'eq', path: 'investigation.mode', value: 'auto_start' } },
         ] },
         resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, HealthCheckSourceConfigV1ProtocolSchema.jsonSchema),
         async run(input, context) {
             const draft = HealthCheckSetupInputV1ProtocolSchema.parse(input);
             const sourceInstanceId = createHealthCheckSourceInstanceIdV1(draft.subject);
-            const sourceConfig = await context.services.healthChecks.setup({ sourceInstanceId, sourceConfig: draft,
+            const sourceConfig = await context.services.healthChecks.setup({ sourceInstanceId,
+                sourceConfig: { ...draft, investigation: draft.investigation ?? { mode: 'inbox' } },
                 heartbeatContributionId: 'health-heartbeat' }, { signal: context.signal });
             return { v: 1, sourceInstanceId, sourceContractVersion: 1, sourceConfig,
                 displayLabel: 'Saved health checks' };
+        },
+    }, 'health/heartbeat/manage': {
+        title: 'Manage heartbeat address', execution: { target: 'daemon' }, scopes: ['global', 'machine'],
+        description: 'Inspect status, rotate or revoke one saved heartbeat. Ask the person to reveal and copy its replacement address in saved-check setup; addresses are never returned here.',
+        surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'], dangerLevel: 'writesRemote',
+        readOnly: { op: 'eq', path: 'operation', value: 'status' },
+        confirmationWhen: { op: 'not', predicate: { op: 'eq', path: 'operation', value: 'status' } },
+        confirmation: { title: 'Change this heartbeat address?',
+            body: 'Rotation or revocation stops the old address accepting pings. After rotating, reveal the replacement address and update your job.' },
+        inputSchema: PluginWebhookHeartbeatManageInputV1ProtocolSchema,
+        resultSchema: PluginWebhookHeartbeatManageResultV1ProtocolSchema,
+        async run(input, context) {
+            return context.services.healthChecks.manageHeartbeat(PluginWebhookHeartbeatManageInputV1ProtocolSchema.parse(input),
+                { signal: context.signal });
         },
     } },
     webhooks: { 'health-heartbeat': { title: 'Health heartbeat', verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' },
