@@ -3,7 +3,9 @@ import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin
 import { neonConnectedAccountRuntime, neonPortableRuntime } from './connectedAccounts/runtime.js';
 import { accountExecution, dataActions } from './data/actions.js';
 import { dataResource } from './data/resources.js';
+import { dataInputResources, dataInputTypes } from './data/inputs.js';
 import { targetSchema } from './data/schemas.js';
+import { queryAction } from './data/query.js';
 
 const resource = (actionId: string) => ({ source: 'dynamic' as const, kind: 'config' as const,
   contentType: 'application/json', scope: 'surface' as const, execution: accountExecution, runtime: dataResource(actionId) });
@@ -37,12 +39,13 @@ export const plugin = definePlugin({
         ] },
       }] } }, runtime: neonConnectedAccountRuntime, accountRuntime: neonPortableRuntime,
   } },
-  actions: dataActions,
-  resources: { 'projects-list-resource': resource('projects-list-read'), 'provision-options-resource': resource('provision-options-read'),
+  actions: { ...dataActions, 'query-read': queryAction },
+  inputTypes: dataInputTypes,
+  resources: { ...dataInputResources, 'projects-list-resource': resource('projects-list-read'), 'provision-options-resource': resource('provision-options-read'),
     'branches-list-resource': resource('branches-list-read') },
   deploymentTargets: { database: { role: 'data', title: 'Neon', icon: 'server-outline', targetKind: 'neon',
     targetSchema: targetSchema.jsonSchema, linkSchema: targetSchema.jsonSchema,
-    dataV1: { projects: { list: 'projects-list-resource', listAction: 'projects-list-read', provisionOptions: 'provision-options-resource',
+    dataV1: { query: { readOnly: 'query-read' }, projects: { list: 'projects-list-resource', listAction: 'projects-list-read', provisionOptions: 'provision-options-resource',
       provisionOptionsAction: 'provision-options-read', provision: 'projects-provision', link: 'projects-link' },
       branches: { list: 'branches-list-resource', listAction: 'branches-list-read', create: 'branches-create', delete: 'branches-delete',
         previewInput: { name: { kind: 'input', name: 'preview', path: ['name'] },

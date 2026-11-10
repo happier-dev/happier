@@ -4,6 +4,7 @@ import { createPluginHttpFixture, createPluginTestkit, createTestResourceInvocat
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import * as entry from './index.js';
+import { dataActions } from './data/actions.js';
 
 const service = { pluginId: 'happier.deploy.neon', localId: 'neon' };
 const credentialRef = { service, accountId: 'connected-neon' };
@@ -84,6 +85,38 @@ async function host(respond: (request: HttpRequest) => unknown | Promise<unknown
 }
 
 describe('activated Neon managed data target', () => {
+  it('offers provider-observed regions as create choices through the existing options Action', async () => {
+    const h = await host(request => request.url.includes('/organizations/') ? organization : { regions: [region] });
+    try {
+      const resource = h.kit.registration('resources', 'input-options');
+      expect(resource).toBeDefined();
+      if (!resource) throw new Error('Missing input options');
+      const context = createTestResourceInvocationContext({ context: { kind: 'global' },
+        async readAction(ref, input, cancellation) { expect(input).toMatchObject({ credentialPrincipal: {
+          purpose: { consumer: ref } } }); return { ok: true, result: await h.kit.invokeAction(ref.localId, input,
+          { signal: cancellation?.signal, surface: 'plugin' }) }; } });
+      expect(h.requests).toHaveLength(0);
+      const bytes = await resource.read({ ...context, query: { draftInput: preparation('projects-provision'), fieldPath: 'regionId' } });
+      expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
+        .toMatchObject({ options: [{ value: region.region_id, label: region.name }] });
+      expect(h.requests.every(request => request.method === 'GET')).toBe(true);
+    } finally { await h.kit.dispose(); }
+  });
+  it('offers the selected project branches before linking without inventing an existing target link', async () => {
+    const h = await host(request => request.url.includes('/branches') ? { branches: [mainBranch], pagination: {} } : { project });
+    try {
+      const resource = h.kit.registration('resources', 'input-options');
+      expect(resource).toBeDefined();
+      if (!resource) throw new Error('Missing input options');
+      const context = createTestResourceInvocationContext({ context: { kind: 'global' },
+        async readAction(ref, input, cancellation) { return { ok: true, result: await h.kit.invokeAction(ref.localId, input,
+          { signal: cancellation?.signal, surface: 'plugin' }) }; } });
+      const bytes = await resource.read({ ...context, query: { draftInput: { ...preparation('projects-link'), projectId: project.id }, fieldPath: 'branchId' } });
+      expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
+        .toMatchObject({ options: [{ value: 'br-main', label: mainBranch.name }] });
+      expect(h.requests.every(request => request.method === 'GET')).toBe(true);
+    } finally { await h.kit.dispose(); }
+  });
   it('contributes real data roles without inventing runtime deployment or query authority', async () => {
     const h = await host(() => ({}));
     try {
@@ -91,8 +124,9 @@ describe('activated Neon managed data target', () => {
         dataV1: expect.objectContaining({ projects: expect.objectContaining({ provision: 'projects-provision' }),
           branches: expect.objectContaining({ create: 'branches-create', delete: 'branches-delete' }), connectionSecret: { save: 'connections-save' } }) })]);
       expect(h.kit.registration('actions', 'connections-save')).toBeDefined();
+      for (const id of Object.keys(dataActions)) expect(entry.manifest.contributes.actions?.find(action => action.id === id)?.surfaces).toContain('ui');
       expect(h.kit.registration('connectedAccountDescriptors', 'neon')).toBeDefined();
-      expect(entry.manifest.contributes.deploymentTargets?.[0]).not.toHaveProperty('dataV1.query');
+      expect(entry.manifest.contributes.deploymentTargets?.[0]?.dataV1?.query).toEqual({ readOnly: 'query-read' });
       expect(h.requests).toHaveLength(0);
     } finally { await h.kit.dispose(); }
   });
@@ -100,7 +134,7 @@ describe('activated Neon managed data target', () => {
   it('prepares only the selected provider project and branch for the canonical host link writer', async () => {
     const h = await host(request => request.url.endsWith('/branches/br-main') ? { branch: mainBranch } : { project });
     try {
-      expect(await h.kit.invokeAction('projects-link', { ...preparation('projects-link'), projectId: project.id, branchId: 'br-main' }))
+      expect(await h.kit.invokeAction('projects-link', { ...preparation('projects-link'), projectId: project.id, branchId: 'br-main' }, { surface: 'ui' }))
         .toMatchObject({ status: 'configured', providerIdentity: { providerAccountId: project.org_id,
           providerResourceId: project.id, providerEnvironment: 'br-main' }, engine: 'postgres' });
       expect(h.requests.every(request => request.method === 'GET')).toBe(true);

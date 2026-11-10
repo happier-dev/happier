@@ -30,7 +30,7 @@ function account(input: Scope): string {
   const id = input.providerIdentity?.providerAccountId ?? input.providerAccountId;
   return id ?? failure('deployment_invalid');
 }
-function resource(input: Scope) {
+export function resource(input: Scope) {
   if (!input.providerIdentity || input.providerEnvironment.kind !== 'custom') return failure('deployment_invalid');
   return { projectRef: input.providerIdentity.providerResourceId, branchRef: input.providerEnvironment.id };
 }
@@ -42,7 +42,8 @@ async function readPassword(reference: Operands<'projects-provision'>['password'
 
 /** Official Management API v1/1.0.0, characterized 2026-10-30 (PROVIDER-API.md).
  * No provider response/error body crosses this boundary without a named projection. */
-async function request(context: Context, path: string, method: HttpMethod = 'GET', payload?: unknown) {
+export async function request(context: Context, path: string, method: HttpMethod = 'GET', payload?: unknown, readOnly = false) {
+  const readOnlyRequest = method === 'GET' || readOnly;
   context.signal.throwIfAborted();
   if (!context.services.http) return failure('client_required');
   let response: HttpResponse;
@@ -53,17 +54,18 @@ async function request(context: Context, path: string, method: HttpMethod = 'GET
     }, { signal: context.signal });
   } catch (error) {
     const code = isPluginError(error) ? error.code : undefined;
-    if (method === 'GET') return failure(context.signal.aborted ? 'operation_cancelled' : code ?? 'deployment_unavailable');
+    if (readOnlyRequest) return failure(context.signal.aborted ? 'operation_cancelled' : code ?? 'deployment_unavailable');
     if (code && beforeRequestRefusals.has(code)) return failure(code);
     throw new PluginError({ code: 'outcome_unknown', message: 'outcome_unknown', ...(code ? { details: { code } } : {}) });
   }
-  if (context.signal.aborted) return failure(method === 'GET' ? 'operation_cancelled' : 'outcome_unknown');
-  if (response.finalUrl !== `${origin}${path}`) return failure(method === 'GET' ? 'provider_response_invalid' : 'outcome_unknown');
+  if (context.signal.aborted) return failure(readOnlyRequest ? 'operation_cancelled' : 'outcome_unknown');
+  if (response.finalUrl !== `${origin}${path}`) return failure(readOnlyRequest ? 'provider_response_invalid' : 'outcome_unknown');
+  if (readOnly && (response.status < 200 || response.status >= 300)) return failure(`provider_http_${response.status}`);
   if (response.status === 401 || response.status === 403) return failure('deployment_access_denied');
   if (response.status === 404) return failure('deployment_unavailable');
   if (response.status < 200 || response.status >= 300) return failure(method !== 'GET' && response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed');
   try { return JSON.parse(new TextDecoder().decode(response.body)) as unknown; }
-  catch { return failure(method === 'GET' ? 'provider_response_invalid' : 'outcome_unknown'); }
+  catch { return failure(readOnlyRequest ? 'provider_response_invalid' : 'outcome_unknown'); }
 }
 
 function project(value: unknown, organization: string, expectedRef?: string) {

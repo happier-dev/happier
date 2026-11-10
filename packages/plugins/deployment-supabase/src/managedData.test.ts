@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginHttpFixture, createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema, PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountPortableRuntime, ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginTestkitInvokeActionOptions } from '@happier-dev/plugin-sdk/testing';
 import * as entry from './index.js';
+import { dataActions } from './data/actions.js';
 
 const credentialRef = { service: { pluginId: 'happier.deploy.supabase', localId: 'supabase' }, accountId: 'connected' };
 function preparation(actionId: string) { return DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
@@ -55,13 +56,33 @@ async function host(respond: (request: HttpRequest) => unknown | Promise<unknown
 }
 
 describe('activated Supabase managed data target', () => {
+  it('offers only observed region objects as creation choices through the options Action', async () => {
+    const h = await host(request => request.url.includes('available-regions')
+      ? { recommendations: [], all: [{ name: 'Europe', code: 'eu-central-1', type: 'specific', provider: 'AWS' }] }
+      : { entitlements: [] });
+    try {
+      const resource = h.kit.registration('resources', 'input-options');
+      expect(resource).toBeDefined();
+      if (!resource) throw new Error('Missing input options');
+      const context = createTestResourceInvocationContext({ context: { kind: 'global' },
+        async readAction(ref, input, cancellation) { expect(input).toMatchObject({ credentialPrincipal: {
+          purpose: { consumer: ref } } }); return { ok: true, result: await h.kit.invokeAction(ref.localId, input,
+          { signal: cancellation?.signal, surface: 'plugin' }) }; } });
+      expect(h.requests).toHaveLength(0);
+      const bytes = await resource.read({ ...context, query: { draftInput: preparation('projects-provision'), fieldPath: 'regionSelection' } });
+      expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
+        .toEqual({ options: [{ value: { type: 'specific', code: 'eu-central-1' }, label: 'Europe' }] });
+      expect(h.requests.every(request => request.method === 'GET')).toBe(true);
+    } finally { await h.kit.dispose(); }
+  });
   it('contributes data-only roles with no activation-time provider work or guessed query API', async () => {
     const h = await host(() => ({}));
     try {
+      for (const id of Object.keys(dataActions)) expect(entry.manifest.contributes.actions?.find(action => action.id === id)?.surfaces).toContain('ui');
       expect(entry.manifest.contributes.deploymentTargets).toEqual([expect.objectContaining({ role: 'data', targetKind: 'supabase',
         dataV1: expect.objectContaining({ projects: expect.objectContaining({ provision: 'projects-provision', link: 'projects-link' }),
           branches: expect.objectContaining({ create: 'branches-create', delete: 'branches-delete' }), connectionSecret: { save: 'connections-save' } }) })]);
-      expect(entry.manifest.contributes.deploymentTargets?.[0]).not.toHaveProperty('dataV1.query');
+      expect(entry.manifest.contributes.deploymentTargets?.[0]?.dataV1?.query).toEqual({ readOnly: 'query-read' });
       expect(h.requests).toHaveLength(0);
     } finally { await h.kit.dispose(); }
   });
@@ -69,7 +90,7 @@ describe('activated Supabase managed data target', () => {
   it('observes the exact native project ref and exposes safe data facts', async () => {
     const h = await host(() => ({ ...project, db_pass: 'private-password' }));
     try {
-      const result = await h.kit.invokeAction('projects-link', { ...base, projectRef: 'parent-ref' });
+      const result = await h.kit.invokeAction('projects-link', { ...base, projectRef: 'parent-ref' }, { surface: 'ui' });
       expect(result).toMatchObject({ state: 'provisioned', providerIdentity: { providerAccountId: 'org-example', providerResourceId: 'parent-ref', providerEnvironment: 'parent-ref' }, engine: 'postgres', providerConsole: { url: 'https://supabase.com/dashboard/project/parent-ref' } });
       expect(JSON.stringify(result)).not.toMatch(/private-password|deprecated-id/u);
       expect(h.requests[0]?.credentialBinding).toMatchObject({ kind: 'connectedAccountPurpose', purpose: 'deploy-manage' });

@@ -33,8 +33,10 @@ const project = object({ providerProjectId: identifier, providerAccountId: ident
   providerConsole: object({ url: identifier, label: identifier }, closed) }, closed);
 const providerIdentity = object({ providerAccountId: identifier, providerResourceId: identifier, providerEnvironment: identifier }, closed);
 const operation = object({ id: identifier, status: identifier }, closed);
-export const projectListInput = object({ cursor: identifier.optional(), search: identifier.optional(), projectId: identifier.optional() }, closed);
-export const projectListResult = object({ projects: array(project), unavailableProjectIds: array(identifier), nextCursor: identifier.optional() }, closed);
+export const projectListInput = object({ cursor: identifier.optional(), search: identifier.optional(), projectId: identifier.optional(),
+  includeBranches: flag.optional() }, closed);
+export const projectListResult = object({ projects: array(project), unavailableProjectIds: array(identifier),
+  branches: array(branch).optional(), nextCursor: identifier.optional() }, closed);
 export const optionsInput = object({}, closed);
 export const optionsResult = object({ providerAccountId: identifier, plan: identifier,
   regions: array(object({ id: identifier, title: identifier }, closed)), price: literal('unknown') }, closed);

@@ -3,6 +3,8 @@ import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin
 import { supabaseConnectedAccountRuntime, supabasePortableRuntime } from './connectedAccounts/runtime.js';
 import { accountExecution, dataActions } from './data/actions.js';
 import { actionResource } from './data/resources.js';
+import { dataInputResources, dataInputTypes } from './data/inputs.js';
+import { queryAction } from './data/query.js';
 
 const empty = { type: 'object', properties: {}, additionalProperties: false } as const;
 const resource = (actionId: string) => ({ source: 'dynamic' as const, kind: 'config' as const, contentType: 'application/json', scope: 'surface' as const,
@@ -36,10 +38,11 @@ export const plugin = definePlugin({
         ] },
       }] } }, runtime: supabaseConnectedAccountRuntime, accountRuntime: supabasePortableRuntime,
   } },
-  actions: dataActions,
-  resources: { 'projects-list-resource': resource('projects-list'), 'provision-options-resource': resource('provision-options'), 'branches-list-resource': resource('branches-list') },
+  actions: { ...dataActions, 'query-read': queryAction },
+  inputTypes: dataInputTypes,
+  resources: { ...dataInputResources, 'projects-list-resource': resource('projects-list'), 'provision-options-resource': resource('provision-options'), 'branches-list-resource': resource('branches-list') },
   deploymentTargets: { database: { role: 'data', title: 'Supabase', icon: 'server-outline', targetKind: 'supabase', targetSchema: empty, linkSchema: empty,
-    dataV1: { projects: { list: 'projects-list-resource', listAction: 'projects-list', provisionOptions: 'provision-options-resource', provisionOptionsAction: 'provision-options', provision: 'projects-provision', link: 'projects-link' },
+    dataV1: { query: { readOnly: 'query-read' }, projects: { list: 'projects-list-resource', listAction: 'projects-list', provisionOptions: 'provision-options-resource', provisionOptionsAction: 'provision-options', provision: 'projects-provision', link: 'projects-link' },
       branches: { list: 'branches-list-resource', listAction: 'branches-list', create: 'branches-create', delete: 'branches-delete',
         previewInput: { name: { kind: 'input', name: 'preview', path: ['name'] },
           gitBranch: { kind: 'input', name: 'preview', path: ['headRef'] }, withData: { kind: 'literal', value: false } } }, connectionSecret: { save: 'connections-save' } },

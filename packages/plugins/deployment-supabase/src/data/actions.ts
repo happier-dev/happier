@@ -3,12 +3,14 @@ import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions
 import { actionSchema, resultSchema } from './schemas.js';
 import type { Operation } from './schemas.js';
 import { run } from './operations.js';
+import { dataActionInputHints } from './inputs.js';
 
 export const accountExecution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } } as const;
 function action(operation: Operation, title: string, readOnly: boolean) {
   return { title, surfaces: operation === 'branches-create' || operation === 'branches-delete'
-      ? ['cli', 'plugin', 'agent'] as const : ['cli', 'plugin'] as const, placementBindings: [], execution: accountExecution,
+      ? ['cli', 'plugin', 'ui', 'agent'] as const : ['cli', 'plugin', 'ui'] as const, placementBindings: [], execution: accountExecution,
     inputSchema: actionSchema(operation), resultSchema: resultSchema(operation), readOnly,
+    inputHints: dataActionInputHints[operation],
     dangerLevel: readOnly ? 'safe' as const : operation === 'branches-delete' ? 'destructive' as const : operation === 'connections-save' ? 'writesLocal' as const : 'writesRemote' as const,
     hostAccess: ['supabase-api', 'deploy-manage'],
     connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy-manage' }],
