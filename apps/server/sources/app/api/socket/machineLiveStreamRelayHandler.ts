@@ -9,11 +9,15 @@ import { resolveSocketMaxHttpBufferSizeFromEnv } from './transportBudget';
 import { getMachineInstallationSocketRoom } from '../socketRooms';
 import { resolveMachineAdmission } from '@/app/machines/machineAccess';
 import { eventRouter } from '@/app/events/eventRouter';
+import { db } from '@/storage/db';
+import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
+import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
+import { machineLiveStreamControlRequiresInputLeaseV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 
 import { resolveMachineLiveStreamRelayCaps } from '../../machines/peer/mediation/stream/relayCaps';
 import { applyMachineLiveStreamRelayBackpressure } from '../../machines/peer/mediation/stream/metering';
 import { createMachineLiveStreamMeter } from '@happier-dev/protocol/machines/peer/mediation/stream/metering';
-import type { PeerMediationViewerSocketOwnershipVerifier } from './viewerSocketOwnership';
+import type { PeerMediationViewerSocketOwnershipVerifier, PeerMediationViewerSessionAuthenticationReader } from './viewerSocketOwnership';
 import {
     createPeerMediationFlowEvent,
     type PeerMediationObservabilityEmitter,
@@ -52,6 +56,7 @@ type MachineLiveStreamRelayState = {
     nextSequenceToRelay: number;
     lastAckNextSequence: number;
     awaitingKeyframe: boolean;
+    retireAfterSessionAccessChange?: () => void;
 };
 
 type RelayIo = Pick<Server, 'to'> | Readonly<{
@@ -66,6 +71,14 @@ type RelayAuthorizationTrustRoot = Readonly<{
 const streamStateByKey = new Map<MachineLiveStreamKey, MachineLiveStreamRelayState>();
 const pendingStartAdmissionsByKey = new Map<MachineLiveStreamKey, Promise<void>>();
 const VIEWER_SOCKET_REQUIRED_REASON = 'viewer_socket_required';
+
+/** The existing committed Session transition retires open-ended Browser access. */
+export function retireSessionBrowserLiveStreamsAfterAccessChange(sessionId: string): void {
+    for (const state of [...streamStateByKey.values()]) {
+        const payload = state.startRequest.authorization?.payload;
+        if (payload?.v === 2 && payload.sessionBrowserAccess?.sessionId === sessionId) state.retireAfterSessionAccessChange?.();
+    }
+}
 
 function buildStreamKey(input: Readonly<{
     sourceMachineId: string;
@@ -334,6 +347,7 @@ function createState(input: Readonly<{
     maxWindowBytes: number;
     nowMs: number;
     expiresAtMs: number;
+    retireAfterSessionAccessChange?: () => void;
 }>): MachineLiveStreamRelayState {
     const existing = streamStateByKey.get(input.key);
     if (existing) return existing;
@@ -367,6 +381,7 @@ function createState(input: Readonly<{
         nextSequenceToRelay: 1,
         lastAckNextSequence: 1,
         awaitingKeyframe: false,
+        ...(input.retireAfterSessionAccessChange ? { retireAfterSessionAccessChange: input.retireAfterSessionAccessChange } : {}),
     };
     streamStateByKey.set(input.key, next);
     return next;
@@ -715,6 +730,7 @@ export function machineLiveStreamRelayHandler(
         socketMaxHttpBufferSize?: number;
         nowMs?: () => number;
         verifyViewerSocketOwnership?: PeerMediationViewerSocketOwnershipVerifier;
+        readViewerSessionAuthentication?: PeerMediationViewerSessionAuthenticationReader;
         observability?: PeerMediationObservabilityEmitter;
     }>,
 ): void {
@@ -861,6 +877,7 @@ export function machineLiveStreamRelayHandler(
         for (const streamKey of socketStreamKeys) {
             const state = streamStateByKey.get(streamKey);
             if (!state || state.startRequest.authorization?.payload.v !== 2
+                || state.startRequest.authorization.payload.sessionBrowserAccess
                 || state.sourceMachineId !== input.machineId || readViewerAccountId(state) !== input.accountId) continue;
             const envelope = createStateStopControlEnvelope(state, 'machine_unavailable');
             emitToConsumer({ io: ctx.io, userId: state.userId, sourceMachineId: state.sourceMachineId,
@@ -1017,7 +1034,9 @@ export function machineLiveStreamRelayHandler(
                 }
                 const viewerSocketId = startRequest.viewerSocketId ?? '';
                 const authorizationPayload = startRequest.authorization!.payload;
-                if (authorizationPayload.v === 2) {
+                const sessionBrowserAccess = authorizationPayload.v === 2 ? authorizationPayload.sessionBrowserAccess : undefined;
+                let viewerSessionAuthentication: SessionAccessAuthentication | null = null;
+                if (authorizationPayload.v === 2 && !sessionBrowserAccess) {
                     // Access loss can arrive while admission awaits network or storage boundaries.
                     releaseAdmissionAccessLoss = eventRouter.onMachineAccessLoss(input => {
                         if (admissionCancelled || input.accountId !== authorizationPayload.viewerAccountId
@@ -1029,10 +1048,13 @@ export function machineLiveStreamRelayHandler(
                     });
                 }
                 if (viewerSocketId) {
-                    const viewerOwned = await ctx.verifyViewerSocketOwnership?.({
+                    const viewer = {
                         accountId: authorizationPayload.v === 2 ? authorizationPayload.viewerAccountId : userId,
                         socketId: viewerSocketId,
-                    });
+                    };
+                    if (sessionBrowserAccess) viewerSessionAuthentication = await ctx.readViewerSessionAuthentication?.(viewer) ?? null;
+                    const viewerOwned = sessionBrowserAccess ? viewerSessionAuthentication !== null
+                        : await ctx.verifyViewerSocketOwnership?.(viewer);
                     if (viewerOwned !== true) {
                         emitObservability({
                             streamId: startRequest.streamId,
@@ -1077,7 +1099,12 @@ export function machineLiveStreamRelayHandler(
                 }
 
                 let encryptionMode: 'plain' | 'e2ee' | null = null;
-                try { encryptionMode = await ctx.resolveAccountEncryptionMode?.() ?? null; } catch { /* Fail closed. */ }
+                try {
+                    if (sessionBrowserAccess) {
+                        const session = await db.session.findUnique({ where: { id: sessionBrowserAccess.sessionId }, select: { encryptionMode: true } });
+                        encryptionMode = session?.encryptionMode === 'plain' || session?.encryptionMode === 'e2ee' ? session.encryptionMode : null;
+                    } else encryptionMode = await ctx.resolveAccountEncryptionMode?.() ?? null;
+                } catch { /* Fail closed. */ }
                 if (disconnected) return;
                 if (encryptionMode !== 'plain' && encryptionMode !== 'e2ee') {
                     refuseStart('stream_encryption_mode_unavailable');
@@ -1088,6 +1115,16 @@ export function machineLiveStreamRelayHandler(
                     && installations.sourceMachineInstallationId !== authorizationPayload.sourceMachineInstallationId)) {
                     refuseStart('machine_unavailable');
                     return;
+                }
+                // Opening an interactive stream is a new admission, even when a still-valid
+                // signed grant was minted before access changed. No later frame re-evaluates it.
+                if (sessionBrowserAccess) {
+                    if (!viewerSessionAuthentication) { refuseStart('capture_source_denied'); return; }
+                    const decision = await resolveSessionAccessForOperation(db, { accountId: sessionBrowserAccess.actorAccountId,
+                        sessionId: sessionBrowserAccess.sessionId, authentication: viewerSessionAuthentication,
+                        capability: sessionBrowserAccess.effectiveAccess.capabilities.submitAgentInput ? 'submitAgentInput' : 'readTranscript' });
+                    if (decision.status !== 'allowed') { refuseStart('capture_source_denied'); return; }
+                    if (disconnected) return;
                 }
                 // Ownership and Account reads can outlive the signed admission window.
                 // Re-sample at the synchronous state/resource admission boundary.
@@ -1157,6 +1194,15 @@ export function machineLiveStreamRelayHandler(
                     maxWindowBytes: Math.max(1, Math.floor(ctx.relayWindowBytes ?? socketMaxHttpBufferSize)),
                     nowMs,
                     expiresAtMs,
+                    ...(sessionBrowserAccess ? { retireAfterSessionAccessChange: () => {
+                        const state = streamStateByKey.get(streamKey);
+                        if (!state) return;
+                        const stop = createStateStopControlEnvelope(state, 'capture_source_denied');
+                        emitToConsumer({ io: ctx.io, userId: state.userId, sourceMachineId: state.sourceMachineId,
+                            targetMachineId: state.targetMachineId, viewerSocketId: state.viewerSocketId, envelope: stop });
+                        emitToMachine({ io: ctx.io, machineId: state.sourceMachineId, envelope: stop });
+                        closeStreamWithObservability({ streamKey, kind: 'flow.aborted', reasonCode: 'capture_source_denied' });
+                    } } : {}),
                 });
                 socketStreamKeys.add(streamKey);
                 if (isNewStream) {
@@ -1444,6 +1490,14 @@ export function machineLiveStreamRelayHandler(
             }
             if (!state) {
                 emitError(socket, 'live_stream_start_required');
+                return;
+            }
+            const access = state.startRequest.authorization?.payload;
+            if (access?.v === 2 && access.sessionBrowserAccess
+                && !access.sessionBrowserAccess.effectiveAccess.capabilities.submitAgentInput
+                && envelope.message.control.payload.t === 'plain'
+                && machineLiveStreamControlRequiresInputLeaseV1(envelope.message.control.payload.v)) {
+                emitError(socket, 'capture_source_denied');
                 return;
             }
             const nowMs = ctx.nowMs?.() ?? Date.now();

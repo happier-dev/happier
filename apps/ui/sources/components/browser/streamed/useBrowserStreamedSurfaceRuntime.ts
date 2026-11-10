@@ -57,7 +57,7 @@ export function BrowserStreamedSurfaceRuntimeHost(props: Readonly<{
 type Discovery =
     | Readonly<{ status: 'idle' }>
     | Readonly<{ status: 'discovering' }>
-    | Readonly<{ status: 'ready'; view: BrowserDaemonViewV1 | null; machineId: string; serverId: string }>
+    | Readonly<{ status: 'ready'; view: BrowserDaemonViewV1 | null; machineId: string; scope: string }>
     | Readonly<{ status: 'failed'; reason: Extract<BrowserDaemonControlDispatchClientResult, { ok: false }>['reason'] }>;
 
 /**
@@ -76,6 +76,8 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     refreshKey?: string;
     enabled?: boolean;
     machineId?: string | null;
+    sessionRpcSessionId?: string | null;
+    interactionEnabled?: boolean;
     serverId?: string | null;
     machineName?: string | null;
     /** The Session's latest Machine-targeted open, read from the typed Action operation owner. */
@@ -84,13 +86,13 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     onDownloadOwnerChange?: (owner: BrowserRuntimeControlAdapter['saveDownload'] | null) => void;
 }>): BrowserStreamedSurfaceRuntime | null {
     const view = input.view && isDaemonAuthoritativeBrowserView(input.view) ? input.view : null;
-    const machineId = input.machineId?.trim() ?? '';
+    const requestedMachineId = input.machineId?.trim() ?? '';
+    const sessionRpcSessionId = input.sessionRpcSessionId?.trim() || undefined;
     const serverId = input.serverId?.trim() ?? '';
     const browserSessionId = view?.browserSessionId ?? input.browserSessionId ?? null;
     const viewId = view?.viewId ?? null;
     const {binding: accountBinding} = useServerCredentialAccountScopeBinding(serverId);
     const writeClipboard = useClipboardWrite(accountBinding?.scope ?? null, { enabled: input.enabled !== false });
-    const viewerKey = accountBinding && viewId ? JSON.stringify([accountBinding.serverId, accountBinding.accountId, machineId, browserSessionId, viewId]) : undefined;
     const [discovery, setDiscovery] = React.useState<Discovery>({ status: 'idle' });
     const [attempt, setAttempt] = React.useState(0);
     const [viewerMetadata, setViewerMetadata] = React.useState<Readonly<{
@@ -99,11 +101,13 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     const inputSequence = React.useRef(0);
     const inputRelayRef = React.useRef<ReturnType<typeof createBrowserStreamInputRelay> | null>(null);
     const discoveryAccountId = accountBinding?.accountId ?? null;
-    const discoveryScope = JSON.stringify([discoveryAccountId, serverId, machineId, browserSessionId]);
+    const discoveryScope = JSON.stringify([discoveryAccountId, serverId, requestedMachineId, sessionRpcSessionId, browserSessionId]);
+    const machineId = requestedMachineId || (discovery.status === 'ready' && discovery.scope === discoveryScope ? discovery.machineId : '');
+    const viewerKey = accountBinding && viewId ? JSON.stringify([accountBinding.serverId, accountBinding.accountId, machineId, browserSessionId, viewId]) : undefined;
     const discoveryBaseline = React.useRef<Readonly<{ scope: string; views: readonly BrowserDaemonViewV1[] }> | null>(null);
     const onBrowserEventRef = React.useRef(input.onBrowserEvent);
     onBrowserEventRef.current = input.onBrowserEvent;
-    const discoveredView = discovery.status === 'ready' && discovery.machineId === machineId && discovery.serverId === serverId
+    const discoveredView = discovery.status === 'ready' && discovery.scope === discoveryScope
         && discovery.view?.browserSessionId === browserSessionId && discovery.view.viewId === viewId
         ? discovery.view : null;
     const reconcileClosedView = useEventCallback((views: readonly BrowserDaemonViewV1[]) => {
@@ -114,18 +118,18 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                 occurredAt: Date.now(), browserSessionId: discoveredView.browserSessionId, viewId: discoveredView.viewId });
         }
     });
-    const reconcileDiscoveredViews = useEventCallback((views: readonly BrowserDaemonViewV1[]) => {
+    const reconcileDiscoveredViews = useEventCallback((views: readonly BrowserDaemonViewV1[], sourceMachineId?: string) => {
         const previous = discoveryBaseline.current?.scope === discoveryScope ? discoveryBaseline.current.views : undefined;
         const reconciled = reconcileBrowserDiscovery(previous, views);
         discoveryBaseline.current = { scope: discoveryScope, views: reconciled.views };
         for (const event of reconciled.events) onBrowserEventRef.current?.(event);
-        setDiscovery(previous => retainShallow(previous, { status: 'ready', machineId, serverId,
+        setDiscovery(previous => retainShallow(previous, { status: 'ready', machineId: requestedMachineId || sourceMachineId || '', scope: discoveryScope,
             view: reconciled.views.find(candidate => candidate.viewId === viewId
                 && resolveBrowserDaemonStreamTarget(candidate) !== null) ?? null }));
     });
 
     React.useEffect(() => {
-        if (!browserSessionId || !machineId || !serverId) {
+        if (!browserSessionId || (!requestedMachineId && !sessionRpcSessionId) || !serverId) {
             setDiscovery({ status: 'idle' });
             return undefined;
         }
@@ -135,14 +139,15 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         const abort = new AbortController();
         setDiscovery(previous => previous.status === 'ready' ? previous : { status: 'discovering' });
         void (async () => {
-            const scope = { machineId, serverId, accountId: discoveryAccountId, browserSessionId, signal: abort.signal };
+            const scope = { ...(sessionRpcSessionId ? { sessionId: sessionRpcSessionId } : { machineId: requestedMachineId }),
+                serverId, accountId: discoveryAccountId, browserSessionId, signal: abort.signal };
             const result = await listBrowserDaemonViewsViaMachineRpc(scope);
             if (abort.signal.aborted) return;
             let views: readonly BrowserDaemonViewV1[] = [];
             if (result.ok) {
                 views = result.views.filter(candidate => candidate.browserSessionId === browserSessionId);
                 reconcileClosedView(views);
-                reconcileDiscoveredViews(views);
+                reconcileDiscoveredViews(views, result.machineId);
             } else setDiscovery({ status: 'failed', reason: result.reason });
             // The broker is observable before Chromium is installed. Approval replay can
             // open its first view without publishing an operation into this client's store.
@@ -155,17 +160,18 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                 if (!changed.ok) return;
                 views = changed.views.filter(candidate => candidate.browserSessionId === browserSessionId);
                 reconcileClosedView(views);
-                reconcileDiscoveredViews(views);
+                reconcileDiscoveredViews(views, changed.machineId);
             }
         })();
         return () => abort.abort();
-    }, [attempt, browserSessionId, discoveryAccountId, input.enabled, input.refreshKey, machineId, reconcileClosedView, reconcileDiscoveredViews, serverId, viewId]);
+    }, [attempt, browserSessionId, discoveryAccountId, input.enabled, input.refreshKey, requestedMachineId, sessionRpcSessionId, reconcileClosedView, reconcileDiscoveredViews, serverId, viewId]);
 
     const captureSource = discoveredView?.captureSource ?? null;
     const sourceId = captureSource ? discoveredView?.sourceId ?? null : null;
     const socket = useMachineLiveStreamRelaySocket({
         machineId,
         serverId,
+        ...(sessionRpcSessionId ? { sessionId: sessionRpcSessionId } : {}),
         enabled: Boolean(sourceId),
         disconnectTag: 'browser-live-stream-relay-disconnect',
     });
@@ -184,6 +190,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         enabled: input.enabled !== false && Boolean(streamId && transport),
         transport,
         serverId,
+        ...(sessionRpcSessionId ? { sessionId: sessionRpcSessionId } : {}),
         sourceMachineId: socket?.machineId ?? '',
         targetMachineId: socket?.machineId ?? '',
         viewerSocketId,
@@ -251,7 +258,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     });
 
     const sendControl = React.useMemo(() => {
-        if (!socket || !streamId || !sourceId || captureSource?.inputMode === 'none') return null;
+        if (input.interactionEnabled === false || !socket || !streamId || !sourceId || captureSource?.inputMode === 'none') return null;
         return (control: MachineLiveStreamControlSidebandV1) => socket.sendEnvelope({
             v: 1,
             sourceMachineId: socket.machineId,
@@ -259,7 +266,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
             ...(viewerSocketId ? { viewerSocketId } : {}),
             message: { kind: 'sideband_control', control },
         });
-    }, [captureSource?.inputMode, socket, sourceId, streamId, viewerSocketId]);
+    }, [captureSource?.inputMode, input.interactionEnabled, socket, sourceId, streamId, viewerSocketId]);
 
     const playerState = sourceId ? ingestion.playerStatesBySimulatorId[sourceId] ?? null : null;
     const metadata = viewerMetadata?.sourceId === sourceId && viewerMetadata.streamId === streamId ? viewerMetadata.value : null;

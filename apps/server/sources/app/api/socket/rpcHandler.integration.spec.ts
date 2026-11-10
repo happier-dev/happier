@@ -17,6 +17,7 @@ import { createEnvReset } from "../testkit/env";
 import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, getSocketHandler } from "../testkit/socketHarness";
 import { rpcHandler } from "./rpcHandler";
 import { registerSocketRoomDiscovery } from './socketRoomDiscovery';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 
 const RELEASED_SERVER_V0_2_0_PROVENANCE = Object.freeze({
     tag: "server-v0.2.0",
@@ -101,6 +102,61 @@ describe("rpcHandler", () => {
         machineId = machine.id;
     });
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it.each([
+        ['view', RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, true],
+        ['view', RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH, true],
+        ['view', RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT, true],
+        ['view', RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START, true],
+        ['owner', RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, true],
+        ['edit', RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH, true],
+        ['view', RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH, false],
+        [null, RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, false],
+    ] as const)('routes Session Browser %s access for %s without a Machine grant', async (level, operation, allowed) => {
+        const installationId = randomUUID();
+        const actorAccountId = level === 'owner' ? ownerId : accountId;
+        await db.account.updateMany({ where: { id: { in: [accountId, ownerId] } }, data: { encryptionMode: 'plain' } });
+        await db.machine.update({ where: { id: machineId }, data: { accountId: ownerId, active: true, installationId } });
+        const homeId = await getOrCreateServerIdentityId();
+        const target = { homeId, accountId: ownerId, sessionId, machineId, installationId };
+        await db.session.update({ where: { id: sessionId }, data: { accountId: ownerId, runtimeMachineTarget: target } });
+        await db.accessKey.create({ data: { accountId: ownerId, sessionId, machineId, data: '{}' } });
+        if (level && level !== 'owner') await db.sessionShare.create({ data: { sessionId, sharedByUserId: ownerId,
+            sharedWithUserId: accountId, accessLevel: level } });
+        const destinationMethod = `${machineId}:${operation}`;
+        const daemon = createTarget('session-browser-daemon', { status: 'ready' });
+        const accountStoredContentCompatibility = evaluateAccountStoredContentCompatibility({ status: 'valid',
+            declaration: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION });
+        Object.assign(daemon.socket, { data: { clientType: 'machine-scoped', machineId,
+            verifiedMachineInstallationId: installationId, accountStoredContentCompatibility } });
+        const { io } = createIo({ [`rpc:${ownerId}:${destinationMethod}`]: [[daemon.socket]] });
+        const caller = createAuthenticatedFakeSocket({ data: { accountStoredContentCompatibility } });
+        rpcHandler(actorAccountId, caller as unknown as Socket, { io });
+        const callback = vi.fn();
+        await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method: `${sessionId}:${operation}`,
+            params: 'opaque-browser-request', authorization: { kind: 'session.read', sessionId } }, callback);
+        expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: allowed }));
+        if (allowed) {
+            expect(daemon.emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+                method: destinationMethod, authorization: { kind: 'session.browser', sessionId,
+                    actorAccountId, custodianAccountId: ownerId, machineId, installationId,
+                    effectiveAccess: expect.objectContaining({ level }) },
+            }));
+            expect(daemon.emitWithAck.mock.calls[0]?.[1]).not.toHaveProperty('machineAdmission');
+            const forwardedAuthorization = daemon.emitWithAck.mock.calls[0]?.[1].authorization;
+            daemon.emitWithAck.mockClear();
+            const forged = vi.fn();
+            await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method: destinationMethod,
+                params: 'opaque-browser-request', authorization: forwardedAuthorization }, forged);
+            expect(forged).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            expect(daemon.emitWithAck).not.toHaveBeenCalled();
+            const physicalSelector = vi.fn();
+            await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method: destinationMethod,
+                params: 'opaque-browser-request', authorization: { kind: 'session.read', sessionId } }, physicalSelector);
+            expect(physicalSelector).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            expect(daemon.emitWithAck).not.toHaveBeenCalled();
+        } else expect(daemon.emitWithAck).not.toHaveBeenCalled();
+    });
 
     it.each([RPC_METHODS.SESSION_CONTINUATION_INSPECT, RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH,
         RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW])('requires exact Session read access for continuation on a shared Machine: %s', async operation => {

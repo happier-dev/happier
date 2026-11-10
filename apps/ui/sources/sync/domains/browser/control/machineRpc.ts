@@ -4,6 +4,7 @@ import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rp
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { sessionRpcWithServerScope, sessionRpcWithServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 
 /**
  * UI→daemon BrowserCommandV1 transport (W2-A-1 / A3).
@@ -11,14 +12,15 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
  * A daemon-authoritative view (`chromiumSidecar`/`streamedBrowserSurface`) is owned by the daemon
  * control broker, so its navigate/reload/stop/close/setTarget commands cannot be applied locally —
  * the control reducer emits a `daemonCommand` effect and calls `sendDaemonCommand`. This module is
- * that transport: it routes the command over the owner-scoped (account+machine) machine RPC to the
- * SAME `createBrowserDaemonControlRoutes` broker the agent execution-run path uses (MC-6 — one
- * daemon control owner, no parallel path). The user-initiated `ui` path is never approval-floored;
+ * that transport: it uses the caller's admitted Machine or Session RPC scope to reach the same
+ * `createBrowserDaemonControlRoutes` broker the agent execution-run path uses. The user-initiated
+ * `ui` path is never approval-floored;
  * the agent path stays floored at the action surface.
  */
 
 export type BrowserDaemonControlDispatchClientInput = Readonly<{
-    machineId: string;
+    machineId?: string;
+    sessionId?: string;
     serverId: string;
     command: BrowserCommandV1;
     signal?: AbortSignal;
@@ -38,41 +40,57 @@ function readFailureReason(value: unknown): BrowserDaemonControlFailureReason | 
     return isRpcMethodNotAvailableError({ rpcErrorCode: code }) ? 'request_failed' : null;
 }
 
+/** The caller supplies its admitted transport scope; a discovered Machine id grants no Machine authority. */
+async function browserRpc<R, A>(input: Readonly<{
+    machineId?: string; sessionId?: string; serverId: string; accountId?: string;
+    method: string; payload: A; signal?: AbortSignal; operationTimeoutMs?: number | null;
+}>): Promise<R> {
+    if (input.sessionId) {
+        const request = { sessionId: input.sessionId, method: input.method, payload: input.payload, signal: input.signal,
+            ...(typeof input.operationTimeoutMs === 'number' ? { timeoutMs: input.operationTimeoutMs } : {}) };
+        return input.accountId
+            ? sessionRpcWithServerAccountScope<R, A>({ ...request, scope: { serverId: input.serverId, accountId: input.accountId } })
+            : sessionRpcWithServerScope<R, A>({ ...request, serverId: input.serverId });
+    }
+    if (!input.machineId) throw new Error('browser_control_route_unavailable');
+    return machineRpcWithServerScope<R, A>({ ...input, machineId: input.machineId });
+}
+
 /** Session-filtered discovery from the same daemon owner as navigation and automation. */
 export async function listBrowserDaemonViewsViaMachineRpc(input: Readonly<{
-    machineId: string; serverId: string; accountId?: string; browserSessionId: string; signal?: AbortSignal;
-}>): Promise<Readonly<{ ok: true; views: readonly BrowserDaemonViewV1[] }>
+    machineId?: string; sessionId?: string; serverId: string; accountId?: string; browserSessionId: string; signal?: AbortSignal;
+}>): Promise<Readonly<{ ok: true; views: readonly BrowserDaemonViewV1[]; machineId?: string }>
     | Readonly<{ ok: false; reason: BrowserDaemonControlFailureReason }>> {
     if (input.signal?.aborted) return { ok: false, reason: 'request_failed' };
     try {
         const payload = DaemonBrowserViewListRequestV1Schema.parse({ machineId: input.machineId,
             browserSessionId: input.browserSessionId });
-        const raw = await machineRpcWithServerScope<unknown, typeof payload>({ machineId: input.machineId,
+        const raw = await browserRpc<unknown, typeof payload>({ machineId: input.machineId, sessionId: input.sessionId,
             serverId: input.serverId, accountId: input.accountId, method: RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, payload,
             ...(input.signal ? { signal: input.signal } : {}) });
         const failureReason = readFailureReason(raw);
         if (failureReason) return { ok: false, reason: failureReason };
         const parsed = DaemonBrowserViewListResponseV1Schema.safeParse(raw);
-        return parsed.success ? { ok: true, views: parsed.data.views } : { ok: false, reason: 'invalid_response' };
+        return parsed.success ? { ok: true, views: parsed.data.views, ...(parsed.data.machineId ? { machineId: parsed.data.machineId } : {}) } : { ok: false, reason: 'invalid_response' };
     } catch (error) { return { ok: false, reason: readFailureReason(error) ?? 'request_failed' }; }
 }
 
 /** The broker parks this read until the Session's native view membership changes. */
 export async function watchBrowserDaemonViewsViaMachineRpc(input: Readonly<{
-    machineId: string; serverId: string; accountId: string; browserSessionId: string;
+    machineId?: string; sessionId?: string; serverId: string; accountId: string; browserSessionId: string;
     knownViewIds: readonly string[]; signal: AbortSignal;
 }>): ReturnType<typeof listBrowserDaemonViewsViaMachineRpc> {
     if (input.signal.aborted) return { ok: false, reason: 'request_failed' };
     try {
         const payload = DaemonBrowserViewWatchRequestV1Schema.parse({ machineId: input.machineId,
             browserSessionId: input.browserSessionId, knownViewIds: input.knownViewIds });
-        const raw = await machineRpcWithServerScope<unknown, typeof payload>({ machineId: input.machineId,
+        const raw = await browserRpc<unknown, typeof payload>({ machineId: input.machineId, sessionId: input.sessionId,
             serverId: input.serverId, accountId: input.accountId, method: RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH,
             payload, signal: input.signal, operationTimeoutMs: null });
         const failureReason = readFailureReason(raw);
         if (failureReason) return { ok: false, reason: failureReason };
         const parsed = DaemonBrowserViewListResponseV1Schema.safeParse(raw);
-        return parsed.success ? { ok: true, views: parsed.data.views } : { ok: false, reason: 'invalid_response' };
+        return parsed.success ? { ok: true, views: parsed.data.views, ...(parsed.data.machineId ? { machineId: parsed.data.machineId } : {}) } : { ok: false, reason: 'invalid_response' };
     } catch (error) { return { ok: false, reason: readFailureReason(error) ?? 'request_failed' }; }
 }
 
@@ -87,8 +105,8 @@ export async function dispatchBrowserDaemonControlCommandViaMachineRpc(
             machineId: input.machineId,
             command: input.command,
         });
-        const raw = await machineRpcWithServerScope<unknown, typeof payload>({
-            machineId: input.machineId,
+        const raw = await browserRpc<unknown, typeof payload>({
+            machineId: input.machineId, sessionId: input.sessionId,
             serverId: input.serverId,
             method: RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH,
             payload,
@@ -117,7 +135,8 @@ export type BrowserDaemonControlCommandSender = (
 
 export function createBrowserDaemonControlCommandSender(
     input: Readonly<{
-        machineId: string;
+        machineId?: string;
+        sessionId?: string;
         serverId: string;
         signal?: AbortSignal;
         onResult?: (result: BrowserDaemonControlDispatchClientResult) => void;
@@ -125,7 +144,7 @@ export function createBrowserDaemonControlCommandSender(
 ): BrowserDaemonControlCommandSender {
     return async (command, onEvents) => {
         const result = await dispatchBrowserDaemonControlCommandViaMachineRpc({
-            machineId: input.machineId,
+            machineId: input.machineId, sessionId: input.sessionId,
             serverId: input.serverId,
             command,
             signal: input.signal,

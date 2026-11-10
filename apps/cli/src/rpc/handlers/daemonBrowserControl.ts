@@ -49,7 +49,8 @@ export function registerDaemonBrowserViewWatchHandler(rpc: RpcHandlerRegistrar, 
         const views = await discovery.watchViews({ browserSessionId: request.browserSessionId,
             knownViewIds: request.knownViewIds, signal: context?.signal,
             scope: browserCommandScope(buildActionExecutorContextForRpc(context ?? {})) });
-        return DaemonBrowserViewListResponseV1Schema.parse({ protocolVersion: 1, views });
+        return DaemonBrowserViewListResponseV1Schema.parse({ protocolVersion: 1, views,
+            ...(context?.authorization?.kind === 'session.browser' ? { machineId: context.authorization.machineId } : {}) });
     });
 }
 
@@ -84,6 +85,7 @@ export function registerDaemonBrowserControlHandler(
         const request = DaemonBrowserViewListRequestV1Schema.parse(raw);
         if (!options.browserControl) return unavailableBrowserControl();
         return DaemonBrowserViewListResponseV1Schema.parse({ protocolVersion: 1,
+            ...(context?.authorization?.kind === 'session.browser' ? { machineId: context.authorization.machineId } : {}),
             views: options.browserControl.listViews(request.browserSessionId, buildActionExecutorContextForRpc(context ?? {})) });
     });
     rpc.registerHandler(

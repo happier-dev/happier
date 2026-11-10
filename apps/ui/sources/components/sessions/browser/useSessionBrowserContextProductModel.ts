@@ -25,7 +25,7 @@ export function useSessionBrowserContextProductModel(input: Readonly<{
     const machineHappyHomeDir = getStorage()(state => machineId && serverId
         ? state.machineListByServerId?.[serverId]?.find(machine => machine.id === machineId)?.metadata?.happyHomeDir ?? null
         : null);
-    const sendCommand = useBrowserDaemonControlTransport({ machineId, serverId });
+    const sendCommand = useBrowserDaemonControlTransport({ machineId, serverId, sessionId: runtime?.sessionTarget?.sessionId });
     const daemonControl = React.useMemo(() => {
         if (!sendCommand) return undefined;
         // One host subscriber per session product model, not another browser state owner.

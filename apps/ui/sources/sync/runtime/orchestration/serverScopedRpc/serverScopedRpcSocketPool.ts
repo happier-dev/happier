@@ -12,6 +12,7 @@ import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { drainRetainedHomeCarrierReleases } from '@/sync/runtime/homeCarrierPolicy';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { replaceSessionConsumption } from '@/sync/runtime/attachManagedSessionConsumptionSocket';
 import {
     resolveSocketIoTransportsForCarrier,
 } from '@/sync/runtime/socketIoTransports';
@@ -54,6 +55,7 @@ type Deps = Readonly<{
     createSocket: (params: Readonly<{
         serverUrl: string;
         token: string;
+        sessionId?: string;
         carrier: 'https' | 'iroh';
         homeCarrier?: HomeCarrier | null;
     }>) => SocketLike;
@@ -81,6 +83,9 @@ type PoolEntry = {
     homeCarrier: HomeCarrier | null;
     socket: SocketLike;
     transport: ReturnType<typeof createSocketTransportAdapter>;
+    sessionId: string | null;
+    sessionConsumption: { controller: AbortController; result: Promise<void>; admitted: boolean } | null;
+    sessionConnectedListeners: Set<() => void>;
     inUseCount: number;
     connectInFlight: { result: Promise<void>; controller: AbortController; waiters: number; progress: { phase: ScopedRpcSocketConnectionPhase } } | null;
     idleDisconnectTimer: ReturnType<typeof setTimeout> | null;
@@ -140,7 +145,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             endpoint: params.serverUrl,
             token: params.token,
             clientType: 'user-scoped',
-            clientPurpose: 'scoped-rpc',
+            clientPurpose: params.sessionId === undefined ? 'scoped-rpc' : 'concurrent-server-cache',
             authExtras: buildAccountStoredContentCompatibilitySocketAuthV1(
                 CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
             ),
@@ -199,7 +204,11 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         token: string,
         carrier: 'https' | 'iroh',
         homeCarrier: HomeCarrier | null,
-    ) => `${buildKey(reachabilityServerUrl, token)}::${homeIdentityId ?? ''}::${serverUrl}::${carrier}::${homeCarrier?.endpointId ?? ''}`;
+        sessionId: string | null,
+    ) => `${buildKey(reachabilityServerUrl, token)}::${homeIdentityId ?? ''}::${serverUrl}::${carrier}::${homeCarrier?.endpointId ?? ''}::${JSON.stringify(sessionId)}`;
+
+    const isEntryReady = (entry: PoolEntry): boolean => entry.socket.connected
+        && (entry.sessionId === null || entry.sessionConsumption?.admitted === true);
 
     const disconnectEntrySocket = async (entry: PoolEntry): Promise<void> => {
         try {
@@ -209,7 +218,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         }
     };
 
-    const stopEntrySocket = (entry: PoolEntry, remove: boolean): Promise<void> => {
+    const stopEntrySocket = (entry: PoolEntry, remove: boolean, failure?: unknown): Promise<void> => {
         entry.teardownRequested ||= remove;
         if (entry.teardownInFlight) return entry.teardownInFlight;
 
@@ -218,12 +227,16 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
                 clearTimeout(entry.idleDisconnectTimer);
                 entry.idleDisconnectTimer = null;
             }
-            entry.connectInFlight?.controller.abort(createRpcCallError({
+            entry.sessionConsumption?.controller.abort();
+            entry.connectInFlight?.controller.abort(failure ?? createRpcCallError({
                 error: 'Scoped RPC socket stopped before connecting',
                 errorCode: 'MACHINE_RPC_UNREACHABLE',
             }));
             await disconnectEntrySocket(entry);
-            if (entry.teardownRequested) await entry.transport.destroy();
+            if (entry.teardownRequested) {
+                await entry.transport.destroy();
+                entry.sessionConnectedListeners.clear();
+            }
             const releaseReachability = entry.reachabilityRelease;
             if (releaseReachability) {
                 await releaseReachability();
@@ -283,7 +296,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
     const releaseEntryUse = (entry: PoolEntry): void => {
         entry.inUseCount = Math.max(0, entry.inUseCount - 1);
         if (entry.inUseCount > 0 || entry.teardownRequested) return;
-        if (entry.backgroundTask) {
+        if (entry.backgroundTask || entry.sessionId !== null) {
             fireAndForget(stopEntrySocket(entry, true), { tag: 'scoped-rpc-background-disconnect' });
         } else {
             scheduleIdleDisconnect(entry);
@@ -299,9 +312,11 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         homeCarrier: HomeCarrier | null,
         carrierRelease: (() => Promise<void>) | null,
         backgroundTask = false,
+        sessionId: string | null = null,
     ): PoolEntry => {
-        const key = buildEntryKey(serverUrl, reachabilityServerUrl, homeIdentityId, token, carrier, homeCarrier);
-        const { socket, transport } = createSocket({ serverUrl, token, carrier, homeCarrier });
+        const key = buildEntryKey(serverUrl, reachabilityServerUrl, homeIdentityId, token, carrier, homeCarrier, sessionId);
+        const { socket, transport } = createSocket({ serverUrl, token, carrier, homeCarrier,
+            ...(sessionId === null ? {} : { sessionId }) });
         const entry: PoolEntry = {
             key,
             serverUrl,
@@ -312,6 +327,9 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             homeCarrier,
             socket,
             transport,
+            sessionId,
+            sessionConsumption: null,
+            sessionConnectedListeners: new Set(),
             inUseCount: 0,
             connectInFlight: null,
             idleDisconnectTimer: null,
@@ -322,13 +340,42 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             teardownInFlight: null,
         };
 
+        if (sessionId !== null) {
+            const declareConsumption = () => {
+                const controller = new AbortController();
+                const consumption = { controller, result: Promise.resolve(), admitted: false };
+                entry.sessionConsumption = consumption;
+                consumption.result = replaceSessionConsumption({
+                    socket,
+                    declaration: { v: 1, liveSessionIds: [sessionId], durableSessionIds: [] },
+                    signal: controller.signal,
+                }).then(result => {
+                    if (controller.signal.aborted) throw createSocketRpcAbortError();
+                    if (!result.fullyAdmitted) throw new Error('session_consumption_partial_admission');
+                    consumption.admitted = true;
+                    for (const listener of entry.sessionConnectedListeners) listener();
+                });
+                fireAndForget(consumption.result, { onError: error => {
+                    if (controller.signal.aborted) return;
+                    console.warn('[session-consumption]', error instanceof Error ? error.message : 'session_consumption_unavailable');
+                    fireAndForget(stopEntrySocket(entry, true, error), { tag: 'scoped-rpc-session-consumption-disconnect' });
+                } });
+            };
+            transport.onConnected(declareConsumption);
+            transport.onDisconnected(() => {
+                entry.sessionConsumption?.controller.abort();
+                entry.sessionConsumption = null;
+            });
+            if (transport.isConnected()) declareConsumption();
+        }
+
         if (!backgroundTask) entriesByKey.set(key, entry);
         return entry;
     };
 
     const ensureConnected = async (entry: PoolEntry, deadlineAt: number, callerSignal?: AbortSignal): Promise<void> => {
         if (deadlineAt <= deps.now()) throw new ScopedRpcSocketConnectionTimeoutError('reachability-start');
-        if (entry.socket.connected) return;
+        if (isEntryReady(entry)) return;
         if (!entry.connectInFlight) {
             const controller = new AbortController();
             const progress: { phase: ScopedRpcSocketConnectionPhase } = { phase: 'reachability-start' };
@@ -366,6 +413,13 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
                 progress.phase = 'socket-connect';
                 syncPerformanceTelemetry.recordScopedRpcSetup('connect', entry.socket, entry.serverUrl);
                 await connectSocket(entry.transport, controller.signal);
+                if (entry.sessionId !== null) {
+                    if (!entry.sessionConsumption) throw createRpcCallError({
+                        error: 'Session socket disconnected before consumption admission',
+                        errorCode: 'MACHINE_RPC_UNREACHABLE',
+                    });
+                    await entry.sessionConsumption.result;
+                }
             })();
             const result = run.finally(() => {
                 if (entry.connectInFlight !== flight) return;
@@ -403,7 +457,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             });
         } finally {
             connection.waiters -= 1;
-            if (entry.connectInFlight === connection && connection.waiters === 0 && !entry.socket.connected) {
+            if (entry.connectInFlight === connection && connection.waiters === 0 && !isEntryReady(entry)) {
                 // No caller still owns a dial budget. A retained stream may keep
                 // the entry alive, but must not retain a stalled handshake for
                 // every later RPC. Reset through this same pool connection owner;
@@ -453,6 +507,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         const token = String(params.token ?? '');
         const carrier = params.carrier === 'iroh' ? 'iroh' : 'https';
         const homeCarrier = params.homeCarrier ?? null;
+        const sessionId = params.sessionId ?? null;
         const releaseCarrier = params.releaseCarrier ?? null;
         const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
         const deadlineAt = deps.now() + timeoutMs;
@@ -463,7 +518,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             throw new Error('Missing token');
         }
 
-        const key = buildEntryKey(serverUrl, reachabilityServerUrl, params.homeIdentityId ?? null, token, carrier, homeCarrier);
+        const key = buildEntryKey(serverUrl, reachabilityServerUrl, params.homeIdentityId ?? null, token, carrier, homeCarrier, sessionId);
         let entry = backgroundTask ? undefined : entriesByKey.get(key);
         while (entry?.teardownRequested) {
             // A retiring socket cannot be revived: join (or retry) its canonical teardown,
@@ -491,6 +546,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
                 homeCarrier,
                 takenCarrierRelease,
                 backgroundTask,
+                sessionId,
             );
             onEntryRetainsCarrierRelease();
         }
@@ -522,12 +578,13 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             syncPerformanceTelemetry.recordScopedRpcSetup('connected', entry.socket, entry.serverUrl);
         } catch (error) {
             releaseOnce();
+            if (entry.sessionId !== null && entry.teardownRequested) await stopEntrySocket(entry, true, error);
             if (params.signal?.aborted) throw createSocketRpcAbortError();
             throw error;
         }
 
         return {
-            get connected() { return entry.socket.connected; },
+            get connected() { return isEntryReady(entry); },
             retain: () => {
                 retainEntryUse(entry);
                 return () => releaseEntryUse(entry);
@@ -535,9 +592,15 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             emitWithAck: (...args: Parameters<SocketLike['emitWithAck']>) => entry.socket.emitWithAck(...args),
             timeout: (ms: number) => entry.socket.timeout(ms),
             emit: (event: string, payload: any) => entry.socket.emit(event, payload),
-            on: (event: string, listener: (...args: any[]) => void) => entry.socket.on(event, listener),
-            off: (event: string, listener: (...args: any[]) => void) => entry.socket.off(event, listener),
-            getSocketId: () => entry.socket.id ?? '',
+            on: (event: string, listener: (...args: any[]) => void) => {
+                if (entry.sessionId !== null && event === 'connect') entry.sessionConnectedListeners.add(listener);
+                else entry.socket.on(event, listener);
+            },
+            off: (event: string, listener: (...args: any[]) => void) => {
+                if (entry.sessionId !== null && event === 'connect') entry.sessionConnectedListeners.delete(listener);
+                else entry.socket.off(event, listener);
+            },
+            getSocketId: () => entry.sessionId !== null && !isEntryReady(entry) ? '' : entry.socket.id ?? '',
             disconnect: () => releaseOnce(),
         };
     };

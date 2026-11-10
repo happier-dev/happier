@@ -24,9 +24,11 @@ import { createBrowserDaemonControlRoutes } from '@/daemon/browser/control/route
 import { createBrowserCdpScreencastProducer } from '@/daemon/browser/capture/cdpScreencast';
 import { registerBrowserLiveCapture } from '@/daemon/browser/capture/registration';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 
 describe('personal live stream source admission RPC', () => {
-    it('refuses a Use viewer presenting another Account’s ephemeral Browser source while preserving owner and Manage', async () => {
+    it('admits shared View/Steer without Machine access while preserving profile and unshared-guest isolation', async () => {
         const root = await mkdtemp(join(tmpdir(), 'browser-source-admission-'));
         const profiles = createBrowserProfileStore({ storageRootDirectory: root,
             partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
@@ -66,6 +68,7 @@ describe('personal live stream source admission RPC', () => {
         } }, { machineId: 'machine', resolveComputer: () => null, resolveBrowser: () => browser,
             readInstallationIdentity: () => installation, readHomeServerIdentityId: () => 'home' });
         const context = (actorAccountId: string, role: 'use' | 'manage'): RpcHandlerContext => ({
+            signal: new AbortController().signal,
             callerAuthority: 'present_user', machineAdmission: { actorAccountId, role,
                 custodianAccountId: 'owner', machineId: 'machine', installationId: 'installation', encryptionMode: 'plain' },
         });
@@ -79,6 +82,53 @@ describe('personal live stream source admission RPC', () => {
                 const opened = await browser.dispatchCommand({ kind: 'openView', commandId: browserSessionId, browserSessionId,
                     viewId: 'view', platform: 'web', target: { kind: 'externalUrl', targetId: 'fixture', url: 'https://fixture.test/' } });
                 expect(opened, JSON.stringify(opened)).toMatchObject({ status: 'dispatched' });
+            }
+            for (const level of ['view', 'edit'] as const) {
+                const shared: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+                    authorization: { kind: 'session.browser', sessionId: 'owner-session', actorAccountId: 'guest',
+                        custodianAccountId: 'owner', machineId: 'machine', installationId: 'installation',
+                        effectiveAccess: { v: 1, level, sources: [{ kind: 'direct', shareId: 'share' }],
+                            capabilities: projectSessionAccessCapabilitiesV1({ owner: false,
+                                grants: [{ accessLevel: level, canApprovePermissions: false }] }) } } };
+                const admitted = await handlers.get(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT)?.({
+                    protocolVersion: 1, machineId: 'machine', streamFamily: 'browser.streamed',
+                    sourceId: browserViewKey({ browserSessionId: 'owner-session', viewId: 'view' }),
+                }, shared);
+                expect(admitted, `Session ${level} can watch without Machine admission`).toMatchObject({ result: {
+                    ok: true, sourceAdmission: { payload: { liveStreamSourceAdmission: { sessionBrowserSessionId: 'owner-session' } } } } });
+                const actionContext = buildActionExecutorContextForRpc(shared);
+                expect(await browser.dispatchCommand({ kind: 'closeView', commandId: `shared-${level}`,
+                    browserSessionId: 'owner-session', viewId: 'view' }, actionContext))
+                    .toMatchObject({ status: level === 'view' ? 'failed' : 'dispatched' });
+                expect(browser.listViews('owner-session', actionContext)).toHaveLength(level === 'view' ? 1 : 0);
+                expect(await browser.dispatchCommand({ kind: 'openView', commandId: `reopen-${level}`,
+                    browserSessionId: 'owner-session', viewId: 'view', platform: 'web',
+                    target: { kind: 'externalUrl', targetId: 'fixture', url: 'https://fixture.test/' } }))
+                    .toMatchObject({ status: 'dispatched' });
+                expect(await handlers.get(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT)?.({
+                    protocolVersion: 1, machineId: 'machine', streamFamily: 'browser.streamed',
+                    sourceId: browserViewKey({ browserSessionId: 'guest-session', viewId: 'view' }),
+                }, shared)).toMatchObject({ result: { ok: false, reasonCode: 'capture_source_denied' } });
+                await profiles.registerPersistentProfile({ profileId: `persistent-${level}`, storageMode: 'user', owner: { kind: 'user', id: 'owner' } });
+                const persistentSession = 'owner-session';
+                expect(await browser.dispatchCommand({ kind: 'closeView', commandId: `close-ephemeral-${level}`,
+                    browserSessionId: persistentSession, viewId: 'view' })).toMatchObject({ status: 'dispatched' });
+                const persistentOpened = await browser.dispatchCommand({ kind: 'openView', commandId: persistentSession,
+                    browserSessionId: persistentSession, viewId: 'view', profileId: `persistent-${level}`, platform: 'web',
+                    target: { kind: 'externalUrl', targetId: 'fixture', url: 'https://fixture.test/' } });
+                expect(persistentOpened, JSON.stringify(persistentOpened)).toMatchObject({ status: 'dispatched' });
+                if (shared.authorization?.kind !== 'session.browser') throw new Error('expected Session authority');
+                const persistentContext = { ...shared, authorization: { ...shared.authorization, sessionId: persistentSession } };
+                expect(await handlers.get(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT)?.({
+                    protocolVersion: 1, machineId: 'machine', streamFamily: 'browser.streamed',
+                    sourceId: browserViewKey({ browserSessionId: persistentSession, viewId: 'view' }),
+                }, persistentContext)).toMatchObject({ result: { ok: false, reasonCode: 'capture_source_denied' } });
+                expect(await browser.dispatchCommand({ kind: 'closeView', commandId: `close-persistent-${level}`,
+                    browserSessionId: persistentSession, viewId: 'view' })).toMatchObject({ status: 'dispatched' });
+                expect(await browser.dispatchCommand({ kind: 'openView', commandId: `reopen-ephemeral-${level}`,
+                    browserSessionId: persistentSession, viewId: 'view', platform: 'web',
+                    target: { kind: 'externalUrl', targetId: 'fixture', url: 'https://fixture.test/' } }))
+                    .toMatchObject({ status: 'dispatched' });
             }
             expect(await invoke('guest-session', 'guest', 'use')).toMatchObject({ result: { ok: true } });
             expect(await invoke('owner-session', 'owner', 'use')).toMatchObject({ result: { ok: true } });

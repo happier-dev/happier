@@ -1,6 +1,7 @@
 import { BrowserAutomationActionRequestV1Schema } from '@happier-dev/protocol/browser/automation/v1';
 import { BrowserEventBatchV1Schema, type BrowserEventBatchV1 } from '@happier-dev/protocol/browser/events/v1';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import { machineLiveStreamControlRequiresInputLeaseV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 import type { BrowserAutomationActionResultV1, BrowserEditableTargetV1, BrowserEventV1, MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol';
 import type { BrowserAutomationDaemonService } from '../automation/service';
 import type { BrowserSidecarContextCaptureSurface } from '../sidecar/controlAdapter';
@@ -29,6 +30,9 @@ export function registerBrowserLiveCapture(input: Readonly<{
         const adapter: MachineLiveStreamCaptureAdapter = {
             async start(startInput) {
                 const humanViewer = startInput.callerAuthority === 'present_user';
+                const authorization = startInput.startRequest.authorization?.payload;
+                const canDrive = authorization?.v !== 2 || !authorization.sessionBrowserAccess
+                    || authorization.sessionBrowserAccess.effectiveAccess.capabilities.submitAgentInput;
                 const canObserve = () => humanViewer || !(input.resolveInputControl?.(view)
                     ?? input.automation()?.getInputControl(view))?.isObservationHeld();
                 let latest: BrowserCdpScreencastFrame | null = null;
@@ -171,6 +175,7 @@ export function registerBrowserLiveCapture(input: Readonly<{
                     applySidebandControl(control) {
                         if (control.sourceId !== sourceId || control.streamId !== startInput.streamId) return { ok: false, reasonCode: 'invalid_control' };
                         if (stopped) return { ok: false, reasonCode: 'capture_stopped' };
+                        if (!canDrive && machineLiveStreamControlRequiresInputLeaseV1(control)) return { ok: false, reasonCode: 'capture_source_denied' };
                         const action = inputAction(control, latest);
                         const viewEvent = control.kind === 'browser_input'
                             && (control.event.kind === 'viewport' || control.event.kind === 'editableProbe') ? control.event : null;

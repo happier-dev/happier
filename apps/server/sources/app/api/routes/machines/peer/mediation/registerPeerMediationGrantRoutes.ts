@@ -14,11 +14,15 @@ import { DAEMON_VOICE_AUDIO_RELAY_CAP_PROFILE_ID } from '@happier-dev/protocol/m
 import { type FeatureId } from '@happier-dev/protocol/features/catalog';
 import { type MachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { type PeerFlowKindV1 } from '@happier-dev/protocol/machines/peer/mediation/flowKind';
+import type { SocketRpcSessionBrowserAuthorizationContext } from '@happier-dev/protocol/socketRpc';
+import { projectSessionEffectiveAccessV1, resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
+import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
 
 import { readMachineLiveStreamFeatureEnv, readMachineTunnelFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
     readAvailableMachineIrohEndpointAuthority,
     readAvailableMachineIrohTransportEndpointAuthority,
+    classifyMachineAvailabilityState,
 } from "@/app/machines/machineStateGuards";
 import { resolveMachineAdmission, resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { inTx } from '@/storage/inTx';
@@ -435,6 +439,7 @@ export function registerPeerMediationGrantRoutes(
             if (viewerSocketOwnershipRejection) return viewerSocketOwnershipRejection;
             const sourceAdmission = parsed.data.sourceAdmission;
             let personalSourceCustodianAccountId: string | undefined;
+            let sessionBrowserAccess: SocketRpcSessionBrowserAuthorizationContext | undefined;
             if (sourceAdmission) {
                 const binding = sourceAdmission.payload.liveStreamSourceAdmission;
                 const sourceDenied = { ok: false, reasonCode: 'capture_source_denied', receipt: PEER_MEDIATION_RECEIPTS.routeGrantRejected } as const;
@@ -446,20 +451,38 @@ export function registerPeerMediationGrantRoutes(
                     || binding.sourceId !== parsed.data.scope.sourceId
                     || binding.homeServerIdentityId !== await getOrCreateServerIdentityId()) return sourceDenied;
                 const admitted = await inTx(async tx => {
+                    const machine = await tx.machine.findUnique({ where: { id: sourceAdmission.payload.machineId }, select: {
+                        accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true,
+                    } });
+                    if (!machine?.installationPublicKey || classifyMachineAvailabilityState(machine) !== 'available'
+                        || machine.accountId !== sourceAdmission.payload.accountId
+                        || machine.installationId !== sourceAdmission.payload.installationId
+                        || !verifyMachineInstallationProof({ payload: sourceAdmission.payload,
+                            proof: sourceAdmission.proof, publicKey: machine.installationPublicKey })) return null;
+                    if (binding.sessionBrowserSessionId) {
+                        if (binding.streamFamily !== 'browser.streamed') return null;
+                        const decision = await resolveSessionAccessForOperation(tx, { accountId,
+                            sessionId: binding.sessionBrowserSessionId, capability: 'readTranscript',
+                            authentication: readSessionAccessAuthenticationFromRequest(request) });
+                        if (decision.status !== 'allowed') return null;
+                        return { custodianAccountId: machine.accountId, sessionBrowserAccess: {
+                            kind: 'session.browser' as const, sessionId: binding.sessionBrowserSessionId,
+                            actorAccountId: accountId, custodianAccountId: machine.accountId,
+                            machineId: sourceAdmission.payload.machineId, installationId: sourceAdmission.payload.installationId,
+                            effectiveAccess: projectSessionEffectiveAccessV1(decision.access),
+                        } };
+                    }
                     const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: accountId,
                         machineId: sourceAdmission.payload.machineId, requireOnline: true,
                         callerAuthority: 'present_user', rpcMethod: RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT });
                     if (admission.kind !== 'admitted') return null;
                     if (admission.custodianAccountId !== sourceAdmission.payload.accountId
                         || admission.installationId !== sourceAdmission.payload.installationId) return null;
-                    const machine = await tx.machine.findUnique({ where: { id: admission.machineId }, select: { installationPublicKey: true } });
-                    if (!machine?.installationPublicKey || !verifyMachineInstallationProof({
-                        payload: sourceAdmission.payload, proof: sourceAdmission.proof, publicKey: machine.installationPublicKey,
-                    })) return null;
-                    return admission;
+                    return { custodianAccountId: admission.custodianAccountId, sessionBrowserAccess: undefined };
                 });
                 if (!admitted) return sourceDenied;
                 personalSourceCustodianAccountId = admitted.custodianAccountId;
+                sessionBrowserAccess = admitted.sessionBrowserAccess;
             } else {
                 const ownershipRejection = await rejectUnlessMachinesOwned(accountId, [
                     parsed.data.machineId,
@@ -503,7 +526,8 @@ export function registerPeerMediationGrantRoutes(
                 ...(parsed.data.viewerSocketId ? { viewerSocketId: parsed.data.viewerSocketId } : {}),
                 ...(sourceAdmission ? { personalViewer: { viewerAccountId: accountId,
                     sourceMachineInstallationId: sourceAdmission.payload.installationId,
-                    personalSourceAdmission: sourceAdmission.payload.liveStreamSourceAdmission } } : {}),
+                    personalSourceAdmission: sourceAdmission.payload.liveStreamSourceAdmission,
+                    ...(sessionBrowserAccess ? { sessionBrowserAccess } : {}) } } : {}),
                 ...(parsed.data.codecId ? { codecId: parsed.data.codecId } : {}),
                 ...(parsed.data.viewerCodecs ? { viewerCodecs: parsed.data.viewerCodecs } : {}),
                 caps: effectiveCaps,

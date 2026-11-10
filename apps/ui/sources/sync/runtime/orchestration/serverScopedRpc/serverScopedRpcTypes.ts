@@ -137,6 +137,8 @@ export type ScopedSessionEncryption = Readonly<{
 export type ScopedSocketConnectParams = Readonly<{
     /** Actual verified Socket.IO origin. */
     serverUrl: string;
+    /** A live Session consumer is ready only after this exact Session is admitted on its socket. */
+    sessionId?: string;
     /** Exact, profile-proven Home identity for local foreground reach history. */
     homeIdentityId?: string;
     /** Stable Home identity/auth audience and reachability key. */
@@ -169,7 +171,7 @@ export type ScopedSocketConnectParams = Readonly<{
 }>;
 
 export type ScopedSocketClient = Readonly<{
-    /** Current physical transport readiness, not the logical holder's retention. */
+    /** Current transport readiness, including declared Session consumption admission. */
     connected?: boolean;
     /** Additional physical-entry use owned by the shared RPC issuer's native ACK. */
     retain?: () => () => void;

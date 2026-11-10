@@ -1667,7 +1667,8 @@ export async function bootstrapMachineSyncRuntime(
       // delivers the server-minted, signed startRequest over machine RPC; the terminator starts
       // capture and echoes the start on this machine-scoped socket for server-side verification.
       connectedApiMachine.registerLiveStreamRelayRoutes({
-        start: (startRequest, callerAuthority) => liveStreamRelayTerminator.start(startRequest, callerAuthority),
+        start: (startRequest, callerAuthority, content) => liveStreamRelayTerminator.start(startRequest, callerAuthority, content),
+        getContentCodec: streamId => liveStreamRelayTerminator.getContentCodec(streamId),
       });
       const cleanupMachineLiveStreamRelaySubscription = connectedApiMachine.onMachineLiveStreamRelayEnvelope((payload) => {
         // Starts arrive exclusively over the machine RPC above (SIM-P0-1). The server never

@@ -6,6 +6,7 @@ import { createCanonicalJsonSigningInput } from '../../../../crypto/canonicalJso
 import { MachineLiveStreamControlSidebandV1Schema } from './controlV1.js';
 import { MachineLiveStreamCodecIdV1Schema, getMachineLiveStreamPayloadDecodedByteLength } from './codecsV1.js';
 import { MachineLiveStreamSourceAdmissionBindingV1Schema } from './sourceAdmissionV1.js';
+import { SocketRpcSessionBrowserAuthorizationContextSchema } from '../../../../sessions/access/sessionBrowserAccessV1.js';
 export {
   MachineLiveStreamSourceAdmissionBindingV1Schema,
   MachineLiveStreamSourceAdmissionPayloadV1Schema,
@@ -88,12 +89,21 @@ export const MachineLiveStreamRelayAuthorizationPayloadV1Schema = lazyZodSchema(
     sourceId: z.string().check(z.minLength(1)),
     sourceMachineInstallationId: z.string().check(z.minLength(1)),
     personalSourceAdmission: MachineLiveStreamSourceAdmissionBindingV1Schema,
+    sessionBrowserAccess: z.optional(SocketRpcSessionBrowserAuthorizationContextSchema),
   }).check(z.superRefine((payload, ctx) => {
     if (payload.targetMachineId !== payload.sourceMachineId
       || payload.viewerAccountId !== payload.personalSourceAdmission.actorAccountId
       || payload.sourceId !== payload.personalSourceAdmission.sourceId
       || payload.streamFamily !== payload.personalSourceAdmission.streamFamily) {
       ctx.addIssue({ code: 'custom', message: 'Personal viewers bind the exact admitted source and person' });
+    }
+    const access = payload.sessionBrowserAccess;
+    if ((access !== undefined) !== (payload.personalSourceAdmission.sessionBrowserSessionId !== undefined)
+      || access && (payload.streamFamily !== 'browser.streamed' || access.custodianAccountId !== payload.accountId
+      || access.sessionId !== payload.personalSourceAdmission.sessionBrowserSessionId
+      || access.actorAccountId !== payload.viewerAccountId || access.machineId !== payload.sourceMachineId
+      || access.installationId !== payload.sourceMachineInstallationId || !access.effectiveAccess.capabilities.readTranscript)) {
+      ctx.addIssue({ code: 'custom', message: 'Session Browser viewers bind the admitted Session and installation' });
     }
   })),
 ]).check(z.superRefine((payload, ctx) => {

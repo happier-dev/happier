@@ -302,6 +302,7 @@ export function BrowserShell(props: Readonly<{
     viewId?: string | null;
     platform: BrowserPlatformV1;
     state: BrowserControlState;
+    interactionEnabled?: boolean;
     onCommand: (command: BrowserCommandV1) => void | Promise<ActionExecuteResult>;
     onCheckAgain?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => Promise<ActionExecuteResult>;
     /** Allow the managed browser's sandbox on the Session's Machine; null when the person declined. */
@@ -404,7 +405,7 @@ export function BrowserShell(props: Readonly<{
     const activeViewNavigationKey = activeView
         ? `${activeView.viewId}:${activeView.navigationGeneration}`
         : '';
-    const toolbar = selectBrowserToolbarModel(activeView);
+    const toolbar = selectBrowserToolbarModel(activeView, props.interactionEnabled !== false);
     const activeSession = props.state.sessionsById[props.browserSessionId] ?? null;
     const launchpadRows = props.launchpadRows ?? EMPTY_LAUNCHPAD_ROWS;
     const plugins = useBrowserPluginActions({
@@ -614,7 +615,7 @@ export function BrowserShell(props: Readonly<{
     });
     // A narrow pane gives the address its room: the page size, a rare choice, moves from the row into
     // the ⋯ as its own checked set. A phone keeps it in the bottom bar; a wide row keeps its picker.
-    const viewportView = activeView && isDaemonAuthoritativeBrowserView(activeView) ? activeView : null;
+    const viewportView = props.interactionEnabled !== false && activeView && isDaemonAuthoritativeBrowserView(activeView) ? activeView : null;
     const viewportInMenu = chromeDensity.density === 'pane' && viewportView !== null;
     const viewportEmulation = streamedChrome?.viewport?.emulation ?? null;
     const selectViewport = React.useCallback((emulation: BrowserViewportEmulationV1) => {
@@ -647,10 +648,10 @@ export function BrowserShell(props: Readonly<{
     const agentDrivesPage = Boolean(activeView && isDaemonAuthoritativeBrowserView(activeView)
         && activeView.automationController?.controller === 'agent');
     const onAddressEdit = React.useCallback(() => {
-        if (!agentDrivesPage || !activeView?.automationController) return;
+        if (!toolbar.canNavigate || !agentDrivesPage || !activeView?.automationController) return;
         const { browserSessionId, viewId } = activeView;
         props.onCommand({ kind: 'takeControl', commandId: createCommandId('takeControl', viewId), browserSessionId, viewId });
-    }, [activeView, agentDrivesPage, props.onCommand]);
+    }, [activeView, agentDrivesPage, props.onCommand, toolbar.canNavigate]);
     // The page tools act on the page in view. The launchpad has no page, so they are not offered there
     // (a disabled pair could only say the target cannot be opened, which is not what the launchpad is).
     const browserContextPresent = Boolean(props.browserContext) && Boolean(activeView) && !agentDrivesPage;
@@ -719,7 +720,8 @@ export function BrowserShell(props: Readonly<{
     // reach the address can't succeed, so it isn't offered; the launchpad says why, in the shared words.
     const machineReachability = useCheckoutReachability(props.machine ?? null);
     const addressNeedsMachine = props.platform === 'web' && props.managedBrowserAvailable === true;
-    const navigateInPlace = addressNeedsMachine && machineReachability.unreachable ? undefined : props.onNavigateInPlace;
+    const navigateInPlace = props.interactionEnabled === false || addressNeedsMachine && machineReachability.unreachable
+        ? undefined : props.onNavigateInPlace;
     const addressField = (
         <BrowserUrlField
             testID={`${testID}-address`}
@@ -813,7 +815,7 @@ export function BrowserShell(props: Readonly<{
             placement={phone ? 'top' : 'bottom'}
         />
     );
-    const viewportPicker = activeView && isDaemonAuthoritativeBrowserView(activeView) && !viewportInMenu ? (
+    const viewportPicker = viewportView && !viewportInMenu ? (
         <BrowserViewportPicker
             testID={`${testID}-viewport`}
             emulation={streamedChrome?.viewport?.emulation ?? { kind: 'fitViewer' }}

@@ -185,7 +185,7 @@ const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), 
  * the user-initiated `ui` path, which never prompts.
  */
 export const DaemonBrowserControlDispatchRequestV1Schema = lazyZodSchema(() => z.strictObject({
-    machineId: IdSchema,
+    machineId: z.optional(IdSchema),
     command: BrowserCommandV1Schema,
   }));
 export type DaemonBrowserControlDispatchRequestV1 = z.infer<
@@ -214,12 +214,13 @@ export const BrowserDaemonViewV1Schema = lazyZodSchema(() => z.strictObject({
 export type BrowserDaemonViewV1 = z.infer<typeof BrowserDaemonViewV1Schema>;
 
 export const DaemonBrowserViewListRequestV1Schema = lazyZodSchema(() => z.strictObject({
-  machineId: IdSchema,
+  machineId: z.optional(IdSchema),
   browserSessionId: IdSchema,
 }));
 export type DaemonBrowserViewListRequestV1 = z.infer<typeof DaemonBrowserViewListRequestV1Schema>;
 export const DaemonBrowserViewListResponseV1Schema = lazyZodSchema(() => z.strictObject({
   protocolVersion: z.literal(1),
+  machineId: z.optional(IdSchema),
   views: z.array(BrowserDaemonViewV1Schema),
 }));
 export type DaemonBrowserViewListResponseV1 = z.infer<typeof DaemonBrowserViewListResponseV1Schema>;

@@ -5,6 +5,7 @@ import { MachineLiveStreamStartRequestV1Schema, createMachineLiveStreamRelayAuth
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 import { validateMachineLiveStreamControlLeaseV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 import type { ActionExecutorContext, MachineLiveStreamControlLeaseV1, MachineLiveStreamControlSourceV1, MachineLiveStreamCaptureSourceKindV1, MachineLiveStreamControlV1, MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1, MachineLiveStreamReceiptV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
+import type { MachineContentCodec } from '@/api/machine/machineStoredContent';
 
 import { startMachineLiveStreamFramePump } from './framePump';
 import {
@@ -22,15 +23,17 @@ import {
 } from '../observability/events';
 
 export type MachineLiveStreamRelayTerminator = Readonly<{
-    start: (startRequest: MachineLiveStreamStartRequestV1, callerAuthority?: ActionExecutorContext['authority']) => Promise<
+    start: (startRequest: MachineLiveStreamStartRequestV1, callerAuthority?: ActionExecutorContext['authority'], sessionBrowserContent?: MachineContentCodec) => Promise<
         Readonly<{ ok: true; streamId: string } | { ok: false; reasonCode: string }>
     >;
     applyControl: (envelope: MachineLiveStreamRelayEnvelopeV1) => Readonly<{ ok: true } | { ok: false; reasonCode: string }>;
     stop: (streamId: string) => Promise<void>;
     dispose: () => Promise<void>;
+    getContentCodec: (streamId: string) => MachineContentCodec | undefined;
 }>;
 
 type ActiveRelayStream = {
+    contentCodec?: MachineContentCodec;
     captureSession: MachineLiveStreamCaptureSession | null;
     controlSource: MachineLiveStreamControlSourceV1 | null;
     controlSourceKind: MachineLiveStreamCaptureSourceKindV1 | undefined;
@@ -118,7 +121,8 @@ function hasSameRenewalScope(previous: MachineLiveStreamStartRequestV1, next: Ma
         && (previousAuthorization?.v !== 2 || (nextAuthorization?.v === 2
             && previousAuthorization.viewerAccountId === nextAuthorization.viewerAccountId
             && previousAuthorization.sourceMachineInstallationId === nextAuthorization.sourceMachineInstallationId
-            && isDeepStrictEqual(previousAuthorization.personalSourceAdmission, nextAuthorization.personalSourceAdmission)));
+            && isDeepStrictEqual(previousAuthorization.personalSourceAdmission, nextAuthorization.personalSourceAdmission)
+            && isDeepStrictEqual(previousAuthorization.sessionBrowserAccess, nextAuthorization.sessionBrowserAccess)));
 }
 
 export function createMachineLiveStreamRelayTerminator(input: Readonly<{
@@ -230,7 +234,8 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
     }
 
     return {
-        start: async (startRequest, callerAuthority = 'account_automation') => {
+        getContentCodec: streamId => activeStreams.get(streamId)?.contentCodec,
+        start: async (startRequest, callerAuthority = 'account_automation', sessionBrowserContent) => {
             if (disposed) {
                 emitObservability({ kind: 'flow.denied', startRequest, reasonCode: 'relay_disposed' });
                 return { ok: false, reasonCode: 'relay_disposed' };
@@ -256,6 +261,8 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
                     signatureBase64Url: authorization.signature.valueBase64Url,
                 })) return { ok: false, reasonCode: 'grant_bad_signature' };
             }
+            const sessionBrowserAccess = authorization?.payload.v === 2 ? authorization.payload.sessionBrowserAccess : undefined;
+            if (sessionBrowserAccess && !sessionBrowserContent) return { ok: false, reasonCode: 'stream_encryption_material_unavailable' };
 
             const captureAdapter = input.captureAdapter;
             if (!captureAdapter) {
@@ -349,6 +356,7 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
             });
 
             const active: ActiveRelayStream = {
+                ...(sessionBrowserAccess ? { contentCodec: sessionBrowserContent } : {}),
                 captureSession: null,
                 controlSourceKind: undefined,
                 controlSource: null,

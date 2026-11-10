@@ -95,7 +95,7 @@ import {
     type RestrictedSocketAdmission,
 } from "./socket/restrictedSocketAdmission";
 import { createMachineSocketOwnershipRegistry } from "./socket/machineSocketOwnershipRegistry";
-import { createPeerMediationViewerSocketOwnershipVerifier } from "./socket/viewerSocketOwnership";
+import { createPeerMediationViewerSocketOwnershipVerifier, createPeerMediationViewerSessionAuthenticationReader } from "./socket/viewerSocketOwnership";
 import { activityCache } from "@/app/presence/sessionCache";
 import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, type PeerTcpTunnelRelayEnvelope } from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
 import { EXTERNAL_SESSION_OPERATION_SOCKET_MAX_BATCH_ITEMS_V1, resolveExternalSessionOperationSocketBatchLimitsV1, type ExternalSessionOperationSocketBatchLimitResolutionV1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
@@ -368,6 +368,7 @@ export function startSocket(app: Fastify) {
         forward: app.forwardSessionServerStartToMachine,
     });
     const verifyPeerMediationViewerSocketOwnership = createPeerMediationViewerSocketOwnershipVerifier(io);
+    const readViewerSessionAuthentication = createPeerMediationViewerSessionAuthenticationReader(io);
     app.verifyPeerMediationViewerSocketOwnership = verifyPeerMediationViewerSocketOwnership;
     eventRouter.setIo(io, {
         forwardRpc: (request) => forwardRpcCall({ io, ...request }),
@@ -1221,6 +1222,7 @@ export function startSocket(app: Fastify) {
                 relayCaps: machineLiveStreamFeatureEnv.serverRoutedCaps,
                 relayAuthorizationTrustRoots: tunnelRelayAuthorizationTrustRoots,
                 verifyViewerSocketOwnership: verifyPeerMediationViewerSocketOwnership,
+                readViewerSessionAuthentication,
                 observability: peerMediationObservabilityEmitter,
             });
             transferRelayV2Handler(userId, socket, {

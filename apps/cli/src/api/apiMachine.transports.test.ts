@@ -22,6 +22,14 @@ import { ApiMachineClient } from './apiMachine';
 import type { Machine } from './types';
 import { decryptLegacy, decodeBase64 } from './encryption';
 import { publishServerHttpRuntimeOrigin } from './client/serverHttpBaseUrl';
+import tweetnacl from 'tweetnacl';
+import { createMachineContentCodec } from './machine/machineStoredContent';
+import { createMachineLiveStreamRelayTerminator } from '@/daemon/peer/mediation/stream/relay';
+import { MACHINE_LIVE_STREAM_SOCKET_EVENT, createMachineLiveStreamRelayAuthorizationSigningInputV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { openMachineLiveStreamEnvelopeV1, sealMachineLiveStreamEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { registerDaemonLiveStreamRelayHandlers } from '@/rpc/handlers/daemonLiveStreamRelay';
+import type { RpcHandler, RpcHandlerContext } from './rpc/types';
 
 const { configurationMock, mockAxiosIsAxiosError, mockAxiosPost, mockIo } = vi.hoisted(() => ({
   configurationMock: {
@@ -30,6 +38,7 @@ const { configurationMock, mockAxiosIsAxiosError, mockAxiosPost, mockIo } = vi.h
     activeServerId: 'test-server',
     activeServerDir: '',
     currentCliVersion: '0.2.10-test',
+    organizationPolicy: { status: 'absent' },
     happyHomeDir: process.env.RUNNER_TEMP ?? process.env.TMPDIR ?? process.env.TEMP ?? '.',
     socketIoTransports: ['polling', 'websocket'] as string[],
     // Canonical configuration defaults: no execution cap without an operator override.
@@ -1013,6 +1022,75 @@ describe('ApiMachineClient transports', () => {
       },
     } })).toEqual({ ok: true, value: envelope });
     await client.shutdown();
+  });
+
+  it('uses the admitted Session key for shared Browser frames and input without exposing the Machine key', async () => {
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(mockIo, machineSocket);
+    const machineCodec = createMachineContentCodec({ encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'dataKey' });
+    const sessionCodec = createMachineContentCodec({ encryptionKey: new Uint8Array(32).fill(9), encryptionVariant: 'dataKey' });
+    const content = (codec: typeof sessionCodec) => ({ mode: codec.mode, ...(codec.mode === 'e2ee' ? { cipher: {
+      encryptRaw: codec.encodeRpc, decryptRaw: codec.decodeRpc,
+    } } : {}) });
+    const client = new ApiMachineClient('fake-token', { id: 'source', encryptionMode: 'e2ee',
+      encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'dataKey', metadata: null, metadataVersion: 0,
+      daemonState: null, daemonStateVersion: 0 });
+    const keys = tweetnacl.sign.keyPair();
+    let captures = 0;
+    const relay = createMachineLiveStreamRelayTerminator({ machineId: 'source', accountId: 'owner', sourceMachineInstallationId: 'installation',
+      nowMs: Date.now, emitEnvelope() {}, resolveRelayAuthorizationTrustRoots: () => [{ keyId: 'home', publicKey: Buffer.from(keys.publicKey).toString('base64url') }],
+      captureAdapter: { async start() { captures++; return { ok: true, session: { stop() {} } }; } } });
+    client.registerLiveStreamRelayRoutes(relay);
+    client.connect();
+    const handlers = new Map<string, RpcHandler>();
+    registerDaemonLiveStreamRelayHandlers({ registerHandler(method, handler) { handlers.set(method, handler); } }, { relay });
+    const access = { kind: 'session.browser' as const, sessionId: 'session', actorAccountId: 'recipient', custodianAccountId: 'owner',
+      machineId: 'source', installationId: 'installation', effectiveAccess: { v: 1 as const, level: 'view' as const,
+        sources: [{ kind: 'direct' as const, shareId: 'share' }], capabilities: projectSessionAccessCapabilitiesV1({ owner: false,
+          grants: [{ accessLevel: 'view', canApprovePermissions: false }] }) } };
+    const payload = { v: 2 as const, grantId: 'grant', accountId: 'owner', sourceMachineId: 'source', targetMachineId: 'source',
+      flowKind: 'live_stream' as const, routeKind: 'server_relay' as const, streamId: 'session-stream', streamFamily: 'browser.streamed',
+      sourceId: 'browser-source', viewerSocketId: 'recipient-tab', viewerAccountId: 'recipient', sourceMachineInstallationId: 'installation',
+      iat: Date.now(), exp: Date.now() + 60_000, aud: 'happier-live-stream-relay-authorization' as const, sessionBrowserAccess: access,
+      personalSourceAdmission: { homeServerIdentityId: 'home', actorAccountId: 'recipient', streamFamily: 'browser.streamed',
+        sourceId: 'browser-source', sourceOccurrenceId: 'occurrence', sessionBrowserSessionId: 'session' } };
+    const request = { protocolVersion: 1, machineId: 'source', startRequest: { v: 1, streamId: payload.streamId, streamFamily: payload.streamFamily,
+      sourceId: payload.sourceId, routeKind: 'server_relay', sourceMachineId: 'source', targetMachineId: 'source', viewerSocketId: payload.viewerSocketId,
+      authorization: { payload, signature: { keyId: 'home', alg: 'Ed25519', valueBase64Url: Buffer.from(tweetnacl.sign.detached(
+        Buffer.from(createMachineLiveStreamRelayAuthorizationSigningInputV1(payload)), keys.secretKey)).toString('base64url') } } } };
+    const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+      authorization: access, sessionBrowserContent: sessionCodec };
+    const start = (ingress = context) => handlers.get(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START)?.(request, ingress);
+    const frame = { v: 1 as const, sourceMachineId: 'source', targetMachineId: 'source', viewerSocketId: 'recipient-tab',
+      message: { kind: 'frame' as const, frame: { v: 1 as const, streamId: 'session-stream', sequence: 1, timestampMs: 1_000,
+        payloadKind: 'image_keyframe' as const, payloadEncoding: 'binary_base64' as const, payloadBase64: 'AQID', payloadSizeBytes: 3 } } };
+    try {
+      expect(await start({ ...context, authorization: { ...access, sessionId: 'other-session' } })).toMatchObject({ result: { ok: false } });
+      expect(await start({ ...context, authorization: { ...access, actorAccountId: 'other-recipient' } })).toMatchObject({ result: { ok: false } });
+      expect(await start({ ...context, authorization: { ...access, effectiveAccess: { ...access.effectiveAccess,
+        capabilities: projectSessionAccessCapabilitiesV1({ owner: false, grants: [{ accessLevel: 'edit', canApprovePermissions: false }] }) } } }))
+        .toMatchObject({ result: { ok: false } });
+      await expect(handlers.get(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START)?.({ ...request,
+        startRequest: { ...request.startRequest, authorization: { ...request.startRequest.authorization,
+          payload: { ...payload, sessionBrowserAccess: undefined } } } }, context)).rejects.toThrow();
+      expect(await start({ ...context, sessionBrowserContent: undefined })).toMatchObject({ result: { ok: false } });
+      expect(captures).toBe(0);
+      expect(await start()).toMatchObject({ result: { ok: true } });
+      expect(captures).toBe(1);
+      expect(await client.sendMachineLiveStreamRelayEnvelope(frame)).toEqual({ ok: true });
+      const wire = machineSocket.emit.mock.calls.find(([event]) => event === MACHINE_LIVE_STREAM_SOCKET_EVENT)?.[1];
+      expect(await openMachineLiveStreamEnvelopeV1(wire, content(sessionCodec))).toEqual({ ok: true, value: frame });
+      expect(await openMachineLiveStreamEnvelopeV1(wire, content(machineCodec))).toMatchObject({ ok: false });
+      const input = { ...frame, message: { kind: 'sideband_control' as const, control: { v: 1 as const, streamId: 'session-stream', sourceId: 'browser-source',
+        eventId: 'wheel', kind: 'browser_input' as const, controlEpoch: 0, event: { kind: 'wheel' as const, target: 'page' as const,
+          x: 0.5, y: 0.5, deltaX: 0, deltaY: 1, sequence: 1 } } } };
+      const sealed = await sealMachineLiveStreamEnvelopeV1(input, content(sessionCodec));
+      if (!sealed.ok) throw new Error(sealed.code);
+      const received: unknown[] = [];
+      client.onMachineLiveStreamRelayEnvelope(value => { received.push(value); });
+      machineSocket.trigger(MACHINE_LIVE_STREAM_SOCKET_EVENT, sealed.value);
+      await vi.waitFor(() => expect(received).toContainEqual(input));
+    } finally { await relay.dispose(); await client.shutdown(); }
   });
 
   it('emits and receives live-stream relay envelopes over the machine-scoped socket', async () => {

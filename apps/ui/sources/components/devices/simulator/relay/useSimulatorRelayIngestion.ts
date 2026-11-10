@@ -40,6 +40,7 @@ export type UseSimulatorRelayIngestionInput = Readonly<{
     enabled?: boolean;
     transport: SimulatorRelayTransport | null;
     serverId?: string | null;
+    sessionId?: string;
     sourceMachineId: string;
     targetMachineId: string;
     /**
@@ -81,6 +82,7 @@ const EMPTY_PLAYER_STATES: Readonly<Record<string, SimulatorPreviewStreamState |
 
 function createStreamIdentityKey(input: Readonly<{
     serverId?: string | null;
+    sessionId?: string;
     simulatorId: string;
     sourceMachineId: string;
     targetMachineId: string;
@@ -91,6 +93,7 @@ function createStreamIdentityKey(input: Readonly<{
 }>): string {
     return [
         input.serverId ?? '',
+        input.sessionId ?? '',
         input.simulatorId,
         input.streamId,
         input.sourceMachineId,
@@ -155,6 +158,7 @@ export function useSimulatorRelayIngestion(
     const {
         transport,
         serverId,
+        sessionId,
         simulatorId,
         sourceMachineId,
         targetMachineId,
@@ -163,8 +167,8 @@ export function useSimulatorRelayIngestion(
         sourceId,
         sourceOccurrenceId,
     } = input;
-    const streamIdentityKey = createStreamIdentityKey({ serverId, simulatorId, sourceMachineId, targetMachineId, streamId, streamFamily, sourceId, sourceOccurrenceId });
-    const sourceIdentityKey = createStreamIdentityKey({ serverId, simulatorId, sourceMachineId, targetMachineId, streamId: '', streamFamily, sourceId, sourceOccurrenceId });
+    const streamIdentityKey = createStreamIdentityKey({ serverId, sessionId, simulatorId, sourceMachineId, targetMachineId, streamId, streamFamily, sourceId, sourceOccurrenceId });
+    const sourceIdentityKey = createStreamIdentityKey({ serverId, sessionId, simulatorId, sourceMachineId, targetMachineId, streamId: '', streamFamily, sourceId, sourceOccurrenceId });
     const viewerSocketId = input.viewerSocketId ?? '';
     const openedStream = openedStreamRef.current;
     // A physical reconnect replaces the socket-bound admission id, not the picture's
@@ -225,6 +229,7 @@ export function useSimulatorRelayIngestion(
         }));
         const clientInput: MachineLiveStreamRelayClientInput = {
             serverId, sourceMachineId, targetMachineId, streamId, streamFamily,
+            ...(sessionId ? { sessionId } : {}),
             signal: requestController.signal,
             ...(sourceId ? { sourceId } : {}),
             ...(sourceOccurrenceId ? { sourceOccurrenceId } : {}),
@@ -355,7 +360,7 @@ export function useSimulatorRelayIngestion(
             // A late accepted capture needs its own final Stop before the carrier retires.
             if (openSettled) unsubscribe();
         };
-    }, [attempt, enabled, transport, serverId, simulatorId, sourceMachineId, targetMachineId, streamId, streamFamily, sourceId, sourceOccurrenceId]);
+    }, [attempt, enabled, transport, serverId, sessionId, simulatorId, sourceMachineId, targetMachineId, streamId, streamFamily, sourceId, sourceOccurrenceId]);
 
     const onFrameDecoded = React.useCallback(() => dispatch({ type: 'frame_decoded', streamId }), [streamId]);
     const playerStatesBySimulatorId = React.useMemo<UseSimulatorRelayIngestionResult['playerStatesBySimulatorId']>(() => {

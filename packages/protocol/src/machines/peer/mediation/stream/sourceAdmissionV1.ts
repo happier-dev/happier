@@ -9,6 +9,8 @@ export const MachineLiveStreamSourceAdmissionBindingV1Schema = lazyZodSchema(() 
   streamFamily: z.string().check(z.minLength(1)),
   sourceId: z.string().check(z.minLength(1)),
   sourceOccurrenceId: z.string().check(z.minLength(1)),
+  /** Installed Browser owner attests which Session owns this exact ephemeral source. */
+  sessionBrowserSessionId: z.optional(z.string().check(z.minLength(1))),
 }));
 export type MachineLiveStreamSourceAdmissionBindingV1 = z.infer<typeof MachineLiveStreamSourceAdmissionBindingV1Schema>;
 

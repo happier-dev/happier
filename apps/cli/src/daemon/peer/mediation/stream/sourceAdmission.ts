@@ -26,10 +26,13 @@ export function registerMachineLiveStreamSourceAdmissionHandler(
             protocolVersion: 1, result: { ok: false, reasonCode },
         });
         const admission = context?.machineAdmission;
+        const sessionBrowserAccess = context?.authorization?.kind === 'session.browser' ? context.authorization : undefined;
+        const sourceAuthority = sessionBrowserAccess ?? admission;
         const installation = options.readInstallationIdentity();
-        if (context?.callerAuthority !== 'present_user' || !admission || !installation
-            || request.machineId !== options.machineId || admission.machineId !== options.machineId
-            || admission.installationId !== installation.installationId) return refuse('capture_source_denied');
+        if (context?.callerAuthority !== 'present_user' || !sourceAuthority || !installation
+            || request.machineId !== options.machineId || sourceAuthority.machineId !== options.machineId
+            || sourceAuthority.installationId !== installation.installationId
+            || sessionBrowserAccess && request.streamFamily !== 'browser.streamed') return refuse('capture_source_denied');
         const actionContext = buildActionExecutorContextForRpc(context);
         const admitSource = async () => {
             if (request.streamFamily === 'browser.streamed') {
@@ -49,10 +52,11 @@ export function registerMachineLiveStreamSourceAdmissionHandler(
         if (!admitted.ok) return refuse(admitted.reasonCode);
         const payload = MachineLiveStreamSourceAdmissionPayloadV1Schema.parse({
             version: 1, machineId: options.machineId, installationId: installation.installationId,
-            accountId: admission.custodianAccountId, liveStreamSourceAdmission: {
-                homeServerIdentityId: admitted.homeServerIdentityId, actorAccountId: admission.actorAccountId,
+            accountId: sourceAuthority.custodianAccountId, liveStreamSourceAdmission: {
+                homeServerIdentityId: admitted.homeServerIdentityId, actorAccountId: sourceAuthority.actorAccountId,
                 streamFamily: admitted.source.streamFamily, sourceId: admitted.source.sourceId,
                 sourceOccurrenceId: admitted.source.sourceOccurrenceId,
+                ...(sessionBrowserAccess ? { sessionBrowserSessionId: sessionBrowserAccess.sessionId } : {}),
             },
         });
         return DaemonMachineLiveStreamSourceAdmitResponseV1Schema.parse({ protocolVersion: 1,

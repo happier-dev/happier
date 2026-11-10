@@ -33,6 +33,8 @@ import {
   parseSocketRpcAuthorizationContext,
   resolveSocketRpcSessionWriteAuthorizationMethod,
   resolveSocketRpcSessionAuthorization,
+  isSocketRpcSessionBrowserAuthorizationContext,
+  resolveSessionBrowserRpcCapabilityV1,
 } from '@happier-dev/protocol/socketRpc';
 import {
   isSocketRpcMachineReadServerOriginAuthorizationContext,
@@ -1211,6 +1213,37 @@ export async function authorizeMachineRpcRequest(
   machine?: MachineRpcAdmissionBoundary,
   source?: 'authenticated_home_socket',
 ): Promise<RpcAuthorizationResult> {
+  if (request.authorization?.kind === 'session.browser') {
+    const access = request.authorization;
+    const method = machine && request.method.startsWith(`${machine.machineId}:`)
+      ? request.method.slice(machine.machineId.length + 1) : '';
+    const capability = resolveSessionBrowserRpcCapabilityV1(method);
+    // The authenticated Home already resolved the Session share. Bind its
+    // decision to this installed source; never synthesize a Machine grant.
+    if (source !== 'authenticated_home_socket' || !machine
+      || !isSocketRpcSessionBrowserAuthorizationContext(access) || !capability
+      || !access.effectiveAccess.capabilities[capability]
+      || access.machineId !== machine.machineId
+      || access.installationId !== machine.resolveInstallationId()) return forbidden('session_authorization');
+    const params = request.params && typeof request.params === 'object' && !Array.isArray(request.params)
+      ? request.params as Record<string, unknown> : null;
+    if (!params || params.machineId !== undefined && params.machineId !== access.machineId) return forbidden('machine_target');
+    if (method === RPC_METHODS.DAEMON_BROWSER_VIEW_LIST || method === RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH) {
+      if (params.browserSessionId !== access.sessionId) return forbidden('session_authorization');
+    } else if (method === RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH) {
+      const command = params.command;
+      if (!command || typeof command !== 'object' || !('browserSessionId' in command)
+        || command.browserSessionId !== access.sessionId) return forbidden('session_authorization');
+    } else if (method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT && params.streamFamily !== 'browser.streamed') {
+      return forbidden('session_authorization');
+    }
+    try {
+      return access.custodianAccountId === await machine.resolveCustodianAccountId(request.signal)
+        ? { ok: true } : forbidden('machine_custodian');
+    } catch {
+      return forbidden('authorization_unavailable');
+    }
+  }
   if (
     request.machineAdmission !== undefined &&
     isSocketRpcActionApiServerOriginAuthorizationContext(request.authorization)

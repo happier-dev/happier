@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import Fastify from 'fastify';
+import { Server } from 'socket.io';
 import { MachineLiveStreamRelayAuthorizationV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -29,25 +30,41 @@ import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteH
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { registerPeerMediationGrantRoutes } from '@/app/api/routes/machines/peer/mediation/registerPeerMediationGrantRoutes';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { createPeerMediationViewerSocketOwnershipVerifier } from './viewerSocketOwnership';
+import { createPeerMediationViewerSocketOwnershipVerifier, createPeerMediationViewerSessionAuthenticationReader } from './viewerSocketOwnership';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createFakeSocket, getSocketHandler } from '../testkit/socketHarness';
 import { getMachineInstallationSocketRoom } from '../socketRooms';
 import { machineLiveStreamRelayHandler } from './machineLiveStreamRelayHandler';
+import { retireSessionConsumptionAfterAccessChange } from './sessionConsumption';
+import { createSessionHumanPresenceService, notifySessionHumanPresenceAccessChanged } from '@/app/session/humanPresence/sessionHumanPresenceService';
 import { createBaseStartRequest, createLiveStreamStartRequest } from '../../../../../ui/sources/sync/domains/machines/peer/mediation/stream/startRequest';
 import { createMachineLiveStreamSocketTransport } from '../../../../../ui/sources/sync/domains/machines/peer/mediation/stream/socketTransport';
 
 describe('Live stream current Machine admission (real SQLite)', () => {
     let harness: LightSqliteHarness;
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-stream-machine-admission-', initAuth: true });
+        harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-stream-machine-admission-', initAuth: true,
+            env: { HAPPIER_FEATURE_SHARING_SESSION__ENABLED: '1', HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1' } });
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
-    it.each(['owner-session-browser', 'manage-browser', 'guest-browser', 'guest-own-desktop'] as const)(
+    it.each(['owner-session-browser', 'manage-browser', 'guest-browser', 'guest-own-desktop',
+        'shared-view-browser', 'shared-edit-browser', 'shared-view-encrypted-browser', 'unshared-session-browser',
+        'withdrawn-session-browser', 'downgraded-session-browser', 'shared-team-browser', 'unqualified-team-browser'] as const)(
         'mints and consumes a viewer-bound grant through HTTP and relay START for %s', async (path) => {
             const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
             const actor = path === 'owner-session-browser' ? owner : await db.account.create({ data: { encryptionMode: 'plain' } });
+            const encryptedSessionBrowser = path === 'shared-view-encrypted-browser';
+            const teamBrowser = path === 'shared-team-browser' || path === 'unqualified-team-browser';
+            const sessionBrowser = path === 'shared-view-browser' || path === 'shared-edit-browser' || encryptedSessionBrowser
+                || path === 'unshared-session-browser' || path === 'withdrawn-session-browser' || path === 'downgraded-session-browser' || teamBrowser;
+            if (teamBrowser) await db.account.update({ where: { id: actor.id }, data: { encryptionMode: 'e2ee', publicKey: randomUUID() } });
+            const session = sessionBrowser ? await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}',
+                encryptionMode: encryptedSessionBrowser ? 'e2ee' : 'plain' } }) : null;
+            if (session && path !== 'unshared-session-browser') await db.sessionShare.create({ data: {
+                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: actor.id,
+                accessLevel: path === 'shared-edit-browser' || path === 'downgraded-session-browser' ? 'edit' : 'view',
+            } });
             const installation = tweetnacl.sign.keyPair();
             const installationId = randomUUID();
             const machine = await db.machine.create({ data: {
@@ -58,30 +75,35 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                 operationProtocolCapabilitiesRevision: 1,
                 dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
             } });
-            if (actor.id !== owner.id) {
+            if (actor.id !== owner.id && !sessionBrowser) {
                 await makeShareEligibleForTest(owner.id, actor.id);
                 expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
                     principal: { kind: 'account', accountId: actor.id }, level: path === 'manage-browser' ? 'admin' : 'view',
                 }))).toMatchObject({ kind: 'saved' });
             }
-            const viewer = createFakeSocket({ id: randomUUID(), data: { userId: actor.id, clientType: 'user-scoped' } });
+            const viewer = createFakeSocket({ id: randomUUID(), data: { userId: actor.id, clientType: 'user-scoped',
+                authAuthority: 'present_user', ...(path === 'shared-team-browser'
+                    ? { authTokenAuthenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }] } : {}) } });
             // Socket.IO is the network boundary; its viewer ownership verifier stays real.
-            const verifyViewerSocketOwnership = createPeerMediationViewerSocketOwnershipVerifier({
+            const viewerSocketIo = {
                 sockets: { sockets: new Map([[viewer.id, viewer]]) },
-            } as unknown as Parameters<typeof createPeerMediationViewerSocketOwnershipVerifier>[0]);
+            } as unknown as Parameters<typeof createPeerMediationViewerSocketOwnershipVerifier>[0];
+            const verifyViewerSocketOwnership = createPeerMediationViewerSocketOwnershipVerifier(viewerSocketIo);
+            const readViewerSessionAuthentication = createPeerMediationViewerSessionAuthenticationReader(viewerSocketIo);
             const source = createFakeSocket({ id: randomUUID(), data: { clientType: 'machine-scoped', machineId: machine.id,
                 verifiedMachineInstallationId: installationId } });
             const streamId = randomUUID();
             const streamFamily = path === 'guest-own-desktop' ? 'screen' : 'browser.streamed';
-            const view = { browserSessionId: 'cmvzjl3en0042mcph0uf97bvt', viewId: 'QAR90B-reload12-main' };
+            const view = { browserSessionId: session?.id ?? 'cmvzjl3en0042mcph0uf97bvt', viewId: 'QAR90B-reload12-main' };
             const sourceId = path === 'guest-own-desktop' ? 'personal-desktop' : browserViewKey(view);
             const sourceOccurrenceId = randomUUID();
             const payload = { version: 1 as const, machineId: machine.id, installationId, accountId: owner.id,
                 liveStreamSourceAdmission: { homeServerIdentityId: await getOrCreateServerIdentityId(), actorAccountId: actor.id,
-                    streamFamily, sourceId, sourceOccurrenceId } };
+                    streamFamily, sourceId, sourceOccurrenceId,
+                    ...(session ? { sessionBrowserSessionId: session.id } : {}) } };
             let sourceAdmission = { payload, proof: signMachineInstallationProof({ payload, privateKey: installation.secretKey }) };
             let disposeBrowser: (() => void) | undefined;
-            if (streamFamily === 'browser.streamed' && actor.id !== owner.id) {
+            if (streamFamily === 'browser.streamed' && actor.id !== owner.id && !sessionBrowser) {
                 const registry = createMachineLiveStreamCaptureRegistry();
                 // Chromium/CDP is the OS boundary; Browser discovery, custody and proof issuance stay real.
                 const transport = { openPage: async () => ({ targetId: 'page', sessionId: 'cdp' }),
@@ -125,11 +147,16 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                 HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: Buffer.from(signing.secretKey).toString('base64url'),
             }, verifyViewerSocketOwnership });
             const delivered: unknown[] = [];
+            const sourceControls: unknown[] = [];
             machineLiveStreamRelayHandler(owner.id, source as unknown as Parameters<typeof machineLiveStreamRelayHandler>[1], {
-                io: { to: (room: string) => ({ emit: (_event: string, value: unknown) => { if (room === viewer.id) delivered.push(value); } }) },
+                io: { to: (room: string) => ({ emit: (_event: string, value: unknown) => {
+                    if (room === viewer.id) delivered.push(value);
+                    else sourceControls.push(value);
+                } }) },
                 serverRoutedLiveStreamEnabled: true, relayCaps: {}, resolveAccountEncryptionMode: async () => 'plain',
                 relayAuthorizationTrustRoots: [{ keyId: 'stream-regression', publicKeyBase64Url: Buffer.from(signing.publicKey).toString('base64url') }],
                 verifyViewerSocketOwnership,
+                readViewerSessionAuthentication,
             });
             try {
                 const token = await createAccountTokenForTests(actor.id, { kind: 'account', authority: 'present_user' });
@@ -140,7 +167,7 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                             ttlMs: 60_000, viewerSocketId: viewer.id, codecId: 'image.mjpeg', viewerCodecs: ['image.mjpeg'],
                             scope: { kind: 'live_stream', streamId, streamFamily, sourceId },
                         } });
-                    expect(unqualified.json()).toMatchObject({ ok: false, reasonCode: 'route_unavailable' });
+                    expect(unqualified.json()).toMatchObject({ ok: false, reasonCode: sessionBrowser ? 'access_denied' : 'route_unavailable' });
                 }
                 const response = await home.inject({ method: 'POST', url: '/v1/machines/peer/mediation/route-grants',
                     headers: { authorization: `Bearer ${token}` }, payload: {
@@ -150,6 +177,10 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                         scope: { kind: 'live_stream', streamId, streamFamily, sourceId },
                     } });
                 expect(response.statusCode, response.body).toBe(200);
+                if (path === 'unshared-session-browser') {
+                    expect(response.json()).toMatchObject({ ok: false, reasonCode: 'capture_source_denied' });
+                    return;
+                }
                 expect(response.json()).toMatchObject({ ok: true });
                 const authorization = MachineLiveStreamRelayAuthorizationV1Schema.parse(response.json().relayAuthorization);
                 const startRequest = createLiveStreamStartRequest({ baseRequest: createBaseStartRequest({
@@ -158,14 +189,42 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                 }), authorization });
                 const envelope = { v: 1 as const, sourceMachineId: machine.id, targetMachineId: machine.id, viewerSocketId: viewer.id };
                 const send = getSocketHandler(source, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+                if (path === 'withdrawn-session-browser' || path === 'downgraded-session-browser') {
+                    // A signed grant is replayable until expiry; opening a stream is a new admission.
+                    if (path === 'withdrawn-session-browser') await db.sessionShare.deleteMany({ where: { sessionId: session!.id } });
+                    else await db.sessionShare.updateMany({ where: { sessionId: session!.id }, data: { accessLevel: 'view' } });
+                    notifySessionHumanPresenceAccessChanged({ sessionId: session!.id });
+                }
+                if (teamBrowser) {
+                    // The current viewer credential, rather than the custodian's socket,
+                    // must qualify the Team arm when the stream is opened.
+                    const team = await db.team.create({ data: { name: 'Browser credential Team', authenticationPolicy: {
+                        v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }],
+                    } } });
+                    await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
+                    await db.sessionTeamGrant.create({ data: { sessionId: session!.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
+                    await db.sessionShare.deleteMany({ where: { sessionId: session!.id } });
+                    notifySessionHumanPresenceAccessChanged({ sessionId: session!.id });
+                }
                 await send({ ...envelope, message: { kind: 'start', startRequest } });
                 await send({ ...envelope, message: { kind: 'frame', frame: {
                     v: 1, streamId, sequence: 1, timestampMs: Date.now(), codecId: 'image.mjpeg', payloadKind: 'image_keyframe',
-                    payloadEncoding: 'binary_base64', payload: { t: 'plain', v: 'AQID' }, payloadSizeBytes: 3,
+                    payloadEncoding: 'binary_base64', payload: encryptedSessionBrowser ? { t: 'encrypted', c: 'AQID' } : { t: 'plain', v: 'AQID' }, payloadSizeBytes: 3,
                 } } });
                 const frame = delivered.find(value => typeof value === 'object' && value !== null && 'message' in value
                     && typeof value.message === 'object' && value.message !== null && 'kind' in value.message && value.message.kind === 'frame');
+                if (path === 'withdrawn-session-browser' || path === 'downgraded-session-browser' || path === 'unqualified-team-browser') {
+                    expect(frame).toBeUndefined();
+                    expect(source.emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT, expect.objectContaining({ message: {
+                        kind: 'control', control: expect.objectContaining({ streamId, kind: 'stop' }),
+                    } }));
+                    return;
+                }
                 expect(frame).toBeDefined();
+                if (encryptedSessionBrowser) expect(frame).toMatchObject({ message: { kind: 'frame', frame: {
+                    payload: { t: 'encrypted', c: 'AQID' },
+                } } });
+                else {
                 const consumed = await new Promise<unknown>((resolve, reject) => {
                     createMachineLiveStreamSocketTransport({
                         emit: () => {}, deliver: resolve, onError: reject,
@@ -173,6 +232,56 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                     }).receive(frame);
                 });
                 expect(consumed).toMatchObject({ message: { kind: 'frame', frame: { streamId, payloadBase64: 'AQID' } } });
+                }
+                if (sessionBrowser) {
+                    expect(authorization.payload).toMatchObject({ sessionBrowserAccess: {
+                        kind: 'session.browser', sessionId: session?.id,
+                        effectiveAccess: { capabilities: { submitAgentInput: path === 'shared-edit-browser' } },
+                    } });
+                    machineLiveStreamRelayHandler(actor.id, viewer as unknown as Parameters<typeof machineLiveStreamRelayHandler>[1], {
+                        io: { to: () => ({ emit: (_event: string, value: unknown) => sourceControls.push(value) }) },
+                        serverRoutedLiveStreamEnabled: true, relayCaps: {},
+                    });
+                    const before = sourceControls.length;
+                    await getSocketHandler(viewer, MACHINE_LIVE_STREAM_SOCKET_EVENT)({ ...envelope, message: {
+                        kind: 'sideband_control', control: { v: 1, streamId, payload: encryptedSessionBrowser
+                            ? { t: 'encrypted', c: 'AQID' } : { t: 'plain', v: {
+                                v: 1, streamId, sourceId, eventId: 'browser-input', kind: 'tap', x: 0.5, y: 0.5,
+                            } } },
+                    } });
+                    // Encrypted controls are classified by the daemon after decryption.
+                    expect(sourceControls.length > before).toBe(path === 'shared-edit-browser' || encryptedSessionBrowser);
+                    const beforeWatchControl = sourceControls.length;
+                    await getSocketHandler(viewer, MACHINE_LIVE_STREAM_SOCKET_EVENT)({ ...envelope, message: {
+                        kind: 'sideband_control', control: { v: 1, streamId, payload: encryptedSessionBrowser
+                            ? { t: 'encrypted', c: 'AQID' } : { t: 'plain', v: {
+                                v: 1, streamId, sourceId, eventId: 'watch-control', kind: 'request_keyframe',
+                            } } },
+                    } });
+                    expect(sourceControls.length).toBeGreaterThan(beforeWatchControl);
+                    const presenceIo = new Server();
+                    const presence = createSessionHumanPresenceService({ io: presenceIo,
+                        onSessionAccessChanged: sessionId => retireSessionConsumptionAfterAccessChange([], sessionId),
+                    });
+                    try {
+                        // The real committed access-change seam retires open-ended access.
+                        // A downgrade must close the old input-bearing admission too.
+                        if (path === 'shared-edit-browser') await db.sessionShare.updateMany({
+                            where: { sessionId: session!.id }, data: { accessLevel: 'view' },
+                        });
+                        else await db.sessionShare.deleteMany({ where: { sessionId: session!.id } });
+                        notifySessionHumanPresenceAccessChanged({ sessionId: session!.id });
+                        expect(delivered).toContainEqual(expect.objectContaining({ message: {
+                            kind: 'control', control: expect.objectContaining({ streamId, kind: 'stop' }),
+                        } }));
+                        const deliveredBefore = delivered.length;
+                        await send({ ...envelope, message: { kind: 'frame', frame: {
+                            v: 1, streamId, sequence: 2, timestampMs: Date.now(), codecId: 'image.mjpeg', payloadKind: 'image_keyframe',
+                            payloadEncoding: 'binary_base64', payload: { t: 'plain', v: 'AQID' }, payloadSizeBytes: 3,
+                        } } });
+                        expect(delivered).toHaveLength(deliveredBefore);
+                    } finally { presence.close(); }
+                }
             } finally {
                 await getSocketHandler(source, 'disconnect')();
                 await home.close();

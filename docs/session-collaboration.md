@@ -125,6 +125,26 @@ for a released reader while every other rule — runtime-principal currentness, 
 transcript shareability, capability — stays in the same owner. The two seam projections are two
 presentations of one decision, never two admissions.
 
+The Session share also governs its ephemeral managed Browser: View watches its
+frames and Steer drives it, without a Machine grant. Browser routing consumes
+`resolveSessionAccessForOperation` (`readTranscript` for viewing,
+`submitAgentInput` for driving), then carries that typed decision to the exact
+installed source and signed stream relay. Browser does not compute a second share
+policy. Session-scoped Browser transport follows the Session encryption mode,
+using its Session key for E2EE and remaining keyless for plaintext Sessions; it
+does not disclose the Machine key. Nonowners cannot use persistent profiles through
+this path. An unshared guest gains no Browser access from knowing its source or
+Session id. These are current unpublished 0.3 contracts requiring matching Home,
+daemon, Protocol and UI readers.
+
+The installed daemon resolves content with the Session's retained requester
+bootstrap credentials and Home when that birth context exists, otherwise with
+its installed Account credentials. The Session reader owns the encryption mode;
+the authenticated viewer's Account mode does not select it. The admitted stream
+retains that codec and input capability, without permission reads per frame or
+input. A new relay START admits current Session access; access-change push closes
+an existing open Session stream.
+
 A verified Session-scoped Runner principal is admitted here too, as a capped `edit` recipient
 with empty `sources` and no owner metadata: its authority is credential-derived, not a persisted
 sharing relationship, and `verifyCurrentMaterializedRunnerPrincipalInTx` revalidates the

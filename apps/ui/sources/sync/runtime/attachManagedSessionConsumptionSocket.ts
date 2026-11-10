@@ -1,8 +1,33 @@
 import type { Socket } from 'socket.io-client';
 import type { ManagedConnectionTransport } from '@happier-dev/connection-supervisor';
 import { emitWithAckCancellable } from '@happier-dev/sync-client';
-import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceAckV1Schema } from '@happier-dev/protocol/sessions';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceAckV1Schema, type SessionConsumptionReplaceV1 } from '@happier-dev/protocol/sessions';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+
+/** The connection-local declaration boundary, shared by managed sync and scoped Session consumers. */
+export async function replaceSessionConsumption(input: Readonly<{
+    socket: Parameters<typeof emitWithAckCancellable>[0]['socket'];
+    declaration: SessionConsumptionReplaceV1;
+    signal: AbortSignal;
+}>): Promise<Readonly<{
+    liveSessionIds: readonly string[];
+    fullyAdmitted: boolean;
+}>> {
+    const result = await emitWithAckCancellable({ socket: input.socket, event: SESSION_CONSUMPTION_REPLACE_EVENT,
+        payload: input.declaration, timeoutMs: null, signal: input.signal });
+    const parsed = SessionConsumptionReplaceAckV1Schema.safeParse(result);
+    if (!parsed.success) throw new Error('session_consumption_invalid_ack');
+    if (!parsed.data.ok) throw new Error(`session_consumption_${parsed.data.error}`);
+    const requestedLive = new Set(input.declaration.liveSessionIds);
+    const liveSessionIds = parsed.data.liveSessionIds.filter(id => requestedLive.has(id));
+    const admittedLive = new Set(liveSessionIds);
+    const admittedDurable = new Set(parsed.data.durableSessionIds);
+    return {
+        liveSessionIds,
+        fullyAdmitted: input.declaration.liveSessionIds.every(id => admittedLive.has(id))
+            && input.declaration.durableSessionIds.every(id => admittedDurable.has(id)),
+    };
+}
 
 /** Captures the authenticated transport lifetime; replacement disposes every source subscription. */
 export function attachManagedSessionConsumptionSocket(input: Readonly<{
@@ -31,20 +56,13 @@ export function attachManagedSessionConsumptionSocket(input: Readonly<{
             const requestId = ++request;
             const signal = controller.signal;
             fireAndForget((async () => {
-                const result = await emitWithAckCancellable({ socket: input.socket, event: SESSION_CONSUMPTION_REPLACE_EVENT,
-                    payload: declaration, timeoutMs: null, signal });
+                const result = await replaceSessionConsumption({ socket: input.socket, declaration, signal });
                 if (disposed || signal.aborted || requestId !== request || !input.transport.isConnected()) return;
-                const parsed = SessionConsumptionReplaceAckV1Schema.safeParse(result);
-                if (!parsed.success) throw new Error('session_consumption_invalid_ack');
-                if (!parsed.data.ok) throw new Error(`session_consumption_${parsed.data.error}`);
-                const requestedLive = new Set(declaration.liveSessionIds);
-                const next = new Set(parsed.data.liveSessionIds.filter(id => requestedLive.has(id)));
+                const next = new Set(result.liveSessionIds);
                 const increased = [...next].filter(id => !admittedLive.has(id));
                 admittedLive = next;
                 if (increased.length > 0) input.onLiveConsumptionAdmitted?.(increased);
-                const admittedDurable = new Set(parsed.data.durableSessionIds);
-                if (declaration.liveSessionIds.some(id => !next.has(id))
-                    || declaration.durableSessionIds.some(id => !admittedDurable.has(id))) {
+                if (!result.fullyAdmitted) {
                     fail(new Error('session_consumption_partial_admission'));
                 }
             })(), { onError: error => { if (!signal.aborted && requestId === request) fail(error); } });

@@ -13,6 +13,10 @@ import { createMachineLiveStreamRelayTerminator } from '../../peer/mediation/str
 import { createDaemonMachineLiveStreamCaptureAdapter } from '../../peer/mediation/stream/captureAdapter';
 import { createBrowserCdpScreencastProducer } from './cdpScreencast';
 import { registerBrowserLiveCapture } from './registration';
+import tweetnacl from 'tweetnacl';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
+import { createMachineLiveStreamRelayAuthorizationSigningInputV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
 describe('human browser input relay', () => {
   it('admits only the controlling human viewer and current epoch through real relay, service and CDP wiring', async () => {
@@ -44,30 +48,61 @@ describe('human browser input relay', () => {
     const registry = createMachineLiveStreamCaptureRegistry();
     const registration = registerBrowserLiveCapture({ registry, contextCapture, producer, automation: () => automation });
     const envelopes: MachineLiveStreamRelayEnvelopeV1[] = [];
+    const keys = tweetnacl.sign.keyPair();
     const relay = createMachineLiveStreamRelayTerminator({ captureAdapter: createDaemonMachineLiveStreamCaptureAdapter(registry), machineId: 'machine', nowMs: Date.now,
+      accountId: 'account', sourceMachineInstallationId: 'installation', resolveRelayAuthorizationTrustRoots: () => [
+        { keyId: 'home', publicKey: Buffer.from(keys.publicKey).toString('base64url') },
+      ],
       emitEnvelope: envelope => {
         envelopes.push(envelope);
-        if (envelope.message.kind === 'frame') relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer',
+        if (envelope.message.kind === 'frame') relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'machine',
           message: { kind: 'control', control: { v: 1, streamId: envelope.message.frame.streamId, kind: 'ack', nextSequence: envelope.message.frame.sequence + 1 } } });
       } });
     const view = { browserSessionId: 'browser', viewId: 'view' };
     const sourceId = browserViewKey(view);
-    const start = (streamId: string, authority: 'present_user' | 'account_automation') => relay.start({ v: 1, streamId,
-      streamFamily: 'browser.streamed', sourceId, sourceMachineId: 'machine', targetMachineId: 'viewer', routeKind: 'server_relay',
-      authorization: { payload: { v: 1, grantId: `grant:${streamId}`, accountId: 'account', flowKind: 'live_stream', routeKind: 'server_relay',
-        sourceMachineId: 'machine', targetMachineId: 'viewer', streamId, streamFamily: 'browser.streamed', sourceId, iat: Date.now(), exp: Date.now() + 60_000,
-        aud: 'happier-live-stream-relay-authorization' }, signature: { keyId: 'key', alg: 'Ed25519', valueBase64Url: 'AQID' } } }, authority);
-    const input = (streamId: string, controlEpoch: number, eventId: string) => relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer',
+    const start = (streamId: string, authority: 'present_user' | 'account_automation') => {
+      const source = registry.resolve({ sourceId });
+      if (!source.ok || !source.source.sourceOccurrenceId) throw new Error('missing Browser source');
+      const level: 'view' | 'edit' = streamId === 'readonly' ? 'view' : 'edit';
+      const payload = { v: 2 as const, grantId: `grant:${streamId}`, accountId: 'account', flowKind: 'live_stream' as const, routeKind: 'server_relay' as const,
+        sourceMachineId: 'machine', targetMachineId: 'machine', streamId, streamFamily: 'browser.streamed', sourceId, iat: Date.now(), exp: Date.now() + 60_000,
+        aud: 'happier-live-stream-relay-authorization' as const, viewerSocketId: streamId,
+        viewerAccountId: 'recipient', sourceMachineInstallationId: 'installation', personalSourceAdmission: {
+          homeServerIdentityId: 'home', actorAccountId: 'recipient', streamFamily: 'browser.streamed', sourceId,
+          sourceOccurrenceId: source.source.sourceOccurrenceId, sessionBrowserSessionId: 'session',
+        }, sessionBrowserAccess: { kind: 'session.browser' as const, sessionId: 'session', actorAccountId: 'recipient',
+          custodianAccountId: 'account', machineId: 'machine', installationId: 'installation', effectiveAccess: {
+            v: 1 as const, level, sources: [{ kind: 'direct' as const, shareId: 'share' }],
+            capabilities: projectSessionAccessCapabilitiesV1({ owner: false, grants: [{ accessLevel: level, canApprovePermissions: false }] }),
+          } },
+      };
+      return relay.start({ v: 1, streamId, viewerSocketId: streamId,
+      streamFamily: 'browser.streamed', sourceId, sourceMachineId: 'machine', targetMachineId: 'machine', routeKind: 'server_relay',
+      authorization: { payload, signature: { keyId: 'home', alg: 'Ed25519', valueBase64Url: Buffer.from(tweetnacl.sign.detached(
+        Buffer.from(createMachineLiveStreamRelayAuthorizationSigningInputV1(payload)), keys.secretKey)).toString('base64url') } } }, authority,
+        createMachineContentCodec({ encryptionMode: 'plain' }));
+    };
+    const input = (streamId: string, controlEpoch: number, eventId: string) => relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'machine',
       message: { kind: 'sideband_control', control: { v: 1, streamId, sourceId, eventId, kind: 'browser_input', controlEpoch,
         event: { kind: 'wheel', target: 'page', x: 0.5, y: 0.25, deltaX: 12, deltaY: 240, sequence: 1 } } } });
     try {
       await result.adapter.dispatchCommand({ ...view, kind: 'openView', commandId: 'open', platform: 'web', focus: true,
         target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
-      for (const [stream, authority] of [['one', 'present_user'], ['two', 'present_user'], ['agent', 'account_automation']] as const) {
+      for (const [stream, authority] of [['one', 'present_user'], ['two', 'present_user'], ['readonly', 'present_user'], ['agent', 'account_automation']] as const) {
         expect(await start(stream, authority)).toMatchObject({ ok: true });
       }
       for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: 'cdp-page',
         params: { sessionId: 1, data: 'AQID', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
+      expect(envelopes.some(envelope => envelope.message.kind === 'frame' && envelope.message.frame.streamId === 'readonly'
+        && envelope.message.frame.payloadKind === 'image_keyframe')).toBe(true);
+      expect(relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'machine', message: { kind: 'sideband_control', control: {
+        v: 1, streamId: 'readonly', sourceId, eventId: 'view-keyframe', kind: 'request_keyframe',
+      } } })).toEqual({ ok: true });
+      expect(input('readonly', 0, 'forbidden-view-input')).toEqual({ ok: false, reasonCode: 'capture_source_denied' });
+      expect(relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'machine', message: { kind: 'sideband_control', control: {
+        v: 1, streamId: 'readonly', sourceId, eventId: 'legacy-view-input', kind: 'keyboard_text', text: 'forbidden',
+      } } })).toEqual({ ok: false, reasonCode: 'capture_source_denied' });
+      expect(commands.filter(command => command.method === 'Input.dispatchMouseEvent')).toHaveLength(0);
       expect(input('agent', 0, 'agent')).toEqual({ ok: false, reasonCode: 'input_not_supported' });
       expect(input('one', 0, 'first')).toEqual({ ok: true });
       await vi.waitFor(() => expect(commands.filter(command => command.method === 'Input.dispatchMouseEvent'))

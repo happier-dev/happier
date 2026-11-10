@@ -86,6 +86,7 @@ async function startServerRelayedStream(input: Readonly<{
 
 export async function startProductionMachineLiveStream(input: Readonly<{
     serverId?: string | null;
+    sessionId?: string;
     sourceMachineId: string;
     targetMachineId: string;
     routeKind: 'loopback_direct' | 'server_relay';
@@ -142,7 +143,7 @@ export async function startProductionMachineLiveStream(input: Readonly<{
     let sourceAdmission = input.sourceAdmission;
     const state = readRegisteredStorageState();
     const machine = state ? resolveServerScopedMachine(state, server.serverId, input.sourceMachineId) : null;
-    if (!sourceAdmission && machine?.isShared === true) {
+    if (!sourceAdmission && (input.sessionId || machine?.isShared === true)) {
         const admitted = await requestMachineLiveStreamSourceAdmission({ ...input, serverId: server.serverId, accountId });
         if (!admitted.ok) return admitted;
         sourceAdmission = admitted.sourceAdmission;

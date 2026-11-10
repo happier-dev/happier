@@ -29,6 +29,8 @@ import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/m
 import { DaemonMachineLiveStreamRelayStartRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
 import { MachineLiveStreamRelayAuthorizationV1Schema, MachineLiveStreamSourceAdmissionV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SocketRpcSessionBrowserAuthorizationContextSchema, type SocketRpcSessionBrowserAuthorizationContext } from '@happier-dev/protocol/socketRpc';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { createMachineLiveStreamRelayAuthorizationSigningInputV1, MACHINE_LIVE_STREAM_SOCKET_EVENT } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { openMachineLiveStreamEnvelopeV1, sealMachineLiveStreamEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
@@ -60,6 +62,11 @@ import { createBrowserRecordingState } from '@/sync/domains/browser/recording';
 import { selectBrowserContextComposerAttachments } from '@/sync/domains/browser/context/selectors';
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+// Static cross-app imports also load Socket.IO; keep that external boundary installed from collection.
+vi.mock('socket.io-client', async importOriginal => {
+    const { createSessionOpsSocketIoClientBoundary } = await import('@/dev/testkit/harness/sessionOpsNetworkBoundary');
+    return createSessionOpsSocketIoClientBoundary(importOriginal);
+});
 const clipboardBoundary = vi.hoisted(() => ({ text: '  pasted text\n' }));
 vi.mock('expo-clipboard', () => ({ getStringAsync: async () => clipboardBoundary.text }));
 vi.mock('react-native', async () => {
@@ -91,6 +98,7 @@ const boundary = vi.hoisted(() => ({
     sourceAdmission: null as ((payload: unknown) => Promise<unknown>) | null,
     startRelay: null as ((payload: unknown) => Promise<unknown>) | null,
     sharedViewer: false as false | 'use' | 'manage',
+    sessionBrowserAccess: null as SocketRpcSessionBrowserAuthorizationContext | null,
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -250,16 +258,19 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                 const { AccountProfileSchema } = await import('@happier-dev/protocol/account/profile');
                 return Response.json(AccountProfileSchema.parse({ id: home.accountId }));
             }
+            if (path !== '/v2/sessions/read-batch' && /^\/v2\/sessions\/[^/]+$/.test(path)) {
+                const { createSessionAccessFixture, createSessionFixture, createPlainSessionByIdResponseFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+                return Response.json(createPlainSessionByIdResponseFixture(createSessionFixture({
+                    id: decodeURIComponent(path.slice('/v2/sessions/'.length)), metadataLayoutVersion: 1,
+                    metadata: null, ownerMetadataView: null, access: createSessionAccessFixture('edit'),
+                })));
+            }
             if (path === '/v1/machines/read-batch') {
-                const { MachineReadBatchResponseV1Schema } = await import('@happier-dev/protocol/machines/machineReadBatchV1');
-                const { MACHINE_PLAIN_DATA_KEY_MARKER } = await import('@happier-dev/protocol/machines/machineStoredContent');
-                return Response.json(MachineReadBatchResponseV1Schema.parse({ results: [{ machineId: 'machine_1', status: 'found',
-                    machine: { id: 'machine_1', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
-                        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
-                        storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-                        access: { custodian: { accountId: boundary.sharedViewer ? 'machine-owner' : home.accountId, displayName: 'Owner' },
-                            role: boundary.sharedViewer || 'manage', resourceMode: 'plain', accessState: 'ready' } },
-                }] }));
+                const { createMachineReadBatchResponseFixture, createPlainMachineRowFixture,
+                    createPlainSharedMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+                return createMachineReadBatchResponseFixture(init?.body, id => boundary.sharedViewer
+                    ? createPlainSharedMachineRowFixture({ id, custodianAccountId: 'machine-owner', role: boundary.sharedViewer })
+                    : createPlainMachineRowFixture({ id, accountId: home.accountId }));
             }
             if (boundary.actionDispatch && /^\/v1\/actions\/browser\.(goBack|goForward|reload|stop|navigate)$/.test(path)) {
                 const { ExternalActionRequestEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
@@ -290,6 +301,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                 payload: { v: boundary.sharedViewer ? 2 : 1, grantId: `grant:${scope.streamId}`, accountId: admittedSource?.payload.accountId ?? home.accountId,
                     ...(boundary.sharedViewer ? { viewerAccountId: home.accountId, sourceMachineInstallationId: 'installation',
                         personalSourceAdmission: admittedSource?.payload.liveStreamSourceAdmission } : {}),
+                    ...(boundary.sessionBrowserAccess ? { sessionBrowserAccess: boundary.sessionBrowserAccess } : {}),
                     sourceMachineId: request.machineId, targetMachineId: request.targetMachineId,
                     flowKind: 'live_stream', routeKind: 'server_relay', ...streamScope,
                     ...(boundary.maxFrameBytes ? { maxFrameBytes: boundary.maxFrameBytes } : {}),
@@ -314,6 +326,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         boundary.sourceAdmission = null;
         boundary.startRelay = null;
         boundary.sharedViewer = false;
+        boundary.sessionBrowserAccess = null;
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
         storage.getState().applyMachines([createMachineFixture({ id: 'machine_1', storageMode: 'plain' })],
@@ -752,6 +765,125 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             viewerSocketId: 'tab_1',
             message: { kind: 'sideband_control', control: expect.objectContaining({ kind: 'tap', sourceId: 'browser-view-key-1' }) },
         }));
+    });
+
+    it.each(['view', 'edit'] as const)('uses the shared Session capability for Browser controls while keeping frames (%s)', async level => {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createSessionFixture, createSessionAccessFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        storage.getState().applySessions([createSessionFixture({ id: view.browserSessionId, serverId,
+            metadataLayoutVersion: 1, metadata: null, ownerMetadataView: null,
+            access: createSessionAccessFixture(level) })]);
+        boundary.views = [daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
+            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } })];
+        const state = { ...createBrowserControlState(), viewsById: { [view.viewId]: view } };
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId={view.browserSessionId} platform="web"
+            initialBrowserState={state} testID="shared-browser"
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+            pluginBrowserActionContext={{ sessionId: view.browserSessionId, machineId: 'machine_1', serverId }} />);
+        try {
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            await waitForStreamAdmission();
+            const picture = screen.findByType(BrowserStreamedTarget).props.runtime;
+            if (level === 'view') expect(picture.input).toBeNull();
+            else expect(picture.input).toMatchObject({ sourceId: 'browser-view-key-1' });
+            expect(screen.findByTestId('shared-browser-reload')?.props.disabled).toBe(level === 'view');
+            if (level === 'view') expect(screen.findByTestId('shared-browser-viewport')).toBeNull();
+            const streamId = (boundary.requests.find(request => (request as { method: string }).method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START) as {
+                payload: { startRequest: { streamId: string } } }).payload.startRequest.streamId;
+            await act(async () => {
+                const envelope: MachineLiveStreamRelayEnvelopeV1 = { v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1',
+                    message: { kind: 'frame', frame: { v: 1, streamId, sequence: 1, timestampMs: 1,
+                        codecId: 'image.mjpeg', payloadKind: 'image_keyframe', payloadEncoding: 'binary_base64',
+                        payloadBase64: 'AQID', payloadSizeBytes: 3 } } };
+                for (const listener of boundary.listeners) listener(envelope);
+            });
+            expect(screen.findByType(LiveStreamPlayer).props.state.lastFrameUrl).toBeTruthy();
+        } finally { await screen.unmount(); }
+    });
+
+    it.each(['view', 'edit'] as const)('uses the shared Session capability to discover and stream without a Machine target or grant (%s)', async level => {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createSessionFixture, createSessionAccessFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        storage.getState().applyMachines([], true, { sourceServerId: serverId });
+        storage.getState().applySessions([createSessionFixture({ id: view.browserSessionId, serverId,
+            metadataLayoutVersion: 1, metadata: null, ownerMetadataView: null,
+            access: createSessionAccessFixture(level) })]);
+        boundary.sharedViewer = 'use';
+        boundary.sessionBrowserAccess = SocketRpcSessionBrowserAuthorizationContextSchema.parse({
+            kind: 'session.browser', sessionId: view.browserSessionId, actorAccountId: home.accountId,
+            custodianAccountId: 'machine-owner', machineId: 'machine_1', installationId: 'installation',
+            effectiveAccess: { v: 1, level, sources: [{ kind: 'direct', shareId: 'browser-share' }],
+                capabilities: projectSessionAccessCapabilitiesV1({ owner: false,
+                    grants: [{ accessLevel: level, canApprovePermissions: false }] }) },
+        });
+        const source = { v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
+            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } };
+        network.setRpcResponder(async request => {
+            if (request.method === RPC_METHODS.DAEMON_BROWSER_VIEW_LIST) return {
+                protocolVersion: 1, machineId: 'machine_1', views: [daemonView(source)],
+            };
+            if (request.method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT) return {
+                protocolVersion: 1, result: { ok: true, sourceAdmission: {
+                    payload: { version: 1, machineId: 'machine_1', installationId: 'installation', accountId: 'machine-owner',
+                        liveStreamSourceAdmission: { homeServerIdentityId: serverId, actorAccountId: home.accountId,
+                            streamFamily: 'browser.streamed', sourceId: source.sourceId, sourceOccurrenceId: 'occurrence',
+                            sessionBrowserSessionId: view.browserSessionId } },
+                    proof: { version: 1, algorithm: 'ed25519', signature: Buffer.alloc(64, 1).toString('base64url') },
+                } },
+            };
+            if (request.method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START) {
+                const { startRequest } = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(request.payload);
+                return { protocolVersion: 1, result: { ok: true, streamId: startRequest.streamId } };
+            }
+            if (request.method === RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH) {
+                const { DaemonBrowserControlDispatchRequestV1Schema } = await import('@happier-dev/protocol/browser/control/v1');
+                const { command } = DaemonBrowserControlDispatchRequestV1Schema.parse(request.payload);
+                return { protocolVersion: 1, result: { v: 1, commandId: command.commandId, status: 'dispatched',
+                    adapterKind: 'chromiumSidecar', events: [] } };
+            }
+            return { error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+        });
+        const { useBrowserDaemonControlTransport } = await import('@/sync/domains/browser/control');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const initialBrowserState = { ...createBrowserControlState(), viewsById: { [view.viewId]: view } };
+        function SharedBrowser() {
+            const sendDaemonCommand = useBrowserDaemonControlTransport({ sessionId: view.browserSessionId, serverId });
+            const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            if (!binding) return null;
+            return <BrowserSurfaceHost browserSessionId={view.browserSessionId} platform="web" testID="shared-session-browser"
+                initialBrowserState={initialBrowserState}
+                pluginAccountLifetime={binding}
+                sendDaemonCommand={sendDaemonCommand}
+                policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+                pluginBrowserActionContext={{ sessionId: view.browserSessionId, machineId: null, serverId }} />;
+        }
+        const screen = await renderScreen(<SharedBrowser />);
+        try {
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            await network.waitForRpcRequest(request => request.method === RPC_METHODS.DAEMON_BROWSER_VIEW_LIST
+                && request.targetId === view.browserSessionId);
+            const started = await network.waitForRpcRequest(request => request.method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START);
+            await flushHookEffects();
+            const { startRequest } = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(started.payload);
+            const envelope = MachineLiveStreamDecodedEnvelopeV1Schema.parse({ v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1',
+                message: { kind: 'frame', frame: { v: 1, streamId: startRequest.streamId, sequence: 1, timestampMs: 1,
+                    codecId: 'image.mjpeg', payloadKind: 'image_keyframe', payloadEncoding: 'binary_base64', payloadBase64: 'AQID', payloadSizeBytes: 3 } } });
+            await act(async () => { for (const listener of boundary.listeners) listener(envelope); });
+            expect(screen.findByType(LiveStreamPlayer).props.state.lastFrameUrl).toBeTruthy();
+            const picture = screen.findByType(BrowserStreamedTarget).props.runtime;
+            if (level === 'view') expect(picture.input).toBeNull();
+            else {
+                expect(picture.input).toMatchObject({ sourceId: source.sourceId });
+                await screen.pressByTestId('shared-session-browser-reload');
+                const dispatched = await network.waitForRpcRequest(request => request.method === RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH);
+                expect(dispatched.payload).toMatchObject({ command: { kind: 'reload',
+                    browserSessionId: view.browserSessionId, viewId: view.viewId } });
+            }
+            expect(network.requests.every(request => request.targetId === view.browserSessionId)).toBe(true);
+            expect(boundary.requests).toEqual([]);
+            expect(network.httpRequests.some(request => new URL(request.url).pathname.startsWith('/v1/machines/')
+                && !request.url.endsWith('/route-grants'))).toBe(false);
+        } finally { await screen.unmount(); }
     });
 
     it.each(['inline', 'retained'] as const)('keeps frame updates below the Browser shell while the real player advances (%s)', async presentation => {

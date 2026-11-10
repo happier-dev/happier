@@ -263,6 +263,7 @@ export function BrowserDetailsSurface(props: Readonly<{
     const sendDaemonCommand = useBrowserDaemonControlTransport({
         machineId: props.machineId,
         serverId: props.serverId,
+        sessionId: props.pluginBrowserActionSessionId,
     });
     const mergedProductModels = React.useMemo(() => mergeBrowserSurfaceProductModels(props.productModels, {
         browserRecording: props.browserRecording,

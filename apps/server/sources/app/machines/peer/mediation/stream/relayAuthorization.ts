@@ -3,6 +3,7 @@ import tweetnacl from "tweetnacl";
 import { MACHINE_LIVE_STREAM_RELAY_AUTHORIZATION_AUDIENCE_V1, MachineLiveStreamCapsV1Schema, MachineLiveStreamRelayAuthorizationPayloadV1Schema, createMachineLiveStreamRelayAuthorizationSigningInputV1, type MachineLiveStreamCapsV1, type MachineLiveStreamSourceAdmissionBindingV1, type MachineLiveStreamRelayAuthorizationV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 import { type MachineLiveStreamCodecIdV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import type { SocketRpcSessionBrowserAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 
 export type MintMachineLiveStreamRelayAuthorizationV1Result =
     | Readonly<{
@@ -42,11 +43,12 @@ export type MintMachineLiveStreamRelayAuthorizationV1Input = Readonly<{
      * legacy machine→machine path.
      */
     viewerSocketId?: string;
-    /** Present only after the installed source owner and current Machine admission agree. */
+    /** Present only after the installed source proof and its canonical access admission agree. */
     personalViewer?: Readonly<{
         viewerAccountId: string;
         sourceMachineInstallationId: string;
         personalSourceAdmission: MachineLiveStreamSourceAdmissionBindingV1;
+        sessionBrowserAccess?: SocketRpcSessionBrowserAuthorizationContext;
     }>;
     signingKey: Readonly<{
         keyId: string;

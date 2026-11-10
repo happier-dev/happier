@@ -34,10 +34,18 @@ Saved context IDs use their captured source and native profile for attachment,
 clear and replacement, including after close or reopen. Selecting another view
 does not change the saved context's custody or prevent valid attachment by ID.
 The same predicate governs native streamed-source admission and list and watch
-discovery. A Use guest can access an ephemeral Browser only when the Session's
-existing requester attribution belongs to that Account; missing attribution denies
-access. Persistent-profile views remain unavailable to Use guests. The Machine
-custodian and Manage requesters retain their existing access.
+discovery. An explicit Session share governs the Session's ephemeral managed
+Browser: View permits frames and Steer permits input, without a separate Machine
+grant. Home consumes `resolveSessionAccessForOperation` and carries its canonical
+capabilities through installed-source admission and the signed relay. Shared
+Browser RPCs and streamed content use the Session encryption mode: E2EE uses its
+Session key, and plaintext Sessions remain keyless. View cannot
+send native commands or streamed input. Persistent profiles remain excluded for
+nonowners on this Session-share path. Without a Session share, a Use guest can
+access an ephemeral Browser only when the Session's existing requester attribution
+belongs to that Account; missing attribution denies access (N14). Persistent-profile
+views remain unavailable to Use guests. The Machine custodian and Manage requesters
+retain their existing Machine-scoped access.
 
 Browser address and navigation shortcuts use the existing keyboard command owner, including
 user rebindings. Native desktop guests, same-origin iframes and cooperative preview frames

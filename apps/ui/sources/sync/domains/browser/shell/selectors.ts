@@ -63,7 +63,7 @@ export function selectActiveBrowserView(
     return null;
 }
 
-export function selectBrowserToolbarModel(view: BrowserControlViewState | null): BrowserToolbarModel {
+export function selectBrowserToolbarModel(view: BrowserControlViewState | null, interactionEnabled = true): BrowserToolbarModel {
     if (!view) {
         return {
             canNavigate: false,
@@ -86,11 +86,11 @@ export function selectBrowserToolbarModel(view: BrowserControlViewState | null):
         ? back.reasonCode
         : null;
     return {
-        canNavigate: navigation.canNavigate && !ended,
-        canGoBack: navigation.canGoBack && view.canGoBack && !ended,
-        canGoForward: navigation.canGoForward && view.canGoForward && !ended,
-        canReload: navigation.canReload,
-        canStop: navigation.canStop && view.loadingState === 'loading',
+        canNavigate: interactionEnabled && navigation.canNavigate && !ended,
+        canGoBack: interactionEnabled && navigation.canGoBack && view.canGoBack && !ended,
+        canGoForward: interactionEnabled && navigation.canGoForward && view.canGoForward && !ended,
+        canReload: interactionEnabled && navigation.canReload,
+        canStop: interactionEnabled && navigation.canStop && view.loadingState === 'loading',
         isLoading: view.loadingState === 'loading',
         showBackForward: navigation.canGoBack || navigation.canGoForward || historyUnavailableReason !== null,
         showReloadStop: navigation.canReload || navigation.canStop,

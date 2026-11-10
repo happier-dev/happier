@@ -142,11 +142,13 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
         };
         function canAccessSessionProfile(sessionId: string, scope?: BrowserSidecarCdpCommandScope, requestedProfileId?: string, existingProfile?: BrowserExistingProfile): boolean {
             const requester = scope?.requester;
+            const shared = scope?.sessionBrowserAccess;
+            if (shared && (shared.sessionId !== sessionId || !shared.effectiveAccess.capabilities.readTranscript)) return false;
             if (!requester || requester.role === 'manage'
                 || requester.actorAccountId && requester.actorAccountId === requester.custodianAccountId) return true;
             // Mounted UI records belong to their adapter, outside the native profile store.
             if (existingProfile && !isBrowserDaemonControlAdapterKind(existingProfile.adapterKind)) return true;
-            if (!requester.actorAccountId || params.readSessionAccountId?.(sessionId) !== requester.actorAccountId) return false;
+            if (!shared && (!requester.actorAccountId || params.readSessionAccountId?.(sessionId) !== requester.actorAccountId)) return false;
             if (existingProfile && !existingProfile.profileId) return false;
             const existing = sessions.get(sessionId);
             const profileId = existingProfile?.profileId ?? existing?.profileId;
@@ -155,9 +157,13 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             return !requestedProfileId && (!profileId || profileStore.getProfile(profileId)?.storageMode === 'ephemeral');
         }
         function getCommandAccessFailure(command: Readonly<{ commandId: string; browserSessionId: string; profileId?: string; existingProfile?: BrowserExistingProfile }>, scope?: BrowserSidecarCdpCommandScope) {
+            if (scope?.sessionBrowserAccess && !scope.sessionBrowserAccess.effectiveAccess.capabilities.submitAgentInput) {
+                return browserCommandDispatchFailure({ commandId: command.commandId, adapterKind: 'chromiumSidecar',
+                    code: 'permission_denied', message: 'This Session share permits viewing the Browser.', completion: 'known', retryable: false });
+            }
             return canAccessSessionProfile(command.browserSessionId, scope, command.profileId, command.existingProfile) ? undefined
                 : browserCommandDispatchFailure({ commandId: command.commandId, adapterKind: 'chromiumSidecar',
-                    code: 'profile_policy_denied', message: 'Guest Sessions use their own browser profile.', completion: 'known', retryable: false });
+                    code: 'profile_policy_denied', message: 'This Browser profile is unavailable to this Session.', completion: 'known', retryable: false });
         }
         async function launchSession(sessionId: string, scope?: BrowserSidecarCdpCommandScope, requestedProfileId?: string, presentation: 'headless' | 'window' = 'headless'): Promise<BrowserSidecarControlAdapterFactoryResult> {
             const existing = sessions.get(sessionId);

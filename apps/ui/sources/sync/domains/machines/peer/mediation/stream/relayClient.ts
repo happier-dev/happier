@@ -6,6 +6,7 @@ import type { MachineLiveStreamRelayStartRpcResult } from './relayStartRpc';
 
 type StartProductionMachineLiveStreamInput = Readonly<{
     serverId?: string | null;
+    sessionId?: string;
     sourceMachineId: string;
     targetMachineId: string;
     routeKind: 'loopback_direct' | 'server_relay';
@@ -27,6 +28,7 @@ type StartProductionMachineLiveStream = (
 type StartDaemonRelay = (input: Readonly<{
     machineId: string;
     serverId?: string | null;
+    sessionId?: string;
     startRequest: MachineLiveStreamStartRequestV1;
     timeoutMs?: number;
     signal?: AbortSignal;
@@ -67,6 +69,7 @@ async function defaultStartDaemonRelay(
  */
 export type MachineLiveStreamRelayClientInput = Readonly<{
     serverId?: string | null;
+    sessionId?: string;
     sourceMachineId: string;
     targetMachineId: string;
     streamId: string;
@@ -89,6 +92,7 @@ export async function renewMachineLiveStreamRelayClient(input: MachineLiveStream
     const start = input.startProduction ?? defaultStartProductionMachineLiveStream;
     return await start({
         serverId: input.serverId,
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         sourceMachineId: input.sourceMachineId,
         targetMachineId: input.targetMachineId,
         // The current direct HTTP start has no receive/control carrier. Only a
@@ -128,6 +132,7 @@ export async function openMachineLiveStreamRelayClient(input: MachineLiveStreamR
     const daemonStarted = await startDaemonRelay({
         machineId: input.sourceMachineId,
         serverId: input.serverId,
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         startRequest: { ...started.startRequest, ...(input.sourceOccurrenceId ? { sourceOccurrenceId: input.sourceOccurrenceId } : {}) },
         ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
     });

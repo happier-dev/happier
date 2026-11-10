@@ -8,14 +8,30 @@ import type { ResolvedMachineLiveStreamContent } from '@/sync/domains/machines/p
 import { createServerRequestForExplicitServerScope } from './createServerRequestWithServerScope';
 import { resolveScopedMachineTransport } from './serverScopedRpcPool';
 import type { ScopedServerRpcContext } from './serverScopedRpcTypes';
+import { resolveScopedSessionCryptoContext, initializeScopedSessionReader } from './resolveScopedSessionDataKey';
 
-/** Active and scoped streams open the same exact, admitted Machine material on a cold read. */
+/** Streams open content under their admitted Session or Machine scope, including cold reads. */
 export async function resolveMachineLiveStreamContent(
     context: Pick<ScopedServerRpcContext, 'machineId' | 'targetServerId' | 'targetServerUrl' | 'targetAccountId'
         | 'runtimeOrigin' | 'homeCarrier' | 'token' | 'credentials' | 'encryption' | 'readTransport' | 'accountEncryptionObservation'> & Readonly<{ timeoutMs?: number }>,
+    sessionId?: string,
 ): Promise<ResolvedMachineLiveStreamContent> {
     const machineId = context.machineId;
     const credentials = context.credentials ?? { token: context.token };
+    if (sessionId) {
+        const encryption = context.encryption;
+        const crypto = await resolveScopedSessionCryptoContext({ sessionId, serverId: context.targetServerId,
+            serverUrl: context.targetServerUrl, runtimeOrigin: context.runtimeOrigin, homeCarrier: context.homeCarrier,
+            token: context.token, credentials, timeoutMs: context.timeoutMs, readTransport: context.readTransport,
+            ...(encryption ? { decryptEncryptionKey: (value: string) => encryption.decryptEncryptionKey(value,
+                { serverId: context.targetServerId, workClass: 'interactive' }) } : {}) });
+        if (crypto.encryptionMode === 'plain') return { mode: 'plain' };
+        if (!encryption || !await initializeScopedSessionReader({ sessionId, serverId: context.targetServerId,
+            context: crypto, encryption })) throw new MachineLiveStreamPayloadErrorV1('stream_encryption_material_unavailable');
+        const cipher = encryption.getSessionEncryption(sessionId);
+        if (!cipher) throw new MachineLiveStreamPayloadErrorV1('stream_encryption_material_unavailable');
+        return { mode: 'e2ee', cipher, isCurrent: () => encryption.getSessionEncryption(sessionId) === cipher };
+    }
     const trust = context.encryption ? await resolveRunnerMachineContentKeyTrustV1({
         credentials, homeServerIdentityId: context.targetServerId, machineId,
     }) : null;

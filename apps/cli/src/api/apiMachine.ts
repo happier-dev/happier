@@ -703,6 +703,7 @@ export class ApiMachineClient {
     private transferRelayV2Listeners = new Set<(payload: TransferRelayV2SendEnvelope) => void>();
     private peerTcpTunnelRelayListeners = new Set<(payload: PeerTcpTunnelRelayEnvelope) => void>();
     private machineLiveStreamRelayListeners = new Set<(payload: MachineLiveStreamRelayEnvelopeV1) => void>();
+    private liveStreamRelayRoutes: DaemonLiveStreamRelayRoutes | null = null;
     private externalSessionStatusDemandListeners = new Set<(payload: ExternalSessionStatusDemandDaemonMessageV1) => void>();
     private connectionStateListeners = new Set<(state: ManagedConnectionState) => void>();
     private connectionSupervisor: ManagedConnectionSupervisor | null = null;
@@ -1595,6 +1596,29 @@ export class ApiMachineClient {
                 }));
                 if (!transport.ok || transport.sessionId !== authorization.sessionId) return null;
                 return { content: resolveSessionRpcContent(transport), isCurrent };
+            },
+            resolveSessionBrowserContent: async ({ authorization, signal }) => {
+                if (signal.aborted || this.projectionSchedulingClosed) return null;
+                const requesterOwner = this.lifecycleDependencies.requesterSessionRuntime;
+                const requester = requesterOwner?.serverId === machineRuntimeServerId
+                    ? await requesterOwner.resolve(authorization.sessionId, undefined, signal) : null;
+                try {
+                    const birth = requester?.bootstrap;
+                    if (birth && (birth.getBoundSessionId() !== authorization.sessionId
+                        || birth.attribution.serverId !== machineRuntimeServerId
+                        || birth.attribution.machineId !== this.machine.id
+                        || birth.attribution.installationId !== this.machineRuntimeInstallationId
+                        || birth.serverHttpBaseUrl !== readMachineRuntimeServerHttpBaseUrl())) return null;
+                    const credentials = birth?.credentials ?? await readStoredCredentialsForServerId(machineRuntimeServerId).catch(() => null);
+                    if (!credentials || !birth && credentials.token !== this.token) return null;
+                    const transport = await runWithServerHttpBaseUrl(birth?.serverHttpBaseUrl ?? readMachineRuntimeServerHttpBaseUrl(), () => resolveSessionTransportContext({
+                        reason: 'session-control', credentials, idOrPrefix: authorization.sessionId, exact: true, signal,
+                    }));
+                    return !transport.ok ? null : createMachineContentCodec(transport.mode === 'plain'
+                        ? { encryptionMode: 'plain' } : transport.ctx);
+                } finally {
+                    if (requester) await requesterOwner!.release(requester);
+                }
             },
             prepareRequesterAccountContext: (input) => this.externalActionIngressOwner?.prepareRequesterAccountContext?.(input)
                 ?? Promise.resolve(null),
@@ -3394,6 +3418,7 @@ export class ApiMachineClient {
     }
 
     registerLiveStreamRelayRoutes(relay: DaemonLiveStreamRelayRoutes): void {
+        this.liveStreamRelayRoutes = relay;
         registerDaemonLiveStreamRelayHandlers(this.rpcHandlerManager, {
             relay,
         });
@@ -3816,8 +3841,15 @@ export class ApiMachineClient {
         this.socket.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, payload);
     }
 
+    private readLiveStreamContentCodec(envelope: MachineLiveStreamRelayEnvelopeV1 | MachineLiveStreamWireEnvelopeV1): MachineContentCodec {
+        const message = envelope.message;
+        const streamId = message.kind === 'frame' ? message.frame.streamId
+            : message.kind === 'sideband_control' ? message.control.streamId : undefined;
+        return (streamId ? this.liveStreamRelayRoutes?.getContentCodec?.(streamId) : undefined) ?? this.machineContentCodec;
+    }
+
     getMachineLiveStreamFramePayloadByteLimit(envelope: MachineLiveStreamRelayEnvelopeV1, maxFrameBytes: number): number {
-        return resolveMachineLiveStreamFramePayloadByteLimit({ envelope, maxFrameBytes, codec: this.machineContentCodec });
+        return resolveMachineLiveStreamFramePayloadByteLimit({ envelope, maxFrameBytes, codec: this.readLiveStreamContentCodec(envelope) });
     }
 
     async sendMachineLiveStreamRelayEnvelope(payload: MachineLiveStreamRelayEnvelopeV1): Promise<
@@ -3831,7 +3863,8 @@ export class ApiMachineClient {
             socket.emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, MachineLiveStreamRelayEnvelopeV1Schema.parse(parsed.data));
             return { ok: true };
         }
-        const codec = this.machineContentCodec;
+        const machineCodec = this.machineContentCodec;
+        const codec = this.readLiveStreamContentCodec(parsed.data);
         const sealed = await sealMachineLiveStreamEnvelopeV1(parsed.data, {
             mode: codec.mode,
             ...(codec.mode === 'e2ee' ? { cipher: {
@@ -3843,7 +3876,7 @@ export class ApiMachineClient {
             this.failMachineLiveStreamPayload(parsed.data, sealed.code);
             return sealed;
         }
-        if (this.socket !== socket || codec !== this.machineContentCodec || !this.machineContentReady) return { ok: false, code: 'stream_transport_unavailable' };
+        if (this.socket !== socket || machineCodec !== this.machineContentCodec || !this.machineContentReady) return { ok: false, code: 'stream_transport_unavailable' };
         socket.emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, sealed.value);
         return { ok: true };
     }
@@ -5760,7 +5793,8 @@ export class ApiMachineClient {
                 logger.warn('[API MACHINE] Live-stream payload rejected', { code: 'stream_payload_invalid' });
                 return;
             }
-            const codec = this.machineContentCodec;
+            const machineCodec = this.machineContentCodec;
+            const codec = this.readLiveStreamContentCodec(parsed.data);
             const opened = hasMachineLiveStreamSensitiveContentV1(parsed.data)
                 ? await openMachineLiveStreamEnvelopeV1(parsed.data, {
                     mode: codec.mode,
@@ -5771,7 +5805,7 @@ export class ApiMachineClient {
                 })
                 : { ok: true as const, value: MachineLiveStreamDecodedEnvelopeV1Schema.parse(parsed.data) };
             if (!this.isActiveTransportGeneration(transportGeneration) || socket !== this.socket
-                || codec !== this.machineContentCodec || !this.machineContentReady) return;
+                || machineCodec !== this.machineContentCodec || !this.machineContentReady) return;
             if (!opened.ok) {
                 this.failMachineLiveStreamPayload(parsed.data, opened.code);
                 return;

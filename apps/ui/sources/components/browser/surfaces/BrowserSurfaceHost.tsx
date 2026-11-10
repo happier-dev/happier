@@ -374,6 +374,8 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     const presenceServerId = props.pluginBrowserActionContext?.serverId ?? null;
     const session = useSession(presenceSessionId ?? '', presenceServerId);
     const browserMachineId = props.pluginBrowserActionContext?.machineId?.trim() ?? null;
+    const sessionRpcSessionId = !browserMachineId ? presenceSessionId : null;
+    const interactionEnabled = session?.access?.capabilities.submitAgentInput ?? true;
     const browserMachineScope = React.useMemo(() => (browserMachineId && presenceServerId
         ? { serverId: presenceServerId, machineId: browserMachineId } : null), [browserMachineId, presenceServerId]);
     const browserOperationScope = browserActionAccountLifetime?.isCurrent()
@@ -930,6 +932,8 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
             enabled: policy.browserEnabled && policy.viewTargetsEnabled && visible && hostActivelyViewed,
             machineId: props.pluginBrowserActionContext?.machineId,
             serverId: props.pluginBrowserActionContext?.serverId,
+            sessionRpcSessionId,
+            interactionEnabled,
             machineName: browserMachineName,
             firstUse,
             onBrowserEvent: receiveBrowserEvent,
@@ -941,6 +945,7 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
                 viewId={focusedView?.viewId ?? null}
                 platform={props.platform}
                 state={surfaceState.browserState}
+                interactionEnabled={interactionEnabled}
                 onCommand={onCommand}
                 onCheckAgain={onCheckAgain}
                 onAllowBrowserSandbox={onAllowBrowserSandbox}

@@ -120,6 +120,8 @@ import { isWorkflowDraftClientRpcMethod } from '@happier-dev/protocol/actions/wo
 import { isMountedWorkReadClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { readSocketRoomSnapshot } from '../socketRoomDiscovery';
 import { readRegisteredRpcTargetPresence } from './rpcTargetDiscovery';
+import { resolveSessionBrowserRpcCapabilityV1, type SocketRpcSessionBrowserAuthorizationContext } from '@happier-dev/protocol/socketRpc';
+import { resolveSessionBrowserAdmission } from './sessionBrowserAdmission';
 
 const MAX_RPC_METHOD_NAME_LENGTH = 512;
 const MACHINE_VISIBLE_CLIENT_RPC_METHODS = new Set<string>([
@@ -506,7 +508,7 @@ function createExactMachineRpcTargetGuard(
 }
 
 function createCurrentMachineAdmissionTargetGuard(
-    admission: SocketRpcMachineAdmissionContextV1,
+    admission: Pick<SocketRpcMachineAdmissionContextV1, 'machineId' | 'installationId'>,
     sourceSocket?: Pick<Socket, 'data' | 'connected'>,
 ): RpcForwardTargetGuard {
     // Reverse client RPCs continue the admitted daemon's authority. Their
@@ -1091,6 +1093,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
         let cancellation: ActiveSocketRpcCancellation | undefined;
         let machineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
         let receivingMachineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
+        let sessionBrowserAuthorization: SocketRpcSessionBrowserAuthorizationContext | undefined;
         let forwardStartedAt: number | undefined;
         let forwardCompletedAt: number | undefined;
         const completionDiagnostic: { failure: ReturnType<typeof projectRpcFailureDiagnostic> } = { failure: null };
@@ -1474,6 +1477,33 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 }
                 : readSessionAccessAuthenticationFromSocket(params.socket);
 
+            const inboundAuthorization = (data as { authorization?: unknown } | undefined)?.authorization;
+            if (inboundAuthorization && typeof inboundAuthorization === 'object'
+                && 'kind' in inboundAuthorization && inboundAuthorization.kind === 'session.browser') {
+                callback?.(buildForbiddenRpcResponse()); return;
+            }
+            const browserCapability = resolveSessionBrowserRpcCapabilityV1(method.slice(method.indexOf(':') + 1));
+            const browserSelector = browserCapability ? parseSocketRpcAuthorizationContext(inboundAuthorization) : null;
+            if (browserCapability && browserSelector
+                && (browserSelector.kind === 'session.read' || browserSelector.kind === 'session.write')) {
+                if (requestAuthentication.authority !== 'present_user' || viewer || verifiedExternalAction) {
+                    callback?.(buildForbiddenRpcResponse()); return;
+                }
+                const admission = await resolveSessionBrowserAdmission({ actorAccountId,
+                    sessionId: browserSelector.sessionId, capability: browserCapability,
+                    authentication: requestAuthentication, io: params.io, presence: params.sessionPublisherPresence });
+                if (admission.status !== 'allowed') {
+                    callback?.(buildSessionAccessRpcRefusal(admission.status)); return;
+                }
+                const prefix = method.slice(0, method.indexOf(':'));
+                if (prefix !== admission.authorization.sessionId) {
+                    callback?.(buildForbiddenRpcResponse()); return;
+                }
+                sessionBrowserAuthorization = admission.authorization;
+                authorization = admission.authorization;
+                sessionWriteTargetUserId = admission.authorization.custodianAccountId;
+                method = `${admission.authorization.machineId}:${method.slice(method.indexOf(':') + 1)}`;
+            }
             const isTransferMethod = SessionTransferRpcMethodV1Schema.safeParse(method.slice(method.indexOf(':') + 1)).success;
             // The same transfer methods also serve the incumbent Machine carrier.
             // Only the routing header selects the Session-owned encrypted carrier.
@@ -1799,6 +1829,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 }
             }
             let machineAdmissionGuard: RpcForwardTargetGuard | null = null;
+            if (sessionBrowserAuthorization) machineAdmissionGuard = createCurrentMachineAdmissionTargetGuard(sessionBrowserAuthorization);
             const machinePrefix = readMachineIdPrefix(method);
             let structuredMessageRouting: StructuredMessageActionRoutingV1 | undefined;
             const machineRpcMethod = machinePrefix ? method.slice(method.indexOf(':') + 1) : null;
@@ -2263,6 +2294,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 } : (moveChildExecution || isHandoffCurrent || isTransitionRoot || verifiedExternalAction?.binding.workflowActionOrigin) && verifiedExternalAction
                     ? { callerAuthority: requestAuthentication.authority } : {}),
                 ...(liveApprovalOrigin ? { callerAuthority: 'present_user' as const } : {}),
+                ...(sessionBrowserAuthorization ? { callerAuthority: requestAuthentication.authority } : {}),
                 ...(explicitMachineStopRequest
                     ? { transportResponseEnvelopeVersion: 1 as const }
                     : {}),

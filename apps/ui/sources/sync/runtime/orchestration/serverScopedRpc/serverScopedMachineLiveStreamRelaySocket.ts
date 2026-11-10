@@ -38,6 +38,7 @@ export type ServerScopedMachineLiveStreamRelaySocket = Readonly<{
 
 export async function resolveServerScopedMachineLiveStreamRelaySocket(params: Readonly<{
     machineId: string;
+    sessionId?: string;
     serverId?: string | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
     timeoutMs?: number;
@@ -45,6 +46,7 @@ export async function resolveServerScopedMachineLiveStreamRelaySocket(params: Re
     const socket = await createServerScopedRelaySocket<MachineLiveStreamRelayEnvelopeV1>({
         machineId: params.machineId,
         serverId: params.serverId,
+        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
         accountLifetime: params.accountLifetime,
         timeoutMs: params.timeoutMs,
         missingScopeUserProfileErrorMessage: 'Active account profile id is unavailable for machine live-stream relay',
@@ -68,7 +70,7 @@ export async function resolveServerScopedMachineLiveStreamRelaySocket(params: Re
                 onError: (error) => console.warn('[Live stream] Scoped payload rejected', { code: error.code }),
                 resolveContent: async (machineId) => {
                     if (machineId !== context.machineId) throw new MachineLiveStreamPayloadErrorV1('stream_payload_binding_mismatch');
-                    contentRead ??= resolveMachineLiveStreamContent(context);
+                    contentRead ??= resolveMachineLiveStreamContent(context, params.sessionId);
                     return await contentRead;
                 },
             });

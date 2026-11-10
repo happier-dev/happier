@@ -3,6 +3,7 @@ import type { MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol/mach
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { sessionRpcWithServerAccountScope, sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 
 export type MachineLiveStreamRelayStartRpcResult = Readonly<
     | { ok: true; streamId: string }
@@ -17,6 +18,7 @@ export type MachineLiveStreamRelayStartRpcResult = Readonly<
  */
 export async function startMachineLiveStreamRelayViaMachineRpc(input: Readonly<{
     machineId: string;
+    sessionId?: string;
     serverId?: string | null;
     startRequest: MachineLiveStreamStartRequestV1;
     timeoutMs?: number;
@@ -28,18 +30,21 @@ export async function startMachineLiveStreamRelayViaMachineRpc(input: Readonly<{
             machineId: input.machineId,
             startRequest: input.startRequest,
         });
-        const raw = await machineRpcWithServerScope<unknown, typeof payload>({
-            machineId: input.machineId,
-            serverId: input.serverId,
-            ...(payload.startRequest.authorization?.payload.v === 2
-                ? { accountId: payload.startRequest.authorization.payload.viewerAccountId } : {}),
-            method: payload.startRequest.authorization?.payload.v === 2
-                ? RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START
-                : RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START,
-            payload,
-            signal: input.signal,
+        const accountId = payload.startRequest.authorization?.payload.v === 2
+            ? payload.startRequest.authorization.payload.viewerAccountId : undefined;
+        const request = {
+            method: input.sessionId || payload.startRequest.authorization?.payload.v === 2
+                ? RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START : RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START,
+            payload, signal: input.signal,
             ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
-        });
+        };
+        const raw = input.sessionId
+            ? await (input.serverId && accountId
+                ? sessionRpcWithServerAccountScope<unknown, typeof payload>({ ...request, sessionId: input.sessionId,
+                    scope: { serverId: input.serverId, accountId } })
+                : sessionRpcWithServerScope<unknown, typeof payload>({ ...request, sessionId: input.sessionId, serverId: input.serverId }))
+            : await machineRpcWithServerScope<unknown, typeof payload>({ ...request, machineId: input.machineId,
+                serverId: input.serverId, ...(accountId ? { accountId } : {}) });
         if (isRpcMethodNotFoundResult(raw)) {
             return { ok: false, reasonCode: 'live_stream_relay_start_unavailable' };
         }

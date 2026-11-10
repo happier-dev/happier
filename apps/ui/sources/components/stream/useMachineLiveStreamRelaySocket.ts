@@ -15,6 +15,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
  */
 export function useMachineLiveStreamRelaySocket(input: Readonly<{
     machineId?: string | null;
+    sessionId?: string;
     serverId?: string | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
     enabled?: boolean;
@@ -25,6 +26,7 @@ export function useMachineLiveStreamRelaySocket(input: Readonly<{
     const enabled = input.enabled ?? true;
     const machineId = String(input.machineId ?? '').trim();
     const serverId = String(input.serverId ?? '').trim();
+    const sessionId = input.sessionId;
     const tag = input.disconnectTag;
     const accountLifetime = input.accountLifetime;
     const resolveSocket = input.resolveSocket ?? resolveServerScopedMachineLiveStreamRelaySocket;
@@ -52,7 +54,7 @@ export function useMachineLiveStreamRelaySocket(input: Readonly<{
         const acquire = async () => {
             if (closing && closing.accountLifetime === accountLifetime) await closing.completion;
             if (disposed) return null;
-            return await resolveSocket({ machineId, serverId: serverId || null, accountLifetime });
+            return await resolveSocket({ machineId, serverId: serverId || null, accountLifetime, ...(sessionId ? { sessionId } : {}) });
         };
         void acquire()
             .then((next) => {
@@ -72,7 +74,7 @@ export function useMachineLiveStreamRelaySocket(input: Readonly<{
             if (resolved) disconnect(resolved);
             setSocket(null);
         };
-    }, [accountLifetime, enabled, machineId, resolveSocket, serverId, tag]);
+    }, [accountLifetime, enabled, machineId, resolveSocket, serverId, sessionId, tag]);
 
     const subscribe = React.useCallback((listener: () => void) => socket ? socket.onSocketIdChange(listener) : () => {}, [socket]);
     const readSocketId = React.useCallback(() => socket?.socketId ?? '', [socket]);

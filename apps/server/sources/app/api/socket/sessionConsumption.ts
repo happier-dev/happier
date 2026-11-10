@@ -6,6 +6,7 @@ import type { SessionTranscriptPublicationFields } from "@/app/session/sessionTr
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import type { Tx } from "@/storage/inTx";
 import { log } from "@/utils/logging/log";
+import { retireSessionBrowserLiveStreamsAfterAccessChange } from './machineLiveStreamRelayHandler';
 
 interface SessionSocketConsumption {
     liveSessionIds: ReadonlySet<string>;
@@ -195,6 +196,7 @@ export function registerSessionConsumptionSocketEvent(socket: Socket, admission:
  * is disconnected, so it cannot outlive a withdrawal and reconnect re-admits it.
  */
 export function retireSessionConsumptionAfterAccessChange(sockets: Iterable<Socket>, sessionId: string): void {
+    retireSessionBrowserLiveStreamsAfterAccessChange(sessionId);
     for (const socket of sockets) {
         if (heldPublicationAudiences.get(socket)?.sessionId === sessionId) heldPublicationAudiences.delete(socket);
         heldLiveDeliveryDecisions.get(socket.data)?.delete(sessionId);

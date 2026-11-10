@@ -54,6 +54,7 @@ export type ServerScopedRelaySocket<TPayload> = Readonly<{
 
 export function createServerScopedRelaySocket<TPayload>(params: Readonly<{
     machineId: string;
+    sessionId?: string;
     serverId?: string | null;
     /** Borrow the source's admitted authority; never resolve another Account here. */
     accountLifetime?: ServerAccountScopeLifetime | null;
@@ -85,6 +86,7 @@ export function createServerScopedRelaySocket<TPayload>(params: Readonly<{
     return resolveServerScopedRelaySocket({
         machineId: params.machineId,
         serverId: params.serverId,
+        sessionId: params.sessionId,
         accountLifetime: params.accountLifetime,
         timeoutMs: params.timeoutMs,
         signal: params.signal,
@@ -99,6 +101,7 @@ export function createServerScopedRelaySocket<TPayload>(params: Readonly<{
 
 export async function resolveServerScopedRelaySocket<TPayload>(params: Readonly<{
     machineId: string;
+    sessionId?: string;
     serverId?: string | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
     timeoutMs?: number;
@@ -122,6 +125,7 @@ export async function resolveServerScopedRelaySocket<TPayload>(params: Readonly<
         machineId: params.machineId,
         serverId: params.serverId,
         timeoutMs: params.timeoutMs,
+        forceScoped: Boolean(params.sessionId),
     });
     if (context.scope === 'active') {
         if (!isSourceCurrent()) throw new StaleServerGenerationError();
@@ -159,6 +163,7 @@ export async function resolveServerScopedRelaySocket<TPayload>(params: Readonly<
                 return context.release;
             }),
             signal: params.signal,
+            ...(params.sessionId ? { sessionId: params.sessionId } : {}),
         });
         if (!carrierCustodyTransferred) {
             await context.release?.();

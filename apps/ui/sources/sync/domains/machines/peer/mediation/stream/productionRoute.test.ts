@@ -36,18 +36,18 @@ vi.mock('@/sync/http/client', () => ({
     },
 }));
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
-    },
-    isLegacyAuthCredentials: (credentials: unknown) => Boolean(
-        credentials
-        && typeof credentials === 'object'
-        && typeof (credentials as { secret?: unknown }).secret === 'string',
-    ),
-}));
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
+    return createTokenStorageModuleMock({
+        importOriginal,
+        tokenStorage: {
+            getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+        },
+    });
+});
 
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
+vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>(),
     getActiveServerSnapshot: (...args: unknown[]) => getActiveServerSnapshotSpy(...args),
 }));
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
@@ -73,7 +73,8 @@ function findServerProfileTestDouble(idRaw: unknown): { id: string; serverUrl: s
     )) ?? null;
 }
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>(),
     areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => {
         const leftId = normalizeServerProfileTestId(left);
         const rightId = normalizeServerProfileTestId(right);

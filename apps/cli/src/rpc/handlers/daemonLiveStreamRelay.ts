@@ -3,6 +3,8 @@ import type { ActionExecutorContext, DaemonMachineLiveStreamRelayStartResponseV1
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { MachineContentCodec } from '@/api/machine/machineStoredContent';
+import { isDeepStrictEqual } from 'node:util';
 
 /**
  * Viewer-triggered server-relay start (SIM-P0-1 fix). The relay socket handler only accepts
@@ -13,9 +15,10 @@ import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
  * verified RPC actor here; the relay terminator verifies their Home signature before capture.
  */
 export type DaemonLiveStreamRelayRoutes = Readonly<{
-    start: (startRequest: MachineLiveStreamStartRequestV1, callerAuthority?: ActionExecutorContext['authority']) => Promise<
+    start: (startRequest: MachineLiveStreamStartRequestV1, callerAuthority?: ActionExecutorContext['authority'], sessionBrowserContent?: MachineContentCodec) => Promise<
         Readonly<{ ok: true; streamId: string } | { ok: false; reasonCode: string }>
     >;
+    getContentCodec?: (streamId: string) => MachineContentCodec | undefined;
 }>;
 
 export type DaemonLiveStreamRelayHandlerOptions = Readonly<{
@@ -34,11 +37,18 @@ export function registerDaemonLiveStreamRelayHandlers(
                 if (method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START) {
                     const payload = request.startRequest.authorization?.payload;
                     const admission = context?.machineAdmission;
-                    if (context?.callerAuthority !== 'present_user' || !admission || payload?.v !== 2
-                        || payload.viewerAccountId !== admission.actorAccountId
-                        || payload.accountId !== admission.custodianAccountId
-                        || payload.sourceMachineId !== admission.machineId
-                        || payload.sourceMachineInstallationId !== admission.installationId) {
+                    const sessionBrowserAccess = context?.authorization?.kind === 'session.browser' ? context.authorization : undefined;
+                    const sessionScope = payload?.v === 2 && (payload.sessionBrowserAccess || payload.personalSourceAdmission.sessionBrowserSessionId);
+                    const matchesAdmission = sessionScope || sessionBrowserAccess
+                        ? payload?.v === 2 && !!sessionBrowserAccess
+                            && isDeepStrictEqual(payload.sessionBrowserAccess, sessionBrowserAccess)
+                            && payload.accountId === sessionBrowserAccess.custodianAccountId
+                            && payload.personalSourceAdmission.sessionBrowserSessionId === sessionBrowserAccess.sessionId
+                        : !!admission && payload?.v === 2 && payload.viewerAccountId === admission.actorAccountId
+                        && payload.accountId === admission.custodianAccountId
+                        && payload.sourceMachineId === admission.machineId
+                        && payload.sourceMachineInstallationId === admission.installationId;
+                    if (context?.callerAuthority !== 'present_user' || !matchesAdmission) {
                         return { protocolVersion: 1, result: { ok: false, reasonCode: 'capture_source_denied' } };
                     }
                 }
@@ -48,7 +58,7 @@ export function registerDaemonLiveStreamRelayHandlers(
                         result: { ok: false, reasonCode: 'live_stream_relay_unavailable' },
                     });
                 }
-                const started = await options.relay.start(request.startRequest, context?.callerAuthority ?? 'account_automation');
+                const started = await options.relay.start(request.startRequest, context?.callerAuthority ?? 'account_automation', context?.sessionBrowserContent);
                 return DaemonMachineLiveStreamRelayStartResponseV1Schema.parse({
                     protocolVersion: 1,
                     result: started.ok

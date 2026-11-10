@@ -7,11 +7,13 @@ import type {
 } from '@happier-dev/protocol';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { SocketRpcSessionBrowserAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 
 export type BrowserCommandScope = Readonly<{
   signal?: AbortSignal;
   /** Containing operation's absolute deadline, in Date.now() milliseconds. */
   deadlineMs?: number;
+  sessionBrowserAccess?: SocketRpcSessionBrowserAuthorizationContext;
   requester?: Readonly<{
     actorAccountId?: string;
     custodianAccountId?: string;
@@ -21,15 +23,17 @@ export type BrowserCommandScope = Readonly<{
 
 /** Carry admitted custody to profile selection without forwarding credentials to CDP. */
 export function browserCommandScope(context?: Pick<RpcActionExecutorContext,
-  'signal' | 'externalActionExecutionAuthorization' | 'machineAdmission' | 'requesterSessionBootstrap'>): BrowserCommandScope {
+  'signal' | 'authorization' | 'externalActionExecutionAuthorization' | 'machineAdmission' | 'requesterSessionBootstrap'>): BrowserCommandScope {
   const requester = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization);
   const admission = context?.machineAdmission
     ?? context?.requesterSessionBootstrap?.savedSecretOperationContext.machineAdmission
     ?? requester?.savedSecretOperationContext.machineAdmission;
+  const sessionBrowserAccess = context?.authorization?.kind === 'session.browser' ? context.authorization : undefined;
   return { signal: context?.signal,
-    ...(admission || context?.requesterSessionBootstrap || requester ? { requester: {
-      actorAccountId: admission?.actorAccountId ?? context?.requesterSessionBootstrap?.attribution.accountId,
-      custodianAccountId: admission?.custodianAccountId,
+    ...(sessionBrowserAccess ? { sessionBrowserAccess } : {}),
+    ...(sessionBrowserAccess || admission || context?.requesterSessionBootstrap || requester ? { requester: {
+      actorAccountId: sessionBrowserAccess?.actorAccountId ?? admission?.actorAccountId ?? context?.requesterSessionBootstrap?.attribution.accountId,
+      custodianAccountId: sessionBrowserAccess?.custodianAccountId ?? admission?.custodianAccountId,
       role: admission?.role,
     } } : {}) };
 }

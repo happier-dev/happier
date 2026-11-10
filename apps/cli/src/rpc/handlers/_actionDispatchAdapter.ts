@@ -15,7 +15,7 @@ import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
 
-type HostRequesterContext = Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'
+type HostRequesterContext = Pick<RpcHandlerContext, 'authorization' | 'machineAdmission' | 'verifyMachineAdmissionCurrent'
     | 'requesterApprovalDecision'
     | 'requesterSessionBootstrap' | 'sessionActionOrigin' | 'callerInputAuthorization' | 'callerInputConstraints'
     | 'workspaceSyncSourceRouting' | 'workspaceSyncTargetRouting' | 'workspaceSyncSourceWriterTargetRouting' | 'workspaceSyncSeedRouting'
@@ -153,6 +153,7 @@ export function buildActionExecutorContextForRpc(
 
     return {
         ...params.reviewedChildActionContext,
+        ...(params.authorization ? { authorization: params.authorization } : {}),
         ...(params.requesterApprovalDecision ? { requesterApprovalDecision: params.requesterApprovalDecision } : {}),
         ...(params.deadlineAtMs === undefined ? {} : { deadlineAtMs: params.deadlineAtMs }),
         ...(params.requestStartedAtMs === undefined ? {} : { requestStartedAtMs: params.requestStartedAtMs }),

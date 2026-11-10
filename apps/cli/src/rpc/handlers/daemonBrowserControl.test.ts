@@ -1,5 +1,6 @@
 import { FeaturesResponseSchema, type BrowserCommandV1, type BrowserCommandDispatchResultV1, type BrowserEventV1, type BrowserDaemonViewV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -84,8 +85,8 @@ installSessionActionRpcBoundary(request => {
     if (!request.method.startsWith(`${MACHINE_ID}:`)) throw new Error('RPC reached the wrong Machine');
     if (!activeRpc) throw new Error('Browser test RPC owner is unavailable');
     // This external Home relay boundary carries its verified human caller.
-    return activeRpc.invokeLocal(request.method.slice(MACHINE_ID.length + 1), request.params,
-        { verifiedPeerAuthority: 'present_user' });
+    return activeRpc.handleRequest({ ...request, callerAuthority: 'present_user' }, undefined,
+        'authenticated_home_socket');
 });
 await Promise.all([
     import(uiPath('sync/domains/server/serverRuntime.ts')),
@@ -174,11 +175,9 @@ describe('daemon Browser control UI seam', () => {
             runtime.browserCommands.length = 0;
             const controller = new AbortController();
             controller.abort();
-            expect(await runtime.rpc.invokeLocal(RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH,
+            await expect(runtime.rpc.invokeLocal(RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH,
                 { machineId: MACHINE_ID, command: { kind: 'focusView', commandId: 'cancelled-focus', ...view } },
-                { verifiedPeerAuthority: 'present_user', signal: controller.signal })).toMatchObject({
-                    result: { status: 'failed', completion: 'known', error: { code: 'adapter_unavailable' } },
-                });
+                { verifiedPeerAuthority: 'present_user', signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
             expect(runtime.browserCommands).toEqual([]);
         } finally { runtime.adapter.dispose(); }
     });
@@ -188,8 +187,8 @@ describe('daemon Browser control UI seam', () => {
         await runtime.featureGate.refresh();
         const machine = createPlainMachineRowFixture({ id: MACHINE_ID, accountId: 'browser-account' });
         const homes = await serveAccountHomes({ homes: [{ key: 'browser', serverUrl: 'https://browser-control.example.test',
-            accountId: 'browser-account' }], route: request => request.path === `/v1/machines/${MACHINE_ID}`
-                ? Response.json({ machine }) : undefined });
+            accountId: 'browser-account' }], route: request => request.path === '/v1/machines/read-batch'
+                ? Response.json(MachineReadBatchResponseV1Schema.parse({ results: [{ machineId: MACHINE_ID, status: 'found', machine }] })) : undefined });
         try {
             const scope = { machineId: MACHINE_ID, serverId: homes.homes.browser.id };
             const send = createBrowserDaemonControlCommandSender(scope);
@@ -213,9 +212,9 @@ describe('daemon Browser control UI seam', () => {
                 .toMatchObject({ commandId: 'action_focus', status: 'dispatched' });
             expect(await listBrowserDaemonViewsViaMachineRpc({ ...scope, browserSessionId: BROWSER_SESSION_ID }))
                 .toMatchObject({ ok: true, views: [{ browserSessionId: BROWSER_SESSION_ID, viewId: VIEW_ID,
-                    adapterKind: 'chromiumSidecar', events: [expect.objectContaining({
+                    adapterKind: 'chromiumSidecar', events: expect.arrayContaining([expect.objectContaining({
                         currentUrl: 'https://browser.example.test/next',
-                    })] }] });
+                    })]) }] });
             expect(await send({ kind: 'reload', commandId: 'reload', browserSessionId: BROWSER_SESSION_ID, viewId: VIEW_ID }))
                 .toMatchObject({ ok: true, result: { commandId: 'reload', status: 'dispatched' } });
             expect(runtime.pageCommands).toContain('Page.reload');
@@ -270,8 +269,8 @@ describe('daemon Browser control UI seam', () => {
         activeRpc = rpc;
         const machine = createPlainMachineRowFixture({ id: MACHINE_ID, accountId: 'browser-account' });
         const homes = await serveAccountHomes({ homes: [{ key: 'browser', serverUrl: 'https://browser-control.example.test',
-            accountId: 'browser-account' }], route: request => request.path === `/v1/machines/${MACHINE_ID}`
-                ? Response.json({ machine }) : undefined });
+            accountId: 'browser-account' }], route: request => request.path === '/v1/machines/read-batch'
+                ? Response.json(MachineReadBatchResponseV1Schema.parse({ results: [{ machineId: MACHINE_ID, status: 'found', machine }] })) : undefined });
         try {
             const scope = { machineId: MACHINE_ID, serverId: homes.homes.browser.id };
             expect(await listBrowserDaemonViewsViaMachineRpc({ ...scope, browserSessionId: BROWSER_SESSION_ID }))

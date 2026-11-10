@@ -3,11 +3,13 @@ import type { MachineLiveStreamSourceAdmissionV1 } from '@happier-dev/protocol/m
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { sessionRpcWithServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 
 /** The installed source owner admits the acting viewer before the Home mints its relay grant. */
 export async function requestMachineLiveStreamSourceAdmission(input: Readonly<{
     serverId: string;
     accountId: string;
+    sessionId?: string;
     sourceMachineId: string;
     sourceId?: string;
     streamFamily: string;
@@ -20,12 +22,14 @@ export async function requestMachineLiveStreamSourceAdmission(input: Readonly<{
     if (!payload.success) return { ok: false, reasonCode: 'capture_source_unavailable' };
     let raw: unknown;
     try {
-        raw = await machineRpcWithServerScope<unknown, typeof payload.data>({
-            machineId: input.sourceMachineId, serverId: input.serverId, accountId: input.accountId,
-            method: RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT,
+        const request = { method: RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT,
             payload: payload.data, signal: input.signal,
-            ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
-        });
+            ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}) };
+        raw = input.sessionId
+            ? await sessionRpcWithServerAccountScope<unknown, typeof payload.data>({ ...request, sessionId: input.sessionId,
+                scope: { serverId: input.serverId, accountId: input.accountId } })
+            : await machineRpcWithServerScope<unknown, typeof payload.data>({ ...request,
+                machineId: input.sourceMachineId, serverId: input.serverId, accountId: input.accountId });
     } catch (error) {
         if (input.signal?.aborted) throw error;
         return { ok: false, reasonCode: readRpcErrorCode(error) ?? 'capture_source_unavailable' };
