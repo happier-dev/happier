@@ -158,6 +158,17 @@ export class MachineSetupEffectError extends Error {
     }
 }
 
+/** CHECK and its isolation preview expose the same native prerequisite and repair. */
+export function readMachineSetupObservationFailureV1(observation: MachineSetupStepObservationV1): MachineElevationFailureV1 | undefined {
+    const failure = MachineElevationFailureV1Schema.safeParse({
+        kind: observation.status === 'unsupported' ? 'native_check_unsupported' : 'native_check_unavailable',
+        ...(observation.reason ? { reason: observation.reason } : {}),
+        requiredFact: typeof observation.facts.requiredFact === 'string' ? observation.facts.requiredFact : observation.stepId,
+        ...(typeof observation.facts.remedy === 'string' ? { remedy: observation.facts.remedy } : {}),
+    });
+    return failure.success ? failure.data : undefined;
+}
+
 /** Only the native package owner can establish an explicit fallback condition. */
 export function isMachineSetupPackageUnavailableV1(step: MachineRecipeStepV1 | MachineRecipeCheckV1, fact: MachineSetupStepObservationV1): boolean {
     return step.kind === 'package' && fact.stepId === step.id && fact.status === 'unsupported'
@@ -343,13 +354,8 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
             const blocked = findMachineSetupBlockingObservationV1(current);
             if (blocked) {
                 const requiredFact = typeof blocked.facts.requiredFact === 'string' ? blocked.facts.requiredFact : blocked.stepId;
-                const failure = MachineElevationFailureV1Schema.safeParse({
-                    kind: blocked.status === 'unsupported' ? 'native_check_unsupported' : 'native_check_unavailable',
-                    ...(blocked.reason ? { reason: blocked.reason } : {}), requiredFact,
-                    ...(typeof blocked.facts.remedy === 'string' ? { remedy: blocked.facts.remedy } : {}),
-                });
                 return result(blocked.status === 'unsupported' ? 'unsupported' : 'unavailable', blocked.stepId, blocked.reason,
-                    requiredFact, failure.success ? failure.data : undefined);
+                    requiredFact, readMachineSetupObservationFailureV1(blocked));
             }
             if (administratorStep) {
                 const account = nativeFacts.find(fact => fact.stepId === administratorStep.id)!;

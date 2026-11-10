@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAgentIsolationEffectsBoundary } from './agentIsolationEffects.testkit';
-import { prepareAgentIsolationEffects, resolveAgentIsolationEffectIntent } from './agentIsolationProvisioner';
+import { prepareAgentIsolationEffects, prepareAgentIsolationEffectsResult, resolveAgentIsolationEffectIntent } from './agentIsolationProvisioner';
+import { createMachineSetupNativeBackend } from '@happier-dev/cli-common/machineSetup';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { resolveHostRequesterAgentPlacementForHost } from './agentIsolationLaunchPolicy';
 import { buildAgentIsolationMemberRetirementSteps } from './provisioning';
 import { createHash } from 'node:crypto';
@@ -9,6 +13,33 @@ import { resolveSeparateUserToolsLayout } from '@happier-dev/cli-common/firstPar
 afterEach(() => vi.restoreAllMocks());
 
 describe.runIf(process.platform !== 'win32')('isolation provisioning daemon identity', () => {
+  it.skipIf(process.platform !== 'linux')('keeps the native missing-ACL repair in the personal setup refusal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-personal-acl-'));
+    try {
+      const workspace = join(root, 'workspace');
+      await mkdir(workspace);
+      const native = createMachineSetupNativeBackend({ run: async ({ executable }) => {
+        if (executable === 'getent') return { code: 0, stdout: 'happier-agent:x:41001:41000::/home/agent:/usr/sbin/nologin\n', stderr: '' };
+        if (executable === 'getfacl') return { code: null, stdout: '', stderr: '', errorCode: 'ENOENT' };
+        throw new Error(`Unexpected native command ${executable}`);
+      } });
+      // Only OS observations are substituted; native ACL CHECK, intent and isolation projection stay real.
+      const boundary = createAgentIsolationEffectsBoundary({ installationId: 'installation',
+        installedCli: '/opt/happier/current/happier', readRoots: () => [{ rootId: 'workspace', path: workspace }],
+        readSessionsToReplace: () => 0, publishStatus: async () => {}, backend: {
+          observe: step => step.kind === 'pathTraversal' ? native.observe(step)
+            : Promise.resolve({ stepId: step.id, status: 'satisfied', facts: {} }),
+          apply: async () => { throw new Error('Read-only preview must not apply'); },
+        } });
+      const result = await prepareAgentIsolationEffectsResult({ machineId: 'machine', enabled: true, memberProvisioning: 'linuxUsersV1',
+        port: { read: async () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
+          compareAndSwap: async () => ({ status: 'unavailable' }) }, status: { kind: 'disabled' } }, boundary.effects);
+      expect(result).toMatchObject({ kind: 'unavailable', setup: { outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+        failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', requiredFact: 'commandExecutable',
+          remedy: 'Install the acl package on this Machine, then try again.' } } });
+      expect(boundary.mutations).toEqual([]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it.each(['linux', 'darwin', 'win32'] as const)('keeps member preview Linux-only and selects fallback on %s', async platform => {
     const native = createAgentIsolationEffectsBoundary({ installationId: 'installation',
       installedCli: '/opt/happier/current/happier', readRoots: () => [], readSessionsToReplace: () => 0, publishStatus: async () => {} });

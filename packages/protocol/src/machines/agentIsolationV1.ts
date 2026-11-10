@@ -163,6 +163,8 @@ export const MachineAgentIsolationSetResultV1Schema = lazyZodSchema(() => z.unio
   z.strictObject({ kind: z.literal('plan_changed'), current: MachineAgentIsolationReadyPreviewV1Schema,
     operationId: z.optional(id) }),
   z.strictObject({ kind: z.literal('conflict'), policy: MachineAgentIsolationPolicyV1Schema, metadataVersion: version }),
-  z.strictObject({ kind: z.literal('failed'), operationId: z.optional(id), code: z.enum(['cancelled', 'denied', 'locked', 'invalid', 'unavailable', 'outcome_unknown']) }),
+  z.strictObject({ kind: z.literal('failed'), operationId: z.optional(id),
+    code: z.enum(['cancelled', 'denied', 'locked', 'invalid', 'unavailable', 'outcome_unknown']),
+    setup: z.optional(MachineElevatedNotAppliedResultV1Schema) }),
 ]));
 export type MachineAgentIsolationSetResultV1 = z.infer<typeof MachineAgentIsolationSetResultV1Schema>;

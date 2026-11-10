@@ -22,7 +22,7 @@ import type { ProjectServiceRelocateInputV1, ProjectServiceMoveStartClaimResultV
 import { MachineServiceControlResultV1Schema } from '@happier-dev/protocol';
 import { MachineServiceExecResultV1Schema } from '@happier-dev/protocol';
 import { MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol';
-import { MachineAdminAccessMutationResultV1Schema, MachineRebootResultV1Schema } from '@happier-dev/protocol';
+import { MachineAdminAccessMutationResultV1Schema, MachineRebootResultV1Schema, MachineAgentIsolationSetResultV1Schema } from '@happier-dev/protocol';
 
 import { parseActionOperationProgressUpdate } from './actionOperationProgress';
 import { projectActionOperationFailure } from './actionOperationFailure';
@@ -438,6 +438,19 @@ export function createActionOperationRunner(deps: Readonly<{
             && deps.store.get(request.scope, operationId)?.observation?.kind === 'outcome_uncertain') {
             // Compute acceptance is not confirmation that the ordinary guest
             // Session has started. Its actual owner retains this uncertainty.
+            return executionResult;
+          }
+          const isolation = action.actionId === 'machines.agentIsolation.set' && executionResult.ok
+            ? MachineAgentIsolationSetResultV1Schema.safeParse(executionResult.result) : null;
+          if (isolation?.success && isolation.data.kind === 'failed') {
+            const result = isolation.data;
+            if (result.code === 'cancelled') deps.store.cancel(operationId, result);
+            else {
+              const failure = result.setup?.failure;
+              deps.store.fail(operationId, { errorCode: failure?.kind ?? result.code,
+                error: failure?.remedy ?? result.code,
+                ...(failure ? { details: { kind: 'machineSetup', failure } } : {}) }, result);
+            }
             return executionResult;
           }
           const failureResult = !executionResult.ok

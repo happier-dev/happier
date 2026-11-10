@@ -1,8 +1,7 @@
-import { createMachineSetupEffectPlan, applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
+import { createMachineSetupEffectPlan, applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend, readMachineSetupObservationFailureV1, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
 import { resolveMachineAgentExecutionPlacementV1, readMachineAgentIsolationPolicyV1, type AgentIsolationEffectPlanV1, type MachineAgentIsolationPolicyV1,
   type MachineAgentIsolationPreviewResultV1, type MachineAgentIsolationStatusV1, type MachineElevatedResultV1 } from '@happier-dev/protocol';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
-import { MachineSetupObservationReasonV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationReasonV1';
 import { MachineAgentIsolationUnavailableStatusV1Schema } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
@@ -121,9 +120,8 @@ export async function prepareAgentIsolationEffectsResult(input: Readonly<{
   const nativeFailure = setupPlan.nativeFacts.find(fact => fact.status === 'unavailable' || fact.status === 'unsupported');
   if (nativeFailure) {
     const reasonCode = nativeFailure.status === 'unsupported' ? 'native_check_unsupported' : 'native_check_unavailable';
-    const reason = MachineSetupObservationReasonV1Schema.safeParse(nativeFailure.reason);
     return { ...unavailable(), setup: { outcome: 'not_applied', reasonCode,
-      failure: { kind: reasonCode, ...(reason.success ? { reason: reason.data } : {}) } } };
+      failure: readMachineSetupObservationFailureV1(nativeFailure) } };
   }
   const plan: AgentIsolationEffectPlanV1 = { ...memberReview, roots: roots.map(root => ({ ...root,
     changes: input.enabled && setupPlan.nativeFacts.find(fact => fact.stepId === `workspace-${root.rootId}`)?.status !== 'satisfied'

@@ -5,6 +5,34 @@ import { describe, expect, it } from 'vitest';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend, type MachineRecipeStepV1 } from './index.js';
 
 describe('reviewed workspace access at the setup interpreter', () => {
+    it.skipIf(process.platform !== 'linux').each(['getfacl', 'setfacl'] as const)(
+        'retains the install-acl repair when %s is missing at the native effect boundary', async missing => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-missing-acl-'));
+        try {
+            const calls: string[] = [];
+            const backend = createMachineSetupNativeBackend({ run: async ({ executable }) => {
+                calls.push(executable);
+                if (executable === 'getent') return { code: 0, stdout: 'member:x:41001:41000::/home/member:/usr/sbin/nologin\n', stderr: '' };
+                if (executable === missing) return { code: null, stdout: '', stderr: '', errorCode: 'ENOENT' };
+                if (executable === 'getfacl') return { code: 0, stdout: 'user::rwx\ngroup::---\nother::---\n', stderr: '' };
+                throw new Error(`Unexpected native command ${executable}`);
+            } });
+            const step: MachineRecipeStepV1 = { id: 'member-traversal', kind: 'pathTraversal', path: root, agentUsername: 'member' };
+            const basis = { kind: 'agentIsolation' as const, machineId: 'machine', enabled: true, expectedPolicy: { enabled: false } };
+            const plan = await checkMachineSetupEffectPlan({ basis, steps: [step], backend });
+            if (missing === 'getfacl') expect(plan.nativeFacts[0]).toMatchObject({ status: 'unavailable',
+                reason: 'required_fact_unavailable', facts: { requiredFact: 'commandExecutable', executable: missing,
+                    remedy: 'Install the acl package on this Machine, then try again.' } });
+            const outcome = await applyMachineSetupEffectPlan({ plan, backend });
+            expect(outcome).toMatchObject({ status: missing === 'getfacl' ? 'unavailable' : 'failed',
+                reason: 'required_fact_unavailable', failure: { kind: missing === 'getfacl' ? 'native_check_unavailable' : 'native_effect_failed',
+                    requiredFact: 'commandExecutable', remedy: 'Install the acl package on this Machine, then try again.' } });
+            if (missing === 'getfacl') expect(calls).not.toContain('setfacl');
+            // Only the actual ACL command decides availability; no command-discovery preflight.
+            expect(calls.every(command => ['getent', 'getfacl', 'setfacl'].includes(command))).toBe(true);
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
+
     it.skipIf(process.platform !== 'linux')('removes only the selected traversal ACL and converges without changing other access', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-traversal-removal-'));
         try {

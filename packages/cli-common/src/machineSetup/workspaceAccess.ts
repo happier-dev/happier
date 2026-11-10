@@ -3,13 +3,14 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { MachineSetupEffectError, type MachineRecipeStepV1, type MachineSetupStepObservationV1 } from './index.js';
+import { MachineSetupEffectError, readMachineSetupObservationFailureV1, type MachineRecipeStepV1, type MachineSetupStepObservationV1 } from './index.js';
 import { readLocalAccount, type NativeRun } from './nativeSystemBackend.js';
 import { parsePosixAcl, posixAclEntryAllows } from './posixAcl.js';
 import { inspectNativeAncestors, isMissingNativeFile } from './nativeFileSafety.js';
 
 type WorkspaceStep = Extract<MachineRecipeStepV1, { kind: 'workspaceAccess' | 'pathTraversal' }>;
 const safeGitEnvironment = { LC_ALL: 'C', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+const missingAclRemedy = 'Install the acl package on this Machine, then try again.';
 
 /** Git configuration belongs only to metadata at the reviewed Workspace root,
  * never an enclosing repository. Plain folder Workspaces need filesystem access. */
@@ -49,7 +50,11 @@ export function createWorkspaceAccessBackend(run: NativeRun) {
         return run(command.executable, command.args, { LC_ALL: 'C' });
     };
     const checked = async (command: string, args: readonly string[]) => {
-        if ((await run(command, args, { LC_ALL: 'C' })).code !== 0) throw new MachineSetupEffectError('native_effect_failed');
+        const result = await run(command, args, { LC_ALL: 'C' });
+        if (result.errorCode === 'ENOENT') throw new MachineSetupEffectError('required_fact_unavailable', {
+            kind: 'native_effect_failed', reason: 'required_fact_unavailable', requiredFact: 'commandExecutable', remedy: missingAclRemedy,
+        });
+        if (result.code !== 0) throw new MachineSetupEffectError('native_effect_failed');
     };
     const observeTraversal = async (step: Extract<WorkspaceStep, { kind: 'pathTraversal' }>): Promise<MachineSetupStepObservationV1> => {
         try { await lstat(step.path); }
@@ -65,6 +70,8 @@ export function createWorkspaceAccessBackend(run: NativeRun) {
         const user = await readLocalAccount(run, 'passwd', step.agentUsername);
         if (!user && step.state === 'absent') return { stepId: step.id, status: 'satisfied', facts: { agentUid: null } };
         const acl = await run('getfacl', ['-n', '-c', '-p', step.path], { LC_ALL: 'C' });
+        if (acl.errorCode === 'ENOENT') return { stepId: step.id, status: 'unavailable', reason: 'required_fact_unavailable',
+            facts: { requiredFact: 'commandExecutable', executable: 'getfacl', remedy: missingAclRemedy } };
         if (acl.code !== 0) throw new MachineSetupEffectError('required_fact_unavailable');
         const lines = parsePosixAcl(acl.stdout);
         const entry = `user:${user?.[2]}:`;
@@ -104,6 +111,8 @@ export function createWorkspaceAccessBackend(run: NativeRun) {
             if (step.kind === 'pathTraversal' && step.state === 'absent') {
                 const current = await observeTraversal(step);
                 if (current.status === 'satisfied') return;
+                if (current.status === 'unavailable') throw new MachineSetupEffectError(
+                    'required_fact_unavailable', readMachineSetupObservationFailureV1(current));
                 const uid = current.facts.agentUid;
                 if (typeof uid !== 'number') throw new MachineSetupEffectError('required_fact_unavailable');
                 // Keep the mask unchanged: removing this UID must not change

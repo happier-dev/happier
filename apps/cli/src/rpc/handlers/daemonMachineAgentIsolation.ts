@@ -2,7 +2,8 @@ import { MACHINE_AGENT_ISOLATION_ACTION_IDS, MACHINE_AGENT_ISOLATION_ACTION_INPU
   MachineAgentIsolationPreviewResultV1Schema, MachineAgentIsolationSetResultV1Schema,
   MachineAgentIsolationOwnStatusV1Schema, type MachineAgentIsolationOwnStatusV1,
   agentIsolationMetadataFieldV1, readMachineAgentIsolationPolicyV1, resolveMachineAgentExecutionPlacementV1,
-  type MachineAgentIsolationStatusV1, type MachineAgentIsolationPolicyV1, type ActionExecutorDeps } from '@happier-dev/protocol';
+  type MachineAgentIsolationStatusV1, type MachineAgentIsolationPolicyV1, type MachineElevatedNotAppliedResultV1,
+  type ActionExecutorDeps } from '@happier-dev/protocol';
 import { mutateMachineMetadataFieldV1, type MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { projectMachineAgentIsolationUnavailableStatusV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -138,8 +139,10 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         return preview;
       }
       const mutation = MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.set'].parse(raw);
-      const failed = (code: 'cancelled' | 'denied' | 'locked' | 'invalid' | 'unavailable' | 'outcome_unknown', operationId?: string) =>
-        MachineAgentIsolationSetResultV1Schema.parse({ kind: 'failed', code, ...(operationId ? { operationId } : {}) });
+      const failed = (code: 'cancelled' | 'denied' | 'locked' | 'invalid' | 'unavailable' | 'outcome_unknown',
+        operationId?: string, setup?: MachineElevatedNotAppliedResultV1) =>
+        MachineAgentIsolationSetResultV1Schema.parse({ kind: 'failed', code, ...(operationId ? { operationId } : {}),
+          ...(setup ? { setup } : {}) });
       const requireReview = async (prepared: PreparedAgentIsolationEffects) => {
         if (!await verify()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
         context?.localActionContext?.operationOwnerUpdate?.update({ state: 'running', observation: {
@@ -259,11 +262,13 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
             phase: event.type, label: 'Applying reviewed Agent isolation changes' }); } });
         if (effect.outcome !== 'applied') {
           if (effect.outcome === 'not_applied' && effect.reasonCode === 'plan_stale') return await parkForReview('native_apply_refused');
-          await publish({ kind: 'unavailable', code: 'provisioning_unavailable' });
+          const setup = effect.outcome === 'not_applied' ? effect : undefined;
+          await publish(projectMachineAgentIsolationUnavailableStatusV1({ kind: 'unavailable',
+            status: { kind: 'unavailable', code: 'provisioning_unavailable' }, ...(setup ? { setup } : {}) }));
           if (effect.outcome === 'outcome_unknown') context?.localActionContext?.operationOwnerUpdate?.update({ state: 'running',
             outcome: { ok: false, errorCode: 'outcome_unknown', error: 'Elevated isolation effects could not be confirmed' } });
           return failed(effect.outcome === 'outcome_unknown' ? 'outcome_unknown'
-            : effect.outcome === 'not_applied' && effect.reasonCode === 'cancelled' ? 'cancelled' : 'denied', operationId);
+            : effect.outcome === 'not_applied' && effect.reasonCode === 'cancelled' ? 'cancelled' : 'denied', operationId, setup);
         }
       }
       // Setup is not effectiveness. Only the current daemon's finite native

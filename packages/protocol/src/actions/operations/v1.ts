@@ -32,7 +32,8 @@ import { ActionApprovalRequestCreatedResultSchema, ActionOperationCredentialUseV
   readActionFailureCauseV1, UNKNOWN_ACTION_FAILURE_CAUSE_V1, type ActionExecuteResult } from '../actionExecutionResult.js';
 import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
 import { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
-import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema, MachineAgentIsolationPolicyV1Schema } from '../../machines/agentIsolationV1.js';
+import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema, MachineAgentIsolationPolicyV1Schema,
+  MachineAgentIsolationSetResultV1Schema } from '../../machines/agentIsolationV1.js';
 import { DeploymentTemplateInstantiationPartialV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
 import { HomeAuthorityMismatchFailureDetailsV1Schema } from '../../ssh/homeAuthorityMismatch.js';
 import { GuestServiceFailureFactsV1Schema } from '../../ssh/commandFailure.js';
@@ -535,6 +536,12 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
       ? SessionSpawnNewActionResultV1Schema.safeParse(snapshot.result) : null;
     const spawnRefusal = spawn?.success && spawn.data.type === 'error'
       && snapshot.error?.errorCode === spawn.data.code;
+    const isolation = snapshot.actionId === 'machines.agentIsolation.set'
+      && (snapshot.state === 'failed' || snapshot.state === 'cancelled')
+      ? MachineAgentIsolationSetResultV1Schema.safeParse(snapshot.result) : null;
+    const isolationRefusal = isolation?.success && isolation.data.kind === 'failed'
+      && (snapshot.state === 'cancelled' ? isolation.data.code === 'cancelled'
+        : snapshot.error?.errorCode === (isolation.data.setup?.failure?.kind ?? isolation.data.code));
     const backupSettlement = snapshot.state === 'failed' || snapshot.state === 'cancelled';
     const backup = backupSettlement && isDeploymentBackupActionIdV1(snapshot.actionId)
       ? DeploymentBackupFailureResultV1Schema.safeParse(snapshot.result) : null;
@@ -547,7 +554,7 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
     const contributedRefusal = contributed?.success && contributed.data.code === snapshot.error?.errorCode;
     if ((!rebootRefusal?.success || rebootRefusal.data.kind === 'accepted')
       && (!adoptionContinuation?.success || adoptionContinuation.data.kind !== 'partial') && !projectOpenReceipt && !spawnRefusal
-      && !backupFailure && !restore?.success && !contributedRefusal) {
+      && !backupFailure && !restore?.success && !contributedRefusal && !isolationRefusal) {
       context.addIssue({ code: 'custom', path: ['result'], message: 'Results must match their operation settlement or typed continuation.' });
     }
   }
@@ -604,6 +611,9 @@ export function readActionOperationTerminalResultV1(snapshot: ActionOperationSna
     const spawn = snapshot.actionId === 'session.spawn_new'
       ? SessionSpawnNewActionResultV1Schema.safeParse(snapshot.result) : null;
     if (spawn?.success && spawn.data.type === 'error') return { ok: true, result: spawn.data, ...metadata };
+    const isolation = snapshot.actionId === 'machines.agentIsolation.set'
+      ? MachineAgentIsolationSetResultV1Schema.safeParse(snapshot.result) : null;
+    if (isolation?.success && isolation.data.kind === 'failed') return { ok: true, result: isolation.data, ...metadata };
     const backupFailure = projectDeploymentBackupFailureResultV1(snapshot.actionId,
       snapshot.error?.errorCode ?? 'action_operation_failed', snapshot.result);
     return {
@@ -637,9 +647,11 @@ export function projectActionOperationSnapshotForV1Reader(snapshot: ActionOperat
     : progress;
   return {
     ...projection,
-    // Released V1 readers forbid failed Session and contributed Action results.
+    // Keep newer typed refusals on the full owner read, outside the released V1 shape.
     ...(result !== undefined && !(snapshot.state === 'failed' && (snapshot.actionId === 'session.spawn_new'
-      || parseQualifiedPluginContributionKey(snapshot.actionId))) ? { result } : {}),
+      || parseQualifiedPluginContributionKey(snapshot.actionId)))
+      && !((snapshot.state === 'failed' || snapshot.state === 'cancelled') && snapshot.actionId === 'machines.agentIsolation.set')
+      ? { result } : {}),
     ...(legacyProgress ? { progress: legacyProgress } : {}),
     ...(legacyDomainRef ? { domainRef: legacyDomainRef } : {}),
     ...(error && snapshot.state === 'failed' ? { error: { errorCode: error.errorCode, error: error.error } } : {}),

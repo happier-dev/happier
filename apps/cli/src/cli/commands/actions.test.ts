@@ -33,10 +33,48 @@ import { createActionOperationStore } from '@/daemon/actionOperations/actionOper
 import axios from 'axios';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 
 afterEach(() => { vi.restoreAllMocks(); process.exitCode = undefined; });
 
 describe('public Action failure evidence', () => {
+  it.each([
+    { json: false, phase: 'preview' }, { json: true, phase: 'preview' },
+    { json: false, phase: 'set' }, { json: true, phase: 'set' },
+  ] as const)('explains a Machine setup prerequisite in CLI output ($phase, json=$json)', async ({ json, phase }) => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    await seedTestServerProfile({ id: 'acl-home', homeId: 'srv_acl_home', serverUrl: 'https://acl-home.example' });
+    const reasonCode = phase === 'preview' ? 'native_check_unavailable' : 'native_effect_failed';
+    const result = { ...(phase === 'preview'
+      ? { kind: 'unavailable', status: { kind: 'unavailable', code: 'provisioning_unavailable' } }
+      : { kind: 'failed', code: 'denied', operationId: 'missing-acl' }),
+      setup: { outcome: 'not_applied', reasonCode, failure: { kind: reasonCode,
+        reason: 'required_fact_unavailable', requiredFact: 'commandExecutable',
+        remedy: 'Install the acl package on this Machine, then try again.' } } } as const;
+    const actionsSettings = setScopedActionApprovalPreference({ actionId: 'machines.agentIsolation.set',
+      scope: { kind: 'machine', machineId: 'machine-1' }, surface: 'cli', mode: 'waived',
+      settings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) });
+    // The host policy snapshot and Machine RPC are boundaries; CLI admission and output stay real.
+    const executor = createCliActionExecutorHarness({ token: 'token', sessionId: 'cli-acl', mode: 'plain', ctx: null,
+      actionsSettingsProvider: { getActionsSettings: () => actionsSettings } }, {
+      ...createUnavailableActionTransportDeps(), machineAgentIsolationAction: async () => result,
+    }).executor;
+    await handleActionsCommand(['invoke', `machines.agentIsolation.${phase}`, '--server-id', 'acl-home',
+      '--input-json', JSON.stringify({ machineId: 'machine-1', enabled: true, memberProvisioning: 'linuxUsersV1',
+        ...(phase === 'set' ? { expectedPolicy: { enabled: false }, expectedMetadataVersion: 1, expectedPlanDigest: 'reviewed' } : {}) }),
+      ...(json ? ['--json'] : [])], {
+      readCredentialsForServerIdFn: async () => credentials('stored_session'),
+      createExecutorFn: () => ({ ...executor, resolveSessionTarget: async sessionId => ({ ok: true as const, sessionId }) }),
+    });
+    const printed = JSON.parse(output);
+    expect(json ? printed.data : printed).toMatchObject(result);
+  });
   it.each(['connectedServices.quota.get', 'machines.agents.list', 'session.open'] as const)(
     'keeps the typed cause and caller request ID through %s', async actionId => {
       let output = '';
