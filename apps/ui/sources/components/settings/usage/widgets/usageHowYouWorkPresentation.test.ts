@@ -8,6 +8,7 @@ import {
   usageNightGridPresentation,
   formatUsageUtcOffset,
   formatUsageDurationCompact,
+  formatUsageDurationExact,
   formatUsageLookbackPeriod,
 } from './usageHowYouWorkPresentation';
 
@@ -152,6 +153,17 @@ describe('How you work presentation', () => {
   it('states the query calendar offset rather than assuming local time', () => {
     expect(formatUsageUtcOffset(120)).toBe('UTC+02:00');
     expect(formatUsageUtcOffset(-330)).toBe('UTC−05:30');
+  });
+});
+
+describe('Exact usage durations (sweep 1110 N7)', () => {
+  it('reads the exact value in hours, minutes and seconds, keeping the milliseconds the compact figure rounds away', () => {
+    // A six-hour wait never reads as "22,049.004 s" to a screen reader or in Details.
+    const exact = formatUsageDurationExact(6 * 60 * MIN + 7 * MIN + 29_004);
+    expect(exact).not.toContain('22');
+    expect(exact).toContain('29.004');
+    expect(exact).toMatch(/^6\D/);
+    expect(formatUsageDurationExact(4_250)).toContain('4.25');
   });
 });
 

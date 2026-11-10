@@ -108,7 +108,8 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
         value: valueOf(entry),
         label: usageDimensionLabel(dimension, entry.key, entry.label, machineNames),
         annotation:
-          metric === 'cost' ? [formatTokenCount(entry.tokens.total), usagePageCostRow(entry.cost, selection)?.label].filter(Boolean).join(' · ') : undefined,
+          // Unknown tokens leave no "—" ahead of the basis (sweep 1110 N5); the basis still says why money is missing.
+          metric === 'cost' ? [entry.tokens.total === null ? null : formatTokenCount(entry.tokens.total), usagePageCostRow(entry.cost, selection)?.label].filter(Boolean).join(' · ') : undefined,
       }));
     const ranked = accounting?.coverage?.ranked.find(
       (row) => row.dimension === dimension,

@@ -1,4 +1,4 @@
-import type { HeatmapProps, IntervalTimelineInterval } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierDataValue, type HeatmapProps, type IntervalTimelineInterval } from '@happier-dev/plugin-ui/presentation';
 import { isUsageNightHour } from '@happier-dev/protocol/usage/usageWorkIntervals';
 import { withUsageAccentAlpha } from '../usageAccent';
 import type { UsageHowYouWork } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
@@ -30,6 +30,22 @@ const durationLabels: UsageDurationLabels = {
 
 export function formatUsageDuration(ms: number): string {
   return formatSharedUsageDuration(ms, durationLabels);
+}
+
+/**
+ * The exact reading behind a compact duration (Details and its accessible name): hours, minutes and the seconds with
+ * the milliseconds the compact figure rounds away ("6 h 7 min 29.004 s"), never a bare count of seconds
+ * ("22,049.004 s", sweep 1110 N7).
+ */
+export function formatUsageDurationExact(ms: number): string {
+  const totalSeconds = ms / 1000;
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds - hours * 3600) / 60);
+  const seconds = Math.round((totalSeconds - hours * 3600 - minutes * 60) * 1000) / 1000;
+  const secondsText = t('usage.board.howYouWork.durationSeconds', { seconds: formatHappierDataValue(seconds, getPreferredLanguage()) });
+  if (hours > 0) return `${t('usage.board.howYouWork.durationHours', { hours, minutes })} ${secondsText}`;
+  if (minutes > 0) return `${t('usage.board.howYouWork.durationMinutes', { minutes })} ${secondsText}`;
+  return secondsText;
 }
 
 /** Ask the duration formatter which measured amount its visible units retain, without parsing localized text. */

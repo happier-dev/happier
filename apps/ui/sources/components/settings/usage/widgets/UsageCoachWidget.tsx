@@ -53,7 +53,7 @@ import {
   type UsageBodyProps,
 } from './usageBodyKit';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
-import { formatUsageDuration, formatUsageLookbackPeriod } from './usageHowYouWorkPresentation';
+import { formatUsageDuration, formatUsageDurationExact, formatUsageLookbackPeriod } from './usageHowYouWorkPresentation';
 import {
   createUsageCoachController,
   type UsageCoachAppliedEntry,
@@ -109,7 +109,7 @@ const COACH_LINE_MEASUREMENTS = 3;
 
 function formatExactCoachValue(value: number, unit: UsageCoachFinding['measurements'][number]['unit'], currency?: string): string {
   return unit === 'currency' ? `${currency ?? 'USD'} ${formatHappierDataValue(value, getPreferredLanguage())}`
-    : unit === 'milliseconds' ? t('usage.board.howYouWork.durationSeconds', { seconds: formatHappierDataValue(value / 1000, getPreferredLanguage()) })
+    : unit === 'milliseconds' ? formatUsageDurationExact(value)
       : unit === 'bytes' ? new Intl.NumberFormat(getPreferredLanguage(), { style: 'unit', unit: 'byte', maximumSignificantDigits: 15 }).format(value)
         : formatHappierDataValue(value, getPreferredLanguage());
 }

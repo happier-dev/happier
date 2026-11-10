@@ -476,7 +476,8 @@ describe('Usage Sources body', () => {
     const boundary = machineBoundary(found, [earlier, found, codex]);
     const screen = await mount(boundary.executor);
     await vi.waitFor(() => expect(screen.findByTestId('sources.machine.mac.source.codex-user.add')).toBeTruthy());
-    const text = screen.getTextContent();
+    // A folder path gives up its middle on the web, drawn as a head and a tail run: read the runs joined.
+    const text = screen.getTextContent().replace(/\s+/g, '');
     const at = (needle: string) => text.indexOf(needle);
     expect([at('~/.claude'), at('/tmp/codex-earlier'), at('~/.codex')]).toEqual(
       [at('~/.claude'), at('/tmp/codex-earlier'), at('~/.codex')].sort((a, b) => a - b));

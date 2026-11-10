@@ -42,20 +42,26 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
       {...(failed ? { action: { label: t('common.retry'), onPress: retry } } : {})} /> : null} />;
 }
 
-/** One capture is read per machine, so a fleet repeats the same source and status: said once with its count. */
+/**
+ * One capture is read per machine, so a fleet repeats the same source: one row per source with its count, and when its
+ * captures differ in status, each status said once with its own count ("Measured · coverage unknown ×35; Measured ·
+ * partial history ×43"), never the same source title on several rows (sweep 1110 N8).
+ */
 function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][number][]) {
-  const groups = new Map<string, { title: string; label: string; count: number }>();
+  const groups = new Map<string, { title: string; labels: Map<string, number>; count: number }>();
   for (const source of sources) {
     // A source's own title can be a mid-sentence fragment ("usage"); a row opens with a capital.
     const named = usageSourceTitle(source.source);
     const title = `${named.charAt(0).toLocaleUpperCase()}${named.slice(1)}`;
     const label = sourceCoverageLabel(source);
-    const key = `${title}\u0000${label}`;
-    const group = groups.get(key);
-    if (group) group.count += 1;
-    else groups.set(key, { title, label, count: 1 });
+    const group = groups.get(title) ?? { title, labels: new Map<string, number>(), count: 0 };
+    group.count += 1;
+    group.labels.set(label, (group.labels.get(label) ?? 0) + 1);
+    groups.set(title, group);
   }
-  return [...groups.values()];
+  return [...groups.values()].map(({ title, labels, count }) => ({ title, count,
+    label: labels.size === 1 ? [...labels.keys()][0]!
+      : [...labels].map(([label, n]) => n > 1 ? `${label} ×${n}` : label).join('; ') }));
 }
 
 function sourceCoverageLabel(source: UsageAnalyticsCoverage['sources'][number]): string {

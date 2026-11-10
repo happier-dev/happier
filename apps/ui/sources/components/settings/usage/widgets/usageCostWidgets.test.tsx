@@ -295,6 +295,13 @@ describe('one selected money basis across Usage bodies', () => {
       slice={coverageOf([...Array.from({ length: 30 }, () => ({ ...source, source: 'claude-assistant-usage' })), { ...source, source: 'codex-token-count' }])} />);
     expect(twins.findByType(HappierDataRows).props.rows).toHaveLength(2);
     expect(twins.getTextContent()).toContain('30');
+    // One source across machines whose captures differ in status is still one row, its statuses counted in it (N8).
+    const mixed = await renderScreen(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
+      slice={coverageOf([...Array.from({ length: 3 }, () => ({ ...source, source: 'claude-assistant-usage' })),
+        ...Array.from({ length: 2 }, () => ({ ...source, source: 'claude-assistant-usage', status: 'partial' as const }))])} />);
+    const mixedRows = mixed.findByType(HappierDataRows).props.rows as readonly (readonly string[])[];
+    expect(mixedRows).toHaveLength(1);
+    expect(mixedRows[0]![0]).toContain('×5');
     const distinct = await renderControls(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
       slice={coverageOf(Array.from({ length: 10 }, (_, index) => ({ ...source, source: `source-${index}` })))} />);
     expect(distinct.findByType(HappierDataRows).props.rows.length).toBeLessThan(10);

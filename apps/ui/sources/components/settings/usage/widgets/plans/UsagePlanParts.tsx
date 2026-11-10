@@ -297,9 +297,11 @@ export function UsagePlanIdentity(
         <ConnectedAccountIdentityText
           value={props.compact ? props.name.title : props.name.primaryLabel ?? props.name.title}
           style={[styles.identityTitle, text.title]}
-          // Two lines either way: in a narrow column (capacity segments, reset rows) a name wraps at a
-          // space instead of being cut, so "ChatGPT account 2" never reads as "ChatGPT account".
-          numberOfLines={2}
+          // In a narrow column (capacity segments, reset rows) a name wraps at a space instead of being cut, so
+          // "ChatGPT account 2" never reads as "ChatGPT account". A compact title also carries the address that tells
+          // same-name accounts apart ("Leeroy · codex3@happier.dev"): it keeps a third line so the address is never
+          // the part that is cut (sweep 1110 #12).
+          numberOfLines={props.compact ? 3 : 2}
         />
         {qualifier && !props.compact ? (
           <ConnectedAccountIdentityText

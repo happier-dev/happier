@@ -6,14 +6,13 @@ import {
   CompositionStrip,
   ChartDatum,
   type HappierChartDatum,
-  formatHappierDataValue,
   HappierDataMetric,
   RankedRows,
 } from '@happier-dev/plugin-ui/presentation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
-import { getPreferredLanguage, t } from '@/text';
+import { t } from '@/text';
 import { usageSeriesColor } from '../usageAccent';
 import {
   UsageBodyInsufficient,
@@ -30,6 +29,7 @@ import {
 } from './usageBodyKit';
 import {
   formatUsageDuration,
+  formatUsageDurationExact,
   isUsageDurationFullyVisible,
   readUsageAnsweringShares,
   type UsageAnsweringClient,
@@ -56,9 +56,7 @@ const CLIENT_LABEL_KEYS: Readonly<
 /** Only precision the canonical duration formatter rounds away needs a second reading. */
 function durationDatum(value: number | null, label: string): HappierChartDatum | null {
   if (value === null || isUsageDurationFullyVisible(value)) return null;
-  return { label, value: t('usage.board.howYouWork.durationSeconds', {
-    seconds: formatHappierDataValue(value / 1000, getPreferredLanguage()),
-  }) };
+  return { label, value: formatUsageDurationExact(value) };
 }
 
 function DurationFigure(props: Readonly<{ value: number | null; label: string; testID: string; children: React.ReactNode }>) {

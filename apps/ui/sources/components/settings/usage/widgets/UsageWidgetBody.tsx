@@ -40,7 +40,9 @@ import { UsageSourcesWidget } from './UsageSourcesWidget';
 import { UsageSourceCoverageWidget, UsageUnpricedWidget } from './UsageSourcePanels';
 import { UsageConstellationBody, UsagePlanetBody, UsageRunLengthBody, UsageScoreBody } from './UsageChartStyleBodies';
 import { UsageAtmosphereBody, UsageMachinesBody, UsageOrbitStyleBody, UsageProjectsBody } from './UsagePlanetFamilyBodies';
-import { UsageBodySettledReportContext, useReportUsageBodySettled, useUsageBodyHeightMemory } from './usageBodyHeightMemory';
+import { UsageBodyReadingPlaceholderContext, UsageBodySettledReportContext, useReportUsageBodySettled, useUsageBodyHeightMemory, type UsageBodyReadState } from './usageBodyHeightMemory';
+
+const NOT_READ: UsageBodyReadState = Object.freeze({ facts: false, settled: false });
 
 /** The one body per builtin Usage definition; all share the descriptor owner's ids. */
 const USAGE_QUERY_BODIES: Readonly<
@@ -99,17 +101,27 @@ export function UsageWidgetBody(
 ): React.ReactElement {
   // Cold-load geometry is decided here once for every Usage body: until a body's reads settle it holds the
   // height it last settled at on this device (same occurrence and width), so arrivals land inside that room.
-  const [settled, setSettled] = React.useState(false);
-  const width = useWidgetPresentation()?.geometry?.width;
-  const memory = useUsageBodyHeightMemory(`${props.serverId}:${props.testID}`, width, settled);
+  const [readState, setReadState] = React.useState<UsageBodyReadState>(NOT_READ);
+  const report = React.useCallback((next: UsageBodyReadState) => setReadState(current =>
+    current.facts === next.facts && current.settled === next.settled ? current : next), []);
+  const [placeholders, setPlaceholders] = React.useState(0);
+  const registerPlaceholder = React.useCallback(() => {
+    setPlaceholders(count => count + 1);
+    return () => setPlaceholders(count => count - 1);
+  }, []);
+  const shown = React.useMemo((): UsageBodyReadState => placeholders > 0 && readState.facts
+    ? { facts: false, settled: readState.settled } : readState, [placeholders, readState]);
+  const memory = useUsageBodyHeightMemory(`${props.serverId}:${props.testID}`, shown);
   return <UsageChartInteractions>
-    <UsageBodySettledReportContext.Provider value={setSettled}>
-      <View style={memory.minHeight === undefined ? styles.body : [styles.body, { minHeight: memory.minHeight }]} onLayout={memory.onLayout}>
+    <UsageBodyReadingPlaceholderContext.Provider value={registerPlaceholder}>
+    <UsageBodySettledReportContext.Provider value={report}>
+      <View style={memory.style === undefined ? styles.body : [styles.body, memory.style]} onLayout={memory.onLayout}>
         {props.id === 'usage_sources'
           ? <UsageSourcesWidget input={props.input} serverId={props.serverId} testID={props.testID} />
           : <UsageQueryWidgetBody {...props} id={props.id} />}
       </View>
     </UsageBodySettledReportContext.Provider>
+    </UsageBodyReadingPlaceholderContext.Provider>
   </UsageChartInteractions>;
 }
 
@@ -148,9 +160,12 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
   const replacing = slice !== null && model.updatingPreviousPeriod;
   useWidgetFrameResourceActivity(replacing || model.refreshing);
   // Settled for the cold-load floor: facts are shown and none of their sources is still being read.
-  useReportUsageBodySettled(!query || (slice !== null
+  // Settled: facts are shown and none of their sources is still being read (or the body ended in a terminal state).
+  // Facts: the body draws admitted facts, so its height is worth remembering even while a read stays outstanding.
+  const bodySettled = !query || (slice !== null
     ? !slice.sources.some(source => source.status === 'pending' || source.status === 'not_loaded')
-    : !!model.error && !model.pending || !model.requestedQuery && !model.pending));
+    : !!model.error && !model.pending || !model.requestedQuery && !model.pending);
+  useReportUsageBodySettled(bodySettled, bodySettled || slice !== null);
   const Body = USAGE_QUERY_BODIES[props.id];
   const style = props.input.style, colourBy = props.input.colourBy, day = props.input.day;
   // Keyed on the three scalars so an unrelated input change keeps the body's props stable.

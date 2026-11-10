@@ -20,6 +20,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { WidgetFrameBodyRowsContext, useWidgetBodyRowHeight } from '@/components/widgets/frame/widgetFrameBody';
+import { useRegisterUsageBodyReadingPlaceholder } from './usageBodyHeightMemory';
 import {
   buildUsageAnalyticsViewModel,
   resolveResponseDayStreaks,
@@ -298,6 +299,8 @@ export function UsageBodyReading(props: Readonly<{
   waitingOn?: Readonly<{ slice: UsageQueryResultSlice; sources: readonly string[] }>;
 }>) {
   const { theme } = useUnistyles();
+  // While this placeholder is up the body has no facts; its dispatch holds the room it last drew them in.
+  useRegisterUsageBodyReadingPlaceholder();
   const reducedMotion = useReducedMotionPreference();
   const color = theme.colors.surface.skeleton;
   const shape = props.shape;
@@ -539,14 +542,16 @@ export function useUsageChartRoomPx(): number | undefined {
  * Every Usage chart's plot height, decided once before its first paint (sweep 1110 #8–#10): the declared room less
  * the chart's chrome, or `minPx` on a phone, where no room is declared. Never the body's own measured box: a box
  * that holds the chart feeds the chart's height back into itself, and the plot then relays out after it draws.
+ * A body whose frame declares no rows (a fixed viewport, a host outside the grouped area) is told its container's
+ * size, which its content cannot change, so that geometry stands.
  */
 export function useUsageChartPlotPx(minPx: number, options?: Readonly<{ peak?: boolean }>): number {
-  const width = useWidgetPresentation()?.geometry?.width;
+  const geometry = useWidgetPresentation()?.geometry;
   const room = useUsageChartRoomPx();
   const phone = useDeviceType() === 'phone';
   if (phone) return minPx;
-  return resolveUsageChartPlotPx(room === undefined ? undefined
-    : { width: width ?? USAGE_CHART_FRAME_PX.narrowFrame, height: room }, minPx, options);
+  return resolveUsageChartPlotPx(room === undefined ? geometry
+    : { width: geometry?.width ?? USAGE_CHART_FRAME_PX.narrowFrame, height: room }, minPx, options);
 }
 
 export function resolveUsageChartChromePx(frameWidth: number | undefined, options?: Readonly<{ peak?: boolean }>): number {

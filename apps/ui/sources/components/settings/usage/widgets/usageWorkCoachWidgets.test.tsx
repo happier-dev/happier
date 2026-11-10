@@ -702,7 +702,7 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.getTextContent()).not.toContain('tool11');
     await screen.pressByTestIdAsync('loop.tools.more.toggle');
     expect(screen.getTextContent()).toContain('tool11');
-    expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'loop.waited.detail')?.props.datum.value).toContain('4,680');
+    expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'loop.waited.detail')?.props.datum.value).toBe('1 h 18 min 0.125 s');
     await screen.update(<UsageHumanLoopWidget {...props} slice={{ ...slice, howYouWork: { ...howYouWork,
       permissions: { ...howYouWork.permissions, decisionLatencyMs: 78 * 60_000 } } }} id="usage_human_loop" testID="loop" />);
     expect(screen.findAllByType(ChartDatum).some(node => node.props.testID === 'loop.waited.detail')).toBe(false);

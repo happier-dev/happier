@@ -217,13 +217,13 @@ export function UsageFilterBar(
     return (
       <View testID={props.testID} style={styles.phone}>
         {period}
-        {/* One Filters chip on the start edge, Tokens/Cost on the end edge of the same line (phone lab p5 "Usage");
-            the cost basis follows and wraps rather than hiding past the screen edge (a scroller clipped it at 390). */}
-        <View style={styles.phoneChips}>
-          {chips}
-          <View style={styles.phoneGap} />
+        {/* The Filters chip on its line; Tokens/Cost and the basis on their own line, end edge. The basis arrives when
+            its read answers: sharing the Filters line it wrapped onto a new one late and pushed the page 38 px (sweep
+            1110 N4), so the line exists whenever these controls do and the basis only fills it (refines phone lab p5). */}
+        <View style={styles.phoneChips}>{chips}</View>
+        {props.onMetricChange || costFilter ? <View testID={`${props.testID}.trailing`} style={styles.phoneTrailing}>
           {trailing}
-        </View>
+        </View> : null}
       </View>
     );
   return (
@@ -322,5 +322,5 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     gap: theme.space.s6,
   },
-  phoneGap: { flexGrow: 1 },
+  phoneTrailing: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end', gap: theme.space.s6 },
 }));
