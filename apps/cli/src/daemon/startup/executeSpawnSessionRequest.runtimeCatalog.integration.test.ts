@@ -34,6 +34,7 @@ import { splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connect
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
+import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { TeamsPageV1Schema, resolveTeamAdmissionProjectionV1 } from '@happier-dev/protocol/teams/projections';
@@ -307,6 +308,7 @@ async function setAccountSnapshot(input: Readonly<{
   settingsVersion?: number;
   acpCatalog?: AcpCatalogSnapshotV1;
   providerConnectionsCatalog?: ActiveAccountSettingsSnapshot['providerConnectionsCatalog'];
+  secretBindingsByProfileId?: Readonly<Record<string, Readonly<Record<string, string>>>>;
 }>) {
   const { profiles, ...settings } = input.settings;
   // The Account HTTP boundary stores destination rows. Settings is no longer
@@ -317,7 +319,7 @@ async function setAccountSnapshot(input: Readonly<{
     content: { t: 'plain', v: { v: 1,
       id: profile && typeof profile === 'object' ? Reflect.get(profile, 'id') : '',
       definition: { kind: 'inline', profile }, enabled: true,
-      promptStack: [], skillSeeds: [], secretBindings: {},
+      promptStack: [], skillSeeds: [], secretBindings: input.secretBindingsByProfileId?.[String(Reflect.get(Object(profile), 'id'))] ?? {},
     } },
   }));
   fixtureAcpCatalog = input.acpCatalog;
@@ -759,7 +761,7 @@ describe('executeSpawnSessionRequest', () => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/encryption/currentness') return homeResponse(createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
       if (path === '/v1/account/encryption') return homeResponse({ mode: 'plain', updatedAt: 1 });
-      if (path === '/v1/artifacts') return homeResponse([]);
+      if (path === '/v1/artifacts') return homeResponse(artifactListResponse(String(url), []));
       if (path === '/v1/account/entity-rows/profiles') return homeResponse({ status: 'listed', rows: profileRows,
         nextCursor: null, complete: true, referenceGuardRevision: 1, transferControl: { status: 'absent' }, diagnostics: [] });
       if (path === '/v1/account/entity-rows/profiles/reference-guard') return homeResponse({ status: 'ready', revision: 1 });
@@ -1266,7 +1268,7 @@ describe('executeSpawnSessionRequest', () => {
     expect(routeSpawnModeAndWaitForWebhook).not.toHaveBeenCalled();
   });
 
-  it('uses static support without an adapter for a safe native V2 profile and releases after spawn commit', async () => {
+  it.each([false, true])('uses static support for a native V2 profile with Saved Secret binding=%s and releases after spawn commit', async (withSecret) => {
     const events: string[] = [];
     hoisted.requireCatalogEntry.mockReturnValue({});
     hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
@@ -1279,15 +1281,35 @@ describe('executeSpawnSessionRequest', () => {
     });
     hoisted.ensureSessionDirectory.mockResolvedValueOnce({ ok: true, directoryCreated: false });
     await setAccountSnapshot({
+      secretBindingsByProfileId: withSecret ? { focused: { PROFILE_SECRET: 'happier:shared-secret:v1:spawn-fixture' } } : {},
       settings: {
         profiles: [{
           v: 2, id: 'focused', name: 'Focused',
-          extraEnvironmentVariables: [{ name: 'TEAM_FLAG', value: '1' }],
+          extraEnvironmentVariables: [{ name: 'TEAM_FLAG', value: '1' }, ...(withSecret ? [{ name: 'PROFILE_SECRET', value: '' }] : [])],
+          envVarRequirements: withSecret ? [{ name: 'PROFILE_SECRET', kind: 'secret', required: true }] : [],
           defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {},
           createdAt: 1, updatedAt: 1,
         }],
       },
     });
+    if (withSecret) {
+      // OS credential-store boundary supplies the same synthetic Account as admission.
+      const persistence = await import('@/persistence');
+      vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(createParams().credentials);
+      const { sealSavedSecretResourceStoredContentV1 } = await import('@happier-dev/protocol');
+      const { SavedSecretResourceMaterialsResponseV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretCatalogV1');
+      const materials = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{
+        resourceId: 'spawn-fixture', encryptionMode: 'plain', recipientEnvelope: null,
+        entry: { ref: 'happier:shared-secret:v1:spawn-fixture', source: 'shared_resource', relationship: 'owner',
+          ownerAccountId: 'owner', name: 'Spawn fixture', kind: 'token', revision: 1, materialStatus: 'ready',
+          capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+        storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'spawn-fixture', mode: 'plain',
+          content: { v: 1, name: 'Spawn fixture', kind: 'token', value: 'synthetic-spawn-material' } }),
+      }] });
+      const ordinaryGet = vi.mocked(axios.get).getMockImplementation()!;
+      vi.mocked(axios.get).mockImplementation(async (url, config) => new URL(String(url)).pathname === '/v1/account/saved-secrets/resources/materials'
+        ? homeResponse(materials) : ordinaryGet(url, config));
+    }
     const release = vi.fn(async () => { events.push('release'); });
     const contributes = createRegistryWithBackendOwners({ codex: 'happier.agent.codex' });
     const codexContribution = contributes.agentDefinitionsById.get('codex')!;
@@ -1321,11 +1343,17 @@ describe('executeSpawnSessionRequest', () => {
       return { type: 'success', sessionId: 'session-1' };
     });
 
-    await expect(executeSpawnSessionRequest({
+    const result = await executeSpawnSessionRequest({
       ...createParams(),
       options: { ...createParams().options, resume: '', profileId: 'focused', environmentVariables: { TEAM_FLAG: '1' } },
-    })).resolves.toMatchObject({ type: 'success' });
+    });
+    expect({ type: result.type, errorCode: result.type === 'error' ? result.errorCode : undefined })
+      .toEqual({ type: 'success', errorCode: undefined });
     expect(events).toEqual(['spawn', 'release']);
+    if (withSecret) {
+      const childInput = vi.mocked(resolveSpawnChildEnvironment).mock.calls.at(-1)?.[0];
+      expect(childInput?.profileEnvironmentVariables.PROFILE_SECRET === 'synthetic-spawn-material').toBe(true);
+    }
     expect(release).toHaveBeenCalledTimes(1);
     expect(hoisted.createRuntimeProviderSpawnAuthorizationAttempt).not.toHaveBeenCalled();
   });
