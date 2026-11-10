@@ -10,6 +10,7 @@ const ModalContentViewportContext = React.createContext<ModalContentViewport | n
 export type ModalBoundaryProviderProps = Readonly<{
     children: React.ReactNode;
     viewport?: ModalContentViewport | null;
+    inside?: boolean;
 }>;
 
 /**
@@ -19,7 +20,7 @@ export type ModalBoundaryProviderProps = Readonly<{
  */
 export function ModalBoundaryProvider(props: ModalBoundaryProviderProps) {
     return (
-        <ModalBoundaryContext.Provider value={true}>
+        <ModalBoundaryContext.Provider value={props.inside ?? true}>
             <ModalContentViewportContext.Provider value={props.viewport ?? null}>
                 <HappierItemGroupSelectionContext.Provider value={null}>
                     <ItemGroupRowPositionBoundary>

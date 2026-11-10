@@ -59,11 +59,12 @@ function UnstableDependencyChromeModal(props: CustomModalInjectedProps) {
     return React.createElement('UnstableDependencyChromeModal');
 }
 
+// Load the real component graph during collection; the test deadline covers chrome publication.
+const { CustomModal } = await import('./CustomModal');
+
 describe('CustomModal chrome publication cycle', () => {
     it('does not re-render the modal content when applying published chrome', async () => {
         unstableChromeRenderCount = 0;
-        const { CustomModal } = await import('./CustomModal');
-
         await renderScreen(React.createElement(CustomModal, {
             config: {
                 id: 'test-modal',

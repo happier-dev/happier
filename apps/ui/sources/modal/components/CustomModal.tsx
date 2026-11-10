@@ -1,5 +1,6 @@
 import React from 'react';
 import { BaseModal } from './BaseModal';
+import { RetainedModalFrame } from './RetainedModalFrame';
 import {
     CustomModalConfig,
     type CustomModalChromeCardConfig,
@@ -175,32 +176,34 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
         >
             {content}
         </ModalCardFrame>;
-        if (presentation.anchor) {
-            return <AnchoredModalCard anchor={presentation.anchor} visible={visible} accessibilityLabel={accessibilityLabel} zIndexBase={zIndexBase ?? MODAL_Z_INDEX}
-                dimensions={chrome?.dimensions} focusReturnRef={config.focusReturnRef} onRequestClose={sharedDismiss} frame={frame} />;
-        }
-        return (
-            <BaseModal
-                visible={visible}
-                onClose={sharedDismiss}
-                accessibilityLabel={accessibilityLabel}
-                testID={effectiveChrome?.kind === 'stage' ? effectiveChrome.testID : undefined}
-                focusReturnRef={config.focusReturnRef}
-                // A captured opener can vanish as it opens the modal (a menu or picker row); return to the control
-                // that held focus when the modal activated instead of the page.
-                focusReturnFallback={effectiveChrome ? 'activation-time' : undefined}
-                closeOnBackdrop={config.closeOnBackdrop ?? true}
-                showBackdrop={showBackdrop && presentation.showBackdrop}
-                motion={presentation.motion}
-                zIndexBase={zIndexBase}
-                webPortalTarget={config.webPortalTarget ?? null}
-                webPlacement={config.webPlacement}
-                placement={presentation.placement}
-                scrollHost={presentation.scrollHost}
-            >
-                {effectiveChrome?.kind === 'stage' ? content : frame()}
-            </BaseModal>
-        );
+        return <RetainedModalFrame frame={frame}>{retainedFrame => {
+            if (presentation.anchor) {
+                return <AnchoredModalCard anchor={presentation.anchor} visible={visible} accessibilityLabel={accessibilityLabel} zIndexBase={zIndexBase ?? MODAL_Z_INDEX}
+                    dimensions={chrome?.dimensions} focusReturnRef={config.focusReturnRef} onRequestClose={sharedDismiss} frame={retainedFrame} />;
+            }
+            return (
+                <BaseModal
+                    visible={visible}
+                    onClose={sharedDismiss}
+                    accessibilityLabel={accessibilityLabel}
+                    testID={effectiveChrome?.kind === 'stage' ? effectiveChrome.testID : undefined}
+                    focusReturnRef={config.focusReturnRef}
+                    // A captured opener can vanish as it opens the modal (a menu or picker row); return to the control
+                    // that held focus when the modal activated instead of the page.
+                    focusReturnFallback={effectiveChrome ? 'activation-time' : undefined}
+                    closeOnBackdrop={config.closeOnBackdrop ?? true}
+                    showBackdrop={showBackdrop && presentation.showBackdrop}
+                    motion={presentation.motion}
+                    zIndexBase={zIndexBase}
+                    webPortalTarget={config.webPortalTarget ?? null}
+                    webPlacement={config.webPlacement}
+                    placement={presentation.placement}
+                    scrollHost={presentation.scrollHost}
+                >
+                    {effectiveChrome?.kind === 'stage' ? content : retainedFrame()}
+                </BaseModal>
+            );
+        }}</RetainedModalFrame>;
     };
     return <ModalCommands bridge={config.commandBridge} commands={dismissible
         ? [{ key: 'close', title: t('common.close'), invoke: handleSharedDismiss }] : []}>

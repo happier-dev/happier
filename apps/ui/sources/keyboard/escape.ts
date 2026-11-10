@@ -54,6 +54,11 @@ export function EscapeLayerProvider(props: React.PropsWithChildren<{ layer: Esca
     return React.createElement(EscapeLayerContext.Provider, { value: props.layer }, props.children);
 }
 
+/** A retained modal body follows its current presentation shell's input scope. */
+export function useEscapeLayerScope(): EscapeLayerScope | null {
+    return React.useContext(EscapeLayerContext);
+}
+
 type EscapeKeyBlockerEntry = Readonly<{
     id: number;
     priority: number;

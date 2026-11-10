@@ -27,8 +27,85 @@ vi.mock('react-native-keyboard-controller', async () => {
 // Resolve the real component graph during collection, outside behavior-test deadlines.
 const { ModalProvider } = await import('./ModalProvider');
 const { Modal } = await import('./ModalManager');
+const { useIsInsideModalBoundary } = await import('./context/ModalBoundaryContext');
 
-it.each(['picker', 'confirm'] as const)('keeps an anchored sheet presented while its nested %s owns input', async kind => {
+// Connect QA r1109a: a wide/phone transition lost the selected mode and credential draft;
+// publishing a late anchor similarly returned the person to Add account's initial state.
+it.each(['resize', 'late-anchor'] as const)('keeps modal-local form state when its presentation changes (%s)', async (transition) => {
+    Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 1440 });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+    window.dispatchEvent(new Event('resize'));
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const anchorRef = React.createRef<HTMLButtonElement>();
+    let mounts = 0;
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        x: 900, y: 40, width: 80, height: 32, top: 40, left: 900, right: 980, bottom: 72, toJSON: () => ({}),
+    });
+    function Form({ setChrome }: import('./types').CustomModalInjectedProps) {
+        const inside = useIsInsideModalBoundary();
+        const [mode, setMode] = React.useState('key');
+        const [draft, setDraft] = React.useState('');
+        React.useEffect(() => { mounts += 1; }, []);
+        return <div data-testid="draft-boundary" data-inside={String(inside)}>
+            <button data-testid="draft-mode" onClick={() => setMode('json')}>{mode}</button>
+            <input data-testid="draft-value" value={draft} onInput={event => setDraft(event.currentTarget.value)} />
+            <button data-testid="late-anchor" onClick={() => setChrome?.({
+                kind: 'card', anchor: { kind: 'view', ref: anchorRef },
+            })}>Publish header anchor</button>
+        </div>;
+    }
+    const resize = async (width: number) => {
+        await act(async () => {
+            Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: width });
+            Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+            window.dispatchEvent(new Event('resize'));
+        });
+    };
+    try {
+        await act(async () => root.render(<ModalProvider>
+            <button ref={anchorRef} data-testid="form-opener" onClick={() => Modal.show({
+                component: Form,
+                chrome: { kind: 'card', title: 'Connect', phonePresentation: 'sheet',
+                    ...(transition === 'resize' ? { anchor: { kind: 'view', ref: anchorRef } as const } : {}) },
+            })}>Add account</button>
+        </ModalProvider>));
+        await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="form-opener"]')!.click());
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="draft-value"]')).not.toBeNull());
+        const field = document.querySelector<HTMLInputElement>('[data-testid="draft-value"]')!;
+        expect(document.querySelector('[data-testid="draft-boundary"]')!.getAttribute('data-inside')).toBe(String(transition === 'late-anchor'));
+        await act(async () => {
+            document.querySelector<HTMLButtonElement>('[data-testid="draft-mode"]')!.click();
+            field.value = 'dummy unsaved draft';
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(field.value).toBe('dummy unsaved draft');
+        if (transition === 'resize') await resize(390);
+        else await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="late-anchor"]')!.click());
+        expect(document.querySelector('[data-testid="draft-value"]')).toBe(field);
+        expect(document.querySelector('[data-testid="draft-mode"]')!.textContent).toBe('json');
+        expect(field.value).toBe('dummy unsaved draft');
+        expect(document.querySelector('[data-testid="draft-boundary"]')!.getAttribute('data-inside')).toBe(String(transition === 'resize'));
+        await resize(1440);
+        expect(document.querySelector('[data-testid="draft-value"]')).toBe(field);
+        expect(mounts).toBe(1);
+        await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="draft-value"]')).toBeNull());
+        await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="form-opener"]')!.click());
+        expect(document.querySelector<HTMLInputElement>('[data-testid="draft-value"]')!.value).toBe('');
+        expect(document.querySelector('[data-testid="draft-mode"]')!.textContent).toBe('key');
+    } finally {
+        await act(async () => root.unmount());
+        measure.mockRestore();
+        container.remove();
+    }
+});
+
+it.each([390, 1440].flatMap(width => (['picker', 'confirm'] as const).map(kind => ({ width, kind }))))('keeps a $width px sheet presented while its nested $kind owns input', async ({ width, kind }) => {
+    Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: width });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    window.dispatchEvent(new Event('resize'));
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
