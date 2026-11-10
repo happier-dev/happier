@@ -4,11 +4,11 @@ import { AGENT_DEFINITION } from './definition.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('OhMyPi agent definition', () => {
-  it('publishes token-only eligibility through public connected-account declarations', () => {
+  it('accepts Claude OAuth and setup tokens while keeping Gemini token eligibility', () => {
     expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-        credentialKinds: ['token'],
+        credentialKinds: ['token', 'oauth'],
       }),
       expect.objectContaining({
         service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },

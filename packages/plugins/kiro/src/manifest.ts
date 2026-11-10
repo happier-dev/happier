@@ -36,6 +36,7 @@ export const KIRO_PLUGIN = definePlugin({
     kiro: {
       declaration: {
         title: 'Kiro',
+        connectedAccounts: [],
         runtime: {
           kind: 'acp',
           transport: {

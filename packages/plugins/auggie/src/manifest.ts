@@ -30,6 +30,7 @@ export const AUGGIE_PLUGIN = definePlugin({
     auggie: {
       declaration: {
         title: 'Auggie',
+        connectedAccounts: [],
         runtime: { kind: 'custom' },
         cli: {
           displayName: 'Auggie CLI',

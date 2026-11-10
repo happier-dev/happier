@@ -17,6 +17,7 @@ export const CUSTOM_ACP_PLUGIN = definePlugin({
     'custom-acp': {
       declaration: {
         title: 'Custom ACP Agent',
+        connectedAccounts: [],
         runtime: { kind: 'custom' },
         sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',

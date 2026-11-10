@@ -46,6 +46,7 @@ export const CODERABBIT_PLUGIN = definePlugin({
     coderabbit: {
       declaration: {
         title: 'CodeRabbit',
+        connectedAccounts: [],
         runtime: { kind: 'custom' },
         cli: {
           executable: {

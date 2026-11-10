@@ -5,6 +5,8 @@ import { QWEN_ACP_RUNTIME_DEFINITION } from './agent/acp/definition.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { QWEN_ACP_COMMAND } from './agent/acp/preflight.js';
 import { qwenExternalSessionsContribution } from './agent/externalSessions/contribution.js';
+import { createQwenAgentRuntime } from './agent/factory.js';
+import { QWEN_ACCOUNT_SOURCES, QWEN_ACCOUNT_ENV_KEYS, prepareQwenConnectedAccount } from './agent/connectedAccount.js';
 
 export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.agent.qwen',
@@ -21,7 +23,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       id: 'qwen-process',
       capability: 'process',
       reason: 'Run the declared Qwen CLI executable.',
-      scope: { executables: [{ kind: 'systemTool', id: QWEN_ACP_COMMAND.toolId }] },
+      scope: { executables: [{ kind: 'systemTool', id: QWEN_ACP_COMMAND.toolId }], envKeys: [...QWEN_ACCOUNT_ENV_KEYS] },
     }],
     optional: [],
   },
@@ -29,14 +31,12 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     qwen: {
       declaration: {
         title: 'Qwen Code',
+        connectedAccounts: QWEN_ACCOUNT_SOURCES.map(({ purpose, service, protocol }) => ({ purpose, service,
+          materializationKinds: protocol === 'gemini' ? ['environment', 'files'] as ['environment', 'files'] : ['environment'] as ['environment'],
+          credentialKinds: ['token'] as ['token'] })),
         runtime: {
-          kind: 'acp',
-          transport: {
-            kind: 'stdio',
-            executable: { kind: 'systemTool', id: 'qwen-cli' },
-            args: [...QWEN_ACP_COMMAND.args],
-          },
-          definition: QWEN_ACP_RUNTIME_DEFINITION,
+          kind: 'custom',
+          permissionModeMapping: QWEN_ACP_RUNTIME_DEFINITION.permissionModeMapping,
         },
         cli: {
           displayName: 'Qwen CLI',
@@ -92,6 +92,22 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           },
         }),
       },
+      factory: createQwenAgentRuntime,
+      sessionRunnerFactory: { module: './agent/factory', export: 'createQwenAgentRuntime', runtimeApiVersion: 1,
+        externalSessionsExport: 'qwenExternalSessionsContribution' },
+      preflightSessionControls: {
+        async prepareLaunchEnvironment({ environment, connectedAccounts, signal }) {
+          const prepared = await prepareQwenConnectedAccount({}, { services: { connectedAccounts }, signal });
+          return { environment, dispose() { prepared?.dispose(); } };
+        },
+        catalogs: { kind: 'acp', command: QWEN_ACP_COMMAND },
+      },
+      connectedAccountLaunch: {
+        continuity: {
+          verifyResumeReachable: async () => ({ ok: false, reason: 'qwen_resume_reachability_unsupported' }),
+        },
+        switchContinuity: { continuityMode: 'restart_same_home',
+        supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'] } },
       externalSessions: qwenExternalSessionsContribution,
     },
   },

@@ -60,6 +60,8 @@ import {
 
 import { ANTHROPIC_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
 import { parseClaudeModelCatalog } from './provider/catalog.js';
+import { CLAUDE_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_API_KEY_ENV } from './connectedAccounts/service.js';
+import { CLAUDE_KIMI_DECLARATION, CLAUDE_KIMI_ENVIRONMENT_USES, prepareClaudeConnectedAccountKeyPreflight } from './agent/runtime/connectedAccountKeys.js';
 
 const resolveClaudeDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
   resolveClaudeDaemonSpawnPrerequisites(event, context);
@@ -120,7 +122,7 @@ const {
 } = CLAUDE_AGENT_SETTINGS_CONTRIBUTION;
 
 export const CLAUDE_PLUGIN = definePlugin({
-  id: 'happier.agent.claude',
+  id: CLAUDE_CONNECTED_ACCOUNT_SERVICE.pluginId,
   version: '0.0.0',
   displayName: 'Claude',
   description: 'Claude Code coding agent.',
@@ -145,6 +147,7 @@ export const CLAUDE_PLUGIN = definePlugin({
         ], envKeys: [
           ...CLAUDE_PROVIDER_OWNED_ENV_KEYS,
           ...CLAUDE_PROVIDER_HELPER_ENV_KEYS,
+          ...CLAUDE_KIMI_ENVIRONMENT_USES.map(use => use.environmentKey),
           'CLAUDE_CONFIG_DIR',
           'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
           'CLAUDE_CODE_ENTRYPOINT',
@@ -219,7 +222,7 @@ export const CLAUDE_PLUGIN = definePlugin({
     },
   },
   connectedAccountDescriptors: {
-    'claude-subscription': {
+    [CLAUDE_CONNECTED_ACCOUNT_SERVICE.localId]: {
       declaration: {
         title: 'Claude',
         ui: { iconResourceId: 'agent-mark', setup: { order: 0, firstRun: true, catalogDescription: { key: 'connectedServicesSettings.catalogClaude', fallback: 'Pro or Max plan. Sign in with a browser, or paste a setup token.' } } },
@@ -280,7 +283,7 @@ export const CLAUDE_PLUGIN = definePlugin({
       runtime: claudeSubscriptionConnectedAccountRuntime,
       accountRuntime: claudeSubscriptionAccountAuthentication,
     },
-    anthropic: {
+    [ANTHROPIC_CONNECTED_ACCOUNT_SERVICE.localId]: {
       declaration: {
         title: 'Anthropic API key',
         ui: { iconResourceId: 'anthropic-mark', setup: { order: 3, firstRun: false, catalogDescription: { key: 'connectedServicesSettings.catalogAnthropic', fallback: 'Pay per use, billed to your Anthropic organization.' } } },
@@ -395,17 +398,17 @@ export const CLAUDE_PLUGIN = definePlugin({
         },
         connectedAccounts: [{
           purpose: 'model_upstream',
-          service: 'claude-subscription',
+          service: CLAUDE_CONNECTED_ACCOUNT_SERVICE.localId,
           required: false,
           materializationKinds: ['environment', 'files', 'httpHeaders'],
           credentialKinds: ['oauth', 'token'],
         }, {
           purpose: 'model_upstream_api_key',
-          service: 'anthropic',
+          service: ANTHROPIC_CONNECTED_ACCOUNT_SERVICE.localId,
           required: false,
           materializationKinds: ['environment'],
           credentialKinds: ['token'],
-        }],
+        }, CLAUDE_KIMI_DECLARATION],
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           skills: { delivery: 'session_dir', nativeDisable: 'supported', liveReload: 'supported', usageEvidence: 'reported',
             nativeRoots: { user: [['.claude', 'skills']], project: [['.claude', 'skills']] } },
@@ -485,6 +488,7 @@ export const CLAUDE_PLUGIN = definePlugin({
       },
       factory: createClaudeAgentRuntime,
       preflightSessionControls: {
+        prepareLaunchEnvironment: prepareClaudeConnectedAccountKeyPreflight,
         resolveNativeCatalogSettingSources: ({ pluginSettings }) => readClaudeSettingSourcesV2(
           CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS, pluginSettings.account ?? {},
         ),
@@ -545,9 +549,9 @@ export const CLAUDE_PLUGIN = definePlugin({
             headerNames: ['authorization'],
           },
         }],
-        environmentUses: [{
+        environmentUses: [...CLAUDE_KIMI_ENVIRONMENT_USES, {
           purpose: 'model_upstream_api_key',
-          environmentKey: 'ANTHROPIC_API_KEY',
+          environmentKey: ANTHROPIC_API_KEY_ENV,
         }],
         stateSharingDescriptor: AGENT_STATE_SHARING_DESCRIPTOR,
         continuity: {
