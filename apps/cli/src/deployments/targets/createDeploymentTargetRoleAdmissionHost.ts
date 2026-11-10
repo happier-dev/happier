@@ -43,6 +43,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
         savedSecretOperationContext?: SavedSecretOperationContextV1;
         isCurrent(): Promise<boolean>;
     }>;
+    acquireServiceExportForward?: DeploymentTargetRoleAdmissionHost['acquireServiceExportForward'];
     readCurrentMachineId(): string | null;
 }>): Promise<DeploymentTargetRoleAdmissionHost | null> {
     const authorization = context.externalActionExecutionAuthorization;
@@ -97,6 +98,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
     return {
         serverId, machineId, credentialOwnerAccountId, credentials, serverHttpBaseUrl,
         resolveRequesterIdentity: config.resolveRequesterIdentity,
+        ...(config.acquireServiceExportForward ? { acquireServiceExportForward: config.acquireServiceExportForward } : {}),
         resolveEnvironmentApprovalScope: deployment.resolveEnvironmentApprovalScope,
         ...(installationId ? { installationId } : {}),
         assertCurrent,
@@ -136,7 +138,7 @@ export function createDeploymentTargetRoleSourceAdmissionForHost(admission: Depl
     Readonly<{ receipt: NonNullable<DeploymentTargetRoleAdmissionForHost['receipt']> }>,
     host: DeploymentTargetRoleAdmissionHost, context: ActionExecutorContext) {
     const { environment, receipt } = admission;
-    const controller = receipt.deployment.acceptedExecution!.controller;
+    const controller = admission.executionEnvironment ?? receipt.deployment.acceptedExecution!.controller;
     return async (_request: import('@happier-dev/plugin-sdk').DeploymentSourceMaterializationRequestV1,
         signal?: AbortSignal): Promise<AdmittedDeploymentSourceV1> => {
         const assertCurrent = async () => { signal?.throwIfAborted(); context.signal?.throwIfAborted(); };

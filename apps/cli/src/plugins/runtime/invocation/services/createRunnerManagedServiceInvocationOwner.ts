@@ -100,6 +100,7 @@ type RunnerLocalPluginServices = Pick<
     | 'managedServices'
     | 'machineProvisioners'
     | 'deploymentSource'
+    | 'deploymentExecEnv'
     | 'targetedContributions'
     | 'interactions'
     | 'composerContent'
@@ -1426,6 +1427,7 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
                     managedServices: services.managedServices,
                     machineProvisioners: services.machineProvisioners,
                     deploymentSource: services.deploymentSource,
+                    deploymentExecEnv: services.deploymentExecEnv,
                     targetedContributions: services.targetedContributions,
                     interactions: services.interactions,
                     composerContent: services.composerContent,

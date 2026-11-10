@@ -78,9 +78,10 @@ export type PluginInvocationServicesSeed = Readonly<{
     readApprovalProfileId?: () => string | null;
     /** Bound by the actual Domain admission, never by plugin-authored operands. */
     machineConnectorSecrets?: PluginServices['machineConnectorSecrets'];
-    /** Exact upload-role source acquisition captured by the deployment admission owner. */
+    /** Exact role source acquisition captured by the deployment admission owner. */
     deploymentSource?: Pick<Parameters<typeof import('@/deployments/targets/ownServer/exactCommitRelease').createDeploymentSourceMaterializationPort>[0], 'admit'> & Readonly<{
         identity: Readonly<Pick<import('@happier-dev/plugin-sdk/services').DeploymentSourceMaterializationRequestV1, 'environmentId' | 'deploymentId'>>;
+        createExecEnv?(source: import('@happier-dev/plugin-sdk').DeploymentSourceMaterializationV1, signal: AbortSignal, retainCleanup: NonNullable<PluginInvocationServicesSeed['retainCleanup']>): import('@happier-dev/plugin-sdk').DeploymentExecEnvPortV1;
     }>;
     /** Exact shared-save id/purpose/audience reviewed by the root Action. */
     sharedSaveAdmission?: import('@/plugins/runtime/context/secrets').PluginSharedSaveAdmission;
@@ -107,6 +108,8 @@ export type PluginInvocationServicesSeed = Readonly<{
     /** Durable source custody; never plugin-authored invocation input. */
     sourceCustody?: PluginSourceCustody;
     correlationId: string;
+    /** Originating host request identity; never an authorization operand. */
+    requestId?: string;
     surface: PluginInvocationSurface;
     /** Host-stamped provenance for a nested target invocation. */
     caller?: PluginInvocationCaller;

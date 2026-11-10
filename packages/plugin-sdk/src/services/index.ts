@@ -17,7 +17,7 @@ import type {
     HttpService,
     FileSystemService,
 } from './io.js';
-import type { ExecService } from '../exec.js';
+import type { ExecService, DeploymentExecEnvPortV1 } from '../exec.js';
 import type { MachineConnectorSecretsService, SecretsService } from '../secrets.js';
 export type { SharedSecretAudience, SharedSecretSaveInput, SharedSecretSaveResult } from '../secrets.js';
 import type { StorageService } from '../storage.js';
@@ -349,6 +349,7 @@ export type PluginServiceId =
     | 'managedServices'
     | 'machineProvisioners'
     | 'deploymentSource'
+    | 'deploymentExecEnv'
     | 'sessions'
     | 'resources'
     | 'mcp'
@@ -377,6 +378,7 @@ export interface PluginServices {
     readonly managedServices: ManagedServices;
     readonly machineProvisioners: MachineProvisionersService;
     readonly deploymentSource: DeploymentSourceMaterializationPortV1;
+    readonly deploymentExecEnv: DeploymentExecEnvPortV1;
     readonly sessions: SessionsService;
     readonly resources: ResourcesService;
     readonly mcp: McpService;

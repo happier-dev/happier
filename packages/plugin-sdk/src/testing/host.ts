@@ -68,6 +68,7 @@ import type {
 
 type PluginActionCaller = Extract<PluginInvocationCaller, Readonly<{ kind: 'plugin' }>>;
 type TestkitActionTargetInvocation = Readonly<{
+    requestId?: string;
     localId: PluginContributionLocalId;
     input: unknown;
     caller: PluginActionCaller;
@@ -103,6 +104,7 @@ type TestkitActionTarget = Readonly<{
 }>;
 
 type TestkitActionServiceSource = Readonly<{
+    requestId?: string;
     localId: PluginContributionLocalId;
     qualifiedId: string;
     surface: PluginInvocationSurface;
@@ -112,6 +114,7 @@ type TestkitActionServiceSource = Readonly<{
 }>;
 
 type TestkitRegisteredActionInvocation = Readonly<{
+    requestId?: string;
     localId: PluginContributionLocalId;
     input: unknown;
     surface: PluginInvocationSurface;
@@ -426,6 +429,7 @@ function createPluginServices(
         managedServices: fixtureService(fixture, 'managedServices'),
         machineProvisioners: fixtureService(fixture, 'machineProvisioners'),
         deploymentSource: fixtureService(fixture, 'deploymentSource'),
+        deploymentExecEnv: fixtureService(fixture, 'deploymentExecEnv'),
         sessions: fixtureService(fixture, 'sessions'),
         resources: fixtureService(fixture, 'resources'),
         mcp: fixtureService(fixture, 'mcp'),
@@ -1073,6 +1077,7 @@ export async function createPluginTestkit(
             // settled effect is reported as it happened.
             throwIfContributedActionCallerInactive(source, signal, caller);
             return await target.invokeFromPlugin({
+                ...(source.requestId === undefined ? {} : { requestId: source.requestId }),
                 localId: action.localId,
                 input,
                 caller,
@@ -1289,6 +1294,7 @@ export async function createPluginTestkit(
                     return null;
                 }
                 const invocationServices = createInvocationServices(invocationOptions.services, {
+                    ...(invocationOptions.requestId === undefined ? {} : { requestId: invocationOptions.requestId }),
                     localId: invocationOptions.localId, qualifiedId, surface: invocationOptions.surface,
                     ...(invocationOptions.caller === undefined ? {} : { caller: invocationOptions.caller }),
                     ...(invocationOptions.sessionId === undefined ? {} : { sessionId: invocationOptions.sessionId }),
@@ -1299,6 +1305,7 @@ export async function createPluginTestkit(
                     contribution: Object.freeze({ id: invocationOptions.localId, qualifiedId }),
                     surface: invocationOptions.surface,
                     invokedAtMs: Date.now(),
+                    ...(invocationOptions.requestId === undefined ? {} : { requestId: invocationOptions.requestId }),
                     ...(invocationOptions.caller === undefined ? {} : { caller: invocationOptions.caller }),
                     signal,
                 };
@@ -1450,6 +1457,7 @@ export async function createPluginTestkit(
                 });
             }
             const value = await invokeRegisteredAction({
+                ...(targetInvocation.requestId === undefined ? {} : { requestId: targetInvocation.requestId }),
                 localId: targetInvocation.localId,
                 input: targetInvocation.input,
                 surface: 'plugin',
@@ -1485,6 +1493,7 @@ export async function createPluginTestkit(
                 localId,
                 input: actionInput,
                 surface: invocationOptions.surface ?? 'cli',
+                ...(invocationOptions.requestId === undefined ? {} : { requestId: invocationOptions.requestId }),
                 ...(invocationOptions.signal ? { signal: invocationOptions.signal } : {}),
                 ...(invocationOptions.sessionId === undefined
                     ? {}

@@ -1,3 +1,4 @@
+import { createDeploymentTargetRoleExecEnvironmentForHost } from '@/deployments/targets/createDeploymentTargetRoleExecEnvironmentForHost';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -439,11 +440,17 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                             ensureEnvironmentServices: params.ensureEnvironmentServices,
                             readOwner: () => params.readRuntimeRegistry?.()?.projectManagedServices });
                     }
-                    if (admitted.role === 'uploadDeploy' && executionTarget === 'daemon' && admitted.receipt
-                        && readHostReviewedChildOperationV1(context, formatQualifiedPluginActionId(identity), input.input)) {
-                        deploymentSource = { identity: { environmentId: admitted.environment.environment.id, deploymentId: admitted.receipt.deployment.id },
-                            admit: createDeploymentTargetRoleSourceAdmissionForHost({ ...admitted,
-                                receipt: admitted.receipt }, host, context) };
+                    const runtime = admitted.executionEnvironment && admitted.workloadControl
+                        ? { executionEnvironment: admitted.executionEnvironment, workloadControl: admitted.workloadControl } : undefined;
+                    if (executionTarget === 'daemon' && admitted.receipt && (runtime || admitted.role === 'uploadDeploy'
+                        && readHostReviewedChildOperationV1(context, formatQualifiedPluginActionId(identity), input.input))) {
+                        const receipt = admitted.receipt;
+                        deploymentSource = { identity: { environmentId: admitted.environment.environment.id, deploymentId: receipt.deployment.id },
+                            admit: createDeploymentTargetRoleSourceAdmissionForHost({ ...admitted, receipt }, host, context),
+                            ...(runtime ? { createExecEnv: (source, signal, retainCleanup) => createDeploymentTargetRoleExecEnvironmentForHost({
+                                admission: { ...admitted, receipt, ...runtime }, host, context, source, signal, retainCleanup,
+                                readOwner: () => params.readRuntimeRegistry?.()?.projectManagedServices,
+                            }) } : {}) };
                     }
                 } catch (error) {
                     if (input.signal.aborted) throw error;

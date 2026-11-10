@@ -8,6 +8,116 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { request as requestCloudflareDeployment } from '../../../../../packages/plugins/deploy-cloudflare/src/platform/deploymentHttp';
 
 describe('deployment role host admission', () => {
+    it('captures runtime custody on the selected target daemon when its controller is elsewhere', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('deploy');
+        const link = fixture.state.environment.targetLinks[0]!.targetLink;
+        link.machineId = 'runtime-machine';
+        link.installationId = 'runtime-installation';
+        const host = { ...fixture.host, machineId: link.machineId, installationId: link.installationId };
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, executionTarget: 'daemon' }, host))
+            .resolves.toMatchObject({ role: 'deploy', executionEnvironment: {
+                phase: 'runtime', machineId: 'runtime-machine', installationId: 'runtime-installation',
+            } });
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, executionTarget: 'daemon' }, {
+            ...host, installationId: 'replaced-installation',
+        })).rejects.toMatchObject({ code: 'machine_unavailable' });
+    });
+
+    it('accepts variable metadata only for the owned keys recorded in the selected private Link', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
+        const role = 'variables.read' as const;
+        const owned = [{ key: 'TOKEN', providerId: 'env_token', desiredRevision: 1 }];
+        fixture.state.environment.targetLinks[0]!.content!.ownedVariables = owned;
+        const request = { ...fixture.request, role, input: { ...fixture.input, owned },
+            bindings: [{ ...fixture.request.bindings[0]!, role }] };
+        await expect(admitDeploymentTargetRoleForHost(request, fixture.host)).resolves.toMatchObject({ role });
+        await expect(admitDeploymentTargetRoleForHost({ ...request, input: { ...request.input, owned: [] } }, fixture.host))
+            .rejects.toMatchObject({ code: 'deployment_access_denied' });
+    });
+
+    it('requires the bindings producer reviewed child for variable writes, and spends that admission once', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
+        const role = 'variables.sync' as const;
+        const action = { pluginId: fixture.request.pluginId, localId: fixture.request.localId };
+        const input = normalizeStrictJsonValue({ ...fixture.input, owned: [], desiredRevision: 2,
+            set: [{ purpose: 'variable', phase: 'runtime', name: 'TOKEN', source: { kind: 'value', value: 'public' } }],
+            remove: [], useOurs: [], keepTheirs: [] });
+        const request = { ...fixture.request, role, input, bindings: [{ ...fixture.request.bindings[0]!, role }] };
+        await expect(admitDeploymentTargetRoleForHost(request, fixture.host)).rejects.toMatchObject({ code: 'action_forbidden' });
+        const port = createHostReviewedChildPortV1({ actionId: 'deployments.bindings.set',
+            input: { serverId: fixture.input.serverId, environmentId: fixture.input.environmentId, expectedRevision: 1,
+                set: [], remove: [] }, context: fixture.request.context, reviewAdmitted: true,
+            plan: { children: [{ action, role, input }] }, policies: [{ action, role, surface: 'cli' }],
+            async execute(_envelope, context) {
+                const admitted = await admitDeploymentTargetRoleForHost({ ...request, context }, fixture.host);
+                return { ok: true, result: normalizeStrictJsonValue({ role: admitted.role }) };
+            } });
+        const before = fixture.state.reads;
+        await expect(port.invoke({ action, role, input })).resolves.toMatchObject({ ok: true, result: { role } });
+        expect(fixture.state.reads).toBe(before);
+    });
+
+    it.each(['domains.read', 'domains.add', 'domains.verify', 'domains.remove'] as const)(
+        'admits %s against the runtime Link without requiring a deployment receipt', async role => {
+            const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
+            const input = { ...fixture.input, domainId: 'domain', domain: { hostname: 'app.example.test' } };
+            const request = { ...fixture.request, role, input,
+                bindings: [{ ...fixture.request.bindings[0]!, role }] };
+            await expect(admitDeploymentTargetRoleForHost(request, fixture.host)).resolves.toMatchObject({ role });
+            fixture.state.environment.targetLinks[0]!.targetLink.role = 'data';
+            await expect(admitDeploymentTargetRoleForHost(request, fixture.host)).rejects.toMatchObject({ code: 'target_mismatch' });
+        });
+
+    it('admits a Workers Preview Domain request so the provider can report its platform limitation', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
+        const role = 'domains.add' as const;
+        const providerEnvironment = { kind: 'preview' as const, scriptName: 'worker', previewName: 'branch' };
+        fixture.state.environment.targetLinks[0]!.content!.providerEnvironment = providerEnvironment;
+        const input = { ...fixture.input, providerEnvironment, domainId: 'domain', domain: { hostname: 'app.example.test' } };
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, role, input,
+            bindings: [{ ...fixture.request.bindings[0]!, role }] }, fixture.host)).resolves.toMatchObject({ role });
+    });
+
+    it.each([
+        { actionId: 'deployments.domains.add', role: 'domains.add' },
+        { actionId: 'deployments.teardown', role: 'domains.remove' },
+    ] as const)('spends the reviewed Domain child after $actionId advances the Environment revision', async ({ actionId, role }) => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
+        const action = { pluginId: fixture.request.pluginId, localId: fixture.request.localId };
+        const input = normalizeStrictJsonValue({ ...fixture.input, domainId: 'domain', domain: { hostname: 'app.example.test' } });
+        const request = { ...fixture.request, role, input,
+            bindings: [{ ...fixture.request.bindings[0]!, role }] };
+        fixture.state.environment.environment.revision++;
+        const port = createHostReviewedChildPortV1({ actionId,
+            input: { serverId: fixture.input.serverId, environmentId: fixture.input.environmentId,
+                domainId: 'domain', targetLinkId: fixture.input.targetLinkId },
+            context: fixture.request.context, reviewAdmitted: true,
+            plan: { children: [{ action, role, input }] },
+            policies: [{ action, role, surface: 'cli' }],
+            async execute(_envelope, context) {
+                const admitted = await admitDeploymentTargetRoleForHost({ ...request, context }, fixture.host);
+                return { ok: true, result: normalizeStrictJsonValue({ role: admitted.role }) };
+            },
+        });
+        await expect(port.invoke({ action, role, input })).resolves.toMatchObject({ ok: true,
+            result: { role } });
+        expect(fixture.state.reads).toBe(0);
+    });
+
+    it('refuses observation whose supplied operation differs from the retained receipt', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('observe');
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request,
+            input: { ...fixture.input, operation: 'promote' } }, fixture.host))
+            .rejects.toMatchObject({ code: 'target_mismatch' });
+    });
+
+    it('requires the retained traffic operation on direct observation instead of falling back to build readiness', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('observe');
+        fixture.state.receipt.deployment.operation = 'promote';
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host))
+            .rejects.toMatchObject({ code: 'target_mismatch' });
+    });
+
     describe('receipt-owned log admission', () => {
         function historicalLogs(role: 'logs.build' | 'logs.runtime' = 'logs.build') {
             const fixture = createDeploymentTargetRoleAdmissionFixture('observe');

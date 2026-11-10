@@ -20,12 +20,15 @@ import { logger } from '@/ui/logger';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { StoredCredentials } from '@/persistence';
 import { readDeploymentSourceIntentForHost } from '@/deployments/readDeploymentSourceIntentForHost';
+import { createDeploymentDumpBackupSourceV1, createDeploymentVolumeBackupSourceIdV1 } from '@happier-dev/deployments';
 import { readPluginExecProcessCustodyForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { resolveEnvironmentDeploymentFactForHost } from '@/deployments/secrets/deploymentFacts';
 import type { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
 import { readEnvironmentSecretLaunchAdmissionForHost } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import type { OwnServerDeploymentMaterialization, OwnServerDeploymentRuntime, OwnServerDeploymentRuntimeAcquisition, OwnServerDeploymentRuntimeRequest } from './ownServerDeploymentTarget';
-import { resolveDeploymentSourcePathForHost } from './exactCommitRelease';
+import { resolveDeploymentSourcePathForHost, createDeploymentSourceMaterializationPort } from './exactCommitRelease';
+import { createNativeComposeLifecycle } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { resolveOwnServerDeploymentIdentityForHost, resolveOwnServerDeploymentRootForHost } from './paths';
 import { resolveOwnServerImageArchivePathForHost } from './releaseProvenance';
 import { createDeploymentImageArchiveCopyForHost } from './imageArchiveCopy';
@@ -35,9 +38,9 @@ import { createServiceReferenceForwardCustody } from './serviceReferenceForwardC
 import { acquirePrivateServiceContainerBridge } from './privateServiceContainerBridge';
 import type { ServiceExportMachineForward } from '@/daemon/peer/iroh/serviceExportMachineForward';
 import { privateServiceForwardAcquisitionError, projectDeploymentFailure } from '../../deploymentFailure';
-import { prepareOwnServerPreMigrationBackupOperandsForHost, prepareOwnServerBackupRepositoryOperandsForHost } from './backupDestination';
+import { prepareOwnServerPreMigrationBackupOperandsForHost, prepareOwnServerBackupRunOperandsForHost, prepareOwnServerBackupRepositoryOperandsForHost } from './backupDestination';
 import { materializeCaddyInitialConfigV1 } from './caddyRouteMaterialization';
-export { openDeploymentBackupDestinationForHost, prepareOwnServerPreMigrationBackupOperandsForHost } from './backupDestination';
+export { openDeploymentBackupDestinationForHost, prepareOwnServerPreMigrationBackupOperandsForHost, prepareOwnServerBackupRunOperandsForHost } from './backupDestination';
 
 type LaunchInput = Parameters<typeof prepareEnvironmentSecretBindingsForLaunch>[0];
 export type OwnServerSecretLaunchAdmissionRequest = Readonly<{
@@ -100,7 +103,8 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
         stageContent(sourceIntent: DeploymentSourceIntentV1): Promise<string>;
     }>), snapshot: Readonly<{ environment: DeploymentEnvironmentDetailV1; content?: DeploymentOwnServerContentV1;
         deployment?: DeploymentReceiptHeaderV1;
-        readReferenceEnvironment?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readEnvironment'] }>) {
+        readReferenceEnvironment?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readEnvironment'];
+        readPreviewDomain?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readPreviewDomain'] }>) {
             const { environment, content } = snapshot;
             const hostSignal = host.signal ?? new AbortController().signal;
             const signal = request.context.signal ? AbortSignal.any([hostSignal, request.context.signal]) : hostSignal;
@@ -232,15 +236,35 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 const selectedArchives = structuredClone(content?.ownServer?.imageArchives ?? []);
                 const environmentName = environment.content.name;
                 const commitSha = intent.kind === 'repository' ? intent.sha : undefined;
+                let previewDomain: Promise<Readonly<{ domainId: string; url: string }>> | undefined;
+                const readPreviewDomain = () => previewDomain ??= (async () => {
+                    const provenance = environment.content.previewProvenance;
+                    if (!provenance || !snapshot.readReferenceEnvironment || !snapshot.readPreviewDomain)
+                        return refuse('reference_unavailable');
+                    const template = await snapshot.readReferenceEnvironment({ environmentId: provenance.templateEnvironmentId,
+                        context: request.context });
+                    const selection = template.content.previewTemplate?.domain;
+                    if (!selection) return refuse('reference_unavailable');
+                    const planned = await snapshot.readPreviewDomain({ serverId: host.serverId,
+                        templateEnvironmentId: provenance.templateEnvironmentId, selection,
+                        pullRequestNumber: provenance.pullRequestNumber, context: request.context });
+                    return { domainId: selection.domainId, url: planned.url };
+                })();
                 const secrets: OwnServerDeploymentRuntimeAcquisition['secrets'] = {
                     installationPrivateSeed: privateSeed, grants: admission.grants,
                     registryConfigBaseDir: registryConfigDirectory,
                     async resolveNonSecret(source) {
                         // These primitives belong to the already admitted acquisition.
                         if (source.kind === 'deploymentFact') {
-                            if (source.fact === 'environmentName') return environmentName;
-                            if (source.fact === 'commitSha' && commitSha !== undefined) return commitSha;
-                            if (source.fact === 'deploymentId' && materialization.kind !== 'review') return materializationId;
+                            if (source.fact === 'domainUrl' || source.fact === 'primaryUrl') {
+                                const planned = await readPreviewDomain();
+                                if (source.fact === 'domainUrl' && source.domainId !== planned.domainId)
+                                    return refuse('reference_unavailable');
+                                return planned.url;
+                            }
+                            return resolveEnvironmentDeploymentFactForHost(source.fact, { environmentName, commitSha,
+                                deploymentId: materialization.kind === 'review' ? undefined : materializationId,
+                                domainUrl: undefined, primaryUrl: undefined });
                         }
                         if (source.kind === 'reference') return resolvePrivateServiceReferenceMaterialForHost({
                             source, environment, homeServerIdentityId, readEnvironment: snapshot.readReferenceEnvironment,
@@ -293,6 +317,13 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     },
                     async preparePreMigrationBackupOperands() {
                         return prepareOwnServerPreMigrationBackupOperandsForHost({ registry: retainedLease.registry,
+                            configuration: environment.content.backup, data: environment.content.template?.data,
+                            preparation: { ...secrets, environmentId: environment.environment.id, machineId: host.machineId,
+                                installationId: identity.installationId, bindings: environment.content.bindings, assertCurrent },
+                            context: request.context, signal, isCurrent: () => !released });
+                    },
+                    async prepareBackupRunOperands() {
+                        return prepareOwnServerBackupRunOperandsForHost({ registry: retainedLease.registry,
                             configuration: environment.content.backup, data: environment.content.template?.data,
                             preparation: { ...secrets, environmentId: environment.environment.id, machineId: host.machineId,
                                 installationId: identity.installationId, bindings: environment.content.bindings, assertCurrent },
@@ -401,6 +432,69 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
         } };
     };
     return {
+        async prepareBackupSourceChoices({ environment, context }) {
+            const signal = context.signal && host.signal ? AbortSignal.any([context.signal, host.signal])
+                : context.signal ?? host.signal ?? new AbortController().signal;
+            signal.throwIfAborted();
+            await host.assertInstalledCurrent?.();
+            const identity = readInstallationIdentityIfExistsSync();
+            if (!identity) return refuse('target_unavailable');
+            const captured = await readDeploymentSourceIntentForHost({ host: { ...host, signal,
+                async assertAuthority() { signal.throwIfAborted(); } },
+                request: { environment, context, actionId: 'deployments.environments.update' } });
+            const intent = captured.sourceIntent;
+            const placement = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
+                serverId: host.serverId, environmentId: environment.environment.id });
+            const temporaryRoot = join(configuration.happyHomeDir, 'tmp', 'deployment-definition');
+            await mkdir(temporaryRoot, { recursive: true, mode: 0o700 });
+            const root = await mkdtemp(join(temporaryRoot, 'backup-'));
+            let source: Awaited<ReturnType<ReturnType<typeof createDeploymentSourceMaterializationPort>['materialize']>> | undefined;
+            let project: Pick<import('@/daemon/local/services/launch/nativeComposeLifecycle').NativeComposeEnvironmentProject,
+                'reviewDefinition' | 'dispose'> | undefined;
+            let native: ReturnType<typeof createOwnServerNativeRuntime> | undefined;
+            let released = false;
+            try {
+                const port = createDeploymentSourceMaterializationPort({ async admit() {
+                    return { environmentId: environment.environment.id, environmentInstanceId: placement.environmentInstanceId,
+                        deploymentId: 'definition', machineId: host.machineId, installationId: identity.installationId,
+                        deploymentRoot: root, artifactDirectory: join(root, 'artifacts'), assertCurrent: captured.assertSourceCurrent,
+                        ...(intent.kind === 'stored' ? { definition: intent } : { sourcePath: captured.workspace!.rootPath,
+                            commitSha: intent.sha,
+                            ...(intent.pullRequestHead ? { pullRequestHead: intent.pullRequestHead, repository: captured.sourceRepository } : {}) }) };
+                } });
+                source = await port.materialize({ environmentId: environment.environment.id, deploymentId: 'definition' }, { signal });
+                native = createOwnServerNativeRuntime({ cwd: source.rootPath, signal, isCurrent: () => !released });
+                const compose = intent.kind === 'stored' ? intent : intent.compose;
+                project = createNativeComposeLifecycle({ kind: 'environmentDefinition', phase: 'build',
+                    exec: native.exec, io: native.nativeIo, settleNative: native.settleNative, source,
+                    sourceKind: intent.kind, files: [intent.kind === 'stored' ? 'compose.yaml' : intent.compose.path],
+                    profiles: compose.profiles, services: compose.services });
+                const review = await project.reviewDefinition({ signal });
+                const choices: import('@happier-dev/deployment-protocol').DeploymentBackupSourceV1[] = [];
+                for (const data of environment.content.template?.data ?? []) {
+                    if (data.engine !== 'postgres' || data.logicalBackup?.adapter !== 'postgres-v1'
+                        || !review.services.some(service => service.name === data.service)) continue;
+                    choices.push(createDeploymentDumpBackupSourceV1(data.service));
+                }
+                const seen = new Set<string>();
+                for (const service of review.services) for (const mount of service.mounts) {
+                    if (mount.type !== 'volume' || !mount.source) continue;
+                    const sourceId = createDeploymentVolumeBackupSourceIdV1(service.name, mount.source);
+                    if (seen.has(sourceId)) continue;
+                    seen.add(sourceId);
+                    choices.push({ kind: 'volume', sourceId, service: service.name, volume: mount.source,
+                        consistency: 'stopDuringCopy' });
+                }
+                return choices;
+            } finally {
+                try { await native?.settleNative(); }
+                finally {
+                    released = true;
+                    try { await project?.dispose(); }
+                    finally { try { await source?.abort(); } finally { await rm(root, { recursive: true, force: true }); } }
+                }
+            }
+        },
         prepareDomainCaddy(request) {
             const routedNetworks = [...new Set(request.replicas.flatMap(replica => [...replica.networkNames]))];
             if (!request.replicas.length) return { status: 'unavailable', reason: 'required_fact_unavailable',
@@ -494,7 +588,8 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 input: { serverId: host.serverId, environmentId: request.environmentId, targetLinkId: request.targetLinkId },
                 ...(request.sourceIntent ? { sourceIntent: request.sourceIntent } : {}),
                 ...(request.sha ? { sha: request.sha } : {}),
-                stageContent: request.stageContent }, { environment, readReferenceEnvironment: request.readReferenceEnvironment });
+                stageContent: request.stageContent }, { environment, readReferenceEnvironment: request.readReferenceEnvironment,
+                    readPreviewDomain: request.readPreviewDomain });
         },
     };
 }

@@ -1,3 +1,12 @@
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { reloadConfiguration } from '@/configuration';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
+import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { runDeploymentRuntimeProbe } from '../../../../../../packages/plugin-sdk/examples/public-authoring/daemon.js';
 import fastify from 'fastify';
 import { createDeploymentTargetRoleAdmissionHost } from '@/deployments/targets/createDeploymentTargetRoleAdmissionHost';
 import { registerAccountArtifactRoutes, registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
@@ -74,7 +83,7 @@ import { createUnavailablePluginServices } from './services/unavailable';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { PLUGIN_MANIFEST as TRIAGE_MANIFEST } from '../../../../../../packages/plugins/triage/src/manifest.js';
 
-import { createTargetActionCurrentIntentAdapter, targetActionApprovalMatchesCurrentIntent } from '@/session/actions/approvals/targetActionCurrentIntent';
+import { createTargetActionCurrentIntentAdapter } from '@/session/actions/approvals/targetActionCurrentIntent';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
@@ -102,7 +111,7 @@ import { MachineConnectorSecretGrantInputV1Schema, machineSecretGrantSubjectKey,
     computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/deployment-protocol';
 import * as installationStore from '@/daemon/identity/store';
 import { writeMachineConnectorSecretGrantForHost } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
-import { openMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
+import { openMachineSecretGrant, sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createExternalActionMachineRpcExecution, projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
@@ -2977,7 +2986,8 @@ describe('buildTargetActionInvocationRegistry', () => {
             read: async () => stored ? { ...stored, status: 'approved', decision: { kind: 'approve', decidedAtMs: Date.now() } } : null,
         });
         try {
-            await expect(target.invoke({ pluginId: 'acme.alpha', localId: 'run', input, surface: 'cli', requestCurrentIntent }))
+            await expect(target.invoke({ pluginId: 'acme.alpha', localId: 'run', input, surface: 'cli',
+                isApprovalRequiredByActionSettings: () => true, requestCurrentIntent }))
                 .resolves.toEqual({ status: 'deferred', artifactId: 'approval-external-cli-operands' });
             expect(applied).toBeUndefined();
             expect(stored?.secretInputPaths).toEqual([]);
@@ -2995,11 +3005,13 @@ describe('buildTargetActionInvocationRegistry', () => {
             expect(resolveApprovalRequestApproveAdmission(legacy))
                 .toMatchObject({ status: 'unavailable', reason: 'context_unavailable' });
             const approved = stored;
+            const context = { surface: 'cli' as const, authority: 'account_automation' as const };
             await expect(target.invoke({
                 pluginId: 'acme.alpha', localId: 'run', input: approved.input, surface: 'cli', requireCurrentIntent: true,
-                requestCurrentIntent: async request => targetActionApprovalMatchesCurrentIntent(approved, request)
-                    ? { status: 'approved', fingerprint: request.fingerprint, artifactId: 'approval-external-cli-operands' }
-                    : { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' },
+                approvalContext: { ...context, hostReviewedChild: createHostReviewedChildPortV1({
+                    actionId: 'action.invoke', input: { action: { pluginId: 'acme.alpha', localId: 'run' }, input: approved.input },
+                    context, reviewAdmitted: true,
+                }) },
             })).resolves.toMatchObject({ status: 'executed' });
             expect(applied).toEqual(input);
         } finally { target.dispose(); }
@@ -3509,6 +3521,110 @@ describe('buildTargetActionInvocationRegistry', () => {
         })).resolves.toMatchObject({
             status: 'unavailable',
             code: 'plugin_contribution_not_applicable',
+        });
+    });
+    it.each(['deploy', 'observe'] as const)('executes an ordinary daemon %s role with invocation-owned runtime source and opaque environment custody', async role => {
+        await withTempDir('deployment-runtime-role-', async homeDir => {
+            const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+            envScope.patch({ HAPPIER_HOME_DIR: homeDir });
+            reloadConfiguration();
+            try {
+                await seedTestServerProfile({ id: 'home', homeId: 'srv_runtime_fixture_home', serverUrl: 'https://home.test' });
+        const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: homeDir,
+            controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+        const stored = createDeploymentTargetRoleAdmissionFixture(role);
+        const definition = await normalizeStoredComposeDefinitionInput({ from: 'image', image: 'nginx:alpine', port: 80 });
+        stored.state.environment.content.definition = definition;
+        stored.state.receipt.content.sourceIntent = definition;
+        const input = { ...stored.input, ...(role === 'deploy' ? { sourceIntent: definition } : {}) };
+        const keys = nacl.sign.keyPair();
+        const link = stored.state.environment.targetLinks[0]!.targetLink;
+        link.machineId = 'runtime'; link.installationId = 'runtime-installation';
+        const host = { ...stored.host, machineId: 'runtime', installationId: 'runtime-installation',
+            credentials: { ...stored.host.credentials, token: `fixture.${Buffer.from(JSON.stringify({ sub: 'custody-account' })).toString('base64url')}.signature` } };
+        const secret = 'opaque-runtime-role-secret';
+        const resourceId = 'runtime-role-resource';
+        stored.state.environment.content.bindings = [{ purpose: 'variable', phase: 'runtime', name: 'ROLE_SECRET',
+            source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }];
+        const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: stored.input.environmentId,
+            machineId: host.machineId, installationId: host.installationId, resourceId, resourceRevision: 1 },
+            installationPublicKey: keys.publicKey, content: { kind: 'secret', value: secret } });
+        // Installed identity, signed Home transport and executable resolution are
+        // genuine system boundaries; the role, source, facade and Exec owners stay real.
+        const installation = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+            installationId: host.installationId, createdAt: 1, publicKey: encodeBase64(keys.publicKey, 'base64url'),
+            privateKey: encodeBase64(keys.secretKey, 'base64url') });
+        const requests: unknown[] = [];
+        const http = vi.spyOn(axios, 'request').mockImplementation(async config => {
+            if (!config.url?.endsWith('/secret-launch-admission')) throw new Error('Unexpected Home request');
+            requests.push(config.data);
+            return { status: 200, data: { ok: true, grants: [grant] } };
+        });
+        const base = connectedAccountActionManifest();
+        const action = base.contributes.actions[0]!;
+        const pluginManifest = normalizePluginManifestV2({ ...base, contributes: { ...base.contributes,
+            actions: (['inspect', 'link', 'deploy', 'observe'] as const).map(role => ({ ...action,
+                id: role, surfaces: ['plugin'], dangerLevel: role === 'inspect' || role === 'observe' ? 'safe' : 'writesLocal',
+                readOnly: role === 'inspect' || role === 'observe',
+                inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema,
+                resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
+            })),
+            deploymentTargets: [{ id: 'platform', title: 'Runtime', icon: 'server-outline', targetKind: 'platform', role: 'runtime',
+                targetSchema: { type: 'object', additionalProperties: false }, linkSchema: { type: 'object', additionalProperties: false },
+                actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' } }],
+        } });
+        let observed: Awaited<ReturnType<PluginInvocationContext['services']['exec']['run']>> | undefined;
+        const accountOwner = createConnectedAccountPurposeBindingOwner({
+            credentialOwnerAccountId: 'custody-account', store: { read: async () => ({ v: 1, bindings: [] }),
+                update: async () => { throw new Error('No selection write'); }, subscribe: () => ({ dispose() {} }) },
+            selectTarget: async () => { throw new Error('No interactive selection'); },
+            resolveTarget: async () => ({ displayName: 'Selected Account', account: stored.input.credentialRef }),
+            materializeAccount: async () => { throw new Error('No provider credential requested'); },
+            projectTargetAccounts: async () => [], assertTargetAccountMaterializable: async () => undefined,
+        });
+        const target = buildRegistry({ contributes: registry({ pluginManifest }), actionFormConnectedAccounts: accountOwner,
+            targetRegistrations: [{ pluginId: 'acme.alpha', occurrenceId: '7', registration: { family: 'actions', localId: role,
+                value: async (_input: JsonValue, context: PluginInvocationContext) => {
+                    if (role === 'observe') {
+                        expect(context.services.availability('deploymentExecEnv')).toMatchObject({ status: 'unavailable' });
+                        return { v: 1, state: 'queued', observedAtMs: 1000 };
+                    }
+                    const source = await context.services.deploymentSource.materialize({ environmentId: stored.input.environmentId,
+                        deploymentId: stored.state.receipt.deployment.id });
+                    try {
+                        await expect(context.services.deploymentExecEnv.prepare({ source, phase: 'build' }))
+                            .rejects.toMatchObject({ data: { code: 'unavailable' } });
+                        await expect(context.services.deploymentExecEnv.prepare({ source: { ...source }, phase: 'runtime' }))
+                            .rejects.toMatchObject({ data: { code: 'unavailable' } });
+                        observed = await runDeploymentRuntimeProbe({ source, execEnv: context.services.deploymentExecEnv,
+                            exec: context.services.exec, executable: { kind: 'systemTool', id: 'fixture.node' },
+                            args: ['-e', 'process.stdout.write(process.env.ROLE_SECRET + " runtime-ok")'], signal: context.signal });
+                        return { v: 1, state: 'queued', observedAtMs: 1000 };
+                    } finally { await source.abort(); }
+                } } }], targetActivationFacts: [fact({ required: [{ family: 'actions', localId: role }], bound: [{ family: 'actions', localId: role }] })],
+            readDeploymentTargetRoleAdmissionHost: async () => host,
+            createServices: createPluginInvocationServicesFactory({ loggerSink: { write() {} }, exec: {
+                async resolveExecutable() { return { command: process.execPath }; },
+                async resolvePath() { throw new Error('No filesystem path selector'); },
+            } }),
+            resolveHostBinding: createTargetActionHostBindingResolver({ createServiceBinding: (generation, id) =>
+                createPluginInvocationServiceBinding(generation, id) }),
+        });
+        try {
+            const result = await target.invoke({ pluginId: 'acme.alpha', localId: role, input, surface: 'plugin',
+                approvalContext: stored.request.context, operationAcceptance: stored.request.context.operationAcceptance,
+                caller: { kind: 'plugin', pluginId: 'acme.alpha', occurrenceId: '7',
+                    contribution: { id: role, qualifiedId: `acme.alpha/actions/${role}` },
+                    sourceCustody: { kind: 'managed', immutableGenerationId: 'immutable-alpha', installSource: 'archive' } } });
+            expect(result.status, JSON.stringify(result)).toBe('executed');
+            if (role === 'observe') { expect(observed).toBeUndefined(); expect(requests).toHaveLength(0); return; }
+            expect(observed?.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+            const output = new TextDecoder().decode(observed?.stdout);
+            expect(output).toContain('runtime-ok');
+            expect(output).not.toContain(secret);
+            expect(requests).toHaveLength(1);
+        } finally { target.dispose(); http.mockRestore(); installation.mockRestore(); await mounted.dispose(); }
+            } finally { envScope.restore(); reloadConfiguration(); }
         });
     });
 });

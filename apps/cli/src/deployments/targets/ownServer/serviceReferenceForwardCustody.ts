@@ -33,6 +33,7 @@ export function createServiceReferenceForwardCustody(input: Readonly<{
         { code: 'private_service_forward_cleanup_failed' })); };
     input.signal.addEventListener('abort', retire, { once: true });
     return {
+        retire,
         reportFailure(admission: Admission, value: ActionExecuteFailure | null) {
             const entry = forwards.get(keyFor(admission));
             if (!entry) return;

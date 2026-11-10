@@ -58,6 +58,7 @@ import {
 } from './composition/connectedAccountAssembly';
 import { createMcpSignInConnectedAccountRegistration } from '@/mcp/oauth/mcpSignInRuntime';
 import { assembleAutomationRuntime } from './composition/automationAssembly';
+import { createCliHealthCheckSourceSnapshotReader } from '@/session/actions/workflowTriggers';
 import { createSavedHealthChecksHost } from '@/deployments/healthChecks/savedHealthChecks';
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { publishSavedServiceHealthResult } from '@/deployments/healthChecks/publishServiceHealth';
@@ -3106,6 +3107,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
     let reconcileAdoptedHealthChecks: (() => void) | undefined;
     const automationAssembly = await assembleAutomationRuntime({
         credentials: sessionCredentials,
+        ...(sessionCredentials ? { readHealthSources: createCliHealthCheckSourceSnapshotReader({
+            credentials: sessionCredentials, serverHttpBaseUrl: notificationServerHttpBaseUrl,
+            signal: consumerAssembly.allRetirementSignal,
+        }) } : {}),
         activationTargets: authoritativeContributes.activationTargets,
         activatedPluginIds: { has: pluginId => activatedRegistry.activatedPluginIds.has(pluginId) },
         resolveCurrentMaterialization: resolveCurrentPluginMaterializationRef,
@@ -6450,6 +6455,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             return projectManagedServicesOwner;
         },
         currentDomainEdgeObservation,
+        readHealthAlertSource: automationAssembly.readHealthAlertSource,
         readHealthCheckSource(sourceInstanceId, signal) {
             const owner = params?.accountExecution ? null : resolveHealthCheckSourceOwner();
             return owner ? readAdoptedHealthCheckBatch({ ...owner, sourceInstanceId, signal,

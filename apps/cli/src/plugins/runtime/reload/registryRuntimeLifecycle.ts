@@ -212,6 +212,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
   resolveCurrentMachineId?: () => string | null;
   readDaemonRequesterWorkAttribution?: () => RequesterWorkAttributionV1 | null;
   ensureEnvironmentServices?(): Promise<void>;
+  acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
   executeClientAction?: ClientContributedActionExecutor;
   /** Existing authenticated Machine admission authority for protected Session input. */
   machineAdmissionTransport?: PluginRuntimeMachineAdmissionTransport;
@@ -456,6 +457,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
             ? { readDaemonRequesterWorkAttribution: params.readDaemonRequesterWorkAttribution }
             : {}),
           ...(params.ensureEnvironmentServices ? { ensureEnvironmentServices: params.ensureEnvironmentServices } : {}),
+          ...(params.acquireServiceExportForward ? { acquireServiceExportForward: params.acquireServiceExportForward } : {}),
           ...(params.machineAdmissionTransport
             ? { machineAdmissionTransport: params.machineAdmissionTransport }
             : {}),

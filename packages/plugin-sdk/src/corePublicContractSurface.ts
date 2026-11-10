@@ -104,6 +104,7 @@ type _ServiceIdsMustBeExact = AssertTrue<Equal<
     | 'providers'
     | 'managedServices'
     | 'deploymentSource'
+    | 'deploymentExecEnv'
     | 'machineProvisioners'
     | 'sessions'
     | 'resources'

@@ -9,6 +9,21 @@ type ConfigurationFailure = Readonly<{ ok: false; code: 'invalid_backup_configur
 export type DeploymentBackupConfigurationPreparationV1 = ConfigurationFailure | Readonly<{ ok: true;
     configuration: DeploymentBackupConfigurationV1; bindingState: 'bound' | 'needsBinding'; missingRoles: string[] }>;
 
+/** Stable native dump identity, including services namespaced by catalog Add. */
+export function createDeploymentDumpBackupSourceIdV1(service: string): string {
+    return JSON.stringify(['dump', service]);
+}
+
+/** The canonical logical dump choice used by native inventory and catalog intent authoring. */
+export function createDeploymentDumpBackupSourceV1(service: string): Extract<DeploymentBackupConfigurationV1['sources'][number], { kind: 'dump' }> {
+    return { kind: 'dump', sourceId: createDeploymentDumpBackupSourceIdV1(service), service, consistency: 'logical' };
+}
+
+/** Stable native volume identity, including catalog Add resource aliases. */
+export function createDeploymentVolumeBackupSourceIdV1(service: string, volume: string): string {
+    return JSON.stringify(['volume', service, volume]);
+}
+
 /** Configure admission consumes the selected catalog descriptor and the opened Environment bindings once. */
 export function prepareDeploymentBackupConfigurationV1(input: Readonly<{ environmentId: string; configuration: unknown;
     destination: Destination; bindings: readonly EnvironmentSecretBindingV1[] }>): DeploymentBackupConfigurationPreparationV1 {

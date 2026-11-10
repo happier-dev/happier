@@ -1,6 +1,5 @@
-import { isIP } from 'node:net';
 import { MachineServicesListResultV1Schema, RPC_METHODS, type MachineServiceRowV1 } from '@happier-dev/protocol';
-import { accessProviderRefsEqualV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
+import { readSharedPrivateNetworkAddresses } from '@/machines/reachability/sharedPrivateNetworkAddresses';
 import { TcpTunnelServiceExportBindingV1Schema, type TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import type { DeploymentServiceExportV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { ApiClient } from '@/api/api';
@@ -21,7 +20,7 @@ export type PrivateServiceReferenceHostInput = Readonly<{
     source: Extract<ResolveInput, { kind: 'reference' }>;
     environment: Awaited<ReturnType<OwnServerDeploymentTargetHostInput['readEnvironment']>>;
     readEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'];
-    host: OwnServerDeploymentRuntimeHostInput;
+    host: Pick<OwnServerDeploymentRuntimeHostInput, 'credentials' | 'machineId' | 'serverHttpBaseUrl' | 'serverId' | 'acquireServiceExportForward'>;
     context: Parameters<OwnServerDeploymentTargetHostInput['readEnvironment']>[0]['context'];
     actionId: string; signal: AbortSignal;
     owner: OwnServerDeploymentRuntimeAcquisition['projectManagedServices'];
@@ -122,20 +121,14 @@ export async function resolvePrivateServiceExportAdmissionForHost(input: Private
                 || row.deployment.service.composeService !== exported.service
                 || row.health?.freshness !== 'current' || row.health.status === 'down'
                 || row.native?.phase !== 'running') continue;
-            for (const network of networks) {
-                if (network.state !== 'ready' || network.networkIdentity !== exported.privateNetwork
-                    || !observerNetworks.some(observer => observer.state === 'ready' && observer.networkIdentity === network.networkIdentity
-                        && accessProviderRefsEqualV1(observer.provider, network.provider))) continue;
-                for (const address of network.addresses) {
-                    const family = isIP(address);
-                    if (!family || address === '::1' || address.startsWith('127.') || address === '0.0.0.0' || address === '::') continue;
-                    for (const port of row.configuration?.ports ?? []) {
-                        const published = typeof port.published === 'number' ? port.published : Number(port.published);
-                        if (Number(port.target) !== exported.containerPort || port.protocol !== 'tcp'
-                            || !Number.isInteger(published) || published < 1 || published > 65535
-                            || port.bindAddress !== address) continue;
-                        urls.add(`${exported.scheme}://${family === 6 ? `[${address}]` : address}:${published}`);
-                    }
+            for (const { address, family } of readSharedPrivateNetworkAddresses({ observer: observerNetworks,
+                target: networks, networkIdentity: exported.privateNetwork })) {
+                for (const port of row.configuration?.ports ?? []) {
+                    const published = typeof port.published === 'number' ? port.published : Number(port.published);
+                    if (Number(port.target) !== exported.containerPort || port.protocol !== 'tcp'
+                        || !Number.isInteger(published) || published < 1 || published > 65535
+                        || port.bindAddress !== address) continue;
+                    urls.add(`${exported.scheme}://${family === 6 ? `[${address}]` : address}:${published}`);
                 }
             }
         }

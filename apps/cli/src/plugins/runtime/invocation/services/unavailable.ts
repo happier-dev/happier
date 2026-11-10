@@ -287,7 +287,44 @@ type PluginInvocationServiceDescriptorContext = Readonly<{
     managedProviderRuntime: ManagedProviderRuntimeOperationBinding | null;
     interactions: InteractionsService;
     fileSystem: FileSystemService | null;
+    deploymentSource: PluginServices['deploymentSource'] | null;
+    deploymentExecEnv: PluginServices['deploymentExecEnv'] | null;
 }>;
+
+/** Pair materialized handles and environment ports inside one admitted invocation. */
+function createDeploymentInvocationServices(seed: PluginInvocationServicesSeed): Readonly<{
+    deploymentSource: PluginServices['deploymentSource'] | null;
+    deploymentExecEnv: PluginServices['deploymentExecEnv'] | null;
+}> {
+    const admission = seed.deploymentSource;
+    if (!admission || !seed.retainCleanup) return { deploymentSource: null, deploymentExecEnv: null };
+    const sourcePort = createDeploymentSourceMaterializationPort({ admit: admission.admit, invocation: {
+        identity: admission.identity, signal: seed.signal,
+        assertCurrent() {
+            if (seed.signal.aborted) throw new PluginError({ code: PLUGIN_SERVICE_UNAVAILABLE_CODE,
+                message: 'Deployment source invocation has ended' });
+        },
+        retainCleanup: seed.retainCleanup,
+    } });
+    const environments = new WeakMap<Awaited<ReturnType<typeof sourcePort.materialize>>, PluginServices['deploymentExecEnv']>();
+    return {
+        deploymentSource: Object.freeze<PluginServices['deploymentSource']>({ async materialize(request, options) {
+            const source = await sourcePort.materialize(request, options);
+            if (admission.createExecEnv) environments.set(source, admission.createExecEnv(source, seed.signal, seed.retainCleanup!));
+            return source;
+        } }),
+        deploymentExecEnv: admission.createExecEnv ? Object.freeze<PluginServices['deploymentExecEnv']>({ async prepare(request, options) {
+            if (!('source' in request)) throw new PluginError({ code: 'unavailable',
+                message: 'A deployment source from this invocation is required' });
+            const environment = environments.get(request.source);
+            if (!environment) throw new PluginError({ code: 'unavailable',
+                message: 'A deployment source from this invocation is required' });
+            const attachment = await environment.prepare(request, options);
+            seed.retainCleanup!({ async dispose() { attachment.dispose(); } });
+            return attachment;
+        } }) : null,
+    };
+}
 
 function createAvailablePluginFileSystemService(
     seed: PluginInvocationServicesSeed,
@@ -551,18 +588,14 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['deploymentSource'] {
             return Object.freeze({ materialize: unavailableMethod('deploymentSource', code, diagnostic) });
         },
-        createAvailable({ seed }): PluginServices['deploymentSource'] | null {
-            if (!seed.deploymentSource || !seed.retainCleanup) return null;
-            return createDeploymentSourceMaterializationPort({ admit: seed.deploymentSource.admit, invocation: {
-                identity: seed.deploymentSource.identity,
-                signal: seed.signal,
-                assertCurrent() {
-                    if (seed.signal.aborted) throw new PluginError({ code: PLUGIN_SERVICE_UNAVAILABLE_CODE,
-                        message: 'Deployment source invocation has ended' });
-                },
-                retainCleanup: seed.retainCleanup,
-            } });
+        createAvailable({ deploymentSource }): PluginServices['deploymentSource'] | null { return deploymentSource; },
+    },
+    deploymentExecEnv: {
+        id: 'deploymentExecEnv', publicProperty: 'deploymentExecEnv', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['deploymentExecEnv'] {
+            return Object.freeze({ prepare: unavailableMethod('deploymentExecEnv', code, diagnostic) });
         },
+        createAvailable({ deploymentExecEnv }): PluginServices['deploymentExecEnv'] | null { return deploymentExecEnv; },
     },
     machineProvisioners: {
         id: 'machineProvisioners', publicProperty: 'machineProvisioners', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
@@ -767,6 +800,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                         : { sourceCustody: seed.sourceCustody }),
                     correlationId: seed.correlationId,
                     surface: seed.surface,
+                    ...(seed.requestId === undefined ? {} : { requestId: seed.requestId }),
                     ...(seed.caller ? { caller: seed.caller } : {}),
                     ...(seed.initiatingActionCaller ? { initiatingActionCaller: seed.initiatingActionCaller } : {}),
                     ...(seed.startedBy ? { startedBy: seed.startedBy } : {}),
@@ -1052,6 +1086,7 @@ export function createPluginInvocationServicesFromDescriptors(
         }),
         ...(params.approvals ? { approvals: params.approvals.bind(seed) } : {}),
     });
+    const deployment = createDeploymentInvocationServices(seed);
     const fileSystem = createAvailablePluginFileSystemService(seed, params);
     const context: PluginInvocationServiceDescriptorContext = Object.freeze({
         seed,
@@ -1063,6 +1098,7 @@ export function createPluginInvocationServicesFromDescriptors(
         managedProviderRuntime,
         interactions,
         fileSystem,
+        ...deployment,
     });
     const available = new Map<PluginServiceId, PluginServices[PluginServiceId]>();
     for (const serviceId of PLUGIN_SERVICE_IDS) {
