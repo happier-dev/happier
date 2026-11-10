@@ -9,6 +9,7 @@ describe('Action failure presentation', () => {
     it.each([
         ['plugin_action_input_schema_invalid', 'common.requestFailed'],
         ['plugin_action_unavailable', 'ui.pluginUi.actionUnavailable'],
+        ['approval_required', 'notifications.activity.permissionFallbackBody'],
     ] as const)('presents plugin refusal %s through thrown errors and Action envelopes', (code, key) => {
         expect(resolveActionExecutionErrorMessage(new PluginError({ code }), 'Save failed')).toBe(t(key));
         expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, error: code }, 'Save failed')).toBe(t(key));
