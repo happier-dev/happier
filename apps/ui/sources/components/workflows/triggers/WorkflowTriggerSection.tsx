@@ -237,7 +237,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     history={item.kind === 'saved' && props.set && historyKey === item.key
                         ? <WorkflowTriggerRunHistory automationId={props.set.automationId} triggerId={item.triggerId}
                             nextRunAt={props.set.enabled ? readNextRunAt(item) : null}
-                            accountLifetime={props.accountLifetime} triggerName={formatTriggerSummary(item.trigger)} /> : undefined}
+                            accountLifetime={props.accountLifetime} triggerName={formatTriggerSummary(item.trigger)} trigger={item.trigger} /> : undefined}
                     onHistory={item.kind === 'saved' ? () => toggleHistory(item.key) : undefined}
                     onOpen={(anchor) => setOpen({ row: item, anchor })}
                     onToggle={(enabled) => {

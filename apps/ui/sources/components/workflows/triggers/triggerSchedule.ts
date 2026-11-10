@@ -5,11 +5,22 @@ import { resolveHappierFutureLocalDateTime, type HappierLocalDateTimeDraft } fro
 /** The editor retains a saved instant exactly; editing its fields releases that retained value. */
 export type OnceScheduleDraft = HappierLocalDateTimeDraft & Readonly<{ relative: string; scheduledAt?: number }>;
 
+export type OnceScheduleSource = Readonly<{ kind: string; schedule?: Readonly<{ kind: string }>; remainingOccurrences?: number | null }>;
+
 /** Consumption is scheduler-owned; a paused pending occurrence is still not done. */
-export function isSpentOnceSchedule(trigger: Readonly<{
-    kind: string; schedule?: Readonly<{ kind: string }>; remainingOccurrences?: number | null;
-}>): boolean {
+export function isSpentOnceSchedule(trigger: OnceScheduleSource): boolean {
     return trigger.kind === 'schedule' && trigger.schedule?.kind === 'once' && trigger.remainingOccurrences === 0;
+}
+
+/**
+ * A one-time schedule's state: pending until the scheduler consumes its occurrence, then Missed when
+ * that occurrence's Run says so (the admission owner's typed `missed` state), otherwise Done. `null`
+ * for any other trigger. The UI never infers Missed from the clock.
+ */
+export function readOnceScheduleState(trigger: OnceScheduleSource, lastRunState?: string | null): 'pending' | 'done' | 'missed' | null {
+    if (trigger.kind !== 'schedule' || trigger.schedule?.kind !== 'once') return null;
+    if (!isSpentOnceSchedule(trigger)) return 'pending';
+    return lastRunState === 'missed' ? 'missed' : 'done';
 }
 
 /** Resolve relative text only at the trigger editor's confirmation boundary, never on a timer. */

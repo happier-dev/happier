@@ -13,8 +13,6 @@ import { buildManagedCreationScopeTriggerTarget } from '@/sync/domains/machines/
 
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Modal } from '@/modal';
 import { useActiveServerAccountScope, useActiveMachineFacts, useMachineListForServer } from '@/sync/domains/state/storage';
 import { areServerAccountScopesEqual, serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
@@ -94,15 +92,14 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
     const captureLifetime = () => props.accountLifetime === undefined
         ? captureActiveServerAccountScopeLifetime() : props.accountLifetime;
     const actionOptions = props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime };
-    const [open, setOpen] = React.useState<Readonly<{ set: WorkflowTriggerSetV1; triggerId: AccountTriggerRow['triggerId']; anchor: React.RefObject<View | null>; refusal?: string }> | null>(null);
-    const [history, setHistory] = React.useState<Readonly<{ automationId: string; triggerId: string; title: string }> | null>(null);
+    // History is the open settings' pushed page (the same shell, popover or sheet), so it opens where the person is.
+    const [open, setOpen] = React.useState<Readonly<{ set: WorkflowTriggerSetV1; triggerId: AccountTriggerRow['triggerId']; anchor: React.RefObject<View | null>; refusal?: string; history?: boolean }> | null>(null);
     const thenOptions = useTriggerThenOptions({ ...actionOptions, libraryEnabled: open !== null, sets });
     const openTriggerAsWorkflow = useOpenTriggerAsWorkflow(props.accountLifetime);
     const [pending, setPending] = React.useState<ReadonlySet<string>>(() => new Set());
     const openRow = useEventCallback(async (row: Pick<AccountTriggerRow, 'automationId' | 'triggerId'> & Partial<Pick<AccountTriggerRow, 'legacy'>>, anchor: React.RefObject<View | null>) => {
         const set = sets.find((candidate) => candidate.automationId === row.automationId);
         if (!set) return;
-        setHistory(null);
         if (isWorkflowTriggerSourceGone(set)) {
             void remove(row);
             return;
@@ -169,15 +166,10 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
     });
     const openTrigger = open?.triggerId == null ? undefined : open.set.triggers.find((trigger) => trigger.id === open.triggerId);
     const openEnabled = open !== null && open.set.enabled && openTrigger?.enabled !== false;
-    const historySet = sets.find(set => set.automationId === history?.automationId);
-    const historyTrigger = historySet?.triggers.find(trigger => trigger.id === history?.triggerId);
-    const popover = open === null ? history === null ? null : (
-        <ItemGroup title={t('workflows.destination.history.title')}
-            action={<ToolbarButton label={t('common.close')} onPress={() => setHistory(null)} />}>
-            <WorkflowTriggerRunHistory automationId={history.automationId} triggerId={history.triggerId} triggerName={history.title}
-                nextRunAt={historySet?.enabled && historyTrigger?.enabled && historyTrigger.kind === 'schedule' ? historyTrigger.nextRunAt : null} />
-        </ItemGroup>
-    ) : (
+    // History reads the current list's occurrence, not the revision kept open for editing.
+    const liveSet = open?.history ? sets.find(set => set.automationId === open.set.automationId) : undefined;
+    const liveTrigger = liveSet?.triggers.find(trigger => trigger.id === open?.triggerId);
+    const popover = open === null ? null : (
         <AccountTriggerPopover
             key={`${open.set.automationId}:${open.triggerId ?? 'manual'}`}
             set={open.set}
@@ -187,10 +179,12 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
             refusal={open.refusal}
             {...actionOptions}
             onRequestClose={() => setOpen(null)}
-            {...(openTrigger ? { onHistory: () => {
-                setHistory({ automationId: open.set.automationId, triggerId: openTrigger.id, title: formatTriggerSummary(openTrigger) });
-                setOpen(null);
-            } } : {})}
+            {...(openTrigger ? { onHistory: () => setOpen({ ...open, history: true }) } : {})}
+            {...(openTrigger && open.history ? { pushedPage: { title: t('workflows.destination.history.title'),
+                onBack: () => setOpen({ ...open, history: false }),
+                content: <WorkflowTriggerRunHistory automationId={open.set.automationId} triggerId={openTrigger.id}
+                    triggerName={formatTriggerSummary(openTrigger)} {...actionOptions} trigger={liveTrigger ?? openTrigger}
+                    nextRunAt={liveSet?.enabled && liveTrigger?.enabled && liveTrigger.kind === 'schedule' ? liveTrigger.nextRunAt : null} /> } } : {})}
             onWritten={refresh}
             {...(open.refusal !== undefined || open.set.legacy?.lockedReason === 'review_required' ? {} : { onToggleEnabled: { enabled: openEnabled, onPress: () => {
                 setOpen(null);
@@ -317,6 +311,7 @@ function AccountTriggerPopover(props: Readonly<{
     onWritten: () => void;
     onToggleEnabled?: React.ComponentProps<typeof TriggerPopover>['onToggleEnabled'];
     onHistory?: () => void;
+    pushedPage?: React.ComponentProps<typeof TriggerPopover>['pushedPage'];
     onSaveAsWorkflow?: (target: TriggerTargetV1) => void;
     initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
     initialEventEditSeed?: PluginEventAutomationEditSeed;
@@ -344,6 +339,7 @@ function AccountTriggerPopover(props: Readonly<{
             anchorRef={props.anchorRef}
             onRequestClose={props.onRequestClose}
             onHistory={props.onHistory}
+            pushedPage={props.pushedPage}
             whenKinds={set.observationOnly ? ['pluginEvent'] : ['schedule', 'pluginEvent']}
             sessionId={null}
             serverId={props.accountLifetime?.scope.serverId}

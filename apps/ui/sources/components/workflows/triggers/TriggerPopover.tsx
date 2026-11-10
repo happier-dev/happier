@@ -256,7 +256,8 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.state.danger.foreground,
         width: '100%',
     },
-    back: { paddingHorizontal: theme.space.s16, paddingTop: theme.space.s12 },
+    // The pushed page's Back keeps its own width at the page's leading edge, never a full-width bar.
+    back: { paddingHorizontal: theme.space.s16, paddingTop: theme.space.s12, alignItems: 'flex-start' },
 }));
 
 
@@ -521,7 +522,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                         <View style={styles.surface}>
                             <View style={styles.back}><ToolbarButton testID={`${props.testID}-back`}
                                 label={t('common.back')} onPress={props.pushedPage.onBack} /></View>
-                            <ItemGroup title={props.pushedPage.title} surface="none">{props.pushedPage.content}</ItemGroup>
+                            {/* A phone sheet already names the pushed page in its header; the section repeats no title. */}
+                            <ItemGroup title={presentation === 'sheet' ? undefined : props.pushedPage.title} surface="none">{props.pushedPage.content}</ItemGroup>
                         </View>
                     </ListPresentationProvider>
                 </FloatingOverlay>

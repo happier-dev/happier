@@ -77,7 +77,8 @@ export function projectWorkflowLibraryRecords(input: Readonly<{
             key: `account-trigger:${set.automationId}`, group: 'library', accountTrigger: set,
             name: sourceGone ? t('workflows.triggers.row.workflowUnavailable')
                 : set.name ?? describeLegacyTriggerSet(set)?.title ?? describeTriggerTarget(set.target, () => null),
-            triggerSummary: formatTriggerSetSummary(set.triggers), updatedAt: set.updatedAt ?? 0,
+            triggerSummary: formatTriggerSetSummary(set.triggers, input.automationSummaries?.get(set.automationId)?.lastRun?.state),
+            updatedAt: set.updatedAt ?? 0,
             lastRunSummary: input.automationSummaries?.get(set.automationId),
             openTarget: triggerOpenTargets[0]!, triggerOpenTargets,
         };

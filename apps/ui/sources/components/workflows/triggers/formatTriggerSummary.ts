@@ -11,7 +11,7 @@ import { arePluginContributionIdentitiesEqual } from '@/sync/domains/automations
 import { createPluginLocalizedTextResolver, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
-import { formatClockTime, parseSimpleSchedule } from './triggerSchedule';
+import { formatClockTime, parseSimpleSchedule, readOnceScheduleState } from './triggerSchedule';
 
 function scheduledRunTimeUnits(nextRunAt: number, nowMs: number) {
     const next = new Date(nextRunAt);
@@ -212,11 +212,19 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
  * A trigger set in one string: "Manual" with none, the one summary, or "{first} · {n} more". The
  * header chip and the settings-pane section use this same string for the same draft (04 §9.1).
  */
-export function formatTriggerSetSummary(triggers: readonly (TriggerSummarySource & Readonly<{ enabled?: boolean }>)[]): string {
+export function formatTriggerSetSummary(
+    triggers: readonly (TriggerSummarySource & Readonly<{ enabled?: boolean; remainingOccurrences?: number | null }>)[],
+    /** The set's last Run state, when its owner has read it: a spent one-time schedule says Done or Missed from it. */
+    lastRunState?: string | null,
+): string {
     const [first, ...rest] = triggers;
     if (first === undefined) return t('workflows.triggers.summary.manual');
-    // A trigger that won't fire says so first, as its row does ("Off · Every day at 2:00 AM").
+    // A trigger that won't fire says so first, as its row does ("Off · Every day at 2:00 AM"); a spent
+    // one-time schedule says how it ended ("Done · Once at …"), a pending one keeps its due time.
     const when = formatTriggerSummary(first);
-    const summary = first.enabled === false ? [t('workflows.triggers.row.off'), when].join(' · ') : when;
+    const once = readOnceScheduleState(first, lastRunState);
+    const state = once === 'done' ? t('common.done') : once === 'missed' ? t('workflows.runState.missed')
+        : first.enabled === false ? t('workflows.triggers.row.off') : null;
+    const summary = state === null ? when : [state, when].join(' · ');
     return rest.length === 0 ? summary : t('workflows.triggers.summary.more', { first: summary, count: rest.length });
 }

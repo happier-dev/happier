@@ -819,6 +819,85 @@ describe('WorkflowsColumn', () => {
         expect(home.findHostByTestId('workflow-builtins:builtin:plan-with-a-panel')).not.toBeNull();
     });
 
+    describe('one-time schedules (WF-ONCE-UI)', () => {
+        const scheduledAt = Date.UTC(2026, 10, 10, 8, 54);
+        /** A Library of Account Workflows, each one Once trigger, answered through the real list, detail and summary owners. */
+        async function serveOnceWorkflows(workflows: readonly Readonly<{ id: string; remaining: 0 | 1; lastRun: WorkflowRunStateV1 | null }>[]) {
+            const [{ AutomationDefinitionDetailSchema }, { AutomationStoredWorkflowDefinitionRecipeV2Schema },
+                { createWorkflowDefinitionFixture }] = await Promise.all([import('@happier-dev/protocol/automations/automationApiV3'),
+                import('@happier-dev/protocol/automations/automationWorkflowRecipeV2'), import('@/dev/testkit/fixtures/workflowRunFixtures')]);
+            const inlineDefinition = createWorkflowDefinitionFixture({
+                defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
+                blocks: [{ kind: 'step', id: 'first', document: { text: 'Send the weekly report', references: [], attachments: [] },
+                    input: [], result: { kind: 'text' } }],
+            });
+            const details = workflows.map(workflow => AutomationDefinitionDetailSchema.parse({ id: workflow.id, name: 'Send the weekly report',
+                description: null, enabled: true, workflowDefinitionId: null, scopeSessionId: null, targetType: null, existingSessionId: null,
+                templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 5,
+                assignments: [{ machineId: 'm1', enabled: true, priority: 0, updatedAt: 1 }],
+                executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1,
+                    workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition } },
+                    triggerEvidence: null }),
+                triggers: [{ id: `${workflow.id}-once`, revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'schedule',
+                    triggerDefinitionEnvelope: null, nextRunAt: workflow.remaining === 1 ? scheduledAt : null,
+                    remainingOccurrences: workflow.remaining, schedule: { kind: 'once', scheduledAt } }],
+            }));
+            automationDefinitionResponse = async (url, init) => {
+                if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {
+                    const { AutomationDefinitionDetailsRequestSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
+                    const query = AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init.body)));
+                    return Response.json({ automations: query.scope === 'account_inline' ? details : [], nextCursor: null });
+                }
+                const detail = details.find(candidate => url.pathname === `/v3/automations/${candidate.id}`);
+                return detail ? Response.json(detail) : undefined;
+            };
+            const ranAt = new Date(scheduledAt).toISOString();
+            const answer = executeMock.getMockImplementation()!;
+            executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => {
+                if (actionId === 'workflow.run.summaries' && Array.isArray(input.automationIds)) return Promise.resolve({ ok: true, result: {
+                    remainingAutomationIds: [], automationSummaries: (input.automationIds as string[]).map(automationId => {
+                        const state = workflows.find(workflow => workflow.id === automationId)?.lastRun ?? null;
+                        return { automationId, lastRun: state === null ? null : { id: `run-${automationId}`, state, workflowCustodyState: 'settled',
+                            attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, createdAt: ranAt, startedAt: ranAt } };
+                    }),
+                } });
+                return answer(actionId, input);
+            });
+        }
+        const subtitleOf = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) => screen.findAll(node =>
+            node.props?.testID === `workflows-column:library:account-trigger:${id}` && 'subtitle' in node.props)[0]?.props.subtitle as string | undefined;
+
+        it('reads Done or Missed from the occurrence Run\'s own state, and a pending one by its due time', async () => {
+            await serveOnceWorkflows([{ id: 'ran', remaining: 0, lastRun: 'succeeded' }, { id: 'missed', remaining: 0, lastRun: 'missed' },
+                { id: 'due', remaining: 1, lastRun: null }]);
+            const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+            await vi.waitFor(() => expect(subtitleOf(screen, 'missed')).toMatch(/^workflows\.runState\.missed · /u));
+            expect(subtitleOf(screen, 'ran')).toMatch(/^common\.done · workflows\.triggers\.once\.at\(/u);
+            expect(subtitleOf(screen, 'missed')).toContain('workflows.triggers.once.at(');
+            expect(subtitleOf(screen, 'due')).toMatch(/^workflows\.triggers\.once\.at\(/u);
+        });
+
+        it('opens History inside the trigger\'s own settings and returns to them', async () => {
+            await serveOnceWorkflows([{ id: 'ran', remaining: 0, lastRun: 'succeeded' }]);
+            const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth,
+                createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(40, 40, 120, 40) }) });
+            await vi.waitFor(() => expect(screen.findByTestId('workflows-column:library:account-trigger:ran')).not.toBeNull());
+            await screen.pressByTestIdAsync('workflows-column:library:account-trigger:ran');
+            await vi.waitFor(() => expect(screen.findByTestId('workflows-column-trigger-popover-history')).not.toBeNull());
+            await screen.pressByTestIdAsync('workflows-column-trigger-popover-history');
+            // History is the settings' pushed page, where the person already is, not a group appended under the whole Library.
+            await vi.waitFor(() => expect(screen.findByTestId('session-work-trigger-history:ran')).not.toBeNull());
+            // The spent schedule's History says how it ended before its Run rows.
+            expect(screen.findAll(node => node.props?.testID === 'session-work-trigger-history:ran-once' && 'title' in node.props)[0]
+                ?.props.title).toBe('common.done');
+            const back = screen.findByTestId('workflows-column-trigger-popover-back');
+            expect(back).not.toBeNull();
+            await screen.pressByTestIdAsync('workflows-column-trigger-popover-back');
+            await vi.waitFor(() => expect(screen.findByTestId('workflows-column-trigger-popover')).not.toBeNull());
+            expect(screen.findByTestId('session-work-trigger-history:ran')).toBeNull();
+        });
+    });
+
     it('lists the built-ins as the column\'s own navigation rows, leaving their controls to the built-in page', async () => {
         answerLists();
         const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
