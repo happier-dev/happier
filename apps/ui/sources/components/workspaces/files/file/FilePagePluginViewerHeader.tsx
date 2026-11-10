@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 
-import { useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
+import { describeCheckoutUnreachable, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { t } from '@/text';
@@ -57,9 +57,7 @@ export function FilePagePluginViewerHeader(
   const { set: requestView } = useFileViewCommands({ scope: accountScope, owner: editOwner, modes: [] });
   const requestEdit = React.useCallback(() => { void requestView({ mode: 'edit' }); }, [requestView]);
   const machineReachable = !reachability.unreachable;
-  const unavailableReason = t('projects.checkouts.notAnswering', {
-    machine: reachability.machineName,
-  });
+  const unavailableReason = describeCheckoutUnreachable(reachability);
   const share = useFilePageSharing({
     scope: props.scope,
     filePath: props.filePath,

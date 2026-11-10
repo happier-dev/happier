@@ -2,10 +2,11 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { useIsWidgetFrameBody } from '@/components/widgets/frame/widgetFrameBody';
 import { useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Text } from '@/components/ui/text/Text';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import {
@@ -13,97 +14,25 @@ import {
   type SurfaceStateSize,
 } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
-import { describeMachinePresenceSummary, type MachineRuntimePresence } from '@/utils/sessions/machinePresenceLine';
 import { formatLastSeen } from '@/utils/sessions/sessionUtils';
 
-/** The machine a checkout lives on: reachability is a fact of the machine, not of the folder. */
-export type CheckoutMachineScope = Readonly<{
-  serverId: string;
-  machineId: string;
-}>;
-
-/**
- * One checkout-reachability state. When the machine a checkout lives on isn't answering, the page
- * that owns the checkout says so once, with when it was last seen and Retry
- * ({@link CheckoutReachabilityLine}); every surface beneath it (Code, Local changes, Scripts, README,
- * the Git pane) inherits that and shows a quiet {@link CheckoutUnreachableState} instead of failing
- * on its own. A surface with no announcing page above it (a Session's Files pane) says it itself,
- * once, with its own Retry.
- *
- * `unknown` reachability (the machine record isn't visible from here, e.g. a shared Session) is never
- * presented as offline.
- */
-export type CheckoutReachability = Readonly<{
-  unreachable: boolean;
-  runtime: MachineRuntimePresence;
-  machineName: string;
-  lastSeenAt: number | null;
-  /** A page above already says it; this surface only inherits. */
-  announced: boolean;
-}>;
-
-const AnnouncedCheckoutMachine =
-  React.createContext<CheckoutMachineScope | null>(null);
-
-/** Declares that this subtree's page announces its checkout machine's reachability. */
-export function CheckoutReachabilityScope(
-  props: Readonly<{ scope: CheckoutMachineScope; children: React.ReactNode }>,
-) {
-  const { serverId, machineId } = props.scope;
-  const scope = React.useMemo(
-    () => ({ serverId, machineId }),
-    [serverId, machineId],
-  );
-  return (
-    <AnnouncedCheckoutMachine.Provider value={scope}>
-      {props.children}
-    </AnnouncedCheckoutMachine.Provider>
-  );
-}
-
-/** The checkout machine the page above announces, for a surface that only knows it sits under it. */
-export function useAnnouncedCheckoutMachine(): CheckoutMachineScope | null {
-  return React.useContext(AnnouncedCheckoutMachine);
-}
-
-export function useCheckoutReachability(
-  scope: CheckoutMachineScope | null,
-): CheckoutReachability {
-  const presence = useMachinePresenceSummary(scope?.serverId, scope?.machineId);
-  return useCheckoutReachabilityPresentation(scope, presence);
-}
-
-/** A surface already holding the selected Machine summary shares the announcement without another subscription. */
-export function useCheckoutReachabilityPresentation(
-  scope: CheckoutMachineScope | null,
-  presence: Parameters<typeof describeMachinePresenceSummary>[0],
-): CheckoutReachability {
-  const announcedScope = React.useContext(AnnouncedCheckoutMachine);
-  const runtime = React.useMemo(() => describeMachinePresenceSummary(presence), [presence]);
-  const unreachable = runtime.showStatus;
-  // Every use of this name is inside a sentence, so a Machine still loading reads "this machine", never "Loading…".
-  const machineName = presence.sentenceName ?? scope?.machineId ?? '';
-  const lastSeenAt = unreachable ? (presence.lastSeenAt ?? null) : null;
-  const announced =
-    unreachable &&
-    scope != null &&
-    announcedScope?.serverId === scope.serverId &&
-    announcedScope.machineId === scope.machineId;
-  return React.useMemo(
-    () => ({ unreachable, machineName, lastSeenAt, announced, runtime }),
-    [unreachable, machineName, lastSeenAt, announced, runtime],
-  );
-}
-
-/**
- * Presence is pushed by the machine; Retry asks the server for the machine's current state now. The one
- * Retry of every "machine isn't answering" line (a checkout's page, a Session's Work pane).
- */
-// Loaded on press: the states that offer Retry stay leaf modules without the sync engine's graph.
-export async function retryMachineReachability(): Promise<unknown> {
-  const { sync } = await import('@/sync/sync');
-  return sync.refreshMachinesThrottled({ staleMs: 0, force: true });
-}
+export {
+  CheckoutReachabilityScope,
+  describeCheckoutUnreachable,
+  retryMachineReachability,
+  useAnnouncedCheckoutMachine,
+  useCheckoutReachability,
+  useCheckoutReachabilityPresentation,
+  type CheckoutMachineScope,
+  type CheckoutReachability,
+} from './checkoutReachabilityModel';
+import {
+  describeCheckoutUnreachable,
+  retryMachineReachability,
+  useCheckoutReachability,
+  type CheckoutMachineScope,
+  type CheckoutReachability,
+} from './checkoutReachabilityModel';
 
 /**
  * The page's one line ("As of 10:42 · devbox isn't answering · Retry"), under its header. Renders
@@ -113,6 +42,14 @@ export function CheckoutReachabilityLine(
   props: Readonly<{ scope: CheckoutMachineScope; testID?: string }>,
 ) {
   const reachability = useCheckoutReachability(props.scope);
+  return <CheckoutReachabilityLineView reachability={reachability} testID={props.testID} />;
+}
+
+/** The same line for a surface that already holds its Machine's reachability. */
+export function CheckoutReachabilityLineView(
+  props: Readonly<{ reachability: CheckoutReachability; testID?: string }>,
+) {
+  const { reachability } = props;
   // Going offline and coming back are moments, not jumps: the line reveals and folds away with the
   // shared disclosure motion (height and opacity together, instant under reduced motion), and it keeps
   // its last words while it folds.
@@ -194,9 +131,7 @@ export function CheckoutUnreachableState(
       size={props.size ?? (widget ? 'line' : undefined)}
       iconName="wifi-slash"
       scene="homeOffline"
-      title={outOfReach
-        ? t('projects.checkouts.outOfReach', { machine: reachability.machineName })
-        : reachability.runtime.label}
+      title={describeCheckoutUnreachable(reachability)}
       reason={reason}
       action={outOfReach ? { label: t('surfaceState.tryAgain'), onPress: retryMachineReachability } : undefined}
     />
@@ -225,13 +160,12 @@ function AnnouncedCheckoutWait(
     [theme.colors.text.tertiary],
   );
   useWidgetFrameBodyMeta(glyph);
+  // Spoken, not drawn: a label on a role-less box is never read, so the words are a visually hidden text.
   return (
-    <View
-      testID={props.testID}
-      accessible
-      accessibilityLabel={t('projects.checkouts.waiting', {
-        machine: props.machineName,
-      })}
-    />
+    <View testID={props.testID}>
+      <Text style={visuallyHiddenStyle}>
+        {t('projects.checkouts.waiting', { machine: props.machineName })}
+      </Text>
+    </View>
   );
 }

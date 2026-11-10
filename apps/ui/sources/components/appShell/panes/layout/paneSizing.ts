@@ -60,6 +60,22 @@ export function resolveDetailsDockPreferredPx(input: Readonly<{
     return Math.max(input.storedPx, Math.min(input.destinationPreferredPx, input.budgetMaxPx));
 }
 
+/**
+ * The right sidebar's width. A person's dragged width always wins. Until they drag, the main column keeps its
+ * reading width and the side pane takes the canvas beyond it, so a wide window doesn't float the transcript in empty
+ * space beside a narrow pane; it never starts narrower than the stored default. The rendered size is still clamped
+ * by the dock budget. A full-width reading preference leaves no spare canvas, so the default stands.
+ */
+export function resolveRightDockPreferredPx(input: Readonly<{
+    storedPx: number;
+    storedDefaultPx: number;
+    containerWidthPx: number;
+    mainReadingWidthPx: number;
+}>): number {
+    if (input.storedPx !== input.storedDefaultPx || !Number.isFinite(input.mainReadingWidthPx)) return input.storedPx;
+    return Math.max(input.storedPx, Math.round(input.containerWidthPx - input.mainReadingWidthPx));
+}
+
 function clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
 }

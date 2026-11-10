@@ -50,50 +50,6 @@ describe('useAgentInputCoreControlHandlers', () => {
         await hook.unmount();
     });
 
-    it('cycles the session mode chip when the interaction policy resolves to cycle', async () => {
-        const onSessionModeChange = vi.fn();
-
-        const hook = await renderHook(() => {
-            const controller = useAgentInputSelectionOverlayController({
-                shouldRenderSessionModeChip: true,
-                canChangePermission: true,
-                hasMachinePopover: false,
-                hasPathPopover: false,
-                hasResumePopover: false,
-                hasProfilePopover: true,
-                hasEnvVarsPopover: true,
-                hasAgentPickerOptions: false,
-                extraActionChips: [],
-            });
-            const handlers = useAgentInputCoreControlHandlers({
-                agentLabel: 'Codex',
-                hasAgentPickerOptions: false,
-                sessionModeChipInteraction: {
-                    kind: 'cycle',
-                    selectableOptionIds: ['build', 'plan'],
-                    nextOptionId: 'plan',
-                },
-                onSessionModeChange,
-                setShowActionMenu: vi.fn(),
-                closeSelectionOverlay: controller.closeSelectionOverlay,
-                toggleSelectionOverlay: controller.toggleSelectionOverlay,
-            });
-            return {
-                ...controller,
-                ...handlers,
-            };
-        });
-
-        await act(async () => {
-            hook.getCurrent().handleModePress();
-        });
-
-        expect(onSessionModeChange).toHaveBeenCalledWith('plan');
-        expect(hook.getCurrent().activeSelectionOverlay).toBeNull();
-
-        await hook.unmount();
-    });
-
     it('opens the session mode picker when the interaction policy resolves to picker', async () => {
         const hook = await renderHook(() => {
             const controller = useAgentInputSelectionOverlayController({

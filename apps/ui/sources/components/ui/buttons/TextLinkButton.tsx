@@ -3,6 +3,7 @@ import {
   happierPageTextMetrics,
   type HappierTextLinkButtonProps,
 } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -25,8 +26,8 @@ function TextLinkButtonText(props: React.ComponentProps<HappierTextLinkButtonPro
  *
  * It is a button, not navigation: semibold ink (secondary, or primary for `strong`) that underlines on hover, the
  * shared press dip, and the keyboard focus ring. The text keeps its line height, so it sits on the
- * baseline of the sentence it ends; on a touch pointer the press frame reaches the platform minimum
- * above and below the line without taking layout. The focus ring and press dip stay on the words.
+ * baseline of the sentence it ends; the press frame reaches the pointer minimum (the platform's touch
+ * minimum under a finger) above and below the line without taking layout. The focus ring and press dip stay on the words.
  */
 export const TextLinkButton = React.memo(function TextLinkButton(
   props: Readonly<{
@@ -56,6 +57,8 @@ export const TextLinkButton = React.memo(function TextLinkButton(
   return (
     <HappierTextLinkButton
       {...props}
+      // A short word ("Reset") is still a full target for a mouse, not only for a finger.
+      minimumTargetSize={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
       Text={TextLinkButtonText}
       labelStyle={{
         ...Typography.default('semiBold'),

@@ -596,8 +596,8 @@ describe('AgentInput (modelOptionsOverride)', () => {
             onModelModeChange: () => {},
             acpSessionModeOptionsOverride: [
                 { id: 'default', name: 'Default' },
-                { id: 'plan', name: 'Plan' },
-                { id: 'build', name: 'Build' },
+                { id: 'plan', name: 'Plan', description: 'Reads and proposes a plan; changes nothing yet.' },
+                { id: 'build', name: 'Build', description: 'Edits files and runs commands.' },
             ],
             acpSessionModeSelectedIdOverride: null,
             onAcpSessionModeChange,
@@ -606,10 +606,14 @@ describe('AgentInput (modelOptionsOverride)', () => {
         const modeChip = screen.findByTestId('agent-input-session-mode-chip');
         expect(modeChip).toBeTruthy();
 
+        // DESIGN.md: never tap-to-cycle. A tap shows every mode with what it does; nothing changes yet.
         await screen.pressByTestIdAsync('agent-input-session-mode-chip');
-
+        expect(onAcpSessionModeChange).not.toHaveBeenCalled();
+        expect(screen.findByTestId('agent-input-selection-list-popover')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Reads and proposes a plan; changes nothing yet.');
+        expect(screen.getTextContent()).toContain('Edits files and runs commands.');
+        await screen.pressByTestIdAsync('selection-list:session-mode-root:option:plan');
         expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
-        expect(screen.findByTestId('agent-input-selection-list-popover')).toBeNull();
     });
 
     it.each([null, 'default'] as const)('distinguishes unset permissions from native Default in preflight (%s)', async (selectedModeId) => {
@@ -647,7 +651,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(onAcpSessionModeChange).toHaveBeenCalledWith('');
     });
 
-    it('cycles a small mapped native-mode list back to the permission setting', async () => {
+    it('offers a small mapped native-mode list as a choice, including the permission setting', async () => {
         const onAcpSessionModeChange = vi.fn();
         const screen = await renderScreen(React.createElement(AgentInput, {
             value: '',
@@ -667,6 +671,8 @@ describe('AgentInput (modelOptionsOverride)', () => {
         }));
 
         await screen.pressByTestIdAsync('agent-input-session-mode-chip');
+        expect(onAcpSessionModeChange).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('selection-list:session-mode-root:option');
         expect(onAcpSessionModeChange).toHaveBeenCalledWith('');
     });
 
@@ -702,7 +708,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
     });
 
-    it('cycles the ACP mode chip directly when only simple build-plan options are available', async () => {
+    it('opens a choice for the ACP mode chip even with only build and plan', async () => {
         const onAcpSessionModeChange = vi.fn();
         modalShowMock.mockReset();
 
@@ -734,9 +740,11 @@ describe('AgentInput (modelOptionsOverride)', () => {
 
         await screen.pressByTestIdAsync('agent-input-session-mode-chip');
 
-        expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
+        expect(onAcpSessionModeChange).not.toHaveBeenCalled();
         expect(modalShowMock).not.toHaveBeenCalled();
-        expect(screen.findByTestId('agent-input-selection-list-popover')).toBeNull();
+        expect(screen.findByTestId('agent-input-selection-list-popover')).toBeTruthy();
+        await screen.pressByTestIdAsync('selection-list:session-mode-root:option:plan');
+        expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
     });
 
     it('keeps the existing list icon and bare mode label when the selected ACP mode is Plan', async () => {
@@ -1716,7 +1724,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         }
     });
 
-    it('cycles the shared session mode from a mode placed in overflow', async () => {
+    it('opens the shared session mode choice from a mode placed in overflow', async () => {
         storage.getState().applyLocalSettings({ navigationSurfacePlacementsV1: { composer: { orderedIds: [], placements: { mode: 'overflow' } } } });
         lastPopoverProps = null;
         const onAcpSessionModeChange = vi.fn();
@@ -1750,9 +1758,12 @@ describe('AgentInput (modelOptionsOverride)', () => {
 
             await pressTestInstanceAsync(modeAction, 'Build pressable');
 
-            expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeNull();
-            expect(screen.findByTestId('agent-input-selection-list-popover')).toBeNull();
-            expect(onAcpSessionModeChange).toHaveBeenCalledWith('build');
+            // The overflow row leads to the same visible choice as the chip, never a silent cycle.
+            expect(onAcpSessionModeChange).not.toHaveBeenCalled();
+            expect(screen.findByTestId('agent-input-selection-list-popover')).toBeTruthy();
+            expect(screen.getTextContent()).toContain('Think first');
+            await screen.pressByTestIdAsync('selection-list:session-mode-root:option:plan');
+            expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
         } finally {
             mockAgentInputActionBarLayout = 'wrap';
         }

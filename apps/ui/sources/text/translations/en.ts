@@ -21152,6 +21152,7 @@ const enProfiles = {
     modalHelpGeneric: 'This profile needs a secret. Choose one option below.',
     chooseOptionTitle: 'Choose an option',
     manageSavedSecrets: 'Manage saved secrets',
+    manageSavedSecretsSubtitle: "Opens Settings and leaves this step without choosing.",
     machineEnvStatus: {
       theMachine: 'the machine',
       checkFor: ({ env }: { env: string }) => `Check for ${env}`,
@@ -21832,7 +21833,6 @@ const enProjects = {
   },
   checkouts: {
       chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `Checkout: ${machine} · ${branch}`,
-      notAnswering: ({ machine }: { machine: string }) => `${machine} isn’t answering`,
       waiting: ({ machine }: { machine: string }) => `Waiting for ${machine}`,
       outOfReach: ({ machine }: { machine: string }) => `${machine} is out of reach`,
       lastSeen: ({ when }: { when: string }) => `Last seen ${when}.`,

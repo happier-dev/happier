@@ -19,7 +19,9 @@ import {
     PANE_SIZING_DEFAULTS,
     resolveDockedPaneSizing,
     resolveDetailsDockPreferredPx,
+    resolveRightDockPreferredPx,
 } from './layout/paneSizing';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { resolveMultiPaneDeviceType } from './layout/resolveMultiPaneDeviceType';
 import { useReportSessionCockpitActionRailRect } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { PaneActionRailContext, PANE_ACTION_RAIL_WIDTH, type RightPaneHiddenByDetails } from './PaneActionRailContext';
@@ -212,7 +214,14 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const right = PANE_SIZING_DEFAULTS.right;
     const details = PANE_SIZING_DEFAULTS.details;
 
-    const storedEffectiveRightDockWidthPx = Math.max(right.minPx, rightPaneWidthPx ?? right.defaultPx);
+    // The main column's reading width: an undragged right pane takes the canvas a wide window leaves beyond it.
+    const mainReadingWidthPx = useLayoutMaxWidth('conversation');
+    const storedEffectiveRightDockWidthPx = Math.max(right.minPx, resolveRightDockPreferredPx({
+        storedPx: rightPaneWidthPx ?? right.defaultPx,
+        storedDefaultPx: localSettingsDefaults.rightPaneWidthPx,
+        containerWidthPx: panelContainerWidthPx,
+        mainReadingWidthPx,
+    }));
     const storedEffectiveDetailsDockWidthPx = Math.max(details.minPx, resolveDetailsDockPreferredPx({
         storedPx: detailsPaneWidthPx ?? details.minPx,
         storedDefaultPx: localSettingsDefaults.detailsPaneWidthPx,

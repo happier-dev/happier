@@ -17683,6 +17683,7 @@ settingsSession: {
         "Для этого профиля требуется секрет. Выберите один вариант ниже.",
       chooseOptionTitle: "Выберите вариант",
       manageSavedSecrets: 'Управление сохранёнными секретами',
+      manageSavedSecretsSubtitle: "Открывает настройки и закрывает этот шаг без выбора.",
       machineEnvStatus: {
         theMachine: "машине",
         checkFor: ({ env }: { env: string }) => `Проверить ${env}`,
@@ -18359,7 +18360,6 @@ settingsSession: {
     },
     checkouts: {
         chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `Checkout: ${machine} · ${branch}`,
-        notAnswering: ({ machine }: { machine: string }) => `${machine} не отвечает`,
         waiting: ({ machine }: { machine: string }) => `Ожидание ${machine}`,
         outOfReach: ({ machine }: { machine: string }) => `${machine} вне досягаемости`,
         lastSeen: ({ when }: { when: string }) => `Последний раз в сети ${when}.`,

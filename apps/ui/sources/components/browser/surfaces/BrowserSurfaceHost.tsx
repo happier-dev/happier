@@ -1,5 +1,6 @@
 import type {
     BrowserCommandV1} from '@happier-dev/protocol/browser/control/v1';
+import { CheckoutReachabilityScope, useAnnouncedCheckoutMachine } from '@/components/workspaces/reachability/checkoutReachabilityModel';
 import type {
     BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
 import type { BrowserProfileV1 } from '@happier-dev/protocol/browser/profile/v1';
@@ -290,6 +291,9 @@ export function BrowserSurfaceHost(props: BrowserSurfaceHostProps): React.ReactE
     const viewerController = useOptionalSessionViewerController();
     const currentUiContextReader = useOptionalCurrentUiContextReader();
     const currentUiContextPublisher = useCurrentUiContextMountPublisher();
+    // A page that already says its Machine is out of reach (a Project pane's line) keeps saying it once.
+    const announcedMachine = useAnnouncedCheckoutMachine();
+    const runtime = <BrowserSurfaceRuntime {...props} />;
     // Retain the runtime owner with its page, not only the picture. These scopes borrow the
     // incumbent ports across portal reparenting; they create no new Account or viewer authority.
     return (
@@ -301,7 +305,9 @@ export function BrowserSurfaceHost(props: BrowserSurfaceHostProps): React.ReactE
             <SessionViewerSourceAccountScopeProvider accountLifetime={accountLifetime}>
                 <SessionViewerControllerScope controller={viewerController}>
                     <CurrentUiContextBridge reader={currentUiContextReader} publisher={currentUiContextPublisher}>
-                        <BrowserSurfaceRuntime {...props} />
+                        {announcedMachine
+                            ? <CheckoutReachabilityScope scope={announcedMachine}>{runtime}</CheckoutReachabilityScope>
+                            : runtime}
                     </CurrentUiContextBridge>
                 </SessionViewerControllerScope>
             </SessionViewerSourceAccountScopeProvider>
@@ -368,6 +374,8 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     const presenceServerId = props.pluginBrowserActionContext?.serverId ?? null;
     const session = useSession(presenceSessionId ?? '', presenceServerId);
     const browserMachineId = props.pluginBrowserActionContext?.machineId?.trim() ?? null;
+    const browserMachineScope = React.useMemo(() => (browserMachineId && presenceServerId
+        ? { serverId: presenceServerId, machineId: browserMachineId } : null), [browserMachineId, presenceServerId]);
     const browserOperationScope = browserActionAccountLifetime?.isCurrent()
         && (!presenceServerId || areServerProfileIdentifiersEquivalent(presenceServerId, browserActionAccountLifetime.scope.serverId))
         ? browserActionAccountLifetime.scope : null;
@@ -942,6 +950,7 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
                 onOpenDevtools={onOpenDevtools}
                 daemonControlAvailable={sendDaemonCommand !== undefined}
                 managedBrowserAvailable={Boolean(browserMachineId && props.pluginBrowserActionContext?.sessionId)}
+                machine={browserMachineScope}
                 onViewLifecycle={applyViewLifecycleSignal}
                 lifecycleState={lifecycleSlot ? lifecycleSnapshot.lifecycleState : undefined}
                 launchpadRows={props.launchpadRows}

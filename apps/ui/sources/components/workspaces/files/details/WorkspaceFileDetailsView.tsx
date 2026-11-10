@@ -31,7 +31,7 @@ import { Typography } from '@/constants/Typography';
 import type { PdfPageInfo } from '@/components/ui/media/pdf/PdfViewerStates';
 import type { PdfViewPosition } from '@/components/ui/media/pdf/pdfViewPosition';
 import type { PdfZoom } from '@/components/ui/media/pdf/pdfZoom';
-import { CheckoutUnreachableState, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
+import { CheckoutUnreachableState, describeCheckoutUnreachable, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { FileContentPanel, resolveFileCodeGeometry } from '@/components/workspaces/files/file/FileContentPanel';
 import { FileChangesSection, type FileChangesDiffSurface } from '@/components/workspaces/files/file/changes/FileChangesRegions';
 import { useFileChangesReview } from '@/components/workspaces/files/file/changes/useFileChangesReview';
@@ -1323,7 +1323,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     const phonePage = surfaceSize === 'phone';
     const safeAreaInsets = useSafeAreaInsets();
     const machineReachable = !checkoutReachability.unreachable;
-    const unavailableReason = t('projects.checkouts.notAnswering', { machine: checkoutReachability.machineName });
+    const unavailableReason = describeCheckoutUnreachable(checkoutReachability);
     const heldText = fileContent && !fileContent.isBinary && !fileContent.partial ? fileContent.content : null;
     const cachedContent = React.useMemo(() => {
         if (machineReachable || !fileContent) return null;

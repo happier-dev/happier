@@ -97,6 +97,7 @@ import { BrowserToolbar } from './BrowserToolbar';
 import type { BrowserViewportEmulationV1 } from '@happier-dev/protocol/browser/input/v1';
 import { BrowserViewportPicker, browserViewportChoices, selectedBrowserViewportChoiceId } from './BrowserViewportPicker';
 import { BrowserViewHost } from './BrowserViewHost';
+import { useCheckoutReachability, type CheckoutMachineScope } from '@/components/workspaces/reachability/checkoutReachability';
 import { isDaemonAuthoritativeBrowserView } from '@/sync/domains/browser/control/commands';
 import type { BrowserOpenExternalAvailability } from '@/sync/domains/browser/actions/openExternal';
 import type { BrowserStreamedPageRect, BrowserStreamedSurfaceRuntime } from './adapters/BrowserStreamedTarget';
@@ -364,6 +365,8 @@ export function BrowserShell(props: Readonly<{
     daemonControlAvailable?: boolean;
     /** This Session's Machine can run the managed Browser, so an embedded page may switch to it. */
     managedBrowserAvailable?: boolean;
+    /** The Machine this Browser's previews and managed pages run on; its reachability is the shared owner's. */
+    machine?: CheckoutMachineScope | null;
     /**
      * The session whose agent drives this browser, so the presence capsule, the cursor badge and the
      * streamed states name it (and know whether its turn is running). Independent of in-app
@@ -712,6 +715,11 @@ export function BrowserShell(props: Readonly<{
     const showPhoneChrome = phone && (!showLaunchpad || firstUseConnecting !== null) && !inViewer;
     const touchPrimaryPointer = useHappierTouchPrimaryPointer(Platform.OS);
     const controlMetrics = resolveBrowserChromeControlMetrics(chromeDensity.density, { touch: touchPrimaryPointer });
+    // On the web a typed address opens in the Machine's managed Browser. While that Machine is out of
+    // reach the address can't succeed, so it isn't offered; the launchpad says why, in the shared words.
+    const machineReachability = useCheckoutReachability(props.machine ?? null);
+    const addressNeedsMachine = props.platform === 'web' && props.managedBrowserAvailable === true;
+    const navigateInPlace = addressNeedsMachine && machineReachability.unreachable ? undefined : props.onNavigateInPlace;
     const addressField = (
         <BrowserUrlField
             testID={`${testID}-address`}
@@ -722,7 +730,7 @@ export function BrowserShell(props: Readonly<{
             displayHost={selectBrowserViewDisplayHost(activeView)}
             value={selectBrowserViewAddress(activeView)
                 ?? (firstUseConnecting ? streamedChrome?.firstUseTargetUrl : undefined) ?? ''}
-            disabled={activeView ? !toolbar.canNavigate : !props.onNavigateInPlace}
+            disabled={activeView ? !toolbar.canNavigate : !navigateInPlace}
             onEditStart={onAddressEdit}
             editIntentKey={activeView ? JSON.stringify([activeView.browserSessionId, activeView.viewId,
                 activeView.automationController?.controller, activeView.automationController?.controlEpoch]) : undefined}
@@ -900,7 +908,8 @@ export function BrowserShell(props: Readonly<{
                         agentBrowser={resolveAgentBrowserPrerequisite(streamedChrome, props.agent ?? null,
                             props.onAllowBrowserSandbox)}
                         onOpenTarget={props.onOpenTarget}
-                        onNavigateInPlace={props.onNavigateInPlace}
+                        onNavigateInPlace={navigateInPlace}
+                        machineReachability={machineReachability}
                         // The wide chrome's address bar is this page's one address field; a phone page
                         // and the Session viewer draw no chrome, so the launchpad brings its own.
                         urlEntry={phone || inViewer}

@@ -41,8 +41,13 @@ describe('checkout reachability', () => {
         expect(body.getTextContent()).not.toContain(t('common.retry'));
         await body.unmount();
         const section = await renderScreen(<CheckoutUnreachableState reachability={reachability} silent testID="section" />);
-        expect(section.getTextContent()).toBe('');
-        expect(section.findHostByTestId('section')?.props.accessibilityLabel).toBe(waiting);
+        // Wordless on screen, yet spoken: the words are a visually hidden text node, because a label on a
+        // role-less box is never read (axe aria-prohibited-attr).
+        expect(section.getTextContent()).toBe(waiting);
+        expect(section.findHostByTestId('section')?.props.accessibilityLabel).toBeUndefined();
+        const spoken = section.root.findAll((node) => node.props.children === waiting && node.props.style !== undefined)[0];
+        const flat = Object.assign({}, ...[spoken?.props.style].flat(Infinity).filter(Boolean));
+        expect(flat).toMatchObject({ position: 'absolute', width: 1, height: 1, overflow: 'hidden' });
         await section.unmount();
     });
     it('an unannounced offline checkout is the shared out-of-reach state: when it was seen, what returns, and Try again', async () => {

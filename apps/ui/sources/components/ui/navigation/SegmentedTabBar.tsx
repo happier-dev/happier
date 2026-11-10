@@ -193,6 +193,11 @@ export type SegmentedTabBarProps<T extends string = string> = Readonly<{
      */
     iconPlacement?: 'only' | 'leading';
     /**
+     * An icon-only bar whose glyphs match the icon buttons beside it (a header's one control size): the glyph slot
+     * takes this size and the segment's padding gives it back, so the track keeps its control height.
+     */
+    iconGlyphPx?: number;
+    /**
      * `plain` only. `'none'`: a row with little room shows each tab as its glyph alone (still named
      * for assistive technology and on hover), so a neighbour can keep its own text. Needs a glyph on
      * every tab. Default `'all'`.
@@ -262,6 +267,25 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     // Laid out (so the row takes its place) but not painted until the tabs are measured and fitted.
     innerAwaitingFit: { opacity: 0 },
+    /**
+     * A bar with More: the tabs sit in their own row inside the track, so the tablist owns only tabs and
+     * More stands beside it (a tablist may hold nothing but tabs). The row lays its tabs out exactly as
+     * the track would; the thumb moves in with them so it measures in the same frame.
+     */
+    tabRow: {
+        flexDirection: 'row',
+        flexGrow: 1,
+        flexShrink: 1,
+        minWidth: 0,
+        position: 'relative',
+        // The row spans the track's padded height, so the thumb and the press frames keep the track's
+        // vertical geometry while the row starts at the track's content edge horizontally.
+        marginVertical: -SEGMENT_TRACK_PADDING_PX,
+        paddingVertical: SEGMENT_TRACK_PADDING_PX,
+    },
+    tabRowContent: { flexGrow: 0 },
+    tabRowPlain: { gap: HAPPIER_SEGMENTED_METRICS.plain.gapPx, marginVertical: 0, paddingVertical: 0 },
+    tabRowPills: { gap: HAPPIER_SEGMENTED_METRICS.pills.gapPx, flexWrap: 'wrap' },
     glassTrack: {
         borderRadius: HAPPIER_SEGMENTED_METRICS.trackRadiusPx.default,
         width: '100%',
@@ -585,6 +609,15 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
     const pills = props.presentation === 'pills';
     const plain = props.presentation === 'plain';
     const compact = pills || plain ? false : props.compact;
+    const iconGlyphPx = props.iconGlyphPx;
+    const iconGlyphStyles = React.useMemo(() => {
+        if (iconGlyphPx === undefined) return null;
+        const step = compact ? 'compact' : 'default';
+        return {
+            surface: { paddingVertical: Math.max(0, (SEGMENT_LABEL_SLOT_PX[step] + SEGMENT_PADDING_VERTICAL_PX[step] * 2 - iconGlyphPx) / 2 - StyleSheet.hairlineWidth) },
+            icon: { height: iconGlyphPx },
+        };
+    }, [compact, iconGlyphPx]);
     const disabled = props.disabled === true;
     // Every segmented bar slides one shared thumb to the choice (ui-craft: the indicator follows the
     // choice rather than cross-fading between separate highlights); pills have no track to slide in.
@@ -794,9 +827,19 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                     disabled ? styles.innerDisabled : null,
                     awaitingFit ? styles.innerAwaitingFit : null,
                 ]}
-                accessibilityRole={valueChoice ? 'radiogroup' : 'tablist'}
-                accessibilityLabel={props.accessibilityLabel}
+                {...(overflow ? {} : { accessibilityRole: valueChoice ? 'radiogroup' as const : 'tablist' as const, accessibilityLabel: props.accessibilityLabel })}
             >
+                <SegmentedTabRow
+                    owned={overflow != null}
+                    role={valueChoice ? 'radiogroup' : 'tablist'}
+                    accessibilityLabel={props.accessibilityLabel}
+                    style={[
+                        styles.tabRow,
+                        contentSized ? styles.tabRowContent : null,
+                        plain ? styles.tabRowPlain : null,
+                        pills ? styles.tabRowPills : null,
+                    ]}
+                >
                 {slidingThumb && activeRect ? (
                     <SlidingThumb
                         rect={activeRect}
@@ -872,6 +915,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                     styles.tabSurface,
                                     compact ? styles.tabSurfaceCompact : null,
                                     iconOnly ? (compact ? styles.tabSurfaceIconCompact : styles.tabSurfaceIcon) : null,
+                                    iconOnly ? iconGlyphStyles?.surface ?? null : null,
                                     contentSized ? (iconOnly ? styles.tabSurfaceIconContent : styles.tabSurfaceContent) : null,
                                     labelSized ? styles.tabSurfaceTight : null,
                                     showOwnActiveSurface && !pills && !plain ? (inherited ? styles.thumbOutlined : styles.tabActive) : null,
@@ -895,7 +939,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                 {plain ? (
                                     <PlainTabCaption tab={tab} icon={showIcons} count={fit.counts} active={active} label={!glyphOnly} />
                                 ) : iconOnly ? (
-                                    <View style={styles.tabIcon}>{tab.icon}</View>
+                                    <View style={[styles.tabIcon, iconGlyphStyles?.icon ?? null]}>{tab.icon}</View>
                                 ) : (
                                     <View style={styles.tabCaption}>
                                     {/* A mark that identifies one option (a dashboard's owner) leads its label. */}
@@ -936,6 +980,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                         </View>
                     ) : tabNode;
                 })}
+                </SegmentedTabRow>
                 {overflow && (hiddenTabs.length > 0 || hasOverflowActions) ? (
                     <SegmentedTabOverflowMore
                         label={overflow.label}
@@ -949,6 +994,25 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
             </View>
             </SegmentedTrackGlass>
             )}
+        </View>
+    );
+}
+
+/**
+ * The tabs' own row when the bar has More (see `tabRow`); without More the track itself is the tablist
+ * and the tabs sit straight in it.
+ */
+function SegmentedTabRow(props: Readonly<{
+    owned: boolean;
+    role: 'tablist' | 'radiogroup';
+    accessibilityLabel?: string;
+    style: React.ComponentProps<typeof View>['style'];
+    children: React.ReactNode;
+}>) {
+    if (!props.owned) return <>{props.children}</>;
+    return (
+        <View style={props.style} accessibilityRole={props.role} accessibilityLabel={props.accessibilityLabel}>
+            {props.children}
         </View>
     );
 }

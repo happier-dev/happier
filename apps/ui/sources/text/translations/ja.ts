@@ -3216,6 +3216,7 @@ export const ja: TranslationStructure = {
         "このプロファイルにはシークレットが必要です。以下から1つ選択してください。",
       chooseOptionTitle: "選択してください",
       manageSavedSecrets: '保存済みシークレットを管理',
+      manageSavedSecretsSubtitle: "設定を開き、選ばずにこの手順を離れます。",
       machineEnvStatus: {
         theMachine: "マシン",
         checkFor: ({ env }: { env: string }) => `${env} を確認`,
@@ -18320,7 +18321,6 @@ settingsSession: {
     },
     checkouts: {
         chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `チェックアウト: ${machine} · ${branch}`,
-        notAnswering: ({ machine }: { machine: string }) => `${machine} が応答していません`,
         waiting: ({ machine }: { machine: string }) => `${machine} を待っています`,
         outOfReach: ({ machine }: { machine: string }) => `${machine} に接続できません`,
         lastSeen: ({ when }: { when: string }) => `最終確認: ${when}。`,

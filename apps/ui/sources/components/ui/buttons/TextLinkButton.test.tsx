@@ -54,6 +54,17 @@ describe('TextLinkButton', () => {
     for (const key of ['paddingTop', 'paddingBottom', 'marginTop', 'marginBottom']) expect(frame[key] ?? 0).toBe(0);
   });
 
+  it('reaches the pointer floor without a finger too, so a short word like Reset is never a 16 px target', async () => {
+    const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
+    const screen = await renderScreen(
+      <HappierUiPlatformProvider platform={{ platform: 'web', colorScheme: 'light' }}>
+        <TextLinkButton testID="link" label="Reset" size="meta" onPress={() => {}} />
+      </HappierUiPlatformProvider>,
+    );
+    const area = await layoutHitArea(() => screen.findByTestId('link'), { width: 33, height: 16 });
+    expect(area.insets).toEqual({ top: 4, bottom: 4, left: 0, right: 0 });
+  });
+
   it('keeps its hit area inside the free space a host declares above and below the line', async () => {
     const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
     const { HappierTextLinkButton } = await import('@happier-dev/plugin-ui/presentation');

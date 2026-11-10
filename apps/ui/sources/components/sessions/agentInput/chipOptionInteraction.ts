@@ -1,63 +1,28 @@
+/**
+ * What pressing an option chip does. Two or more choices always open a visible picker, where each
+ * option says what it does: DESIGN.md forbids tap-to-cycle, because one stray tap would silently
+ * change how the agent works. A keyboard shortcut may still step through modes (an expert accelerator).
+ */
 export type ChipOptionInteraction<T extends string> =
     | Readonly<{
         kind: 'none';
         selectableOptionIds: ReadonlyArray<T>;
     }>
     | Readonly<{
-        kind: 'cycle';
-        selectableOptionIds: ReadonlyArray<T>;
-        nextOptionId: T;
-    }>
-    | Readonly<{
         kind: 'picker';
         selectableOptionIds: ReadonlyArray<T>;
     }>;
 
-export const DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS = 3;
-
 export function resolveChipOptionInteraction<T extends string>(params: Readonly<{
     currentOptionId: T | null;
     selectableOptionIds: ReadonlyArray<T>;
-    cycleMaxOptions: number;
 }>): ChipOptionInteraction<T> {
     const selectable = params.selectableOptionIds;
-    if (selectable.length === 0) {
-        return {
-            kind: 'none',
-            selectableOptionIds: selectable,
-        };
+    const onlyChoiceIsCurrent = selectable.length === 1 && selectable[0] === params.currentOptionId;
+    if (selectable.length === 0 || onlyChoiceIsCurrent) {
+        return { kind: 'none', selectableOptionIds: selectable };
     }
-
-    const clampedCycleMaxOptions = Math.max(1, Math.floor(params.cycleMaxOptions));
-    if (selectable.length > clampedCycleMaxOptions) {
-        return {
-            kind: 'picker',
-            selectableOptionIds: selectable,
-        };
-    }
-
-    const currentIndex = params.currentOptionId === null ? -1 : selectable.indexOf(params.currentOptionId);
-    if (currentIndex < 0) {
-        return {
-            kind: 'cycle',
-            selectableOptionIds: selectable,
-            nextOptionId: selectable[0]!,
-        };
-    }
-
-    const nextOptionId = selectable[(currentIndex + 1) % selectable.length] ?? selectable[0]!;
-    if (nextOptionId === undefined || nextOptionId === params.currentOptionId) {
-        return {
-            kind: 'none',
-            selectableOptionIds: selectable,
-        };
-    }
-
-    return {
-        kind: 'cycle',
-        selectableOptionIds: selectable,
-        nextOptionId,
-    };
+    return { kind: 'picker', selectableOptionIds: selectable };
 }
 
 export function shouldRenderChipForOptions(params: Readonly<{

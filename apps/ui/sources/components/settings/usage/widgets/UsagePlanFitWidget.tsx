@@ -441,7 +441,7 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: 'right',
   },
   quiet: { ...Typography.default(), color: theme.colors.text.tertiary },
-  warning: { color: theme.colors.state.warning.foreground },
+  warning: { color: theme.colors.state.warning.textForeground },
   note: {
     ...Typography.default(),
     color: theme.colors.text.tertiary,

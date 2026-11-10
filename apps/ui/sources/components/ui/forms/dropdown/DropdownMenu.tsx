@@ -237,8 +237,8 @@ export type DropdownMenuProps = Readonly<{
     popoverPortalWebTarget?: 'body' | 'modal' | 'boundary';
     /**
      * See `Popover.phonePresentation`: `sheet` makes a form-like menu (its own footer) the shared bottom sheet
-     * on a phone, named by `popoverAccessibilityLabel`; `panel` spans a phone. A menu whose rows open submenus
-     * is a panel, and its submenus push inside it.
+     * on a phone, named by `popoverAccessibilityLabel`; otherwise every menu is the phone `panel`, and its
+     * submenus push inside it.
      */
     popoverPhonePresentation?: 'sheet' | 'panel';
     popoverAccessibilityLabel?: string;
@@ -305,6 +305,8 @@ export type DropdownMenuProps = Readonly<{
 }>;
 
 type DropdownTriggerAccessibilityProps = Readonly<{
+    accessibilityRole?: unknown;
+    role?: unknown;
     expanded?: boolean;
     accessibilityState?: AccessibilityState;
     'aria-expanded'?: boolean;
@@ -330,6 +332,10 @@ export function untitleSheetCategories<Category extends Readonly<{ title: string
 
 function withExpandedTriggerState(trigger: React.ReactNode, open: boolean): React.ReactNode {
     if (!React.isValidElement<DropdownTriggerAccessibilityProps>(trigger)) return trigger;
+    // A role-less layout box around the real control (a header holding a grip and a ⋯) is not the
+    // control: aria-expanded on it is never announced (axe aria-allowed-attr). The control inside
+    // carries its own expanded state.
+    if (trigger.type === View && trigger.props.accessibilityRole == null && trigger.props.role == null) return trigger;
 
     if (typeof trigger.type === 'string' && trigger.type === trigger.type.toLowerCase()) {
         return React.cloneElement(trigger, { 'aria-expanded': open });
@@ -380,13 +386,10 @@ export function DropdownMenu(props: DropdownMenuProps) {
         anchorRef: React.RefObject<unknown>;
     } | null>(null);
     const menuItems = props.itemSource?.items ?? props.items;
-    // A menu whose rows open submenus stays anchored on a phone, where its submenus push inside it
-    // (`phoneSheetPush`) instead of being squeezed beside it.
-    const opensSubmenus = React.useMemo(
-        () => menuItems.some((item) => item.submenu && (item.submenu.items.length > 0 || item.submenu.renderContent)),
-        [menuItems],
-    );
-    const phonePresentation = props.popoverPhonePresentation ?? (opensSubmenus ? 'panel' : undefined);
+    // On a phone every menu is the anchored panel (owner R2): above or below its trigger, spanning the screen
+    // less its gutters, with submenus pushing inside it. A desktop width or a side placement left a plain menu
+    // narrow, or at the top of the screen beside a trigger near the bottom (NATIVE-SWEEP L10).
+    const phonePresentation = props.popoverPhonePresentation ?? 'panel';
     const findMenuItem = React.useCallback((id: string) => {
         if (!props.itemSource) return menuItems.find((item) => item.id === id);
         const index = props.itemSource.indexById.get(id);

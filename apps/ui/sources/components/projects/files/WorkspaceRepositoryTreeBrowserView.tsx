@@ -29,7 +29,7 @@ import { createActionApprovalContinuation } from '@/components/approvals/actionA
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { usePaneHeaderSlotContent, type PaneHeaderLine } from '@/components/appShell/panes/paneHeaderSlot';
-import { CheckoutReachabilityLine, CheckoutReachabilityScope, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
+import { CheckoutReachabilityLine, CheckoutReachabilityScope, describeCheckoutUnreachable, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { useIsWidgetFrameBody } from '@/components/widgets/frame/widgetFrameBody';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
@@ -676,7 +676,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     createMenuSelectRef.current = onSelectCreateMenuItem;
     const selectCreateMenuItem = React.useCallback((itemId: RepositoryTreeCreateMenuItemId) => createMenuSelectRef.current(itemId), []);
     const rootLabel = props.rootLabel ?? t('files.projectRoot');
-    const unreachableReason = reachability.unreachable ? t('projects.checkouts.notAnswering', { machine: reachability.machineName }) : null;
+    const unreachableReason = reachability.unreachable ? describeCheckoutUnreachable(reachability) : null;
     const createMenu = React.useMemo(() => (
         <RepositoryTreeCreateMenu
             createEnabled={allowCreateActions}

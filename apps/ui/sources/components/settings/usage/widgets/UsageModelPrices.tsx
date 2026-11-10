@@ -503,7 +503,7 @@ const styles = StyleSheet.create((theme) => ({
   quiet: { ...Typography.default(), color: theme.colors.text.secondary },
   attention: {
     ...Typography.default(),
-    color: theme.colors.state.warning.foreground,
+    color: theme.colors.state.warning.textForeground,
   },
   rates: { fontVariant: ['tabular-nums'] },
   fields: { gap: theme.space.s10, paddingBottom: 14 },

@@ -181,7 +181,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
     shouldRenderSessionModeChip: boolean;
     sessionModePickerAnchor: AgentInputPopoverAnchor;
     sessionModeChipAnchorRef: React.RefObject<View | null>;
-    sessionModePickerOptions: ReadonlyArray<SimpleOption>;
+    sessionModePickerOptions: ReadonlyArray<Readonly<{ id: string; label: string; subtitle?: string }>>;
     sessionModeSelectedOptionId?: string | null;
     onSessionModeSelect?: (selectedId: string) => void;
     onSessionModeRequestClose: () => void;
@@ -413,10 +413,11 @@ export function AgentInputOverlayLayer(props: Readonly<{
                         {
                             kind: 'static',
                             id: 'session-mode',
+                            // Each mode says what it does: the one-line consequence beside its name.
                             options: props.sessionModePickerOptions.map((option) => ({
                                 id: option.id,
                                 label: option.label,
-                                subtitle: option.description,
+                                subtitle: option.subtitle,
                             })),
                         },
                     ],

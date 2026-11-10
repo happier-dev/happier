@@ -88,13 +88,13 @@ describe('useSessionAuthoringControls session modes', () => {
         await hook.unmount();
     });
 
-    it('cycles the same mapped choices offered by the picker', async () => {
+    it('opens a picker over the same mapped choices instead of cycling', async () => {
         const hook = await renderHook(() => useSessionAuthoringControls(modeInput({
             acpSessionModeOptionsOverride: modeOptions.slice(0, 2),
             acpSessionModeSelectedIdOverride: 'plan',
         })));
         expect(hook.getCurrent().sessionModeChipInteraction).toMatchObject({
-            kind: 'cycle', selectableOptionIds: ['', 'default', 'plan'], nextOptionId: '',
+            kind: 'picker', selectableOptionIds: ['', 'default', 'plan'],
         });
         await hook.unmount();
     });
@@ -113,7 +113,7 @@ describe('useSessionAuthoringControls session modes', () => {
         })));
         expect(hook.getCurrent().sessionModeChipControl?.selectedId).toBe('default');
         expect(hook.getCurrent().sessionModeChipControl?.label).toBe('Build');
-        expect(hook.getCurrent().sessionModeChipInteraction).toMatchObject({ kind: 'cycle', nextOptionId: 'build' });
+        expect(hook.getCurrent().sessionModeChipInteraction).toMatchObject({ kind: 'picker', selectableOptionIds: ['default', 'build', 'plan'] });
         await hook.unmount();
     });
 });

@@ -17557,6 +17557,7 @@ settingsSession: {
         "Ten profil wymaga sekretu. Wybierz jedną z opcji poniżej.",
       chooseOptionTitle: "Wybierz opcję",
       manageSavedSecrets: 'Zarządzaj zapisanymi sekretami',
+      manageSavedSecretsSubtitle: "Otwiera Ustawienia i opuszcza ten krok bez wyboru.",
       machineEnvStatus: {
         theMachine: "maszynie",
         checkFor: ({ env }: { env: string }) => `Sprawdź ${env}`,
@@ -18231,7 +18232,6 @@ settingsSession: {
     },
     checkouts: {
         chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `Checkout: ${machine} · ${branch}`,
-        notAnswering: ({ machine }: { machine: string }) => `${machine} nie odpowiada`,
         waiting: ({ machine }: { machine: string }) => `Czekam na ${machine}`,
         outOfReach: ({ machine }: { machine: string }) => `${machine} jest poza zasięgiem`,
         lastSeen: ({ when }: { when: string }) => `Ostatnio widziany ${when}.`,

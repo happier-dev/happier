@@ -688,6 +688,8 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                             <Item
                                 testID="secret-requirement:manage"
                                 title={t('profiles.requirements.manageSavedSecrets')}
+                                // It closes the prompt without a choice, so it says so; adding a key stays in the list above.
+                                subtitle={t('profiles.requirements.manageSavedSecretsSubtitle')}
                                 icon={<Icon name="gear" size={24} color={theme.colors.text.secondary} />}
                                 onPress={openSecretsSettings}
                                 showDivider={false}

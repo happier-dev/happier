@@ -186,6 +186,21 @@ describe('SegmentedTabBar', () => {
     expect(customize).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps More beside the tablist, never inside it: a tablist owns only tabs (axe aria-required-children)', async () => {
+    const { SegmentedTabBar } = await import('./SegmentedTabBar');
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const screen = await renderScreen(<SegmentedTabBar tabs={TABS} activeTabId="alpha" onSelectTab={() => {}}
+      accessibilityLabel="Pages" overflow={{ label: 'More', actions: [{ id: 'customize', label: 'Customize', onPress: () => {} }] }} />);
+    const tablists = screen.root.findAll((node) => node.props.accessibilityRole === 'tablist');
+    expect(new Set(tablists.map((node) => node.props.accessibilityLabel))).toEqual(new Set(['Pages']));
+    expect(screen.findAllByType(DropdownMenu)).toHaveLength(1);
+    for (const tablist of tablists) {
+      expect(tablist.findAllByType(DropdownMenu)).toHaveLength(0);
+      expect(tablist.findAll((node) => node.props.accessibilityRole === 'tab').length).toBeGreaterThan(0);
+    }
+    await screen.unmount();
+  });
+
   it.each([false, true])(
     'keeps the selected thumb and its gradient solid inside floating material (dark=%s)',
     async (dark) => {
@@ -1523,7 +1538,11 @@ describe('SegmentedTabBar measured overflow', () => {
           : style
             ? [style as { opacity?: number }]
             : [];
-      return !flat(tablist.props.style).some((entry) => entry.opacity === 0);
+      // The track paints the row; with More the tablist is the tabs' own row inside it.
+      for (let node: typeof tablist | null = tablist; node; node = node.parent) {
+        if (flat(node.props?.style).some((entry) => entry.opacity === 0)) return false;
+      }
+      return true;
     };
     const screen = await renderScreen(scene(withoutCount));
     // Unmeasured, every tab would squeeze into the row: it is laid out but not painted.

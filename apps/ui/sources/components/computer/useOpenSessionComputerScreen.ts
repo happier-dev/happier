@@ -3,8 +3,8 @@ import * as React from 'react';
 import { useOptionalSessionViewerController } from '@/components/sessions/viewer/SessionViewerController';
 import { useSessionViewerMachineId } from '@/components/sessions/viewer/useSessionViewerMachine';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { describeCheckoutUnreachable, useCheckoutReachabilityPresentation } from '@/components/workspaces/reachability/checkoutReachabilityModel';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
-import { t } from '@/text';
 
 /**
  * The one way to open a Session's shared window: the Session's viewer, through its mounted
@@ -36,9 +36,11 @@ export function useOpenSessionComputerScreen(
       : null;
   const request = viewer?.requestSemantic;
   const presence = useMachinePresenceSummary(serverId, request ? machineId : null);
-  const disabledReason = presence.reachability === 'unreachable'
-    ? t('projects.checkouts.notAnswering', { machine: presence.sentenceName ?? presence.name ?? t('machine.thisMachineInSentence') })
-    : null;
+  const machineScope = React.useMemo(() => (serverId && machineId && request ? { serverId, machineId } : null),
+    [machineId, request, serverId]);
+  // The Machine's absence reads as it does on every other surface: the shared reachability owner's sentence.
+  const reachability = useCheckoutReachabilityPresentation(machineScope, presence);
+  const disabledReason = reachability.unreachable ? describeCheckoutUnreachable(reachability) : null;
   const open = React.useCallback(() => {
     if (disabledReason) return;
     void request?.({ kind: 'viewer.open', source: 'computer' });

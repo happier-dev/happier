@@ -754,7 +754,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.text.tertiary,
     fontVariant: ['tabular-nums'],
   },
-  danger: { color: theme.colors.state.danger.foreground },
+  danger: { color: theme.colors.state.danger.textForeground },
   multiples: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s16, rowGap: 14 },
   multiple: { flexGrow: 1, minWidth: 0, gap: theme.space.s6, borderRadius: theme.borderRadius.sm },
   multipleTitle: { ...Typography.default('medium'), color: theme.colors.text.secondary },

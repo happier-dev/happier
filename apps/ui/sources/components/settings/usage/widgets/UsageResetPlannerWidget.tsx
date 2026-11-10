@@ -416,7 +416,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.text.tertiary,
     fontVariant: ['tabular-nums'],
   },
-  warning: { color: theme.colors.state.warning.foreground },
+  warning: { color: theme.colors.state.warning.textForeground },
   credits: { gap: theme.space.s4 },
   waiting: { gap: theme.space.s8 },
   waitingRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s12 },

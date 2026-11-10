@@ -6,7 +6,6 @@ import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import {
-    DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS,
     resolveChipOptionInteraction,
     shouldRenderChipForOptions,
     type ChipOptionInteraction,
@@ -345,7 +344,6 @@ export function useSessionAuthoringControls(
         return resolveChipOptionInteraction({
             currentOptionId: sessionModeChipControl.selectedId,
             selectableOptionIds,
-            cycleMaxOptions: DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS,
         });
     }, [sessionModeChipControl, sessionModePickerOptions]);
 

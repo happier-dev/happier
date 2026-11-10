@@ -106,7 +106,7 @@ describe('Session shared browser consumer', () => {
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const createMenu = screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'repository-tree-create-menu');
         expect(createMenu?.props.items.every((item: { disabled?: boolean }) => item.disabled)).toBe(true);
-        expect(createMenu?.props.header?.props).toMatchObject({ kind: 'unavailable', title: 'projects.checkouts.notAnswering' });
+        expect(createMenu?.props.header?.props).toMatchObject({ kind: 'unavailable', title: 'projects.checkouts.outOfReach' });
 
         // The Home pushes the original Machine's recovery. No Retry or Session
         // metadata write is needed to re-resolve its known folder and list it.

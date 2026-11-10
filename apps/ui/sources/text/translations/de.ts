@@ -17865,6 +17865,7 @@ settingsSession: {
             modalHelpGeneric: 'Dieses Profil braucht ein Secret. Wähl unten eine Möglichkeit.',
             chooseOptionTitle: 'Wähl eine Möglichkeit',
             manageSavedSecrets: 'Gespeicherte Secrets verwalten',
+            manageSavedSecretsSubtitle: "Öffnet die Einstellungen und verlässt diesen Schritt ohne Auswahl.",
             machineEnvStatus: {
                 theMachine: 'der Rechner',
                 checkFor: ({ env }: { env: string }) => `Prüfen auf ${env}`,
@@ -18512,7 +18513,6 @@ settingsSession: {
         },
         checkouts: {
             chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `Checkout: ${machine} · ${branch}`,
-            notAnswering: ({ machine }: { machine: string }) => `${machine} antwortet nicht`,
             waiting: ({ machine }: { machine: string }) => `Warten auf ${machine}`,
             outOfReach: ({ machine }: { machine: string }) => `${machine} ist nicht erreichbar`,
             lastSeen: ({ when }: { when: string }) => `Zuletzt gesehen ${when}.`,

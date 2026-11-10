@@ -273,7 +273,8 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         const attributes: Record<string, string | undefined> = {
             'data-testid': props.testID, 'data-placeholder': props.placeholder,
             'aria-label': props.accessibilityLabel, 'aria-description': props.accessibilityHint,
-            role: props.accessibilityRole ?? 'textbox', 'aria-multiline': 'true',
+            // aria-multiline belongs to a textbox; a combobox does not allow it (axe aria-allowed-attr).
+            role: props.accessibilityRole ?? 'textbox', 'aria-multiline': props.accessibilityRole === undefined ? 'true' : undefined,
             'aria-expanded': props.accessibilityState?.expanded === undefined ? undefined : String(props.accessibilityState.expanded),
             'aria-haspopup': props['aria-haspopup'], 'aria-autocomplete': props['aria-autocomplete'],
             'aria-controls': props['aria-controls'], 'aria-activedescendant': props['aria-activedescendant'],

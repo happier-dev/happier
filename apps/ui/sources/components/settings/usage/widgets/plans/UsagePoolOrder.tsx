@@ -913,7 +913,7 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.default('semiBold'),
     color: theme.colors.text.primary,
   },
-  danger: { color: theme.colors.state.danger.foreground },
+  danger: { color: theme.colors.state.danger.textForeground },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

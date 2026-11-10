@@ -206,6 +206,26 @@ describe('BrowserLaunchpad', () => {
         expect(onRefresh).toHaveBeenCalledOnce();
         if (retainRows) expect(screen.findByTestId('browser-launchpad-card:recent:external_docs')).toBeTruthy();
     });
+    it.each([false, true])('says once, in the shared words, that its Machine is out of reach (F-1) while retained rows=%s', async (retainRows) => {
+        const machineReachability = { unreachable: true, machineName: 'Studio', lastSeenAt: null, announced: false,
+            runtime: { online: false, status: 'offline' as const, label: 'Offline', nextAction: 'retry' as const, showStatus: true } };
+        const screen = await renderScreen(<BrowserLaunchpad
+            rows={retainRows ? rows.filter((row) => row.section === 'recent') : []}
+            platform="web"
+            refreshStatus="error"
+            refreshError="local_service_preview_refresh_failed"
+            onRefresh={vi.fn()}
+            machineReachability={machineReachability}
+        />);
+        const text = screen.getTextContent();
+        // One cause, one wording: with nothing to show, the Local services state; over retained rows, the
+        // Project page's line. Never the Browser's own refresh error.
+        expect(text).toContain(retainRows ? 'Offline' : 'projects.checkouts.outOfReach:{"machine":"Studio"}');
+        expect(text).not.toContain('browserLaunchpad.error.title');
+        expect(screen.findByTestId('browser-launchpad-error-action')).toBeNull();
+        if (retainRows) expect(screen.findByTestId('browser-launchpad-card:recent:external_docs')).toBeTruthy();
+    });
+
     it('keeps rows visible while refreshing', async () => {
 
         const screen = await renderScreen(

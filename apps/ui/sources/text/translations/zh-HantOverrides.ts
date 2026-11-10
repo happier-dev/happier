@@ -13993,7 +13993,6 @@ settingsSession: {
         },
         checkouts: {
             chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `簽出：${machine} · ${branch}`,
-            notAnswering: ({ machine }: { machine: string }) => `${machine} 沒有回應`,
             waiting: ({ machine }: { machine: string }) => `正在等待 ${machine}`,
             outOfReach: ({ machine }: { machine: string }) => `${machine} 無法連線`,
             lastSeen: ({ when }: { when: string }) => `上次上線：${when}。`,

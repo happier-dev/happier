@@ -80,7 +80,8 @@ describe('MultiTextInput web surface', () => {
         expect(view.input.getAttribute('aria-label')).toBe('Prompt');
         expect(view.input.getAttribute('aria-description')).toBe('Write a prompt');
         expect(view.input.getAttribute('role')).toBe('combobox');
-        expect(view.input.getAttribute('aria-multiline')).toBe('true');
+        // aria-multiline is not an allowed attribute on a combobox (axe aria-allowed-attr).
+        expect(view.input.hasAttribute('aria-multiline')).toBe(false);
         expect(view.input.getAttribute('aria-expanded')).toBe('true');
         expect(view.input.getAttribute('aria-haspopup')).toBe('listbox');
         expect(view.input.getAttribute('aria-autocomplete')).toBe('list');
@@ -89,6 +90,12 @@ describe('MultiTextInput web surface', () => {
         await view.update({ editable: false, accessibilityState: { expanded: false } });
         expect(view.input.getAttribute('contenteditable')).toBe('false');
         expect(view.input.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('announces a plain editor as a multi-line textbox', async () => {
+        const view = await render({ accessibilityLabel: 'Notes' });
+        expect(view.input.getAttribute('role')).toBe('textbox');
+        expect(view.input.getAttribute('aria-multiline')).toBe('true');
     });
 
     it('uses scaled caller typography and the containing glass placeholder ink', async () => {

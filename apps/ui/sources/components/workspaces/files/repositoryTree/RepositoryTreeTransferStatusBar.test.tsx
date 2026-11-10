@@ -130,7 +130,7 @@ describe('RepositoryTreeTransferStatusBar', () => {
         const words = (screen: Awaited<ReturnType<typeof render>>) => JSON.stringify(screen.tree.toJSON());
 
         for (const [reason, key] of [
-            ['unreachable', 'projects.checkouts.notAnswering'],
+            ['unreachable', 'projects.checkouts.outOfReach'],
             ['declined', 'files.transfers.failureReasons.declined'],
             ['permission', 'errors.permissionDenied'],
             ['tooLarge', 'files.transfers.failureReasons.tooLarge'],

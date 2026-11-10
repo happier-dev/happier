@@ -17242,6 +17242,7 @@ settingsSession: {
       modalHelpGeneric: "此配置需要机密。请选择下面的一个选项。",
       chooseOptionTitle: "选择一个选项",
       manageSavedSecrets: '管理已保存的机密',
+      manageSavedSecretsSubtitle: "打开设置，不做选择即离开此步骤。",
       machineEnvStatus: {
         theMachine: "机器",
         checkFor: ({ env }: { env: string }) => `检查 ${env}`,
@@ -18025,7 +18026,6 @@ settingsSession: {
     },
     checkouts: {
         chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `检出：${machine} · ${branch}`,
-        notAnswering: ({ machine }: { machine: string }) => `${machine} 没有响应`,
         waiting: ({ machine }: { machine: string }) => `正在等待 ${machine}`,
         outOfReach: ({ machine }: { machine: string }) => `${machine} 无法连接`,
         lastSeen: ({ when }: { when: string }) => `上次在线：${when}。`,

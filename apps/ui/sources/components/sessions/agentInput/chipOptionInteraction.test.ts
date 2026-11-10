@@ -3,38 +3,35 @@ import { describe, expect, it } from 'vitest';
 import { resolveChipOptionInteraction, shouldRenderChipForOptions } from './chipOptionInteraction';
 
 describe('chipOptionInteraction', () => {
-    it('cycles when selectable options are within the cycle threshold', () => {
+    // DESIGN.md: never tap-to-cycle. Two or more choices always open a visible picker, so one stray
+    // tap never silently changes how the agent works.
+    it('opens the picker for two choices instead of cycling', () => {
         expect(resolveChipOptionInteraction({
             currentOptionId: 'claude',
             selectableOptionIds: ['claude', 'opencode'],
-            cycleMaxOptions: 3,
         })).toEqual({
-            kind: 'cycle',
+            kind: 'picker',
             selectableOptionIds: ['claude', 'opencode'],
-            nextOptionId: 'opencode',
         });
     });
 
-    it('cycles to an explicit empty clear choice', () => {
+    it('opens the picker for three choices including the empty clear choice', () => {
         expect(resolveChipOptionInteraction({
             currentOptionId: 'plan',
             selectableOptionIds: ['', 'default', 'plan'],
-            cycleMaxOptions: 3,
         })).toEqual({
-            kind: 'cycle',
+            kind: 'picker',
             selectableOptionIds: ['', 'default', 'plan'],
-            nextOptionId: '',
         });
     });
 
-    it('opens picker when selectable options exceed the cycle threshold', () => {
+    it('offers nothing to choose when the only choice is the current one', () => {
         expect(resolveChipOptionInteraction({
             currentOptionId: 'claude',
-            selectableOptionIds: ['claude', 'codex', 'opencode', 'gemini'],
-            cycleMaxOptions: 3,
+            selectableOptionIds: ['claude'],
         })).toEqual({
-            kind: 'picker',
-            selectableOptionIds: ['claude', 'codex', 'opencode', 'gemini'],
+            kind: 'none',
+            selectableOptionIds: ['claude'],
         });
     });
 
@@ -42,7 +39,6 @@ describe('chipOptionInteraction', () => {
         expect(resolveChipOptionInteraction({
             currentOptionId: 'claude',
             selectableOptionIds: [],
-            cycleMaxOptions: 3,
         })).toEqual({
             kind: 'none',
             selectableOptionIds: [],

@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { PANE_SIZING_DEFAULTS, resolveDetailsDockPreferredPx, resolveDockedPaneSizing } from './paneSizing';
+import { PANE_SIZING_DEFAULTS, resolveDetailsDockPreferredPx, resolveDockedPaneSizing, resolveRightDockPreferredPx } from './paneSizing';
+
+describe('resolveRightDockPreferredPx', () => {
+    const base = { storedDefaultPx: 380, mainReadingWidthPx: 850 };
+    it('gives an undragged side pane the canvas the reading column leaves empty on a wide window', () => {
+        // 2560 less the sidebar and rail: the transcript keeps its reading width, the pane takes the rest.
+        expect(resolveRightDockPreferredPx({ ...base, storedPx: 380, containerWidthPx: 2196 })).toBe(1346);
+    });
+    it('keeps the default where the window has no spare canvas', () => {
+        expect(resolveRightDockPreferredPx({ ...base, storedPx: 380, containerWidthPx: 1096 })).toBe(380);
+    });
+    it('keeps a dragged width and a full-width reading preference', () => {
+        expect(resolveRightDockPreferredPx({ ...base, storedPx: 420, containerWidthPx: 2196 })).toBe(420);
+        expect(resolveRightDockPreferredPx({ storedDefaultPx: 380, mainReadingWidthPx: Number.POSITIVE_INFINITY,
+            storedPx: 380, containerWidthPx: 2196 })).toBe(380);
+    });
+});
 
 describe('resolveDetailsDockPreferredPx', () => {
     const base = { storedDefaultPx: 600, destinationPreferredPx: 750 };

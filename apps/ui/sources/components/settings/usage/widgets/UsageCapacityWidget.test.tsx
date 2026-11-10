@@ -340,6 +340,8 @@ it('outlines only a pool of two or more members; a pool of one reads as its acco
   expect(screen.findHostByTestId('capacity.pool.duo')).not.toBeNull();
   expect(screen.findHostByTestId('capacity.pool.one')).toBeNull();
   expect(screen.findHostByTestId('capacity.cell.solo')).not.toBeNull();
+  // Each cell is an item of the meter list it sits in (axe aria-required-children on the list).
+  expect(screen.findHostByTestId('capacity.cell.solo')?.props.accessibilityRole).toBe('listitem');
   // The outline is named: a framed set of cells says which pool it is.
   expect(screen.findHostByTestId('capacity.pool.duo.label')).not.toBeNull();
   // At full width (Plans) the pool order follows the meters; beside other widgets the meters are said once.

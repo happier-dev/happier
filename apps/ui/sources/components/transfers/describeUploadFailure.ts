@@ -5,7 +5,7 @@ export function describeUploadFailureReason(reason: TransferFailureReason, machi
     switch (reason) {
         case 'carrierUnavailable': return t('files.transfers.failureReasons.carrierUnavailable');
         case 'carrierInterrupted': return t('files.transfers.failureReasons.carrierInterrupted');
-        case 'unreachable': return t('projects.checkouts.notAnswering', { machine: machineName });
+        case 'unreachable': return t('projects.checkouts.outOfReach', { machine: machineName });
         case 'declined': return t('files.transfers.failureReasons.declined');
         case 'accessRefused': return t('files.transfers.failureReasons.accessRefused');
         case 'teamSignIn': return t('files.transfers.failureReasons.teamSignIn');

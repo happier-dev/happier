@@ -61,7 +61,6 @@ export function useAgentInputActionMenuControls(params: Readonly<{
     /** The permission row opens the permission picker (rather than the host's own permission action). */
     permissionOpensPicker?: boolean;
     sessionModeChipInteraction?: ChipOptionInteraction<string> | null;
-    onSessionModeChange?: (modeId: string) => void;
     onMachineClick?: () => void;
     onPathClick?: () => void;
     onResumeClick?: () => void;
@@ -161,10 +160,6 @@ export function useAgentInputActionMenuControls(params: Readonly<{
     }, [params.closeSelectionOverlay, opensPicker.engine, params.onAgentClick, params.openSelectionOverlay]);
 
     const handleActionMenuSessionModeClick = React.useCallback(() => {
-        if (params.sessionModeChipInteraction?.kind === 'cycle') {
-            params.onSessionModeChange?.(params.sessionModeChipInteraction.nextOptionId);
-            return;
-        }
         if (!opensPicker.mode) {
             return;
         }
@@ -172,9 +167,7 @@ export function useAgentInputActionMenuControls(params: Readonly<{
         params.openSelectionOverlay('sessionMode', 'actionMenuRow');
     }, [
         params.closeSelectionOverlay,
-        params.onSessionModeChange,
         params.openSelectionOverlay,
-        params.sessionModeChipInteraction,
         opensPicker.mode,
     ]);
 

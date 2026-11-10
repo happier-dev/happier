@@ -8,6 +8,11 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import {
+    CheckoutReachabilityLineView,
+    CheckoutUnreachableState,
+    type CheckoutReachability,
+} from '@/components/workspaces/reachability/checkoutReachability';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import type { BrowserLaunchpadRow, BrowserLaunchpadSection } from '@/sync/domains/browser/targets';
 import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
@@ -275,6 +280,11 @@ export function BrowserLaunchpad(props: Readonly<{
      */
     onNavigateInPlace?: OpenBrowserViewTarget;
     /**
+     * The reachability of the Machine this Browser runs on, from the shared owner. While it is out of
+     * reach the launchpad says so once, in the same words as Local services and the Project.
+     */
+    machineReachability?: CheckoutReachability | null;
+    /**
      * Whether the launchpad draws its own address entry. A host whose chrome already shows an address
      * bar turns it off, so a page never offers two address fields (DA3 D13); the launchpad keeps it
      * where it stands alone (the phone page, the Session viewer).
@@ -376,6 +386,7 @@ export function BrowserLaunchpad(props: Readonly<{
     }, [props.onNavigateInPlace, props.platform]);
 
     const hasRows = resolvedRows.length > 0;
+    const offline = props.machineReachability?.unreachable ? props.machineReachability : null;
     const refreshReason = props.refreshStatus === 'error'
         ? resolveReasonCopy({ reasonCode: props.refreshError, kind: 'browserLaunchpad' })
         : null;
@@ -418,7 +429,9 @@ export function BrowserLaunchpad(props: Readonly<{
 
                 {!hasRows ? (
                     <View style={stylesheet.terminalState}>
-                        {props.agentBrowser ? (
+                        {offline ? (
+                            <CheckoutUnreachableState reachability={offline} testID={`${testID}-offline`} />
+                        ) : props.agentBrowser ? (
                             <AgentBrowserPrerequisite testID={`${testID}-agent-browser`} {...props.agentBrowser} />
                         ) : props.refreshStatus === 'refreshing' ? (
                             <SurfaceStateCard
@@ -450,7 +463,9 @@ export function BrowserLaunchpad(props: Readonly<{
                     </View>
                 ) : (
                     <>
-                        {props.refreshStatus !== 'idle' ? (
+                        {offline ? (
+                            <CheckoutReachabilityLineView reachability={offline} testID={`${testID}-offline`} />
+                        ) : props.refreshStatus !== 'idle' ? (
                             <View style={stylesheet.banner}>
                                 <ItemGroup>
                                     <BrowserLaunchpadRefreshBanner

@@ -3050,6 +3050,7 @@ export const it: TranslationStructure = {
         "Questo profilo richiede un segreto. Scegli un’opzione qui sotto.",
       chooseOptionTitle: "Scegli un’opzione",
       manageSavedSecrets: 'Gestisci i segreti salvati',
+      manageSavedSecretsSubtitle: "Apre le Impostazioni ed esce da questo passaggio senza scegliere.",
       machineEnvStatus: {
         theMachine: "la macchina",
         checkFor: ({ env }: { env: string }) => `Controlla ${env}`,
@@ -18408,7 +18409,6 @@ settingsSession: {
     },
     checkouts: {
         chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `Checkout: ${machine} · ${branch}`,
-        notAnswering: ({ machine }: { machine: string }) => `${machine} non risponde`,
         waiting: ({ machine }: { machine: string }) => `In attesa di ${machine}`,
         outOfReach: ({ machine }: { machine: string }) => `${machine} non è raggiungibile`,
         lastSeen: ({ when }: { when: string }) => `Visto l’ultima volta ${when}.`,

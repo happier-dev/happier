@@ -12,7 +12,7 @@ import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { ScmChangeOverflowMenu } from '@/components/workspaces/scm/changes/ScmChangeOverflowMenu';
 import { activeReviewFileKeyForWorkspace } from '@/components/workspaces/scm/review/activeReviewFile';
 import { buildSessionScmSummary, sumChangedLines } from '@/components/sessions/sourceControl/status/statusSummary';
-import { CheckoutUnreachableState, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
+import { CheckoutUnreachableState, describeCheckoutUnreachable, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { resolveChangesGlanceFiles } from '@/components/sessions/companion/glances/glanceModels';
 import { WidgetGlanceRow } from '@/components/widgets/glance/WidgetGlanceRow';
 import { DiffStat } from '@/components/workspaces/scm/DiffStat';
@@ -102,7 +102,7 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
     return (
         <View testID={testID} style={styles.body}>
             {offline && !reachability.announced ? <SurfaceFreshnessLine testID={`${testID}-offline`} asOf={snapshot.fetchedAt}
-                reason={t('projects.checkouts.notAnswering', { machine: reachability.machineName })} /> : null}
+                reason={describeCheckoutUnreachable(reachability)} /> : null}
             {clean ? (
                 <WidgetGlanceRow testID={`${testID}-clean`} variant="fact" mark="check-circle" title={t('projects.localChanges.clean')} />
             ) : null}

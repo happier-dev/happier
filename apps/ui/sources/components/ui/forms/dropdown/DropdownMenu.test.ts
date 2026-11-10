@@ -276,6 +276,21 @@ describe('DropdownMenu', () => {
         expect(getTrigger()?.props['aria-expanded']).toBe(false);
     });
 
+    it('leaves a role-less layout wrapper trigger unannounced: aria-expanded belongs on the control inside it', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const { View } = await import('react-native');
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: () => React.createElement(View, { testID: 'wrapper-trigger' }),
+        }));
+        const wrapper = screen.findByTestId('wrapper-trigger');
+        expect(wrapper?.props).not.toHaveProperty('aria-expanded');
+        expect(wrapper?.props).not.toHaveProperty('accessibilityState');
+    });
+
     it('uses the DOM aria contract without leaking React Native accessibility state to host triggers', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const screen = await renderScreen(React.createElement(DropdownMenu, {

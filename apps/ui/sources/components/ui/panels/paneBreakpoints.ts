@@ -62,8 +62,9 @@ export const DEFAULT_RIGHT_MIN_PX = 260;
 export const DEFAULT_DETAILS_MIN_PX = 320;
 /**
  * The right sidebar's width until the user drags it (calm-shell `csinfo`/`csrail` side panel, 380 px):
- * the panel sheet's own width; on the canvas its gap to the page is added outside it. It stays this
- * width at every window size, clamped only by the measured dock budget; a saved width wins.
+ * the panel sheet's own width; on the canvas its gap to the page is added outside it. A wider window
+ * gives it the canvas beyond the main column's reading width (`resolveRightDockPreferredPx`); it is
+ * clamped by the measured dock budget, and a saved width wins.
  */
 export const DEFAULT_RIGHT_PREFERRED_PX = 380;
 

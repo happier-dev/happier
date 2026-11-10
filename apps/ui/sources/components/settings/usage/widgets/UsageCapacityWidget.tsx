@@ -568,7 +568,8 @@ function CapacityCell(
   return (
     <View
       testID={props.testID}
-      accessibilityRole="text"
+      // Every cell sits in a meter list (the bar, the pooled bar, the listed accounts): it is that list's item.
+      accessibilityRole="listitem"
       style={[
         styles.cell,
         // A listed row stacks in a column: it takes its content's height (a "used up" note under the name),
@@ -706,6 +707,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   pooledSegment: { flex: 1, minWidth: 0 },
   pooledLabels: { flexDirection: 'row', gap: theme.space.s4 },
-  warning: { color: theme.colors.state.warning.foreground },
-  danger: { color: theme.colors.state.danger.foreground },
+  warning: { color: theme.colors.state.warning.textForeground },
+  danger: { color: theme.colors.state.danger.textForeground },
 }));
