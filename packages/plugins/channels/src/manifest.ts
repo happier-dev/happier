@@ -1,8 +1,11 @@
 import type {
+  DefinedPlugin,
+  DefinedPluginActionContracts,
   JsonValue,
   PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { DefinedContributionPointProtocolMap } from '@happier-dev/plugin-sdk/contributions';
 import { DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1, DiscussionReplyDestinationInputV1Schema,
   DiscussionReplyDestinationResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import { readConversationDiscussionReplyDestinationForInvocation } from './discussionReplyDestination.js';
@@ -301,7 +304,59 @@ type ChannelsPluginActivationRuntime = Readonly<{
  * No Channels contribution is declared from a second manifest and no Channels
  * registration is written by hand.
  */
-function createChannelsPlugin() {
+/** Named schema references retain exact Action payloads in portable declarations. */
+type ChannelsActionSchemas = {
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionList]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionList;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingList]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingList;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressAttention]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.ingressAttention;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.deliveryAttention]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.deliveryAttention;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.deliveryRead]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.deliveryRead;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.conversationStart]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.conversationStart;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingRead]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPairingRead;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCreate]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPairingCreate;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingFinalize]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPairingFinalize;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCancel]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPairingCancel;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionCreate;
+  readonly [DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1]: { readonly title: string; readonly inputSchema: typeof DiscussionReplyDestinationInputV1Schema; readonly resultSchema: typeof DiscussionReplyDestinationResultV1Schema; };
+  readonly [SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1]: { readonly title: string; readonly inputSchema: typeof SessionPullRequestBindingInputV1Schema; readonly resultSchema: typeof SessionPullRequestBindingResultV1Schema; };
+  readonly [SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1]: { readonly title: string; readonly inputSchema: typeof SessionPullRequestBindingInputV1Schema; readonly resultSchema: typeof SessionPullRequestBindingResultV1Schema; };
+  readonly [SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1]: { readonly title: string; readonly inputSchema: typeof SessionPullRequestWatchInputV1Schema; readonly resultSchema: typeof SessionPullRequestWatchResultV1Schema; };
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionTransfer]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionTransfer;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPrepare;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionSetupRemediate]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionSetupRemediate;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionRetest]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionRetest;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionUpdate;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionDelete;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamNoticeDismiss]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.streamNoticeDismiss;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPollRetry;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingRead;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingResolve;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingCreate]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingCreate;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingUpdate;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingSetEnabled]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingSetEnabled;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingDelete]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingDelete;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.sessionProjectionNoticeDismiss]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.sessionProjectionNoticeDismiss;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressRetry]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.ingressRetry;
+  readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.deliveryResolve]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.deliveryResolve;
+  readonly [CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.observationIngest]: { readonly title: string; readonly inputSchema: typeof ConversationProviderObservationIngestInputV1Schema; readonly resultSchema: undefined; };
+  readonly [CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList]: { readonly title: string; readonly inputSchema: typeof ConversationProviderConnectionsListInputV1Schema; readonly resultSchema: typeof ConversationProviderConnectionsListResultV1Schema; };
+  readonly [CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead]: { readonly title: string; readonly inputSchema: typeof ConversationProviderConnectionReadInputV1Schema; readonly resultSchema: typeof ConversationProviderConnectionReadResultV1Schema; };
+  readonly [CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.permissionMediationSourceCurrentness]: typeof CONVERSATION_CORE_PROVIDER_ACTION_DECLARATIONS_V1.permissionMediationSourceCurrentness;
+  readonly [CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport]: typeof CONVERSATION_CORE_PROVIDER_ACTION_DECLARATIONS_V1.transportFactReport;
+  readonly [CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.automationResultDeliver]: typeof CONVERSATION_CORE_PROVIDER_ACTION_DECLARATIONS_V1.automationResultDeliver;
+};
+
+type ChannelsActionDeclarations = {
+  readonly [TLocalId in keyof ChannelsActionSchemas]: ChannelsActionSchemas[TLocalId] & { readonly title: string };
+};
+
+type ChannelsPlugin = DefinedPlugin<
+  typeof CHANNELS_PLUGIN_ID,
+  DefinedPluginActionContracts<typeof CHANNELS_PLUGIN_ID, ChannelsActionDeclarations>,
+  DefinedContributionPointProtocolMap<typeof PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS>
+>;
+
+function createChannelsPlugin(): ChannelsPlugin {
   let activeChannelsPluginRuntime: ChannelsPluginActivationRuntime | null = null;
 
   function requireActiveChannelsPluginRuntime(): ChannelsPluginActivationRuntime {
@@ -377,7 +432,7 @@ function createChannelsPlugin() {
     };
   }
 
-  return definePlugin({
+  const plugin = definePlugin({
     id: CHANNELS_PLUGIN_ID,
     version: '0.0.0',
     displayName: 'Conversation Channels',
@@ -1069,10 +1124,12 @@ function createChannelsPlugin() {
     ],
     setup: setupChannelsPluginGeneration,
   });
+  const declaredPlugin: ChannelsPlugin = plugin;
+  return declaredPlugin satisfies typeof plugin;
 }
 
 /** The one Channels plugin value: manifest, activation and contribution points. */
-export const CHANNELS_PLUGIN = createChannelsPlugin();
+export const CHANNELS_PLUGIN: ReturnType<typeof createChannelsPlugin> = createChannelsPlugin();
 
 export const PLUGIN_MANIFEST: PluginManifest = CHANNELS_PLUGIN.manifest;
 

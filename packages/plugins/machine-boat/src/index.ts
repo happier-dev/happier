@@ -6,5 +6,5 @@ export type { BoatAcquireOperationV1, BoatDeleteOperationV1, BoatLaunchV1, BoatN
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import { createBoatPlugin } from './manifest.js';
 export { MACHINE_PROVISIONER, PLUGIN_MANIFEST, PLUGIN_MANIFEST as manifest, ROLE_SCHEMAS, prepareStoredSchemas } from './manifest.js';
-export const PLUGIN = createBoatPlugin(resolveMachineProvisionerSshBootstrap);
+export const PLUGIN: ReturnType<typeof createBoatPlugin> = createBoatPlugin(resolveMachineProvisionerSshBootstrap);
 export const activate = PLUGIN.activate;

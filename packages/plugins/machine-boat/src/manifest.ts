@@ -1,3 +1,5 @@
+import type { DefinedPlugin, DefinedPluginActionContracts } from '@happier-dev/plugin-sdk';
+import type { DefinedContributionPointProtocolMap } from '@happier-dev/plugin-sdk/contributions';
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
@@ -95,8 +97,35 @@ export const MACHINE_PROVISIONER = {
   reconciliation: { action: 'reconcile', nativeOperationSchema: BoatNativeOperationV1Schema.jsonSchema },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
-export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProvisionerSshBootstrap) {
-  return definePlugin({
+/** Named schema references retain exact Action payloads in portable declarations. */
+type BoatActionSchemas = {
+  readonly reconcile: readonly [typeof reconciliation.input, typeof reconciliation.result];
+  readonly check: readonly [typeof ROLE_SCHEMAS.checkInput, typeof MachineProvisionerCheckResultV1Schema];
+  readonly options: readonly [typeof ROLE_SCHEMAS.checkInput, typeof MachineProvisionerOptionsResultV1Schema];
+  readonly acquire: readonly [typeof ROLE_SCHEMAS.acquireInput, typeof ROLE_SCHEMAS.acquireResult];
+  readonly bootstrap: readonly [typeof ROLE_SCHEMAS.bootstrapInput, typeof MachineProvisionerBootstrapCarrierV1Schema];
+  readonly inspect: readonly [typeof ROLE_SCHEMAS.resourceInput, typeof MachineProvisionerObservationV1Schema];
+  readonly renew: readonly [typeof ROLE_SCHEMAS.renewInput, typeof MachineProvisionerRenewResultV1Schema];
+  readonly power: readonly [typeof ROLE_SCHEMAS.powerInput, typeof MachineProvisionerPowerResultV1Schema];
+  readonly destroy: readonly [typeof reconciliation.destroyInput, typeof reconciliation.destroyResult];
+};
+
+type BoatActionDeclarations = {
+  readonly [TLocalId in keyof BoatActionSchemas]: {
+    readonly title: string;
+    readonly inputSchema: BoatActionSchemas[TLocalId][0];
+    readonly resultSchema: BoatActionSchemas[TLocalId][1];
+  };
+};
+
+type BoatPlugin = DefinedPlugin<
+  typeof PLUGIN_ID,
+  DefinedPluginActionContracts<typeof PLUGIN_ID, BoatActionDeclarations>,
+  DefinedContributionPointProtocolMap<Readonly<Record<string, never>>>
+>;
+
+export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProvisionerSshBootstrap): BoatPlugin {
+  const plugin = definePlugin({
   id: PLUGIN_ID,
   version: '0.0.0',
   displayName: 'Boat Machines',
@@ -318,8 +347,10 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
     "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
 });
+  const declaredPlugin: BoatPlugin = plugin;
+  return declaredPlugin satisfies typeof plugin;
 }
 
-export const PLUGIN = createBoatPlugin();
+export const PLUGIN: ReturnType<typeof createBoatPlugin> = createBoatPlugin();
 export const PLUGIN_MANIFEST = PLUGIN.manifest;
 export const activateAccount = PLUGIN.activateAccount;
