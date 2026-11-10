@@ -60,12 +60,22 @@ it('preserves the real WORKER handler refusal at the UI control decoder', async 
   }
 });
 
-it.each(['localServices.actions.stopManaged', 'machines.services.control'] as const)(
-  'stops A’s Service on B through the real UI, Machine ingress and native owner: %s', async actionId => {
+it.each(['localServices.actions.stopManaged', 'machines.services.control', 'localServices.actions.openPreview'] as const)(
+  'controls A’s own Service on B through the real UI, Machine ingress and native owner: %s', async actionId => {
   const h = await createHarness(actionId, 'ask', false, 'srv_n2', undefined, false, false,
-    { authentication: 'account', machineCustodianAccountId: 'host', machineRole: 'manage' });
+    { authentication: 'account', machineCustodianAccountId: 'host', machineRole: actionId === 'localServices.actions.openPreview' ? 'use' : 'manage' });
   try {
-    const workspace = actionId === 'localServices.actions.stopManaged' ? await h.seedMoveService() : null;
+    const opening = actionId === 'localServices.actions.openPreview';
+    const workspace = actionId !== 'machines.services.control' ? await h.seedMoveService(opening ? 'http://127.0.0.1:42518' : null) : null;
+    if (opening) {
+      const post = vi.mocked(axios.post).getMockImplementation()!;
+      vi.mocked(axios.post).mockImplementation(async (url, body, config) => {
+        if (new URL(String(url)).pathname !== '/v1/local-services/preview') return await post(url, body, config);
+        // Home HTTP is the real credential boundary: a guest Open must mint the guest's viewer admission.
+        expect(config?.headers?.Authorization).toBe('Bearer ' + h.humanToken);
+        return { status: 200, data: { resource: body, accessUrl: 'https://guest.preview.example.test/', expiresAt: 61_000 } };
+      });
+    }
     const native = actionId === 'machines.services.control' ? await h.seedNativeService() : null;
     const seeded = workspace ?? native!;
     seeded.finishStop();
@@ -96,7 +106,7 @@ it.each(['localServices.actions.stopManaged', 'machines.services.control'] as co
         return { status: result.status, body: result.data };
       } });
     }
-    const request = workspace ? { requestId: 'ui-stop-on-worker', action: 'stop_managed' as const,
+    const request = workspace ? { requestId: 'ui-stop-on-worker', action: opening ? 'open_preview' as const : 'stop_managed' as const,
       target: workspace.request.currentTarget, force: false } : null;
     let confirm!: (confirmed: boolean) => void;
     const decision = new Promise<boolean>(resolve => { confirm = resolve; });
@@ -118,9 +128,12 @@ it.each(['localServices.actions.stopManaged', 'machines.services.control'] as co
     expect(seeded.stopCalls()).toBe(0);
     expect(h.hasApproval()).toBe(false);
     confirm(true);
-    expect(await execution).toMatchObject({ ok: true });
-    expect(seeded.snapshot().state).toBe('stopped');
-    expect(seeded.stopCalls()).toBe(1);
+    const result = await execution;
+    expect(result, JSON.stringify(result)).toMatchObject(opening
+      ? { ok: true, result: { preview: { accessUrl: 'https://guest.preview.example.test/', resource: { owner: { kind: 'user', id: 'account' } } } } }
+      : { ok: true });
+    expect(seeded.snapshot().state).toBe(opening ? 'running' : 'stopped');
+    expect(seeded.stopCalls()).toBe(opening ? 0 : 1);
     expect(confirmModal).toHaveBeenCalledTimes(1);
     expect(h.hasApproval()).toBe(false);
     expect(h.networkPaths.filter(path => path === `POST /v1/actions/${actionId}`)).toHaveLength(1);

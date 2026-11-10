@@ -946,6 +946,12 @@ The canonical port decision is `isPeerTcpTunnelRelayPortAllowed`. The preview re
 and access routes obtain the exact managed occurrence and endpoint through
 `readLocalServicePreviewAdmission` (`app/local/services/preview/admission.ts`), which asks
 the Machine's existing declared-service owner and preserves viewer/starter Machine admission.
+In unreleased 0.3, the daemon preview lifecycle selects an admitted guest's forwarded
+Account credential to mint that guest's viewer access. The native registration channel
+retains the daemon credential. Guest preview metadata uses the existing requester Service
+projection and omits viewer URLs; observing it does not require forwarding credentials
+or minting access. Inventory preview remains under the custodian's credential scope.
+
 Only that admitted service binding supplies the product-service exception. Passive inventory
 and caller-supplied ports do not. Both native and server-preview access use this port decision
 before issuing access. The generic route-grant endpoint rejects preview bindings;

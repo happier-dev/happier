@@ -414,7 +414,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     return Response.json({ features: actionId === 'workflow.trigger.run_now' ? { workflows: { enabled: true }, automations: { enabled: true } }
       : deploymentAction ? { deployments: { enabled: true } }
       : serviceAction ? { localServices: { enabled: true,
-      inventory: { enabled: true }, launcher: { enabled: true }, actions: { enabled: true }, managed: { enabled: true } },
+      inventory: { enabled: true }, launcher: { enabled: true }, actions: { enabled: true }, managed: { enabled: true }, preview: { enabled: true } },
       browser: { enabled: true, viewTargets: { enabled: true } } } : {},
       capabilities: { serverIdentity: { serverIdentityId: homeId } } });
   });
@@ -1208,7 +1208,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     deliverMachineRpc: (method: string, params: unknown) => rpcInstallation.run(installation, () => rpc.handleRequest({
       method: target.machineId + ':' + method, params, callerAuthority: 'present_user', machineAdmission: admission,
     })),
-    async seedMoveService() {
+    async seedMoveService(endpoint: string | null = null) {
       if (!pluginRuntime) throw new Error('Missing installed Service owner');
       let phase: 'running' | 'stopped' = 'running';
       let stopCalls = 0;
@@ -1222,7 +1222,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         cwd: ref.rootPath, serviceId: 'web', specIdentity: 'web', execution: 'portable', isCurrent: () => true,
         requester: { serverId: homeId, accountId: 'account', machineId: ref.machineId, installationId: sourceInstallation.installationId },
         processSpec: { mode: { kind: 'native', instance: { adapter: { pluginId: 'fixture.plugin', localId: 'web' }, nativeResourceId: 'web' },
-          lifecycle: { inspect: async () => ({ phase, readiness: 'not_reported', endpoint: null }),
+          lifecycle: { inspect: async () => ({ phase, readiness: 'not_reported', endpoint }),
             stop: async () => { stopCalls++; await stopped; phase = 'stopped'; return { status: 'stopped' }; } } } },
         authorizeLaunch: async () => ({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], env: {}, release: async () => {} }),
       });

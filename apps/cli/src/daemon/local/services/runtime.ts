@@ -214,6 +214,7 @@ async function readDaemonSessionWorkspaceFacts(machineId: string): Promise<reado
 
 export function createLocalServicesDaemonRuntime(params: Readonly<{
     machineId: string;
+    serverId?: string;
     accountId?: string;
     previewServer?: LocalServicePreviewServerInput;
     processEnv?: NodeJS.ProcessEnv;
@@ -318,6 +319,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     };
     const previewRoutes = createLocalServicePreviewRoutes({
         machineId: params.machineId,
+        serverId: params.serverId,
         accountId: params.accountId,
         server: params.previewServer,
         registry: previewRegistry,

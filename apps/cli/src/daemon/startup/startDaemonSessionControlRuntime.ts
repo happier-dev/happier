@@ -8944,6 +8944,7 @@ export async function startDaemonSessionControlRuntime(
   await localServicesActionFeatureGate.refresh();
   const localServicesRuntime = createLocalServicesDaemonRuntime({
     processOwnershipRuntime,
+    serverId: params.serverId,
     machineId: params.machineId,
     projectManagedServices,
     projectServiceStarter: {

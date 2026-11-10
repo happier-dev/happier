@@ -973,3 +973,46 @@ describe('createLocalServicePreviewRoutes lifecycle', () => {
         expect(result.response.revoked).toBe(false);
     });
 });
+
+it('reads only a Use guest’s own Project preview metadata without forwarding viewer credentials', async () => {
+    const owner = createManagedServicesOwner({
+        processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+        dependencies() { throw new Error('Native Project preview does not install Plugin dependencies'); },
+        resolveScope: scope => scope,
+    });
+    const registry = createLocalServicePreviewRegistry();
+    const workspace = { id: 'guest-checkout', serverId: 'home', machineId: MACHINE_ID, rootPath: process.cwd(), createdAtMs: 1 };
+    const previewIds: string[] = [];
+    try {
+        for (const accountId of ['guest', 'custodian']) {
+            const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: accountId } };
+            const handle = await owner.superviseProject({ kind: 'workspace', workspace, declaration, cwd: workspace.rootPath,
+                serviceId: accountId, specIdentity: accountId, isCurrent: () => true,
+                requester: { accountId, serverId: 'home', machineId: MACHINE_ID, installationId: 'installation' },
+                processSpec: { mode: { kind: 'native',
+                    instance: { adapter: { pluginId: 'fixture.plugin', localId: 'web' }, nativeResourceId: accountId },
+                    lifecycle: { inspect: async () => ({ phase: 'running', readiness: 'ready', endpoint: 'http://127.0.0.1:42518' }),
+                        stop: async () => ({ status: 'stopped' }) } } },
+                authorizeLaunch: async () => ({ command: process.execPath, args: [], env: {}, release: async () => undefined }),
+            });
+            previewIds.push(handle.instanceId);
+            const registered = registerLocalServicePreview(registry, { previewId: handle.instanceId, machineId: MACHINE_ID,
+                serviceTarget: { kind: 'managed_service', machineId: MACHINE_ID, managedServiceId: handle.instanceId,
+                    workspaceId: workspace.id, declaration, cwd: workspace.rootPath },
+                owner: { kind: 'user', id: accountId }, target: { scheme: 'http', host: '127.0.0.1', port: 42518 },
+                initialPath: { pathname: '/', search: '' }, display: { title: accountId, addressLabel: 'localhost:42518' }, originMode: 'host' });
+            if (!registered.ok) throw new Error(registered.reasonCode);
+            registry.previewsById.set(handle.instanceId, { ...registry.previewsById.get(handle.instanceId)!,
+                accessUrl: 'https://custodian.preview.example.test/', expiresAt: 61_000 });
+        }
+        const routes = createRoutes({ machineId: MACHINE_ID, serverId: 'home', accountId: 'custodian', registry, projectManagedServices: owner });
+        const context: RpcHandlerContext = { signal: new AbortController().signal, verifyMachineAdmissionCurrent: async () => true,
+            machineAdmission: { actorAccountId: 'guest', custodianAccountId: 'custodian', machineId: MACHINE_ID,
+                installationId: 'installation', role: 'use', encryptionMode: 'plain' } };
+        const snapshot = await routes.getSnapshot(context);
+        expect(snapshot.resources.map(resource => resource.previewId)).toEqual([previewIds[0]]);
+        expect(snapshot.previews).toMatchObject([{ previewId: previewIds[0], accessUrl: null, expiresAt: null }]);
+        expect(await routes.openOrCreate({ machineId: MACHINE_ID, serviceTarget: snapshot.resources[0]!.serviceTarget }, undefined, context))
+            .toEqual({ ok: false, reasonCode: 'requester_credentials_unavailable' });
+    } finally { await owner.dispose(); }
+});

@@ -27,7 +27,7 @@ import { localServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/
 import type { LocalServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { startLocalServicePreviewNativeAdapter } from './nativeAdapter';
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import { assertLocalServiceCredentialAdmission, assertLocalServiceReadCustody } from '../credentialAdmission';
+import { admitLocalServicePreviewRequest } from './requester';
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { readProjectManagedServicePreviewEndpoint } from './projectEndpoint';
 import { formatLocalServiceLauncherTitle } from '../launch/suggestions';
@@ -91,6 +91,7 @@ function buildInventoryPreviewInput(input: Readonly<{
 
 export function createLocalServicePreviewRoutes(input: Readonly<{
     machineId: string;
+    serverId?: string;
     accountId?: string;
     server?: LocalServicePreviewServerInput;
     registry: LocalServicePreviewRegistry;
@@ -102,9 +103,11 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
 }>): LocalServicePreviewRoutes {
     const now = input.now ?? (() => Date.now());
     const server = input.server ? createLocalServicePreviewServerRoutes(input.server) : null;
-    const assertCredentialAdmission = (context?: RpcHandlerContext) => assertLocalServiceCredentialAdmission({
-        accountId: input.accountId, machineId: input.machineId, context,
+    const admitRequest = (context: RpcHandlerContext | undefined, effect: boolean) => admitLocalServicePreviewRequest({
+        accountId: input.accountId, machineId: input.machineId, serverId: input.serverId, server: input.server,
+        projectManagedServices: input.projectManagedServices, context, effect,
     });
+    type Admission = Awaited<ReturnType<typeof admitRequest>>;
 
     function failureReason(error: unknown): string {
         if (error instanceof Error && (error.message === 'requester_credentials_unavailable' || error.message === 'preview_target_unresolved')) return error.message;
@@ -115,7 +118,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
         return 'preview_registration_failed';
     }
 
-    async function publish(resource: LocalServicePreviewResourceV1, signal?: AbortSignal, context?: RpcHandlerContext, isCurrent?: () => boolean) {
+    async function publish(admission: Admission, resource: LocalServicePreviewResourceV1, signal?: AbortSignal, context?: RpcHandlerContext, isCurrent?: () => boolean) {
         const registration = input.registry.previewsById.get(resource.previewId);
         const occurrence = registration?.occurrence;
         // A server reply belongs to the registration that requested it. Revoke or
@@ -124,20 +127,22 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             && input.registry.previewsById.get(resource.previewId) === registration
             && registration.occurrence === occurrence;
         try {
-            if (!server) throw new Error('preview_server_unavailable');
+            if (!admission.server) throw new Error('preview_server_unavailable');
             signal?.throwIfAborted();
             if (!stillRegistered() || occurrence?.ended || isCurrent && !isCurrent()) throw new Error('preview_target_unresolved');
-            const preview = await server.registerPreview(resource, signal);
+            const preview = await admission.server.registerPreview(resource, signal);
             signal?.throwIfAborted();
             context?.signal.throwIfAborted();
             if (!stillRegistered() || occurrence?.ended || isCurrent && !isCurrent()) throw new Error('preview_target_unresolved');
-            input.registry.previewsById.set(resource.previewId, { ...preview, ...(occurrence ? { occurrence } : {}) });
+            // Viewer credentials belong only to this Open's reply, never the shared Machine projection.
+            input.registry.previewsById.set(resource.previewId, { ...preview,
+                ...(admission.requesterOnly ? { accessUrl: null, expiresAt: null } : {}), ...(occurrence ? { occurrence } : {}) });
             return { ok: true as const, preview };
         } catch (error) {
             signal?.throwIfAborted();
             context?.signal.throwIfAborted();
             if (!stillRegistered() || occurrence?.ended) return { ok: false as const, reasonCode: 'preview_target_unresolved' };
-            const reasonCode = server ? failureReason(error) : 'preview_server_unavailable';
+            const reasonCode = admission.server ? failureReason(error) : 'preview_server_unavailable';
             input.registry.previewsById.set(resource.previewId, {
                 ...(occurrence ? { occurrence } : {}),
                 previewId: resource.previewId,
@@ -150,8 +155,8 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
         }
     }
 
-    function buildSnapshot(): LocalServicePreviewSnapshotV1 {
-        const resources = [...listLocalServicePreviewResources(input.registry)]
+    async function buildSnapshot(admission: Admission): Promise<LocalServicePreviewSnapshotV1> {
+        const resources = [...await admission.selectResources(listLocalServicePreviewResources(input.registry))]
             .sort((a, b) => a.previewId.localeCompare(b.previewId));
         return {
             v: 1,
@@ -161,7 +166,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             resources,
             previews: resources.map((resource) => {
                 const { occurrence: _occurrence, ...row } = input.registry.previewsById.get(resource.previewId)!;
-                return row;
+                return admission.requesterOnly ? { ...row, accessUrl: null, expiresAt: null } : row;
             }),
             diagnostics: [],
         };
@@ -191,14 +196,15 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
         },
 
         async getSnapshot(context) {
-            await assertLocalServiceReadCustody({ accountId: input.accountId, machineId: input.machineId, context });
+            const admission = await admitRequest(context, false);
             // Reads project registration state. Each explicit Open requests its own one-use
             // admission through openOrCreate; observing metadata must not mint credentials.
-            return buildSnapshot();
+            return await buildSnapshot(admission);
         },
 
         async openOrCreate(request, signal, context) {
-            try { await assertCredentialAdmission(context); }
+            let admission: Admission;
+            try { admission = await admitRequest(context, true); }
             catch { return { ok: false, reasonCode: 'requester_credentials_unavailable' }; }
             if (input.signal) signal = signal ? AbortSignal.any([input.signal, signal]) : input.signal;
             signal?.throwIfAborted();
@@ -208,6 +214,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
 
             if (request.serviceTarget) {
                 const serviceTarget = request.serviceTarget;
+                if (!await admission.canAccess(serviceTarget)) return { ok: false, reasonCode: 'unknown_managed_service' };
                 if (request.sessionId !== undefined) return { ok: false, reasonCode: 'preview_target_unresolved' };
                 const resolved = input.projectManagedServices?.resolveProjectService(serviceTarget);
                 if (resolved?.status === 'unknown') return { ok: false, reasonCode: 'unknown_managed_service' };
@@ -246,9 +253,9 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                     return current();
                 } });
                 if (!registration.ok) return { ok: false, reasonCode: registration.reasonCode };
-                const published = await publish(registration.resource, signal, context, current);
+                const published = await publish(admission, registration.resource, signal, context, current);
                 if (!published.ok) return published;
-                return { ok: true, response: { protocolVersion: 1, status: existing ? 'existing' : 'created', preview: published.preview, snapshot: buildSnapshot() } };
+                return { ok: true, response: { protocolVersion: 1, status: existing ? 'existing' : 'created', preview: published.preview, snapshot: await buildSnapshot(admission) } };
             }
 
             // Already-registered target (managed/launch services register their own preview, or a
@@ -257,8 +264,9 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             if (existingId) {
                 const existing = input.registry.previewsById.get(existingId)?.resource;
                 if (existing) {
+                    if (!await admission.canAccess(existing.serviceTarget)) return { ok: false, reasonCode: 'unknown_managed_service' };
                     if (existing.sessionId !== request.sessionId) return { ok: false, reasonCode: 'preview_session_mismatch' };
-                    const published = await publish({ ...existing, initialPath: request.initialPath ?? existing.initialPath }, signal, context);
+                    const published = await publish(admission, { ...existing, initialPath: request.initialPath ?? existing.initialPath }, signal, context);
                     if (!published.ok) return published;
                     return {
                         ok: true,
@@ -266,12 +274,13 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                             protocolVersion: 1,
                             status: 'existing',
                             preview: published.preview,
-                            snapshot: buildSnapshot(),
+                            snapshot: await buildSnapshot(admission),
                         },
                     };
                 }
             }
 
+            if (admission.requesterOnly) return { ok: false, reasonCode: 'unknown_inventory_entry' };
             if (!request.inventoryEntryId) {
                 // managed/launch targets that are not already registered have no daemon-resolvable
                 // loopback origin here — the managed launch path owns their registration.
@@ -308,9 +317,9 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                 listLocalServicePreviewResources(input.registry), entry, input.accountId, request.sessionId,
             );
             if (existing) {
-                const published = await publish({ ...existing, initialPath: request.initialPath ?? existing.initialPath }, signal, context);
+                const published = await publish(admission, { ...existing, initialPath: request.initialPath ?? existing.initialPath }, signal, context);
                 if (!published.ok) return published;
-                return { ok: true, response: { protocolVersion: 1, status: 'existing', preview: published.preview, snapshot: buildSnapshot() } };
+                return { ok: true, response: { protocolVersion: 1, status: 'existing', preview: published.preview, snapshot: await buildSnapshot(admission) } };
             }
             const previewInput = buildInventoryPreviewInput({
                 entry,
@@ -350,7 +359,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             if (!registration.ok) {
                 return { ok: false, reasonCode: registration.reasonCode };
             }
-            const published = await publish(registration.resource, signal, context);
+            const published = await publish(admission, registration.resource, signal, context);
             if (!published.ok) return published;
             return {
                 ok: true,
@@ -358,24 +367,26 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                     protocolVersion: 1,
                     status,
                     preview: published.preview,
-                    snapshot: buildSnapshot(),
+                    snapshot: await buildSnapshot(admission),
                 },
             };
         },
 
         async revoke(request, context) {
-            try { await assertCredentialAdmission(context); }
+            let admission: Admission;
+            try { admission = await admitRequest(context, true); }
             catch { return { ok: false, reasonCode: 'requester_credentials_unavailable' }; }
             if (request.machineId !== input.machineId) {
                 return { ok: false, reasonCode: 'wrong_machine' };
             }
             const resource = input.registry.previewsById.get(request.previewId)?.resource;
+            if (!await admission.canAccess(resource?.serviceTarget)) return { ok: false, reasonCode: 'unknown_managed_service' };
             if (resource && !isDeepStrictEqual(resource.serviceTarget, request.serviceTarget)) {
                 return { ok: false, reasonCode: 'preview_service_mismatch' };
             }
             if (resource) {
-                if (!server) return { ok: false, reasonCode: 'preview_server_unavailable' };
-                try { await server.unregisterPreview(request.previewId); }
+                if (!admission.server) return { ok: false, reasonCode: 'preview_server_unavailable' };
+                try { await admission.server.unregisterPreview(request.previewId); }
                 catch (error) { return { ok: false, reasonCode: failureReason(error) }; }
             }
             const result = unregisterLocalServicePreview(input.registry, request.previewId);
@@ -385,7 +396,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                     protocolVersion: 1,
                     previewId: request.previewId,
                     revoked: result.ok,
-                    snapshot: buildSnapshot(),
+                    snapshot: await buildSnapshot(admission),
                 },
             };
         },
