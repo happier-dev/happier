@@ -1463,6 +1463,30 @@ describe('Collection table', () => {
     }
   });
 
+  it('sizes each grid card to its own content: nothing inside a card grows', async () => {
+    // React Native's Yoga errata stretch a growing child of a wrapped grid row to the whole grid's height, so every
+    // card took the full grid height with its content centred (iOS "Start from an example" looked empty). The web
+    // stacks it correctly, so the contract is checked at its cause: nothing inside a card grows.
+    const view = mount({ presentation: 'grid', grouped: false, detail: 'none' });
+    try {
+      view.measure(700);
+      const row = view.query('row:a')!;
+      const growing: string[] = [];
+      for (let node: HTMLElement | null = row; node !== null && node.getAttribute('data-testid') !== 'collection'; node = node.parentElement) {
+        // Only height growth stretches a card: a grow along a row parent fills width, which is fine.
+        const parent = node.parentElement;
+        const growsInHeight = parent !== null && !getComputedStyle(parent).flexDirection.startsWith('row');
+        if (getComputedStyle(node).flexGrow === '1' && growsInHeight && parent?.getAttribute('data-testid')?.endsWith(':grid-row') !== true) {
+          growing.push(node.getAttribute('data-testid') ?? `${node.getAttribute('role') ?? node.tagName}:${(node.getAttribute('style') ?? '').slice(0, 120)}`);
+        }
+        if (node.getAttribute('data-testid')?.endsWith(':grid-row')) break;
+      }
+      expect(growing).toEqual([]);
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('keeps grid positions when a primary item is inactive', async () => {
     const view = mount({
       presentation: 'grid',
@@ -2198,6 +2222,9 @@ describe('Collection table', () => {
         destination: () => ({
           destination: { pluginId: 'triage', localId: 'triage' },
         }),
+        wrapItem: (entry, children) => (
+          <View testID={`menu-wrapper:${entry.id}`}>{children}</View>
+        ),
       },
       useRowActions: () => ({
         secondaryActions: [{ id: 'pin', label: 'Pin' }],
@@ -2217,6 +2244,7 @@ describe('Collection table', () => {
         }),
     });
     view.measure(1440);
+    expect(view.query('menu-wrapper:a')?.contains(view.query('row:a'))).toBe(true);
     act(() => {
       view
         .query('row:a')!
@@ -2273,16 +2301,19 @@ describe('Collection table', () => {
           </View>
         ),
       });
-      view.measure(1440);
-      expect(
-        view.query('core-row:a')?.contains(view.query('destination-row:a')),
-      ).toBe(true);
-      expect(
-        view.query('destination-row:a')?.contains(view.query('row:a')),
-      ).toBe(true);
-      act(() => view.query('row:a')!.click());
-      expect(view.openChanges).toEqual(['a']);
-      view.unmount();
+      try {
+        view.measure(1440);
+        expect(
+          view.query('destination-row:a')?.contains(view.query('core-row:a')),
+        ).toBe(true);
+        expect(
+          view.query('core-row:a')?.contains(view.query('row:a')),
+        ).toBe(true);
+        act(() => view.query('row:a')!.click());
+        expect(view.openChanges).toEqual(['a']);
+      } finally {
+        view.unmount();
+      }
     },
   );
   it('draws columns by measured width, dropping the lowest priority first and never the title', () => {

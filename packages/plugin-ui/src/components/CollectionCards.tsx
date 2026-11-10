@@ -688,7 +688,9 @@ function GridCardView<Item>(props: Readonly<{
   const row: ReactElement<ItemProps> = (
     <List.Item {...actions} showDivider={false} density="compact" accessoryOutsidePressable contentBesidePressable
       accessibilityLabel={anatomy.accessibilityLabel(item)} accessibilityHint={anatomy.accessibilityHint?.(item)}
-      testID={testID} style={{ flex: 1, padding: 0, borderRadius: RADIUS - 1 }}
+      // Sized by its content (the card's minHeight keeps a row's cards equal): a growing child of a wrapped grid row
+      // takes the whole grid's height under React Native's Yoga errata, and every card stretched to it on iOS.
+      testID={testID} style={GRID_CARD_ITEM_STYLE}
     >
       <BoardCard item={item} anatomy={anatomy} selected={false} reserveActions={hasRowActions} previewInset={geometry.previewHeight}
         minHeight={geometry.fitContent ? undefined : geometry.cardHeight - CARD.rowLayerEdge} />
@@ -1052,6 +1054,7 @@ const pagedRowStyle: HappierPortableStyle = { marginRight: -GUTTER, flexGrow: 0 
 const pagedRowContentStyle: HappierPortableStyle = { paddingRight: GUTTER };
 const pagedSkeletonRowStyle: HappierPortableStyle = { overflow: 'hidden', marginRight: -GUTTER };
 const gridCardStyle: HappierPortableStyle = { borderRadius: RADIUS };
+const GRID_CARD_ITEM_STYLE = { padding: 0, borderRadius: RADIUS - 1 } as const;
 // Inside the row layer's ring and the frame's 1 px edge, so the band reads as the card's top and the edge runs
 // around it (its corners are `RADIUS - 2`, concentric with the frame).
 const PREVIEW_INSET = CARD.rowLayerEdge / 2 + 1;
