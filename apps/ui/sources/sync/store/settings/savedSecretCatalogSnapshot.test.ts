@@ -46,6 +46,16 @@ function sharedEntry(overrides?: Partial<SavedSecretCatalogEntryV1>): SavedSecre
 describe('savedSecretCatalogSnapshot', () => {
     beforeEach(() => resetSavedSecretCatalogSnapshotsForTests());
 
+    it('reports acquisition only for a qualified Account scope and settles after an unavailable response', () => {
+        const ref = sharedEntry().ref;
+        expect(resolveSavedSecretReference(null, [], ref).resolving).toBe(false);
+        expect(resolveSavedSecretReference(undefined, [], ref).resolving).toBe(false);
+        beginSavedSecretCatalogLoad(scope);
+        expect(resolveSavedSecretReference(scope, [], ref)).toMatchObject({ status: 'temporarily_unavailable', resolving: true });
+        applySavedSecretCatalogFailure({ scope, error: { kind: 'network', retryable: true } });
+        expect(resolveSavedSecretReference(scope, [], ref)).toMatchObject({ status: 'temporarily_unavailable', resolving: false });
+    });
+
     it('returns only a typed display name or unavailable reason, including acknowledged withdrawal during refresh', () => {
         const entry = sharedEntry();
         applySavedSecretCatalogPage({ scope, entries: [entry], observedAt: 1,
@@ -369,12 +379,13 @@ describe('savedSecretCatalogSnapshot', () => {
         invalidateSavedSecretCatalog(scope);
         beginSavedSecretCatalogLoad(scope);
         expect(resolveSavedSecretReference(scope, [], entry.ref)).toMatchObject({
-            status: 'temporarily_unavailable', displayStatus: 'ready', secret: null,
+            status: 'temporarily_unavailable', displayStatus: 'ready', secret: null, resolving: true,
         });
         applySavedSecretCatalogFailure({ scope, error: { kind: 'unreachable', retryable: true } });
         const failed = resolveSavedSecretReference(scope, [], entry.ref);
         expect(failed.status).toBe('temporarily_unavailable');
         expect(failed.displayStatus ?? failed.status).toBe('temporarily_unavailable');
+        expect(failed.resolving).not.toBe(true);
     });
 
     it('removes only the deleted resource from its exact Account/Home catalog', () => {

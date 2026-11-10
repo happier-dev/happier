@@ -532,8 +532,9 @@ describe('VoiceCredentialItem', () => {
     const onStatusChanged = vi.fn((status: { status: string }) => {
       if (status.status === 'ready') ready.resolve();
     });
-    await render({ recipientContract, onStatusChanged });
+    const screen = await render({ recipientContract, onStatusChanged });
     await ready.promise;
+    expect(screen.getTextContent()).toContain('Acme key');
     expect(onStatusChanged).toHaveBeenCalledWith(expect.objectContaining({ status: 'ready', usable: true }));
     expect(account!.resources).toEqual(before);
     expect(JSON.stringify(boundary.confirm.mock.calls)).not.toContain('retained-secret');

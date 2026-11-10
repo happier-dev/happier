@@ -56,14 +56,14 @@ describe('Connect sheet opening choice', () => {
             .toMatchObject({ initialMode: 'new', preselected: null });
     });
 
-    it('keeps kind-only matches available without opening Saved, while the current link selects Saved', () => {
+    it('opens requested keys on Saved without guessing which unrelated key to use', () => {
         const keys = [{ ref: 'unrelated-password', kind: 'password' as const },
             { ref: 'first-api-key', kind: 'apiKey' as const }, { ref: 'linked-api-key', kind: 'apiKey' as const }];
         const request = { service: { kind: 'key' as const, keyKind: 'apiKey' as const } };
         expect(resolveConnectSheetOpening(request, { keys: keys.slice(0, 1) }))
             .toMatchObject({ initialMode: 'new', preselected: null });
         expect(resolveConnectSheetOpening(request, { keys }))
-            .toMatchObject({ initialMode: 'new', preselected: null, savedKeys: keys.slice(1) });
+            .toMatchObject({ initialMode: 'saved', preselected: null, savedKeys: keys.slice(1) });
         expect(resolveConnectSheetOpening({ ...request, current: 'linked-api-key' }, { keys }))
             .toMatchObject({ initialMode: 'saved', preselected: 'linked-api-key' });
     });
@@ -87,7 +87,7 @@ describe('Connect sheet opening choice', () => {
             { keys, sameTargetRefs: ['same-target'] })).toEqual({ initialMode: 'saved', preselected: 'current-link',
                 savedKeys: [keys[3], keys[2], keys[1], keys[4]] });
         expect(resolveConnectSheetOpening({ service: { kind: 'key' } }, { keys: keys.slice(0, 1) }))
-            .toEqual({ initialMode: 'new', preselected: null, savedKeys: keys.slice(0, 1) });
+            .toEqual({ initialMode: 'saved', preselected: null, savedKeys: keys.slice(0, 1) });
         expect(resolveConnectSheetOpening({ service: { kind: 'key', keyKind: 'apiKey' } }, { keys: keys.slice(0, 1) }))
             .toEqual({ initialMode: 'new', preselected: null, savedKeys: [] });
     });

@@ -15,7 +15,7 @@ import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
-import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
+import { useSavedSecretCatalog, useSavedSecretCatalogName } from '@/components/secrets/useSavedSecretCatalog';
 import { Modal } from '@/modal';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { storage, useSetting } from '@/sync/domains/state/storage';
@@ -155,6 +155,7 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
       })
     : Object.freeze({ status: 'missing' as const, reference: null });
   const reference = credentialStatus.reference;
+  const selectedSecretName = useSavedSecretCatalogName(reference?.secretId ?? null, expectedSettingsScope);
   const status = React.useMemo(() => ({
     status: credentialStatus.status,
     exists: reference !== null,
@@ -382,6 +383,9 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
         title: props.title,
         subtitle: detail,
         showSelectedSubtitle: false,
+        detailFormatter: () => selectedSecretName.status === 'ready'
+          ? selectedSecretName.name
+          : t('common.unavailable'),
         itemProps: { subtitleLines: 0 },
       }}
       items={gestureItems}

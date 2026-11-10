@@ -232,6 +232,8 @@ export type SavedSecretReferenceResolution = Readonly<{
     status: SavedSecretCatalogMaterialStatusV1;
     /** Last-known metadata for display only; `status` and `secret` still govern material use. */
     displayStatus?: SavedSecretCatalogMaterialStatusV1;
+    /** The catalog owner is actively acquiring this reference's material. */
+    resolving?: boolean;
     entry: SavedSecretCatalogEntryV1 | null;
     secret: SavedSecret | null;
     revision: number | null;
@@ -305,6 +307,7 @@ export function resolveSavedSecretReference(
                 ? entry.materialStatus
                 : 'temporarily_unavailable',
             ...(entry && snapshot?.status !== 'error' ? { displayStatus: entry.materialStatus } : {}),
+            resolving: Boolean(scope) && (snapshot === null || snapshot.status === 'loading' || snapshot.status === 'refreshing'),
             entry,
             secret: null,
             revision,

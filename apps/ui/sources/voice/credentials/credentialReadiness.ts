@@ -43,12 +43,13 @@ export function projectVoiceCredentialReadiness(input: Readonly<{
   sourceSelection: VoiceSelectedSource | null;
   projectedCredential: VoiceProviderCredentialReadinessProjection | null;
   accountCredentialReference: AccountVoiceCredentialStatus['reference'];
+  credentialResolving: boolean;
 }> {
   const entry = input.entry;
   const declaration = entry.kind === 'voice.conversation-provider.v1' || entry.kind === 'voice.speech-engine.v1'
     ? entry.declaration : null;
   const credentials = declaration?.credentials;
-  const unavailable = { credential: 'unknown' as const, sourceSelection: null, projectedCredential: null, accountCredentialReference: null };
+  const unavailable = { credential: 'unknown' as const, sourceSelection: null, projectedCredential: null, accountCredentialReference: null, credentialResolving: false };
   if (!declaration || !credentials) return unavailable;
   const contribution = { pluginId: entry.pluginId, localId: declaration.id };
   let sourceSelection: VoiceSelectedSource;
@@ -63,7 +64,7 @@ export function projectVoiceCredentialReadiness(input: Readonly<{
   } catch {
     return unavailable;
   }
-  const savedSecret = sourceSelection.kind === 'savedSecret'
+  const savedSecret: AccountVoiceCredentialStatus = sourceSelection.kind === 'savedSecret'
     ? resolveAccountVoiceCredentialStatus({ settings: input.settings, contribution,
       credentialSlotId: credentials.slot.id, machineId: input.machineId, resolveSavedSecret: input.resolveSavedSecret })
     : { status: 'missing' as const, reference: null };
@@ -80,5 +81,6 @@ export function projectVoiceCredentialReadiness(input: Readonly<{
       && raw.realm === 'daemon' && raw.phase === 'speech' ? raw.status : 'unknown';
   }
   return { credential, sourceSelection, projectedCredential: projected,
+    credentialResolving: savedSecret.savedSecret?.resolving === true,
     accountCredentialReference: savedSecret.status === 'ready' ? savedSecret.reference : null };
 }

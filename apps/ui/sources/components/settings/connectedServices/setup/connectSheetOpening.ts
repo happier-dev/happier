@@ -34,7 +34,7 @@ export function resolveConnectSheetOpening<Key extends SavedKey>(request: Connec
         const savedKeys = (inventory.keys ?? []).filter(key => !request.service.keyKind
             || key.kind === request.service.keyKind || rank(key) < 2).sort((a, b) => rank(a) - rank(b));
         const matching = savedKeys.find(key => rank(key) < 2);
-        return { initialMode: matching ? 'saved' : 'new', preselected: matching?.ref ?? null, savedKeys };
+        return { initialMode: savedKeys.length > 0 ? 'saved' : 'new', preselected: matching?.ref ?? null, savedKeys };
     }
     const services = request.service ? [request.service] : inventory.services;
     const accounts = (inventory.accounts ?? []).filter(account => services?.some(service =>

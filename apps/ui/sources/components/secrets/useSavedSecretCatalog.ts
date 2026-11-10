@@ -215,7 +215,7 @@ function sameReferenceResolution(
   left: SavedSecretReferenceResolution,
   right: SavedSecretReferenceResolution,
 ): boolean {
-  return left.status === right.status && left.displayStatus === right.displayStatus
+  return left.status === right.status && left.displayStatus === right.displayStatus && left.resolving === right.resolving
     && left.kind === right.kind && left.entry === right.entry && left.secret === right.secret
     && left.revision === right.revision && left.fingerprint === right.fingerprint;
 }
