@@ -498,7 +498,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         installHomeGovernanceBoundaries(homes);
     });
 
-    it('reviews and applies template instructions through Account content and private Session transports', async () => {
+    it.each([false, true])('reviews and applies template content through Account and Session transports (mounted recovery=%s)', async mountedRecovery => {
         const { BotTemplateReleaseV1Schema, projectBotTemplateArtifactHeaderV1 } = await import('@happier-dev/protocol/bots/templates/botTemplateV1');
         const { BotTemplateUpdateDiffResultV1Schema } = await import('@happier-dev/protocol/bots/templates/botTemplateActionsV1');
         const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
@@ -514,7 +514,11 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         const base = BotTemplateReleaseV1Schema.parse({ v: 1, version: '1.0.0', changelog: '', releasedAtMs: 1,
             content: { v: 1, identity: { name: 'Helper', description: '' }, instructions: { markdown: 'one\ntwo\nthree\n' },
                 memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] } } });
-        const upstream = { ...base, version: '1.1.0', content: { ...base.content, instructions: { markdown: 'one\ntwo\nnew three\n' } } };
+        const { skillFileFromBytesV1 } = await import('@happier-dev/protocol/prompts/library/skills/skillZipV1');
+        const skill = (text: string) => ({ key: 'guide', title: 'Guide', bundleSchemaId: 'skills.skill_md_v1' as const,
+            entries: [skillFileFromBytesV1('SKILL.md', new TextEncoder().encode(`---\nname: guide\ndescription: Review\n---\n${text}\n`))] });
+        const upstream = { ...base, version: '1.1.0', content: { ...base.content, instructions: { markdown: 'one\ntwo\nnew three\n' },
+            skills: mountedRecovery ? [skill('Old guide')] : [] } };
         for (const [id, release] of [[sourceId, upstream], [baseId, base]] as const) {
             const envelope = { v: 1 as const, state: 'released' as const, release };
             homes.artifacts(serverId).replaceStoredRow(createPlainArtifactHttpFixture({ id, isDecrypted: true, title: release.content.identity.name,
@@ -532,7 +536,10 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             acceptedVersion: '1.0.0', acceptedBase: { serverId, artifactId: baseId }, skillIds: {}, mcpServerIds: {}, follow: true });
         const session = seedSession(false, { work: { templateInstance: instance, promptStack: [{ id: 'session.instructions',
             ref: { kind: 'doc', serverId, artifactId: instructionsId }, enabled: true, placement: 'system_append' }] } });
-        const persisted = serveSession(session);
+        let failInclusion = false;
+        const persisted = serveSession(session, undefined, async () => {
+            if (failInclusion) throw new Error('Session transport unavailable after skill creation');
+        });
         const sessionRef = { serverId, sessionId: session.id };
         const { ensureSessionDisplayProjectionsForRead } = await import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority');
         const account = await captureLazyActionAccountContext(serverId);
@@ -544,6 +551,41 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         if (!reviewed.ok) throw new Error(`Template review failed: ${reviewed.errorCode}: ${reviewed.error}`);
         const review = BotTemplateUpdateDiffResultV1Schema.parse(reviewed.result);
         expect(review.instructions?.comparison.text).toBe('mine\ntwo\nnew three\n');
+        if (mountedRecovery) {
+            const { useBotTemplateUpdate } = await import('@/components/sessions/bots/templates/useBotTemplateUpdate');
+            const hook = await renderHook(() => useBotTemplateUpdate(sessionRef));
+            try {
+                await vi.waitFor(() => expect(hook.getCurrent().review?.upstream.release.version).toBe('1.1.0'));
+                homes.artifacts(serverId).afterNextCreate(async () => { failInclusion = true; });
+                await act(async () => { await hook.getCurrent().apply({ sessionRef, expectedVersion: '1.1.0',
+                    expectedRevision: hook.getCurrent().review!.upstream.revision, skills: { guide: { choice: 'take' } } }); });
+                expect(hook.getCurrent().mutation, JSON.stringify(hook.getCurrent().mutation)).toMatchObject({ kind: 'failed', result: { details: { skillIds: { guide: expect.any(String) } } } });
+                const partial = hook.getCurrent().mutation;
+                if (partial.kind !== 'failed') throw new Error('Expected partial update');
+                const { BotTemplateUpdateFailureDetailsV1Schema } = await import('@happier-dev/protocol/bots/templates/botTemplateActionsV1');
+                const retained = BotTemplateUpdateFailureDetailsV1Schema.parse(partial.result.details);
+                expect(retained.acceptedBaseId).toBeUndefined();
+                const release = { ...upstream, version: '1.2.0', content: { ...upstream.content, skills: [skill('New guide')] } };
+                const envelope = { v: 1 as const, state: 'released' as const, release };
+                homes.artifacts(serverId).replaceStoredRow(createPlainArtifactHttpFixture({ id: sourceId, isDecrypted: true,
+                    title: release.content.identity.name, header: projectBotTemplateArtifactHeaderV1(envelope), body: JSON.stringify(envelope),
+                    headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 2 }, 'account-a'));
+                failInclusion = false;
+                // This is the actual "Review again" hook command; retain its acknowledged resources.
+                await act(async () => { await hook.getCurrent().reload(); });
+                expect(hook.getCurrent().review?.upstream.release.version).toBe('1.2.0');
+                await act(async () => { await hook.getCurrent().apply({ sessionRef, expectedVersion: '1.2.0',
+                    expectedRevision: hook.getCurrent().review!.upstream.revision, skills: { guide: { choice: 'take' } } }); });
+                expect(hook.getCurrent().mutation).toMatchObject({ kind: 'updated', result: { acceptedVersion: '1.2.0' } });
+                const skillId = retained.skillIds!.guide!;
+                expect(persisted.readMetadata().work).toMatchObject({ templateInstance: { acceptedVersion: '1.2.0', skillIds: { guide: skillId } } });
+                const content = await executor.execute('skills.updates.diff', { skillId,
+                    candidate: { baseFiles: skill('New guide').entries, files: skill('New guide').entries } }, context);
+                if (!content.ok) throw new Error(JSON.stringify(content));
+                expect(SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.updates.diff'].parse(content.result).files.every(file => !file.changed)).toBe(true);
+            } finally { await hook.unmount(); }
+            return;
+        }
         const input = { sessionRef, expectedVersion: '1.1.0', expectedRevision: review.upstream.revision,
             instructions: { expectedRevision: review.instructions!.revision } };
         const applied = await executor.execute('template.updates.apply', input, { ...context,

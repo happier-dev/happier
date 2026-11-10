@@ -85,7 +85,7 @@ export async function applyBotTemplateMcpSetupV1(input: Readonly<{
   if (Object.keys(input.recoveryIds ?? {}).some(key => !input.mcp.some(item => item.key === key))) return refuse('invalid_request');
   if (!input.mcp.length) return {};
   const ids: Record<string, string> = {};
-  const existing = input.mcp.filter(item => input.existingIds?.[item.key]);
+  const existing = input.mcp.filter(item => input.existingIds?.[item.key] || input.recoveryIds?.[item.key]);
   const pendingCreate = input.mcp.filter(item => !input.existingIds?.[item.key] && !input.recoveryIds?.[item.key]);
   for (const item of input.mcp) {
     const recoveredId = input.recoveryIds?.[item.key];

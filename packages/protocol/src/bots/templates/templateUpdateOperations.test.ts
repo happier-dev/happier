@@ -188,6 +188,32 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
 }
 
 describe('template update composition', () => {
+  it('reconciles recovered skill bytes with a newly reviewed release before accepting its base', async () => {
+    const f = await fixture();
+    const entries = (text: string) => [skillFileFromBytesV1('SKILL.md', new TextEncoder().encode(`---\nname: guide\ndescription: Review\n---\n${text}\n`))];
+    const release = (version: string, text: string): BotTemplateReleaseV1 => ({ ...upstream, version,
+      content: { ...upstream.content, skills: [{ key: 'guide', title: 'Guide', bundleSchemaId: 'skills.skill_md_v1', entries: entries(text) }] } });
+    f.release(release('1.1.0', 'Old guide'));
+    f.failCapability('refused');
+    const partial = await f.apply(await f.diff(), { skills: { guide: { choice: 'take' } } });
+    expect(partial).toMatchObject({ ok: false, errorCode: 'conflict' });
+    if (partial.ok) throw new Error('Expected inclusion refusal');
+    const recovery = BotTemplateUpdateFailureDetailsV1Schema.parse(partial.details);
+    expect(recovery.acceptedBaseId).toBeUndefined();
+    f.release(release('1.2.0', 'New guide'));
+    f.failCapability(false);
+    expect(await f.apply(await f.diff(), { skills: { guide: { choice: 'take' } },
+      recovery: { skillIds: recovery.skillIds, mcpServerIds: {} } })).toMatchObject({ ok: true, result: { acceptedVersion: '1.2.0' } });
+    const skillId = f.state().instance.skillIds.guide;
+    expect(skillId).toBe(recovery.skillIds?.guide);
+    expect(f.docs.size).toBe(3);
+    const stored = await f.executor.execute('skills.updates.diff', { skillId,
+      candidate: { baseFiles: entries('New guide'), files: entries('New guide') } }, f.context);
+    if (!stored.ok) throw new Error(JSON.stringify(stored));
+    const diff = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.updates.diff'].parse(stored.result);
+    expect(diff.files.every(file => !file.changed)).toBe(true);
+    expect(JSON.parse(f.boundary.rows.get(f.state().instance.acceptedBase.artifactId)!.body!)).toMatchObject({ release: release('1.2.0', 'New guide') });
+  });
   it.each([true, 'refused'] as const)('preserves the inclusion cause when taking a new skill (failure=%s)', async failure => {
     const f = await fixture();
     const entries = [skillFileFromBytesV1('SKILL.md', new TextEncoder().encode('---\nname: guide\ndescription: Review\n---\nGuide\n'))];
@@ -470,7 +496,7 @@ describe('template update composition', () => {
     const selection = readSessionCapabilitySelectionFromMetadataV1(f.metadata());
     expect(readSessionCapabilityOverrideV1(selection, 'mcp_server', 'existing-docs')).toBe('on');
   });
-  it('retains an acknowledged MCP identity when Session inclusion fails and retries without creating another', async () => {
+  it.each([false, true])('retains an acknowledged MCP identity on retry and reconciles the reviewed definition (new release=%s)', async changedRelease => {
     const f = await fixture();
     const need = { key: 'docs', name: 'Docs', requirement: 'required' as const, purpose: 'Read documentation', skipConsequence: '',
       definition: { name: 'docs', transport: 'http' as const, env: {},
@@ -484,11 +510,17 @@ describe('template update composition', () => {
     const recovery = BotTemplateUpdateFailureDetailsV1Schema.parse(partial.details);
     expect(f.catalog().servers).toHaveLength(1);
     expect(f.state().instance.acceptedVersion).toBe('1.0.0');
+    const candidate = changedRelease ? { ...need, definition: { ...need.definition, remote: { ...need.definition.remote,
+      url: { ...need.definition.remote.url, baseUrl: { kind: 'literal' as const, value: 'https://new-docs.example/mcp' } } } } } : need;
+    if (changedRelease) f.release({ ...upstream, version: '1.2.0', content: { ...upstream.content,
+      needs: { ...upstream.content.needs, mcpServers: [candidate] } } });
     f.failCapability(false);
     const result = await f.apply(await f.diff(), { setup, recovery: { skillIds: {}, mcpServerIds: recovery.mcpServerIds } });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
     expect(f.catalog().servers).toHaveLength(1);
     expect(f.state().instance.mcpServerIds).toEqual(recovery.mcpServerIds);
+    expect(f.catalog().servers[0]).toMatchObject({ remote: { url: candidate.definition.remote.url.baseUrl.value } });
+    expect(f.state().instance.acceptedVersion).toBe(changedRelease ? '1.2.0' : '1.1.0');
   });
   it('returns only new resource recovery identities when incumbent skills and MCP already exist', async () => {
     const f = await fixture();

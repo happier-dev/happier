@@ -171,15 +171,19 @@ export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV
       ...review.skills.flatMap((skill): HostReviewedChildrenPreparationV1['children'] => {
         const choice = input.skills?.[skill.key]?.choice;
         if (!choice || choice === 'skip' || choice === 'keep' || skill.status === 'deleted' && !skill.canTake) return [];
-        if (createsSkill(skill)) return [{ action: 'skills.create' as const, role: `skill:${skill.key}` },
-          ...(input.recovery?.skillIds[skill.key] ? [{ action: 'session.capabilities.set' as const, role: `recover_skill:${skill.key}` }] : [])];
+        if (createsSkill(skill)) return input.recovery?.skillIds[skill.key] ? [
+          { action: 'skills.updates.diff' as const, role: `recover_skill_read:${skill.key}` },
+          { action: 'skills.updates.apply' as const, role: `recover_skill_update:${skill.key}` },
+          { action: 'session.capabilities.set' as const, role: `recover_skill:${skill.key}` },
+        ] : [{ action: 'skills.create' as const, role: `skill:${skill.key}` }];
         if (skill.status === 'removed') return choice === 'remove' ? [{ action: 'session.capabilities.set' as const, role: `skill:${skill.key}` }] : [];
         return [{ action: 'skills.updates.apply' as const, role: `skill:${skill.key}` }];
       }),
       ...(input.takeIdentity ? [{ action: 'session.title.set' as const, role: 'update_title' }, { action: 'session.bot.face.set' as const, role: 'update_face' }] : []),
       ...(setup.mcp.length ? [{ action: 'mcp.servers.list' as const, role: 'template_mcp_catalog' },
         { action: 'mcp.servers.create' as const, role: 'create_template_mcp' },
-        ...setup.mcp.filter(item => review.instance.mcpServerIds[item.key]).map(item => ({ action: 'mcp.servers.update' as const, role: `update_template_mcp:${item.key}` })),
+        ...setup.mcp.filter(item => review.instance.mcpServerIds[item.key] || input.recovery?.mcpServerIds[item.key])
+          .map(item => ({ action: 'mcp.servers.update' as const, role: `update_template_mcp:${item.key}` })),
         ...setup.mcp.map(item => ({ action: 'session.capabilities.set' as const, role: `template_mcp:${item.key}` }))] : []),
       ...(setupApply ? [{ action: 'machines.setup.apply' as const, role: BOT_TEMPLATE_SETUP_APPLY_ROLE_V1, input: projectNativeJsonValueForTransport(setupApply) },
         { action: 'action.operations.get' as const, role: 'template_setup_wait' }] : []),
@@ -241,6 +245,13 @@ export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV
                 if (result.inclusion?.ok === false) return fail(result.inclusion.code);
                 if (result.incomplete || result.includedInSessionId !== input.sessionRef.sessionId) return fail('invalid_action_output');
               } else {
+                // A deliberate new review can select different bytes after creation succeeded.
+                const candidate = { baseFiles: next!.entries, files: next!.entries };
+                const diff = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.updates.diff'].parse(await invoke('skills.updates.diff',
+                  `recover_skill_read:${skill.key}`, { skillId: skillIds[skill.key], candidate }));
+                SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.updates.apply'].parse(await invoke('skills.updates.apply',
+                  `recover_skill_update:${skill.key}`, { skillId: skillIds[skill.key], expectedRevision: diff.revision,
+                    candidate: { baseFiles: diff.files.flatMap(file => file.mine ? [file.mine] : []), files: next!.entries } }));
                 await invoke('session.capabilities.set', `recover_skill:${skill.key}`, {
                   sessionId: input.sessionRef.sessionId, kind: 'skill', id: skillIds[skill.key], state: 'on' });
               }
