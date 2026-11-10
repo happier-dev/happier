@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { RpcHandler, RpcHandlerRegistrar, RpcHandlerContext } from '../rpc/types';
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { registerMachineWorkspaceSyncRpcHandlers } from './rpcHandlers.workspaceSync';
 
@@ -31,6 +32,20 @@ function createRegistrar() {
 }
 
 describe('workspace sync machine RPC handlers', () => {
+  it('returns a typed preview refusal when the optional workspace runtime is unavailable', async () => {
+    const rpcHandlerManager = new RpcHandlerManager({ scopePrefix: 'controller', encryptionMode: 'plain', logger: () => {} });
+    registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager });
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    await expect(rpcHandlerManager.handleRequest({
+      method: `controller:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`,
+      params: { kind: 'preview', workspace: { serverId: 'home', refId: 'source' }, machineId: 'controller',
+        targetMachineId: 'worker', targetWorkspaceRefId: 'copy', expectedRelationship: {
+          v: 1, relationshipId: 'copy-link', controllerMachineId: 'controller', alphaWorkspaceRefId: 'source',
+          betaWorkspaceRefId: 'copy', mode: 'keep_synced', enabled: true, createdAtMs: 1, updatedAtMs: 2,
+          contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
+        } },
+    })).resolves.toMatchObject({ ok: false, errorCode: 'workspace_sync_unavailable', error: 'workspace_sync_unavailable' });
+  });
   it('accepts only a relationship-owned target entry request and passes cancellation to the authority', async () => {
     const { handlers, rpcHandlerManager } = createRegistrar();
     const observeEntryAtTarget = vi.fn(async () => ({ kind: 'missing' as const }));

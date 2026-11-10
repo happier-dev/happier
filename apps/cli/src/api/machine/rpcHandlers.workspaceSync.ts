@@ -252,24 +252,24 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT, async (raw, context) => {
     const request = WorkspaceSyncCommittedCopyInspectV1Schema.parse(raw);
-    const inspect = service().inspectCommittedCopyHere;
-    if (!inspect) unavailable();
-    if ('kind' in request) {
-      try {
+    try {
+      const inspect = service().inspectCommittedCopyHere;
+      if (!inspect) unavailable();
+      if ('kind' in request) {
         return WorkspaceSyncCommittedCopyPreviewResultV1Schema.parse(await inspect(request, signal(context?.signal), context));
-      } catch (error) {
-        // The routed TARGET hop keeps its thrown RPC error for the SOURCE. Only
-        // the Action front door projects a typed refusal, which the UI/CLI
-        // result readers would otherwise collapse into invalid_action_output.
-        if (context?.workspaceSyncSourceWriterTargetRouting) throw error;
-        const errorCode = readRpcErrorCode(projectWorkspaceSyncRpcError(error, RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT))
-          ?? 'workspace_copy_preview_unavailable';
-        return { ok: false, errorCode, error: errorCode };
       }
+      return await observeCommittedCopyResult(async () => WorkspaceSyncCommittedCopyTargetResultV1Schema.parse(
+        await inspect(request, signal(context?.signal), context),
+      ));
+    } catch (error) {
+      // The routed TARGET hop keeps its thrown RPC error for the SOURCE. Only
+      // the Action front door projects a typed refusal, which the UI/CLI
+      // result readers would otherwise collapse into invalid_action_output.
+      if (!('kind' in request) || context?.workspaceSyncSourceWriterTargetRouting) throw error;
+      const errorCode = readRpcErrorCode(projectWorkspaceSyncRpcError(error, RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT))
+        ?? 'workspace_copy_preview_unavailable';
+      return { ok: false, errorCode, error: errorCode };
     }
-    return await observeCommittedCopyResult(async () => WorkspaceSyncCommittedCopyTargetResultV1Schema.parse(
-      await inspect(request, signal(context?.signal), context),
-    ));
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE, async (raw, context) => {
     const request = WorkspaceSyncCommittedCopyTargetV1Schema.parse(raw);
