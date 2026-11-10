@@ -10,6 +10,7 @@ import type {
     DeploymentEnvironmentHealthAggregateV1,
 } from '@happier-dev/deployment-protocol/v1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import type { DeploymentEnvironmentListInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentDomainHealthFactsV1, DeploymentSecretRevisionFactV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import type { DeploymentMemberVersionV1 } from '../projection/deploymentStepProjection.js';
 import type { DeploymentActivityV1, DeploymentChipV1 } from '../projection/deploymentSurfaceFacts.js';
@@ -70,15 +71,13 @@ export type DeploymentReadLeaseV1<T> = Readonly<{
     release(): void;
 }>;
 
-export type DeploymentCollectionQueryV1 = Readonly<{
-    cursor?: string; machineId?: string;
+export type DeploymentCollectionQueryV1 = Readonly<Omit<DeploymentEnvironmentListInputV1,
+    'serverId' | 'projectSourceId' | 'projection' | 'environmentIds' | 'previewPullRequestIds'> & {
+    /** A Resource observes all matching children, independently of page navigation. */
+    allPages?: true;
     /** Exact visible owner-header demand. Internally [] means no demand. */
     environmentIds?: readonly string[];
-    /** P44's saved repository relation plus exact visible PR identities. */
-    previewRepositoryId?: string;
     previewPullRequestIds?: readonly string[];
-    /** Exact children of P44's admitted template Environment relation. */
-    previewTemplateEnvironmentId?: string;
 }>;
 export type DeploymentHistoryQueryV1 = Readonly<{
     cursor?: string;

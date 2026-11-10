@@ -377,7 +377,8 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             const previewPullRequestIds = suppliedPreviewPullRequestIds === undefined ? undefined : [...new Set(suppliedPreviewPullRequestIds)].sort();
             const previewIds = new Set(previewPullRequestIds);
             const key = (cursor: string | undefined) => JSON.stringify(['collection', cursor ?? null, filters.machineId ?? null, environmentIds ?? null,
-                filters.previewRepositoryId ?? null, previewPullRequestIds ?? null, filters.previewTemplateEnvironmentId ?? null]);
+                filters.previewRepositoryId ?? null, previewPullRequestIds ?? null, filters.previewTemplateEnvironmentId ?? null,
+                filters.previewRepository ?? null, filters.allPages ?? false, filters.limit ?? null, filters.includeDeleted ?? false]);
             return createDeploymentReadPageLease<DeploymentEnvironmentReadCollectionV1>({ initialCursor, demand,
                 nextCursor: cursor => entries.get(key(cursor))?.nextCursor ?? null,
                 acquire: (cursor, pageDemand) => acquire<DeploymentEnvironmentReadCollectionV1>({

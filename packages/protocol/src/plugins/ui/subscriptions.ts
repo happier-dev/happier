@@ -8,6 +8,7 @@ import { projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
 import { PluginUiMachineServiceReadReferenceV1Schema } from '../../daemon/machineServiceLogsResource.js';
 import { ManagedListInputV1Schema } from '../../machines/managed/actionsV1.js';
+import { DeploymentEnvironmentListInputV1Schema } from '../../deployments/deploymentActionsV1.js';
 import type { ActionId } from '../../actions/actionIds.js';
 export { PluginUiMachineServiceLogsReadReferenceV1Schema } from '../../daemon/machineServiceLogsResource.js';
 
@@ -24,6 +25,9 @@ export type PluginUiReadAuthorityReferenceV1 = z.infer<typeof PluginUiReadAuthor
 export const PluginUiHostReadReferenceV1Schema = lazyZodSchema(() => z.union([z.strictObject({
   hostRead: z.enum(['usage.query', 'connectedServices.quota.get', 'connectedServices.pools.selection.get', 'discussion.get', 'action.operations.get']),
   input: PluginUiJsonValueV1Schema,
+}), z.strictObject({
+  hostRead: z.literal('deployments.environments.list'),
+  input: DeploymentEnvironmentListInputV1Schema,
 }), z.strictObject({
   hostRead: z.literal('machines.managed.list'),
   // This observation borrows the canonical active inventory, not a second query/selector owner.

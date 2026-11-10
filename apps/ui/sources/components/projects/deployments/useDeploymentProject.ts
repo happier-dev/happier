@@ -17,7 +17,7 @@ type ProjectOwner = Readonly<{
 }>;
 const projects = new WeakMap<ServerAccountScopeLifetime, Map<string | undefined, ProjectOwner>>();
 
-function readProject(lifetime: ServerAccountScopeLifetime, projectSourceId: string | undefined) {
+export function readDeploymentProjectOwner(lifetime: ServerAccountScopeLifetime, projectSourceId: string | undefined) {
     lifetime = readServerAccountScopeOwnerLifetime(lifetime);
     let sources = projects.get(lifetime);
     if (!sources) { sources = new Map(); projects.set(lifetime, sources); }
@@ -85,7 +85,7 @@ function useDeploymentOwner(lifetime: ServerAccountScopeLifetime | null, project
     }> | null>(null);
     React.useEffect(() => {
         if (!lifetime?.isCurrent() || !enabled) return;
-        setBinding({ lifetime, projectSourceId, owner: readProject(lifetime, projectSourceId) });
+        setBinding({ lifetime, projectSourceId, owner: readDeploymentProjectOwner(lifetime, projectSourceId) });
     }, [lifetime, projectSourceId, enabled]);
     const owner = enabled && binding?.lifetime === lifetime && binding?.projectSourceId === projectSourceId ? binding.owner : null;
     const presented = isDeploymentReadDemandActiveV1(demand);

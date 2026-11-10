@@ -27,6 +27,21 @@ function networkBoundary() {
 }
 
 describe('deployment demand read controller', () => {
+    it('keeps a complete preview collection independent from a navigated page', async () => {
+        const base = networkBoundary();
+        const later = createDeploymentEnvironmentHeaderV1({ id: 'later', projectSourceId: scope.projectSourceId });
+        base.transport.listEnvironments.mockImplementation(async (_scope, query) => ({ ok: true,
+            value: createDeploymentEnvironmentCollectionV1({ items: (query.allPages ? [base.environment, later] : [base.environment])
+                .map(environment => ({ environment, title: environment.id })) }) }));
+        const controller = createDeploymentReadControllerV1({ scope, transport: base.transport });
+        const paged = controller.acquireCollection({}, active);
+        const complete = controller.acquireCollection({ allPages: true }, active);
+        try {
+            await Promise.all([paged.refresh(), complete.refresh()]);
+            expect(paged.getSnapshot().value?.items.map(row => row.environment.id)).toEqual([base.environment.id]);
+            expect(complete.getSnapshot().value?.items.map(row => row.environment.id)).toEqual([base.environment.id, later.id]);
+        } finally { paged.release(); complete.release(); controller.retire(); }
+    });
     it('publishes Domain metadata before controller health and scopes observation lifetime to visible page demand', async () => {
         const base = networkBoundary();
         const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'domain', environmentId: base.environment.id,

@@ -4,7 +4,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type Home
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -16,6 +16,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
+import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 
 const homes = createHomeGovernanceHarness();
@@ -23,6 +24,9 @@ installHomeGovernanceBoundaries(homes);
 const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
 const { createFrontDoorUiActionExecutor } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 const { useDeploymentEnvironmentChecks } = await import('./useDeploymentReads');
+const { createPluginDeploymentCollectionHostReadStore } = await import('@/components/plugins/surfaces/pluginDeploymentCollectionHostRead');
+const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+const { getStorage } = await import('@/sync/domains/state/storageStore');
 
 /** The page's rows, whichever typed read returned them. */
 const pageItems = (result: unknown) => (result as Readonly<{ value: Readonly<{ items: readonly unknown[] }> }>).value.items;
@@ -30,6 +34,96 @@ const pageItems = (result: unknown) => (result as Readonly<{ value: Readonly<{ i
 describe('deployment scoped read transport', () => {
     beforeEach(() => homes.reset());
     afterEach(() => standardCleanup());
+
+    it('opens only requested data-link choices through one Artifact batch and retains their saved titles', async () => {
+        const serverId = await homes.addHome({ name: 'Data choices', serverUrl: 'https://data-choices.test', accountId: 'alice' });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        const targetLink = createDeploymentTargetLinkHeaderV1({ role: 'data', targetKind: 'database', machines: [], members: [],
+            source: { kind: 'plugin', contribution: { pluginId: 'com.example.database', localId: 'database' } } });
+        const content = { providerIdentity: { providerAccountId: 'team', providerResourceId: 'internal-project-id', providerEnvironment: 'main' },
+            providerEnvironment: { kind: 'custom' as const, id: 'main' } };
+        try {
+            await account.createArtifactDocument({ artifactId: targetLink.contentArtifactId,
+                header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Customer database' }, body: JSON.stringify(content) });
+            const before = homes.requests.length;
+            const transport = createDeploymentReadTransport(account.accountLifetime);
+            expect(await transport.readTargetLinks(account.accountLifetime.scope, [targetLink],
+                { signal: new AbortController().signal })).toEqual({ ok: true,
+                value: [{ targetLink, title: 'Customer database', content }] });
+            expect(homes.requests.slice(before).filter(request => request.path === '/v1/artifacts/read').map(request => request.input))
+                .toEqual([{ artifactIds: [targetLink.contentArtifactId] }]);
+            expect(homes.requests.slice(before).filter(request => request.path.startsWith('/v1/deployments'))).toEqual([]);
+        } finally { account.dispose(); }
+    });
+
+    it('keeps a later preview page in an all-pages receipt observation and does no hidden or unrelated receipt reads', async () => {
+        const serverId = await homes.addHome({ name: 'Preview pages', serverUrl: 'https://preview-pages.test', accountId: 'alice', active: false });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        const controllerMachine = createMachineFixture({ id: 'preview-controller', active: true, presenceProtocolVersion: 1 });
+        const machineScope = { sourceServerId: serverId, sourceAccountId: 'alice' };
+        getStorage().getState().applyMachines([controllerMachine], true, machineScope);
+        const rows = ['first', 'later'].map(id => {
+            const environment = createDeploymentEnvironmentHeaderV1({ id, serverId, contentArtifactId: `${id}-content`,
+                controllerMachineId: controllerMachine.id,
+                owner: { kind: 'account', accountId: 'alice' } });
+            const deployment = createDeploymentReceiptHeaderV1({ id: `${id}-receipt`, environmentId: id,
+                contentArtifactId: `${id}-receipt-content`, state: 'running' });
+            return { environment, deployment };
+        });
+        for (const { environment, deployment } of rows) {
+            await account.createArtifactDocument({ artifactId: environment.contentArtifactId,
+                header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: environment.id }, body: '{}' });
+            await account.createArtifactDocument({ artifactId: deployment.contentArtifactId,
+                header: { kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: deployment.id }, body: '{}' });
+        }
+        homes.answer(serverId, '/v1/deployments/environments', { select: (_body, request) => {
+            const later = new URL(request.url).searchParams.has('cursor');
+            const row = rows[later ? 1 : 0]!;
+            return { body: { ok: true, items: [row.environment], currentDeployments: [row.deployment],
+                nextCursor: later ? null : 'later' } };
+        } });
+        const store = createPluginDeploymentCollectionHostReadStore({ lifetime: account.accountLifetime });
+        const entry = store.getEntry({ hostRead: 'deployments.environments.list', input: { serverId } });
+        let release = entry.subscribe(() => {}, true);
+        const value = () => JSON.parse(new TextDecoder().decode(entry.getSnapshot().value?.bytes)) as {
+            items: { environment: { id: string }; currentDeployment: { state: string } | null }[];
+            controllerAvailability: { machineId: string; state: string }[];
+        };
+        const push = (environmentId: string, deploymentId: string) => publishHomeAccountChange(serverId,
+            [buildDeploymentAccountChangeV1({ environmentId, deploymentId, revision: 2 }).entityId], { changeKinds: ['account'] });
+        const reads = () => homes.requests.filter(request => request.path.split('?')[0] === '/v1/deployments/environments').length;
+        try {
+            await entry.refresh();
+            expect(value().items.map(row => row.environment.id)).toEqual(['first', 'later']);
+            const before = reads();
+            push('unrelated', 'unrelated-receipt');
+            expect(reads()).toBe(before);
+            rows[1]!.deployment = { ...rows[1]!.deployment, state: 'succeeded', revision: 2 };
+            push('later', 'later-receipt');
+            await vi.waitFor(() => expect(value().items[1]?.currentDeployment?.state).toBe('succeeded'));
+            expect(reads()).toBe(before + 2);
+            const onlineDigest = entry.getSnapshot().value?.digest;
+            expect(value().controllerAvailability).toEqual([{ machineId: controllerMachine.id, state: 'available' }]);
+            getStorage().getState().applyMachineActivityUpdates([{ id: controllerMachine.id, active: false, activeAt: 2 }], machineScope);
+            await vi.waitFor(() => expect(entry.getSnapshot().value?.digest).not.toBe(onlineDigest));
+            const pausedDigest = entry.getSnapshot().value?.digest;
+            expect(value().controllerAvailability).toEqual([{ machineId: controllerMachine.id, state: 'paused' }]);
+            expect(reads()).toBe(before + 2);
+            getStorage().getState().applyMachineActivityUpdates([{ id: controllerMachine.id, active: true, activeAt: 3 }], machineScope);
+            await vi.waitFor(() => expect(entry.getSnapshot().value?.digest).toBe(onlineDigest));
+            getStorage().getState().applyMachineActivityUpdates([{ id: controllerMachine.id, active: true, activeAt: 4 }], machineScope);
+            expect(entry.getSnapshot().value?.digest).toBe(onlineDigest);
+            release();
+            release = () => {};
+            const hiddenReads = reads();
+            getStorage().getState().applyMachineActivityUpdates([{ id: controllerMachine.id, active: false, activeAt: 5 }], machineScope);
+            expect(entry.getSnapshot().value?.digest).not.toBe(pausedDigest);
+            push('later', 'later-receipt');
+            expect(reads()).toBe(hiddenReads);
+        } finally { release(); store.dispose(); account.dispose(); }
+    });
 
     it('consumes the existing selected native Service Resource as current health without another observer or probe', async () => {
         const serverIdentityId = 'srv_environment_health';
@@ -332,6 +426,9 @@ describe('deployment scoped read transport', () => {
         expect(pageItems(partialDomains)).toHaveLength(1);
         const unconfigured = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({
             serverId, id: 'unconfigured', contentArtifactId: 'unconfigured-content' }) });
+        unconfigured.content.previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
+            repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/app' },
+            runtimeTargetLinkId: unconfigured.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [], data: [] };
         const notNeeded = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({
             serverId, id: 'not-needed', contentArtifactId: 'not-needed-content' }) });
         notNeeded.content.backup = { notNeeded: true };
@@ -348,9 +445,9 @@ describe('deployment scoped read transport', () => {
             items: [environmentHeader, unconfigured.environment, notNeeded.environment], nextCursor: null } });
         const beforeMembership = homes.requests.length;
         expect(await transport.listEnvironments(scope, {}, options)).toMatchObject({ ok: true, value: { items: [
-            { environment: environmentHeader, backupConfigured: true },
-            { environment: unconfigured.environment, backupConfigured: false },
-            { environment: notNeeded.environment, backupConfigured: false },
+            { environment: environmentHeader, backupConfigured: true, previewTemplateConfigured: false },
+            { environment: unconfigured.environment, backupConfigured: false, previewTemplateConfigured: true },
+            { environment: notNeeded.environment, backupConfigured: false, previewTemplateConfigured: false },
         ] } });
         const membershipRequests = homes.requests.slice(beforeMembership);
         expect(membershipRequests.filter(request => request.path.split('?')[0] === root)).toHaveLength(1);

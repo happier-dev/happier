@@ -14,6 +14,7 @@ describe('plugin UI resource subscriptions', () => {
     ['deployments.health.edge', 'deployments.health.current'],
     ['machines.services.list', 'machines.services.list'],
     ['usage.query', 'usage.query'],
+    ['deployments.environments.list', 'deployments.environments.list'],
   ] satisfies Array<[Parameters<typeof resolvePluginUiHostReadActionIdV1>[0], string]>)('admits %s through its canonical %s Action', (hostRead, actionId) => {
     expect(resolvePluginUiHostReadActionIdV1(hostRead)).toBe(actionId);
   });
@@ -58,6 +59,16 @@ describe('plugin UI resource subscriptions', () => {
       expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: {
         ...managed, input: { ...managed.input, ...extra },
       }, subscriptionId: 'managed' }).success).toBe(false);
+    }
+  });
+  it('keeps preview collection Resources on the canonical exact repository and pull request input', () => {
+    const resource = { hostRead: 'deployments.environments.list', input: { serverId: 'home', includeDeleted: true,
+      previewRepository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/repository' },
+      previewPullRequestIds: ['17'] } };
+    expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource, subscriptionId: 'preview' }).success).toBe(true);
+    for (const input of [{ ...resource.input, previewPullRequestIds: [] }, { ...resource.input, accountId: 'foreign' },
+      { previewPullRequestIds: ['17'] }, { includeDeleted: true }, { includeDeleted: true, machineId: 'machine' }]) {
+      expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: { ...resource, input }, subscriptionId: 'preview' }).success).toBe(false);
     }
   });
 

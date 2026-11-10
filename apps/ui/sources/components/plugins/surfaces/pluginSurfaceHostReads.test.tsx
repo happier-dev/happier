@@ -54,7 +54,7 @@ afterEach(async () => {
 });
 
 async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], enabled: boolean | (() => boolean) = true,
-    resource: PluginUiHostReadReferenceV1 = reference, serverIdentityId?: string) {
+    resource: PluginUiHostReadReferenceV1 = reference, serverIdentityId?: string, pluginId = 'acme.usage') {
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://mounted-usage.test', accountId: 'account-a',
         ...(serverIdentityId ? { serverIdentityId } : {}) }], route: async request => await route(request)
             ?? createEmptyAccountBootstrapHttpResponse(request.url.pathname + request.url.search, { method: request.method }) ?? undefined });
@@ -65,6 +65,9 @@ async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], en
     await sync.refreshSessions();
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Missing captured test Account');
+    if (resource.hostRead === 'deployments.environments.list') {
+        resource = { ...resource, input: { ...resource.input, serverId: lifetime.scope.serverId } };
+    }
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ isActionEnabled: () => typeof enabled === 'function' ? enabled() : enabled,
         discussionAction: async args => {
             const account = await captureLazyActionAccountContext(lifetime.scope.serverId);
@@ -80,7 +83,7 @@ async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], en
         } },
     }));
     const mountController = () => createBoundPluginSurfaceController({ facts: {
-        pluginId: 'acme.usage', contributionId: 'summary', surfaceId: 'usage-mount', placement: 'browserSurface', platform: 'web',
+        pluginId, contributionId: 'summary', surfaceId: 'usage-mount', placement: 'browserSurface', platform: 'web',
         machineId: 'machine-1', occurrenceId: 'bundled-summary-current', serverId: lifetime.scope.serverId,
         accountLifetime: lifetime, interactionEnabled: true, daemonInteractionEnabled: false,
     }, binding: { executeHostAction: Object.assign(executor.execute, { prepare: executor.prepare }) } });
@@ -88,14 +91,15 @@ async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], en
     controllers.push(controller);
     const context = await captureLazyActionAccountContext(lifetime.scope.serverId);
     const hostEntry = resource.hostRead === 'discussion.get' || resource.hostRead === 'machines.managed.list'
+        || resource.hostRead === 'deployments.environments.list'
         ? controller.resourceStore!.getEntry(resource) : getUsageQueryResourceStore(context).getEntry(resource);
     context.dispose();
     const native = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({
-        mount: { kind: 'destination', destination: { pluginId: 'acme.usage', localId: 'summary' }, container: 'appPage' }, target: { kind: 'app' },
+        mount: { kind: 'destination', destination: { pluginId, localId: 'summary' }, container: 'appPage' }, target: { kind: 'app' },
     }), requestSurface: controller.surfaceContext, handleRequest: controller.hostApi.handleRequest,
         installedMethods: controller.installedMethods });
     const unwatchNative = controller.subscribeResourceInvalidations(event => native.publishResourceSubscriptionEvent(event));
-    return { controller, native: { ...native, dispose() { unwatchNative(); native.dispose(); } }, hostEntry, lifetime,
+    return { controller, native: { ...native, dispose() { unwatchNative(); native.dispose(); } }, hostEntry, lifetime, resource,
         mountAnotherController() { const next = mountController(); controllers.push(next); return next; }, executor };
 }
 
@@ -133,6 +137,29 @@ async function settleUsageDetail(entry: PluginUiResourceEntry) {
 }
 
 describe('mounted native and hosted host reads', () => {
+    it('admits preview collection reads through the original deployment Action before opening its shared owner', async () => {
+        let enabled = false;
+        const resource = { hostRead: 'deployments.environments.list', input: {
+            serverId: 'mounted-home',
+            previewRepository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/repo' },
+            previewPullRequestIds: ['17'],
+        } } satisfies PluginUiHostReadReferenceV1;
+        const { native, resource: mountedResource } = await mount(request => request.url.pathname === '/v1/deployments/environments'
+            ? Response.json({ ok: true, items: [], nextCursor: null }) : undefined, () => enabled, resource, undefined, 'happier.scm.forge.github');
+        const lists = () => home!.requests.filter(request => request.path.split('?')[0] === '/v1/deployments/environments');
+        try {
+            await expect(native.api.readResource(mountedResource)).rejects.toMatchObject({ code: 'action_disabled' });
+            expect(lists()).toHaveLength(0);
+            enabled = true;
+            const content = await native.api.readResource(mountedResource);
+            expect(JSON.parse(new TextDecoder().decode(content.bytes))).toMatchObject({ items: [] });
+            expect(lists()).toHaveLength(1);
+            await expect(native.api.readResource({ ...resource, input: {
+                ...resource.input, serverId: 'foreign-home',
+            } })).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+            expect(lists()).toHaveLength(1);
+        } finally { native.dispose(); }
+    });
     it('does not admit or read the disabled managed inventory binding of an older Machine target', async () => {
         const { controller, native, lifetime } = await mount(() => undefined);
         const resource = { hostRead: 'machines.managed.list', input: { homeId: '' } } as const;

@@ -6,13 +6,13 @@ import {
 import {
     readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1, readDeploymentReceiptArtifactHeaderV1,
     readDeploymentReceiptArtifactV1,
-    readDeploymentDomainArtifactV1,
+    readDeploymentDomainArtifactV1, readDeploymentTargetLinkArtifactV1,
     projectDeploymentCancellationConsequenceV1,
 } from '@happier-dev/deployment-protocol/v1';
 import type {
     DeploymentReadTransportV1, DeploymentReadScopeV1, DeploymentReadOptionsV1, DeploymentReadResultV1,
 } from '@happier-dev/deployments';
-import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentCollectionV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/v1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -32,8 +32,19 @@ async function readArtifactsByRow<T>(artifactIds: readonly string[], read: (ids:
     return artifactIds.map(id => byId.get(id));
 }
 
+export type DeploymentTargetLinkChoiceV1 = Readonly<{
+    targetLink: DeploymentEnvironmentDetailV1['targetLinks'][number]['targetLink'];
+    title: string;
+    content: NonNullable<DeploymentEnvironmentDetailV1['targetLinks'][number]['content']>;
+}>;
+type UiDeploymentReadTransport = DeploymentReadTransportV1 & Readonly<{
+    readTargetLinks: (scope: DeploymentReadScopeV1,
+        targetLinks: readonly DeploymentTargetLinkChoiceV1['targetLink'][], options: DeploymentReadOptionsV1)
+        => Promise<DeploymentReadResultV1<readonly DeploymentTargetLinkChoiceV1[]>>;
+}>;
+
 /** The shared controller consumes the existing Action and mode-aware Account Artifact owners. */
-export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifetime): DeploymentReadTransportV1 {
+export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifetime): UiDeploymentReadTransport {
     const execute = createFrontDoorUiActionExecutor(undefined, {
         serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
     });
@@ -73,7 +84,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             || !detail.targetLinks.every(link => link.environmentId === environmentId)) return failure('invalid_response');
         return { ok: true as const, value: detail };
     };
-    return {
+    const transport = {
         listDomains: (scope, environmentId, query, options) => scoped(scope, options, async account => {
             const parsed = DeploymentDomainListResultV1Schema.safeParse(await execute('deployments.domains.list',
                 { ...home, environmentId, ...query }, { signal: options.signal }));
@@ -154,7 +165,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 const runtimeTargetLink = runtimeByEnvironment.get(environment.id) ?? null;
                 items.push({ environment, title: label.title, projectSourceName: sourceNames.get(environment.projectSourceId) ?? null,
                     ...(opened.ok ? { backupConfigured: opened.content.backup !== undefined
-                        && !('notNeeded' in opened.content.backup) } : {}),
+                        && !('notNeeded' in opened.content.backup),
+                        previewTemplateConfigured: opened.content.previewTemplate !== undefined } : {}),
                     liveVersionTitle: currentDeployment && runtimeTargetLink?.activeDeploymentId === currentDeployment.id
                         ? currentDeployment.title ?? null : null,
                     ...(page.runtimeTargetLinks === undefined ? {} : { runtimeTargetLink }),
@@ -218,5 +230,34 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 ...(receipt.cancellable === undefined ? {} : { cancellable: receipt.cancellable }),
                 ...(cancellationConsequence ? { cancellationConsequence } : {}) } };
         }),
-    };
+    } satisfies DeploymentReadTransportV1;
+    return { ...transport,
+        readTargetLinks: (scope, targetLinks, options) => scoped(scope, options, async account => {
+            if (targetLinks.length === 0) return { ok: true, value: [] };
+            const artifacts = await readArtifactsByRow(targetLinks.map(link => link.contentArtifactId),
+                ids => account.readArtifactContents(ids, { signal: options.signal }));
+            const rows: DeploymentTargetLinkChoiceV1[] = [];
+            for (const [index, targetLink] of targetLinks.entries()) {
+                const artifact = artifacts[index];
+                const opened = readDeploymentTargetLinkArtifactV1(targetLink, artifact?.status === 'fulfilled' ? artifact.value : null);
+                if (!opened.ok) return failure(opened.error);
+                rows.push({ targetLink, title: opened.title, content: opened.content });
+            }
+            return { ok: true, value: rows };
+        }),
+        async listEnvironments(scope, query, options) {
+        const { allPages, ...pageQuery } = query;
+        if (!allPages) return transport.listEnvironments(scope, pageQuery, options);
+        const items: DeploymentEnvironmentCollectionV1['items'][number][] = [];
+        let coverage: DeploymentEnvironmentCollectionV1['coverage'];
+        let cursor = pageQuery.cursor;
+        do {
+            const page = await transport.listEnvironments(scope, { ...pageQuery, cursor }, options);
+            if (!page.ok) return page;
+            items.push(...page.value.items);
+            if (page.value.coverage === 'partial') coverage = 'partial';
+            cursor = page.value.nextCursor ?? undefined;
+        } while (cursor !== undefined);
+        return { ok: true, value: { items, nextCursor: null, ...(coverage === undefined ? {} : { coverage }) } };
+    } };
 }

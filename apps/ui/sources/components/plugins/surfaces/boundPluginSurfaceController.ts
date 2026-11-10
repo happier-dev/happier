@@ -15,6 +15,7 @@ import { createPluginDeclaredResourceStore } from './PluginContextualResourceSto
 import { createPluginSurfaceHostReadStore } from './pluginSurfaceHostReadStore';
 import { createPluginDiscussionHostReadStore } from './pluginDiscussionHostRead';
 import { createPluginManagedMachineInventoryHostReadStore } from './pluginManagedMachineInventoryHostRead';
+import { createPluginDeploymentCollectionHostReadStore } from './pluginDeploymentCollectionHostRead';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { getUsageQueryResourceStore } from '@/sync/api/account/usageQueryResource';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -564,7 +565,7 @@ function isDaemonOwnedPluginSurfaceMethod(method: PluginUiHostMethodV1): boolean
     // Openable stat/read use the File opener's concrete host binding, whose own
     // target/transport reports availability independently of the plugin daemon.
     return method === 'watchLiveStream' || method === 'readStoredImage' || method === 'readResource' || method === 'watchResource'
-        || method === 'selectActionInput' || method === 'downloadFile';
+        || method === 'downloadFile';
 }
 
 export function resolveBoundPluginSurfaceContext(
@@ -1069,7 +1070,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         return !facts.machineId || canManageMachine(resolveServerScopedMachine(storage.getState(), facts.serverId, facts.machineId));
     };
     const isMethodAvailable = (method: PluginUiHostMethodV1): boolean => {
-        if ((method === 'executeAction' || method === 'admitAction' || method === 'selectActionInput'
+        if ((method === 'executeAction' || method === 'admitAction'
             || method === 'actionControl') && !canManageActions()) return false;
         return method === 'context' || method === 'openSurface' || method === 'openConnectedAccounts'
             || (isInteractionCurrent() && (((canAdmitHostReads || hasAccountResources()) && (method === 'readResource' || method === 'watchResource'))
@@ -1284,8 +1285,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         isCurrent,
     });
     let actionInputHost = createActionInputHost();
-    const createSelectActionInput = (): PluginSurfaceHostApiMethodHandler | null => daemon
-        ? (payload, options) => {
+    const createSelectActionInput = (): PluginSurfaceHostApiMethodHandler => (payload, options) => {
             const current = readActionInputFacts();
             return createPluginActionInputSelectionHostApiHandler({
                 ...(current.pluginProjectionById
@@ -1303,8 +1303,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 anchor: input.binding?.readActionInputAnchor?.(),
                 isCurrent,
             })(payload, options);
-        }
-        : null;
+        };
     const createOpenNewSessionBinding = () => accountLifetime
         ? (executeSelectedOperation: PluginSurfaceHostApiMethodHandler) => (
             createPluginOpenNewSessionHostApiHandler({
@@ -1380,6 +1379,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         ? createPluginDiscussionHostReadStore({ lifetime: accountLifetime }) : null;
     const managedMachineHostReadStore = accountLifetime && callerBinding && !isOpenableContentViewer
         ? createPluginManagedMachineInventoryHostReadStore({ lifetime: accountLifetime }) : null;
+    const deploymentCollectionHostReadStore = accountLifetime && callerBinding && !isOpenableContentViewer
+        ? createPluginDeploymentCollectionHostReadStore({ lifetime: accountLifetime }) : null;
     const hostReadResourceStore = accountLifetime && homeFamilyScope && callerBinding && hostAction.execute.prepare && !isOpenableContentViewer
         ? createPluginSurfaceHostReadStore({
             isCurrent: isInteractionCurrent,
@@ -1418,6 +1419,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                         ? discussionHostReadStore!.getEntry(reference)
                         : reference.hostRead === 'machines.managed.list'
                         ? managedMachineHostReadStore!.getEntry(reference)
+                        : reference.hostRead === 'deployments.environments.list'
+                        ? deploymentCollectionHostReadStore!.getEntry(reference)
                         : reference.hostRead === 'action.operations.get'
                         ? operationHostReadStore!.getEntry(reference) : getUsageQueryResourceStore(account).getEntry(reference);
                 } finally { account.dispose(); }
@@ -1561,7 +1564,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 get refreshOnRead() { return resourceContext?.kind === 'surface' && !declaredStore?.hasDeclaredNamespace(); },
                 ...(declaredStore ? { onDeclaredNamespaceAdmission: declaredStore.onDeclaredNamespaceAdmission } : {}),
             } } : {}),
-            selectActionInput: createSelectActionInput() ?? undefined,
+            selectActionInput: createSelectActionInput(),
             createOpenNewSession: createOpenNewSessionBinding() ?? undefined,
             ...(accountLifetime ? { openAutomationEvent: createPluginOpenAutomationEventHostApiHandler({
                 accountLifetime, lifetimeSignal: mountLifetime.signal, isCurrent,
@@ -1706,6 +1709,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         resourceStore?.dispose();
         discussionHostReadStore?.dispose();
         managedMachineHostReadStore?.dispose();
+        deploymentCollectionHostReadStore?.dispose();
         operationHostReadStore?.dispose();
         resourceInvalidationListeners.clear();
     };
