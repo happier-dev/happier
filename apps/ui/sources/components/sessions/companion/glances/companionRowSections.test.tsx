@@ -150,14 +150,11 @@ beforeEach(() => {
 });
 
 describe('Companion Running section header', () => {
-  it('counts every running item by kind, says nothing for a kind with none, and draws nothing when idle', async () => {
+  it('counts running agents in the header and leaves services to their own row', async () => {
     const { formatRunningSectionCount } = await import('./glanceModels');
-    expect(formatRunningSectionCount({ agents: 2, services: 2 })).toBe(
-      'sessionCompanion.sections.agentsCount(count=2) · sessionCompanion.sections.servicesCount(count=2)',
-    );
-    expect(formatRunningSectionCount({ agents: 5, services: 0 })).toBe('sessionCompanion.sections.agentsCount(count=5)');
-    expect(formatRunningSectionCount({ agents: 0, services: 1 })).toBe('sessionCompanion.sections.servicesCount(count=1)');
-    expect(formatRunningSectionCount({ agents: 0, services: 0 })).toBeNull();
+    // Services carry their count in their own row (the way into the Services pane); the header never repeats it.
+    expect(formatRunningSectionCount({ agents: 2 })).toBe('sessionCompanion.sections.agentsCount(count=2)');
+    expect(formatRunningSectionCount({ agents: 0 })).toBeNull();
   });
 });
 

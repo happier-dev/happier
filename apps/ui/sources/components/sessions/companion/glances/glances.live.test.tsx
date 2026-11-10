@@ -184,7 +184,7 @@ function homeServicesFixture(descriptor = readWidgetDescriptor(null, homeService
 }
 
 describe('Companion glance consumed owners', () => {
-    it('reads Running services from pushed summary without acquiring service feeds, and opens details on demand', async () => {
+    it('keeps the services row as the count and the way into the pane, puts no services count in the header, and reads no feed', async () => {
         const { RunningGlance } = await import('./RunningGlance');
         const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now(),
             daemonState: { localServices: { v: 1, state: 'ready', runningCount: 2 } } });
@@ -198,6 +198,8 @@ describe('Companion glance consumed owners', () => {
             RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
         ].includes(request.method));
         expect(serviceRequests()).toHaveLength(0);
+        // Services are the only running kind: their row says the count once; the header repeats nothing.
+        expect(screen.findByTestId('running.meta')).toBeNull();
         const services = screen.findByTestId('running.services');
         expect(services).not.toBeNull();
         await act(async () => { services!.props.onPress(); });

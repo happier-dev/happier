@@ -132,7 +132,6 @@ function RunningLiveGlance(props: RunningGlanceProps) {
       title={t('sessionCompanion.sections.running')}
       meta={formatRunningSectionCount({
         agents: rows.agents.length + rows.moreAgents,
-        services: runningServiceCount ?? 0,
       })}
       menu={props.menu}
       body={{

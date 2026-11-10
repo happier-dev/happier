@@ -171,13 +171,13 @@ export function resolveRunningSectionRows(input: Readonly<{
     };
 }
 
-/** The Running section's header count (lab crows B, "2 agents · 2 services"): every running item by kind, not only the rows drawn. */
-export function formatRunningSectionCount(counts: Readonly<{ agents: number; services: number }>): string | null {
-    const parts = [
-        ...(counts.agents > 0 ? [t('sessionCompanion.sections.agentsCount', { count: counts.agents })] : []),
-        ...(counts.services > 0 ? [t('sessionCompanion.sections.servicesCount', { count: counts.services })] : []),
-    ];
-    return parts.length > 0 ? parts.join(' · ') : null;
+/**
+ * The Running section's header count (lab crows B): every running agent, not only the rows drawn. Services
+ * say their count in their own row, which is also the way into the Services pane, so the header never
+ * repeats it (lead ruling 2026-11-10).
+ */
+export function formatRunningSectionCount(counts: Readonly<{ agents: number }>): string | null {
+    return counts.agents > 0 ? t('sessionCompanion.sections.agentsCount', { count: counts.agents }) : null;
 }
 
 /** Links: the repository's page, read from `origin` first, else the first remote that has one. */
