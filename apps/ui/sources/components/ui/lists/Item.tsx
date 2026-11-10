@@ -113,6 +113,8 @@ type ItemTextEllipsizeMode = NonNullable<TextProps['ellipsizeMode']>;
 
 export interface ItemProps {
     testID?: string;
+    /** A decorative layer beneath the row's content and independent controls. */
+    underlay?: React.ReactNode;
     /** Native/web metadata on the primary row host, never on secondary controls. */
     /** RN Web metadata; native ViewProps intentionally omit this web-only carrier. */
     dataSet?: Readonly<Record<string, unknown>>;
@@ -769,6 +771,7 @@ export const Item = React.memo<ItemProps>((props) => {
     
     const {
         testID,
+        underlay,
         dataSet,
         pressableRef,
         titleRef,
@@ -1946,6 +1949,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const content = React.useMemo(() => (
         <>
             <View style={[containerCore, containerPadding, style]} onLayout={measuresRowWidth ? handleRowLayout : undefined}>
+                {underlay}
                 {renderRowContent()}
             </View>
 
@@ -1962,6 +1966,7 @@ export const Item = React.memo<ItemProps>((props) => {
         measuresRowWidth,
         renderRowContent,
         style,
+        underlay,
     ]);
     const splitRightElementOutsidePressable = Boolean(
         isInteractive
@@ -2073,6 +2078,7 @@ export const Item = React.memo<ItemProps>((props) => {
         return (
             <>
                 <View style={[containerCore, style, resolveInteractiveRowStyle(isSplitPrimaryPressed, isSplitPrimaryFocused)]} onLayout={measuresRowWidth ? handleRowLayout : undefined}>
+                    {underlay}
                     {withOutsideLeading(<ListOptionPressable
                         readsListOptionSetSize={readsListOptionSetSize}
                         readsListOptionPosition={readsListOptionPosition}

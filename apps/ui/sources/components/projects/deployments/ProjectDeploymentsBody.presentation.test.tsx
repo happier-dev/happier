@@ -37,6 +37,38 @@ function Page(props: Readonly<{ controller: ReturnType<typeof createDeploymentRe
 }
 
 describe('Environment detail in a split pane', () => {
+    it.each(['outcome_unknown', 'running_unverified', 'failed'] as const)('uses the shared needs-you treatment for a troubled Environment (%s), and removes it when the receipt recovers', async (trouble) => {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const previousLocalSettings = storage.getState().localSettings;
+        storage.getState().applyLocalSettings({ sessionListNeedsYouHighlight: 'accent' });
+        const detail = createDeploymentEnvironmentDetailV1();
+        const receipt = createDeploymentReceiptDetailV1();
+        let state: typeof receipt.deployment.state = trouble;
+        const transport: DeploymentReadTransportV1 = {
+            listEnvironments: async () => ({ ok: true, value: { items: [{ environment: detail.environment, title: 'Staging',
+                currentDeployment: { ...receipt.deployment, state } }], nextCursor: null } }),
+            readEnvironment: async () => ({ ok: true, value: detail }),
+            readReceipt: async () => ({ ok: true, value: receipt }),
+            listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        };
+        const scope = { serverId: 'home', accountId: 'account-owner', projectSourceId: 'source-app' };
+        const controller = createDeploymentReadControllerV1({ scope, transport });
+        const demand = { mounted: true, visible: true, focused: true };
+        const screen = await renderScreen(<AccountNoticeInvestigationBoundary><ProjectDeploymentsView controller={controller}
+            demand={demand} lifetime={null} serverId={scope.serverId} accountId={scope.accountId} sourceId={scope.projectSourceId} />
+        </AccountNoticeInvestigationBoundary>);
+        try {
+            const highlight = `project-deployments.rail.row.${detail.environment.id}:needs-you:accent`;
+            expect(screen.findByTestId(highlight)).not.toBeNull();
+            state = 'succeeded';
+            await act(async () => { await controller.refreshDemanded(); });
+            expect(screen.findByTestId(highlight)).toBeNull();
+        } finally {
+            await screen.unmount(); controller.retire();
+            storage.setState({ localSettings: previousLocalSettings });
+        }
+    });
+
     it.each([[true, 1], [false, 0]] as const)('reads the selected Environment while its pane is visible (%s) even when another pane has focus', async (visible, reads) => {
         const detail = createDeploymentEnvironmentDetailV1();
         const receipt = createDeploymentReceiptDetailV1();
