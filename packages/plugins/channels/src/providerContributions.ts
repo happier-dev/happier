@@ -59,6 +59,14 @@ async function readCurrentProviderSnapshot(
   }
 }
 
+/** Public provider presentation, not a connection selection or a delivery grant. */
+export async function readCurrentConversationProviderDisplayName(context: ProviderContributionReadContext, pluginId: string): Promise<string | null> {
+  const snapshot = await readCurrentProviderSnapshot(context);
+  const contribution = snapshot.contributions.find(entry => hasCurrentPointProtocol(entry, CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_REF_V1)
+    && entry.contributor.pluginId === pluginId);
+  return contribution?.descriptor?.displayName?.trim() || null;
+}
+
 /**
  * Resolves the exact stable contributor chosen by the caller through current
  * admission, including same-ID reload/source replacement. No plugin-wide

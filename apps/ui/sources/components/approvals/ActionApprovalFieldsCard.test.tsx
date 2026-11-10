@@ -25,6 +25,7 @@ import { resetMcpServerCatalogEngineForTests } from '@/sync/engine/settings/mcpS
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentReviewConflictFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { presentApprovalFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
+import { DiscussionReplyDestinationResultV1Schema } from '@happier-dev/channels-protocol/v1';
 
 it('renders settled failure facts and recovery in the shared disclosure in both approval anatomies', async () => {
     const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict',
@@ -93,6 +94,37 @@ it('keeps an unreadable reply destination visible in both approval anatomies wit
         expect(text).toContain('Ready for review.');
         expect(text).not.toContain('opaque-discussion');
         expect(text).not.toContain('opaque-message');
+        await screen.unmount();
+    }
+});
+
+it('renders another Account’s shared Discussion reply destination in both approval anatomies', async () => {
+    // Channels' owner suite exercises cross-Account resolution. This consumer test
+    // reads its public result through the real Protocol presenter and both UI anatomies.
+    const destination = DiscussionReplyDestinationResultV1Schema.parse({ kind: 'channel',
+        connectionName: 'Owner name · Email', conversationName: 'External title' });
+    if (destination.kind !== 'channel') throw new Error('Expected a Channel destination');
+    const discussionId = 'shared-discussion-routing-id';
+    const messageId = 'shared-message-routing-id';
+    const actionArgs = getActionSpec('discussion.reply').inputSchema.parse({
+        discussionId, replyTarget: { kind: 'message', messageId },
+        content: { v: 1, parts: [{ t: 'text', text: 'Ready for the external conversation.' }] },
+    });
+    const presentation = describeApprovalActionFields({ actionId: 'discussion.reply', actionArgs,
+        context: { discussionReplyDestination: { discussionId,
+            messageId, connectionName: destination.connectionName,
+            conversationName: destination.conversationName } } });
+    for (const anatomy of ['page', 'card'] as const) {
+        const screen = await renderScreen(<ActionApprovalFieldsCard anatomy={anatomy} presentation={presentation} />);
+        const text = screen.getTextContent();
+        for (const value of ['Connection', 'Owner name · Email', 'Conversation', 'External title', 'Ready for the external conversation.']) {
+            expect(text).toContain(value);
+        }
+        for (const id of [discussionId, messageId]) expect(text).not.toContain(id);
+        const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
+        expect(details).toBeTruthy();
+        await act(async () => { details?.props.onExpandedChange(true); });
+        expect(screen.getTextContent()).toContain(discussionId);
         await screen.unmount();
     }
 });

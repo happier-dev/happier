@@ -4903,6 +4903,17 @@ discarding those message variants.
 There is no second Discussion writer, delivery pipe or message archive. Source
 composition tests are separate from the QA-owned live connection journey.
 
+Discussion posting access also permits an outward reply through another
+participant's Channel when replying to that Channel's imported thread (owner
+ruling, 2026-11-10). View-only access gains no posting authority. The Channels
+destination reader distinguishes presentation from routing: the server keeps
+foreign message local IDs private, so shared approval presentation follows
+readable sealed `externalSource` provenance and uses the imported author's public
+Account profile and admitted integration descriptor where available. It does not
+read the other Account's bindings or connection names. Own-Account presentation
+retains the exact binding/connection reader. Both page and inline approval cards
+consume the same destination result; neither projection grants send authority.
+
 In unreleased 0.3 source, `actions.getCurrentExecutionRouting()` reads the
 invoking plugin's own current Home/Machine/plugin routing through that same
 caller-origin owner. It returns null when current origin evidence is unavailable;
@@ -9782,6 +9793,14 @@ resource facts. Unavailable observations retain their last admitted facts and
 timestamp; missing captures do not invent them. Lists carry only the configuration's port projection; detail retains the full
 redacted structure for every Compose service, including services without a
 healthcheck. Detail accounting uses the same explicit native reader as the list.
+In 0.3 development source, Compose samples also carry optional nullable
+`networkReceivedBytes`, `networkSentBytes` and `restartCount` per immutable
+container ID. Network values are Docker CLI humanized lifetime totals decoded
+to bytes, not rates or exact raw-byte measurements; restarts come from the
+existing native observation for that ID. Missing values stay unknown and a
+replacement invalidates the pending sample. Machine → Services → Usage and
+`machines.services.detail` expose the same sample. Opening detail or choosing
+Measure again requests it; this extension adds no background sampling.
 A person's log page carries `secretMasking: 'incomplete'` when masking custody
 is unavailable until redeploy; that notice is metadata, never a synthetic log
 line. The existing automation refusal remains unchanged.

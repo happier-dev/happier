@@ -53,7 +53,7 @@ export { CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1, ProtocolCurrentUiContextSnap
 export { TRANSCRIPT_ANNOTATION_ATTACHMENT_IDENTITY_V1, ProtocolTranscriptAnnotationV1Schema, buildTranscriptAnnotationPresentationV1 } from './transcriptAnnotation.js';
 export type { TranscriptAnnotationV1 } from './transcriptAnnotation.js';
 /** Canonical Discussion content projection for human reads and previews. */
-export { readDiscussionMessagePartsV1 } from './discussionContent.js';
+export { readDiscussionMessagePartsV1, resolveAccountDisplayLabelV1 } from './discussionContent.js';
 export type { DiscussionMessageContentV1, DiscussionMessagePartV1 } from './discussionContent.js';
 /**
  * The canonical executable parser for a complete Composer reference

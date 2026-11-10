@@ -145,6 +145,11 @@ supported result-delivery setting. Files cannot be sent back through Channels.
 In unreleased 0.3 source, a Discussion reply approval shows the Channel connection
 and external conversation by name alongside the reply. An unreadable destination
 appears as unavailable; technical routing identifiers stay in Technical details.
+Participants who can post in a shared Discussion can also reply to its imported
+threads through the Channel owner's connection. Their approvals use the readable
+external conversation title and publicly available owner and integration names;
+the owner's private connection records and credentials remain private. View-only
+participants cannot post replies.
 New imported messages show the binding's readable conversation name in **Via**.
 Existing messages retain their stored attribution, including earlier UUID labels;
 0.3 does not migrate that attribution.
