@@ -207,6 +207,15 @@ test('admission uses jobs cgroup headroom rather than host memory', { skip: proc
   const { requestAdmissionSample } = await import('./admission_client.mjs');
   const cgroup = `/sys/fs/cgroup/user.slice/user-${process.getuid()}.slice/user@${process.getuid()}.service/happier.slice/happier-jobs.slice`;
   const cases = [
+    // nl1 /proc/meminfo + jobs memory.{high,max,current,stat}, 2026-11-10 16:02:58Z.
+    // Continuation 3: charged inactive file cache is reclaimable, not job working set.
+    { name: 'nl1 reclaimable cache does not consume admission headroom',
+      meminfo: 'MemTotal: 131348608 kB\nMemAvailable: 65598876 kB\nMemFree: 8165464 kB\nCached: 36107036 kB\nSReclaimable: 16705680 kB\n',
+      high: '107600777216', max: 'max', current: '88252342272',
+      stat: 'inactive_file 28026961920\nactive_file 1158443008\nslab_reclaimable 4788865112\n',
+      total: 105078884, available: 46265036 },
+    { name: 'reclaimable cache remains capped by host MemAvailable', high: '2048000', max: 'max', current: '1638400', stat: 'inactive_file 819200\n', total: 1000, available: 900 },
+    { name: 'cache cannot enlarge cgroup capacity', high: '614400', max: 'max', current: '102400', stat: 'inactive_file 204800\n', total: 600, available: 600 },
     { name: 'memory.high below host', high: '614400', max: '819200', current: '409600', total: 600, available: 200 },
     { name: 'memory.max below high', high: '819200', max: '614400', current: '409600', total: 600, available: 200 },
     { name: 'host availability below cgroup headroom', high: '2048000', max: 'max', current: '0', total: 1000, available: 900 },
@@ -220,8 +229,9 @@ test('admission uses jobs cgroup headroom rather than host memory', { skip: proc
   for (const scenario of cases) await t.test(scenario.name, async t => {
     const readFile = fs.readFileSync;
     t.mock.method(fs, 'readFileSync', (path, ...args) => {
-      if (path === '/proc/meminfo') return 'MemTotal: 1000 kB\nMemAvailable: 900 kB\n';
+      if (path === '/proc/meminfo') return scenario.meminfo ?? 'MemTotal: 1000 kB\nMemAvailable: 900 kB\n';
       if (String(path).startsWith(`${cgroup}/`)) {
+        if (String(path).endsWith('/memory.stat')) return scenario.stat ?? 'inactive_file 0\n';
         const value = scenario[String(path).slice(`${cgroup}/memory.`.length)];
         if (value !== undefined) return `${value}\n`;
         throw Object.assign(new Error('No cgroup file'), { code: 'ENOENT' });

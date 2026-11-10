@@ -24,6 +24,13 @@ export function readLinuxAdmissionMemory({ waitingResidentMemoryKiB = 0 } = {}) 
   // A finite limit requires its usage observation; never fall back to the host
   // when that observation is unavailable.
   const current = Number(readFileSync(`${cgroup}/memory.current`, 'utf8').trim());
+  // memory.current includes the slice's page cache. The kernel can reclaim
+  // inactive file pages before charging new work against memory.high/max;
+  // counting them as working set discarded nl1's 26 GiB of reclaimable cache.
+  // Keep the existing slice boundary and the host MemAvailable estimate.
+  const stat = readFileSync(`${cgroup}/memory.stat`, 'utf8');
+  const inactiveFile = Number(/^inactive_file\s+(\d+)/m.exec(stat)?.[1]);
+  const workingSet = Math.max(0, current - inactiveFile);
   return { totalMemoryKiB: Math.min(totalMemoryKiB, Math.floor(limit / 1024)),
-    availableMemoryKiB: Math.min(availableMemoryKiB, Math.max(0, Math.floor((limit - current) / 1024))) };
+    availableMemoryKiB: Math.min(availableMemoryKiB, Math.max(0, Math.floor((limit - workingSet) / 1024))) };
 }
