@@ -75,7 +75,7 @@ const SshContext = z.object({ user: Name, host: z.string().min(1).refine(value =
         .refine(value => Object.keys(value).length > 0).optional(),
 }).strict();
 export const MachineRecipeFileProbeV1Schema = z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('sshd'), contexts: z.array(SshContext).min(1) }).strict(),
+    z.object({ kind: z.literal('sshd'), contexts: z.array(SshContext).min(1), publicHostKeyEvidence: z.literal(true).optional() }).strict(),
     z.object({ kind: z.literal('docker') }).strict(),
     z.object({ kind: z.literal('caddy') }).strict(),
     z.object({ kind: z.literal('nft') }).strict(),

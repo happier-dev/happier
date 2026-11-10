@@ -22,7 +22,7 @@ Match User {username}
 Match all
 `, { username: input('username'), chrootPath: input('chrootPath') });
 const administrator = { user: input('administrator.username'), host: input('administrator.host'), address: input('administrator.address') };
-const probe = { kind: 'sshd' as const, contexts: [
+const probe = { kind: 'sshd' as const, publicHostKeyEvidence: true as const, contexts: [
   { user: input('username'), host: input('connection.host'), address: input('connection.address'), expected: {
     chrootdirectory: input('chrootPath'), forcecommand: 'internal-sftp', authenticationmethods: 'publickey', pubkeyauthentication: 'yes',
     passwordauthentication: 'no', kbdinteractiveauthentication: 'no', disableforwarding: 'yes', permittty: 'no',
@@ -55,6 +55,10 @@ export const BACKUP_RECEIVER_RECIPE = {
   inputSchema: { type: 'object', properties: {
     username: { type: 'string', pattern: '^(?!(?:root|happier|happier-agent|nobody|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|www-data|backup|list|irc|gnats|sshd|_sshd|messagebus|polkitd|sudo|docker|adm|wheel|shadow|disk|staff|users|nogroup)$)(?!systemd-)[a-z_][a-z0-9_-]*$(?![\\s\\S])' },
     chrootPath: path, repositoryPath: path, senderPublicKey: publicKey, previousSenderPublicKey: publicKey,
+    endpoint: { type: 'object', properties: {
+      host: { type: 'string', minLength: 1, pattern: '^[^\\s\\[\\]\\/\\\\,@]+$' },
+      port: { type: 'integer', minimum: 1, maximum: 65535 },
+    }, required: ['host', 'port'], additionalProperties: false },
     connection,
     administrator: { ...connection, properties: { ...connection.properties, username: {
       type: 'string', pattern: '^[a-zA-Z_][a-zA-Z0-9_.-]*[$]?$(?![\\s\\S])' },

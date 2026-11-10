@@ -236,8 +236,10 @@ export function createMachineSetupNativeBackend(options: Readonly<{
             || step.content?.kind === 'iniKeys' || state.digest === step.expectedContentDigest;
         if (!known) return { stepId: step.id, status: 'unavailable', reason: 'foreign_effect_conflict', facts: facts(state) };
         const matched = state.kind === 'file' && state.digest === hash(bytes) && state.uid === owner.uid && state.gid === owner.gid && state.mode === step.mode;
-        if (matched && step.probe?.kind === 'sshd' && !await probeNativeSshFile(step.probe, run)) {
-            return { stepId: step.id, status: 'drifted', facts: facts(state) };
+        if (matched && step.probe?.kind === 'sshd') {
+            const observed = await probeNativeSshFile(step.probe, run);
+            return { stepId: step.id, status: observed.satisfied ? 'satisfied' : 'drifted',
+                facts: { ...facts(state), ...(observed.hostKeyEvidence ? { sshHostKeyEvidence: observed.hostKeyEvidence } : {}) } };
         }
         if (matched && (step.probe?.kind === 'fail2ban' || step.probe?.kind === 'audit')) {
             const observed = await observeNativeFileProbe(step.id, step.probe, run);

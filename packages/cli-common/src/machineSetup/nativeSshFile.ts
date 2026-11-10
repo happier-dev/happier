@@ -3,6 +3,8 @@ import { dirname, isAbsolute, join, matchesGlob, resolve } from 'node:path';
 import { MachineSetupEffectError, type MachineRecipeStepV1 } from './index.js';
 import { isMissingNativeFile } from './nativeFileSafety.js';
 import type { NativeRun } from './nativeSystemBackend.js';
+import type { MachineSetupSshHostKeyEvidenceV1 } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
+import { parseSshKnownHostLine } from '../systemTasks/kinds/sshKnownHostLine.js';
 
 type FileStep = Extract<MachineRecipeStepV1, { kind: 'file' }>;
 export type NativeSshProbe = Extract<NonNullable<FileStep['probe']>, { kind: 'sshd' }>;
@@ -136,12 +138,33 @@ export async function validateNativeSshFile(input: Readonly<{
     } finally { await rm(staging, { recursive: true, force: true }); }
 }
 
-export async function probeNativeSshFile(probe: NativeSshProbe, run: NativeRun, options: Readonly<{ mainPath?: string }> = {}): Promise<boolean> {
+export async function probeNativeSshFile(probe: NativeSshProbe, run: NativeRun, options: Readonly<{ mainPath?: string }> = {}):
+    Promise<Readonly<{ satisfied: boolean; hostKeyEvidence?: MachineSetupSshHostKeyEvidenceV1 }>> {
     const mainPath = options.mainPath ?? mainConfiguration;
     await ssh(run, ['-t', '-f', mainPath]);
+    let configuration: string | undefined;
     for (const context of probe.contexts) {
         const output = await effective(run, mainPath, context);
-        if (context.expected !== undefined && !satisfies(output, context.expected)) return false;
+        configuration ??= output;
+        if (context.expected !== undefined && !satisfies(output, context.expected)) return { satisfied: false };
     }
-    return true;
+    if (!probe.publicHostKeyEvidence) return { satisfied: true };
+    const paths = (configuration ?? '').split(/\r?\n/u).flatMap(line => {
+        const match = /^hostkey (\/[^\r\n]+)$/u.exec(line.trim());
+        return match ? [match[1]!] : [];
+    });
+    let invalid = false;
+    for (const path of paths) {
+        let publicKey: string;
+        // The native SSH validator owns key sanity. Read only its public sibling.
+        try { publicKey = await readFile(`${path}.pub`, 'utf8'); }
+        catch { continue; }
+        const match = /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)) ([A-Za-z0-9+/]+={0,2})(?: [^\r\n]*)?$/u.exec(publicKey.trim());
+        if (!match) { invalid = true; continue; }
+        const parsed = parseSshKnownHostLine(`receiver ${match[1]} ${match[2]}`);
+        if (!parsed) { invalid = true; continue; }
+        return { satisfied: true, hostKeyEvidence: { status: 'ready',
+            publicKey: `${parsed.keyType} ${parsed.key}`, fingerprint: parsed.fingerprint } };
+    }
+    return { satisfied: true, hostKeyEvidence: { status: 'unavailable', reason: invalid ? 'host_key_invalid' : 'host_key_unreadable' } };
 }

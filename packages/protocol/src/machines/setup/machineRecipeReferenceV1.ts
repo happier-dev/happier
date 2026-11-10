@@ -17,3 +17,8 @@ export type MachineRecipeReferenceV1 = z.infer<typeof MachineRecipeReferenceV1Sc
 export const DOCKER_ENGINE_RECIPE_REF_V1 = Object.freeze({
     pluginId: 'happier.machine.recipes', recipeId: 'docker-engine', revision: '1',
 } as const) satisfies MachineRecipeReferenceV1;
+
+/** Shared receiver selection for native setup and the deployment configure composition. */
+export const BACKUP_RECEIVER_RECIPE_REF_V1 = Object.freeze({
+    pluginId: 'happier.machine.recipes', recipeId: 'backup-receiver', revision: '1',
+} as const) satisfies MachineRecipeReferenceV1;

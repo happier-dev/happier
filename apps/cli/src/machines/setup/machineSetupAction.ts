@@ -1,7 +1,8 @@
 import { homedir } from 'node:os';
 import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema, MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { MachineSetupNativeSshHostKeyV1 } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
 import type { MachineSetupApplyTargetV1, MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -21,6 +22,7 @@ import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/
 import { createProjectNativeInvocationCustody, type ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import { applyMachineSetup, removeMachineSetup, prepareMachineSetupStages } from './applyMachineSetup';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
+import { projectBackupReceiverPlanResults } from './backupReceiverResult';
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 import { prepareMachineSetupPlanV1 } from './prepareMachineSetupPlan';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
@@ -153,6 +155,11 @@ export function createMachineSetupPlanAction(params: Readonly<{
     } finally { await recipeLease?.release(); }
     if ((signal ?? context.signal)?.aborted) return fail('cancelled');
     if ('errorCode' in result) return result;
+    if (params.installation && result.recipePlans) {
+      const backupReceivers = projectBackupReceiverPlanResults({ machineId: params.machineId,
+        installationId: params.installation.installationId, entries: result.recipePlans });
+      if (backupReceivers.length) result = { ...result, backupReceivers };
+    }
     return prepareMachineSetupApps(input, result, { ...context, ...(signal ? { signal } : {}) }, {
       ...params.appPreparation, ...(params.installation ? { installationId: params.installation.installationId } : {}),
     });
@@ -217,6 +224,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         (await import('@/plugins/runtime/reload/runtimeLease')).acquireAuthoritativePluginRuntimeRegistryLease)();
       let reportedRunning = false;
       let nativeStarted = false;
+      let receiverHostKeys: readonly MachineSetupNativeSshHostKeyV1[] = [];
       const report = async (state: 'running' | 'succeeded' | 'failed', errorCode?: string) => {
         if (!creation) return;
         await request('/v1/machines/setup/report', MachineSetupReportInputV1Schema.parse({ homeId: input.homeId, machineId: input.machineId,
@@ -367,6 +375,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           ...(elevation ? { elevation } : {}), operation, signal: cancellationSignal, terminalSessions,
           settleNative: () => custody.release(),
           onSetupApplied: (plans, result) => {
+            receiverHostKeys = result.sshHostKeys ?? [];
             if (!result.initialPresence) return;
             const firstPresence = result.initialPresence;
             const nativeSourceFacts = observeInitialPresence(sources, input.recipePlans.map(entry => ({ ...entry,
@@ -430,6 +439,14 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           }
         }
         if (reportedRunning) await report(result.ok ? 'succeeded' : 'failed', result.ok ? undefined : result.errorCode);
+        if (result.ok && mode === 'apply') {
+          const backupReceivers = projectBackupReceiverPlanResults({ machineId: params.machineId,
+            installationId: params.installation.installationId, entries: input.recipePlans,
+            nativeHostKeys: receiverHostKeys, planIndexOffset: planned.removalPlans?.length ?? 0 });
+          if (backupReceivers.length) return { ok: true, result: {
+            ...MachineSetupApplyResultV1Schema.parse(result.result), backupReceivers,
+          } };
+        }
         return result;
       } catch (error) {
         // Capture release waits on physical native process settlement, even

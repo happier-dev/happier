@@ -23,15 +23,19 @@ import { DurableWorkflowCoordinatorStore } from '@/daemon/workflows/production';
 import { workflowInvocationKey } from '@/daemon/workflows/coordinator';
 import type { WorkflowJsonValue } from '@/daemon/workflows/input';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
+import { BACKUP_RECEIVER_RECIPE_REF_V1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
 import { buildMachineSetupWorkflow, createCombinedMachineSetupActionDeps } from './composeMachineSetup';
 
 // The opaque Home storage boundary is faked; Run admission, content opening,
 // invocation paging and setup composition all use their real owners.
-async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'running', errorCode: string, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string, waitError?: Error | ActionExecuteFailure, pendingNative = false, failureCause?: ActionFailureCauseV1) {
+async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'running', errorCode: string, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string, waitError?: Error | ActionExecuteFailure, pendingNative = false, failureCause?: ActionFailureCauseV1, receiver = false) {
   const accountId = 'actor', machineId = 'guest', rootId = 'setup-root';
+  const selection = { ref: BACKUP_RECEIVER_RECIPE_REF_V1, inputs: {} };
+  const receiverPlan = createMachineSetupEffectPlan({ basis: { kind: 'setup', machineId, desiredRevision: 0, selection }, steps: [], nativeFacts: [] });
   const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId, targets: [{
-    homeId: 'home', machineId, desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }],
-    exclusions: [], recipePlans: [],
+    homeId: 'home', machineId, desiredRevision: 0, sources: [{ kind: 'direct', setup: receiver ? { items: [{ kind: 'setupRecipe', selection }] } : {} }],
+    exclusions: [], recipePlans: receiver ? [{ sourceIndex: 0, itemIndex: 0, plan: receiverPlan }] : [],
   }] });
   const runId = deriveWorkflowReplacementId(['machines.setup.apply', input.homeId, accountId, 'setup-request']);
   const definition = buildMachineSetupWorkflow(input);
@@ -105,6 +109,24 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
 }
 
 describe('Combined Machine setup child settlement', () => {
+  it('retains settled receiver evidence through the completed native child and root setup result', async () => {
+    const backupReceivers = [{ sourceIndex: 0, itemIndex: 0, machineId: 'guest', installationId: 'receiver-installation',
+      status: 'ready', endpoint: { host: 'receiver.example', port: 2205 }, username: 'archive', path: '/repository',
+      hostKey: '[receiver.example]:2205 ssh-ed25519 AAAA', fingerprint: 'SHA256:fixture' }];
+    const fixture = await retainedSetup('succeeded', 'completed', { operationId: 'child-operation', backupReceivers },
+      undefined, undefined, false, undefined, true);
+    expect(await fixture.apply()).toMatchObject({ operationId: 'setup-operation', runId: fixture.runId, backupReceivers });
+  });
+
+  it.each(['failed', 'running', 'cancelled'] as const)('retains root recovery links alongside native details for a %s receiver setup', async state => {
+    const details = { operationId: 'native-operation', stepId: 'receiver-policy' };
+    const fixture = await retainedSetup(state, 'native_effect_failed', details, undefined,
+      state === 'running' ? new Error('observer unavailable') : undefined, false, undefined, true);
+    expect(await fixture.apply()).toMatchObject({ ok: false, details: {
+      setupOperation: { operationId: 'setup-operation', runId: fixture.runId },
+      ...(state === 'failed' ? details : {}),
+    } });
+  });
   it.each<{ errorCode: string; details: Record<string, WorkflowJsonValue> }>([
     { errorCode: 'native_effect_failed', details: { kind: 'machineSetup',
       failure: { kind: 'native_effect_failed', reason: 'native_effect_failed' } } },

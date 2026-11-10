@@ -18,9 +18,12 @@ export const ManagedPrerequisiteV1Schema = lazyDefinition(() => z.strictObject({
   reason: z.optional(id()),
   repairAction: z.optional(z.strictObject({ action: asProtocolZod(PluginContributionIdentityV1Schema), input: PluginJsonValueV2Schema })),
 }));
-/** Omitted measurements remain unknown; these are observed headroom, not quotas. */
+/** Observed host resources, not quotas. Omitted facts remain unknown. */
 export const ManagedLocalResourceFactsV1Schema = lazyDefinition(() => z.strictObject({
   observedAt: instant(),
+  /** Host topology and running guest allocations; neither describes idle CPU. */
+  totalCpuCores: z.optional(z.int().check(z.gte(0))),
+  allocatedCpuCores: z.optional(z.int().check(z.gte(0))),
   availableCpuCores: z.optional(z.number().check(z.gte(0))),
   availableMemoryBytes: z.optional(z.int().check(z.gte(0))),
   availableDiskBytes: z.optional(z.int().check(z.gte(0))),
@@ -30,6 +33,15 @@ export const ProviderPriceV1Schema = lazyDefinition(() => z.strictObject({
   amount: z.string().check(z.regex(/^-?[0-9]+(?:\.[0-9]+)?$/)),
   currency: id(), unit: id(), source: id(), observedAt: instant(),
 }));
+export const MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1 = ['cpuCores', 'memoryBytes', 'diskBytes'] as const;
+export type MachineProvisionerSizeDimensionV1 = typeof MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1[number];
+/** Physical dimensions shared by creation disclosure, resize and native observation. */
+export const MachineProvisionerSizeV1Schema = lazyDefinition(() => z.strictObject({
+  cpuCores: z.optional(z.number().check(z.gt(0))),
+  memoryBytes: z.optional(z.int().check(z.gt(0))),
+  diskBytes: z.optional(z.int().check(z.gt(0))),
+}).check(z.refine(value => MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1.some(dimension => value[dimension] !== undefined))));
+export type MachineProvisionerSizeV1 = z.infer<typeof MachineProvisionerSizeV1Schema>;
 /** Labelled native choices are disclosure, not executable selectors or measured headroom. */
 export const ProviderNativeOptionFactsV1Schema = lazyDefinition(() => z.strictObject({
   size: z.optional(z.strictObject({
@@ -123,6 +135,7 @@ export const ProviderObservationV1Schema = lazyDefinition(() => z.strictObject({
   storage: z.optional(z.enum(['retained', 'lost', 'unknown'])),
   billing: z.optional(BillingCapabilitiesV1Schema),
   prices: z.optional(z.array(ProviderPriceV1Schema)),
+  size: z.optional(MachineProvisionerSizeV1Schema),
   nativeExpiry: z.optional(instant()),
   deletionNotices: z.optional(z.array(ProviderDeletionNoticeV1Schema)),
   reason: z.optional(id()),
@@ -183,7 +196,7 @@ const nativeRejectedFields = ['name', 'location', 'server_type', 'start_after_cr
   'ssh_keys', 'volumes', 'networks', 'firewalls', 'user_data', 'labels', 'automount', 'public_net'] as const;
 export const MachineProvisionerNativeCauseV1Schema = lazyDefinition(() => z.union([
   z.strictObject({ localCause: z.literal('ssh_keyscan_failed'), resultClass: z.enum(['empty', 'invalid', 'command_failed', 'spawn_failed']) }),
-  z.strictObject({ localCause: z.literal('native_command_failed'), command: z.enum(['start', 'restart', 'stop', 'create', 'run', 'up']),
+  z.strictObject({ localCause: z.literal('native_command_failed'), command: z.enum(['start', 'restart', 'stop', 'create', 'run', 'up', 'edit', 'update']),
     exitCode: z.nullable(z.int()),
     stderr: z.optional(z.string().check(z.minLength(1), z.maxLength(MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1))),
     stderrTruncated: z.optional(z.literal(true)),

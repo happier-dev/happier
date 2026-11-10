@@ -1,10 +1,12 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolveMachineRecipeStepInputsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { BACKUP_RECEIVER_RECIPE } from '../../../plugins/machine-recipes/src/backupReceiver.js';
-import { runMachineSetupNativeCommand } from './nativeBackend.js';
+import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan } from './index.js';
+import { MachineEffectInternalRecordSchema } from './effectInternalProtocol.js';
+import { createMachineSetupNativeBackend, runMachineSetupNativeCommand } from './nativeBackend.js';
 import { probeNativeSshFile, validateNativeSshFile } from './nativeSshFile.js';
 import type { NativeRun } from './nativeSystemBackend.js';
 
@@ -12,6 +14,46 @@ const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 const run: NativeRun = (executable, args) => runMachineSetupNativeCommand({ executable, args });
 const administrator = { user: 'root', host: 'probe', address: '127.0.0.1' };
+
+it('returns public host-key evidence from the same effective receiver probe without reading its private half', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-receiver-key-')); roots.push(root);
+    const keyPath = join(root, 'host_ed25519');
+    const publicKey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h';
+    await writeFile(`${keyPath}.pub`, `${publicKey} receiver\n`);
+    const boundary: NativeRun = async (_executable, args) => ({ code: 0, stdout: args.includes('-T')
+        ? `hostkey ${keyPath}\nforcecommand internal-sftp\n` : '', stderr: '' });
+    const observation = await probeNativeSshFile({ kind: 'sshd', contexts: [{ ...administrator,
+        expected: { forcecommand: 'internal-sftp' } }], publicHostKeyEvidence: true }, boundary);
+    expect(observation).toMatchObject({ satisfied: true, hostKeyEvidence: { status: 'ready', publicKey } });
+    await rm(`${keyPath}.pub`);
+    expect(await probeNativeSshFile({ kind: 'sshd', contexts: [administrator], publicHostKeyEvidence: true }, boundary))
+        .toMatchObject({ satisfied: true, hostKeyEvidence: { status: 'unavailable', reason: 'host_key_unreadable' } });
+});
+
+it('carries the real native file witness through settled interpreter output and its process protocol', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-receiver-settlement-')); roots.push(root);
+    const keyPath = join(root, 'host_ed25519'), policy = join(root, 'receiver.conf');
+    const publicKey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h';
+    const account = userInfo();
+    await writeFile(`${keyPath}.pub`, `${publicKey} receiver\n`);
+    await writeFile(policy, 'receiver policy', { mode: 0o600 });
+    const backend = createMachineSetupNativeBackend({ platform: 'linux', run: async command => {
+        if (command.executable === 'getent') return { code: 0, stderr: '', stdout: command.args.includes('passwd')
+            ? `${account.username}:x:${account.uid}:${account.gid}:fixture:${account.homedir}:/bin/sh\n`
+            : `${account.username}:x:${account.gid}:\n` };
+        expect(command.executable).toBe('/usr/sbin/sshd');
+        return { code: 0, stderr: '', stdout: command.args.includes('-T') ? `hostkey ${keyPath}\nforcecommand internal-sftp\n` : '' };
+    } });
+    const plan = await checkMachineSetupEffectPlan({ basis: { kind: 'setup', machineId: 'receiver', desiredRevision: 0 },
+        steps: [{ id: 'receiver-policy', kind: 'file', path: policy, owner: account.username, group: account.username, mode: 0o600,
+            content: { kind: 'literal', value: 'receiver policy' }, probe: { kind: 'sshd', publicHostKeyEvidence: true,
+                contexts: [{ ...administrator, expected: { forcecommand: 'internal-sftp' } }] } }], backend });
+    const result = await applyMachineSetupEffectPlan({ plan, backend });
+    expect(MachineEffectInternalRecordSchema.parse({ type: 'result', result })).toMatchObject({ type: 'result', result: {
+        status: 'applied', sshHostKeys: [{ planIndex: 0, stepId: 'receiver-policy', evidence: { status: 'ready', publicKey } }],
+    } });
+    await expect(readFile(keyPath)).rejects.toMatchObject({ code: 'ENOENT' });
+});
 
 it.each([
     { errorCode: 'ENOENT', reasonCode: 'required_fact_unavailable' },
@@ -64,7 +106,7 @@ describe.skipIf(process.getuid?.() !== 0)('native SSH complete-configuration val
         await validateNativeSshFile({ ...f, probe, run });
         await writeFile(join(f.root, 'sshd_config.d', '00-before.conf'), 'PasswordAuthentication yes\n');
         await expect(validateNativeSshFile({ ...f, probe, run })).rejects.toMatchObject({ reasonCode: 'foreign_effect_conflict' });
-        expect(await probeNativeSshFile(probe, run, f)).toBe(false);
+        expect(await probeNativeSshFile(probe, run, f)).toMatchObject({ satisfied: false });
         expect(await readFile(f.path, 'utf8')).toBe('PasswordAuthentication yes\n');
     });
 
@@ -83,7 +125,7 @@ describe.skipIf(process.getuid?.() !== 0)('native SSH complete-configuration val
         const probe = policy.probe;
         await validateNativeSshFile({ ...f, probe, run });
         await writeFile(f.path, await readFile(f.candidate));
-        expect(await probeNativeSshFile(probe, run, f)).toBe(true);
+        expect(await probeNativeSshFile(probe, run, f)).toMatchObject({ satisfied: true });
         await validateNativeSshFile({ ...f, candidate: null, probe: removal.validate, run });
         expect(await readFile(f.path, 'utf8')).toContain('ForceCommand internal-sftp');
     });

@@ -1,4 +1,5 @@
 import { MachineAdministratorUsernameV1Schema, MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
+import { MachineSetupSshHostKeyEvidenceV1Schema, type MachineSetupNativeSshHostKeyV1 } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
 import type { MachineElevationFailureV1, MachineFirewallRecoveryV1 as MachineSetupFirewallRecoveryV1,
     MachineFirewallRestorationV1 as MachineSetupFirewallRestorationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 export type { MachineFirewallRecoveryV1 as MachineSetupFirewallRecoveryV1,
@@ -118,6 +119,8 @@ export type MachineSetupApplyResultV1 = Readonly<{
     /** Executing-process presence, in admitted plan order, before any mutation. */
     initialPresence?: readonly ('present' | 'absent' | 'unknown')[];
     comparison?: MachineSetupPlanComparisonV1;
+    /** Public-only evidence from the same effective native receiver check. */
+    sshHostKeys?: readonly MachineSetupNativeSshHostKeyV1[];
 }>;
 
 /** Unknown steps cannot establish that this operation first installed an item. */
@@ -268,12 +271,20 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
     let restoration: MachineSetupFirewallRestorationV1 | undefined;
     let comparison: MachineSetupPlanComparisonV1 | undefined;
     const initialPresence: NonNullable<MachineSetupApplyResultV1['initialPresence']>[number][] = [];
+    const sshHostKeys = new Map<string, MachineSetupNativeSshHostKeyV1>();
+    const captureHostKey = (planIndex: number, fact: MachineSetupStepObservationV1) => {
+        if (fact.facts.sshHostKeyEvidence === undefined) return;
+        const evidence = MachineSetupSshHostKeyEvidenceV1Schema.safeParse(fact.facts.sshHostKeyEvidence);
+        if (fact.status === 'satisfied' && evidence.success) sshHostKeys.set(`${planIndex}:${fact.stepId}`,
+            { planIndex, stepId: fact.stepId, evidence: evidence.data });
+    };
     const result = (status: MachineSetupApplyResultV1['status'], stepId?: string, reason?: string, requiredFact?: string, failure?: MachineElevationFailureV1): MachineSetupApplyResultV1 => ({
         status, completedStepIds: [...completedStepIds], daemonRestartRequired,
         ...(stepId ? { stepId } : {}), ...(reason ? { reason } : {}),
         ...(requiredFact ? { requiredFact } : {}), ...(failure ? { failure } : {}),
         ...(restoration ? { restoration } : {}),
         ...(comparison ? { comparison } : {}),
+        ...(status === 'applied' && sshHostKeys.size ? { sshHostKeys: [...sshHostKeys.values()] } : {}),
         ...(status === 'applied' && entries.some(entry => 'plan' in entry && entry.plan.basis.kind === 'setup')
             ? { initialPresence: [...initialPresence] } : {}),
     });
@@ -374,6 +385,7 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
         // programs may now observe prerequisites established by earlier ones;
         // they never re-author or replace their reviewed steps/selection.
         for (const [planIndex, { plan, nativeFacts, administratorStep }] of programs.entries()) {
+            for (const fact of nativeFacts) captureHostKey(planIndex, fact);
             if (input.onStaged) {
                 const step = plan.steps[0]!;
                 if (step.kind !== 'firewall') return result('unsupported', step.id, 'required_fact_unavailable');
@@ -435,6 +447,7 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                     return result('outcome_unknown', step.id, input.signal?.aborted ? 'cancelled' : 'required_fact_unavailable');
                 }
                 if (observed.status === 'unsupported' || observed.status === 'unavailable') return result(observed.status, step.id, observed.reason);
+                captureHostKey(planIndex, observed);
                 if (observed.status === 'satisfied' && !establishesAdministrator) continue;
                 // chpasswd establishes the verifier before the full locked:false user
                 // declaration is verified. Never unlock an empty-verifier new account.
@@ -491,6 +504,7 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                 }
                 input.onProgress?.({ planIndex, stepId: step.id, phase: 'verify', status: verified.status, ...(verified.reason ? { reason: verified.reason } : {}) });
                 if (verified.status !== 'satisfied') return result('failed', step.id, verified.reason ?? 'required_fact_unavailable');
+                captureHostKey(planIndex, verified);
             }
         }
         return result('applied');

@@ -76,7 +76,7 @@ describe('restricted receiver declaration through receiving Plan', () => {
     if (policy?.kind !== 'file' || policy.content?.kind !== 'literal') throw new Error('Receiver SSH policy was not rendered');
     expect(policy.content.value).toContain(`ChrootDirectory "${chrootPath}"`);
     expect(policy.content.value).toContain('Match all\n');
-    expect(policy.probe).toEqual({ kind: 'sshd', contexts: [
+    expect(policy.probe).toEqual({ kind: 'sshd', publicHostKeyEvidence: true, contexts: [
       { user: reviewed.username, ...reviewed.connection, expected: {
         chrootdirectory: chrootPath, forcecommand: 'internal-sftp', authenticationmethods: 'publickey', pubkeyauthentication: 'yes',
         passwordauthentication: 'no', kbdinteractiveauthentication: 'no', disableforwarding: 'yes', permittty: 'no',
@@ -86,7 +86,7 @@ describe('restricted receiver declaration through receiving Plan', () => {
     expect(removal.find(step => step.id === policy.id)).toMatchObject({ validate: { kind: 'sshd', contexts: [
       { user: 'root', host: 'receiver', address: '192.0.2.3' },
     ] } });
-    expect(plan.nativeFacts.find(fact => fact.stepId === policy.id)).toMatchObject({ status: 'unsupported', reason: 'required_fact_unavailable' });
+    expect(plan.nativeFacts.find(fact => fact.stepId === policy.id)).toMatchObject({ status: 'drifted' });
     expect(result.support[0]?.status).not.toBe('satisfied');
     expect(effects).toEqual([]);
     for (const inputs of [{ ...reviewed, repositoryPath: `${chrootPath}-foreign/repository` },
