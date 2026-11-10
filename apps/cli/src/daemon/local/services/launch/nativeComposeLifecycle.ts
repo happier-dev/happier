@@ -804,7 +804,7 @@ export function resolveNativeComposeCandidateProjectName(admissionProjectName: s
 
 function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInput, 'envPort'>
     & Readonly<{ envPort?: DeploymentExecEnvPortV1 }>,
-    candidate?: Readonly<{ admissionProjectName: string }>): NativeComposeEnvironmentProject {
+    candidate?: Readonly<{ admissionProjectName: string; startFirst?: true }>): NativeComposeEnvironmentProject {
     const projectName = resolveEnvironmentComposeProjectName({ environmentInstanceId: input.source.environmentInstanceId,
         services: input.services, ...(input.physicalProjectName ? { physicalProjectName: input.physicalProjectName } : {}) });
     const admissionProjectName = candidate?.admissionProjectName ?? projectName;
@@ -949,8 +949,9 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
     };
     const inspectStorage = (model: Record<string, unknown>, configs: ReadonlyMap<string, Record<string, unknown>>) => inspectNativeComposeStorage({
         model, imageConfigs: configs, runtimeMachineCount: input.storage?.runtimeMachineCount ?? 1,
-        ...(input.storage?.previewDataVolumes?.length ? { previewData: { projectName, volumes: input.storage.previewDataVolumes } } : {}),
-        ...(candidate ? { requireStateless: true } : {}),
+        ...(input.storage?.previewDataVolumes?.length ? { previewData: { projectName, volumes: input.storage.previewDataVolumes,
+            namedVolumes: input.storage.namedVolumes } } : {}),
+        ...(candidate?.startFirst ? { requireStateless: true } : {}),
         isUnchangedManifestSource: path => isDeploymentSourceUnchangedManifestInput(input.source, path),
     });
     const generation = createNativeComposeGenerationProof({ projectName, run: (args, signal) => run(args, signal), pin });
@@ -1189,7 +1190,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             const result: NativeComposeProjectRender = { engineId, engine, projectName, platform: runtimePlatform, services, servicePlatforms, buildServices,
                 namedVolumes: record(model.volumes) ? Object.entries(model.volumes).flatMap(([volume, definition]) =>
                     record(definition) && typeof definition.name === 'string' ? [{ volume, physicalName: definition.name }] : []) : [],
-                ...(health ? { health } : {}), healthServices: candidate ? services : services.filter(service => !excludedFromHealth.has(service)),
+                ...(health ? { health } : {}), healthServices: candidate?.startFirst ? services : services.filter(service => !excludedFromHealth.has(service)),
                 ...(sharedData ? { sharedData } : {}),
                 environmentInstanceId: input.source.environmentInstanceId, admissionProjectName,
                 keys: [{ kind: 'composeProject', dockerEndpoint: engineId, projectName: admissionProjectName }], review,
@@ -1250,8 +1251,8 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             acquired.set(service, local);
         }
         const imageConfigs = new Map([...acquired].map(([service, local]) => [service, local.config]));
-        if (candidate) assertNativeComposeStartFirstConfiguration(capture.model, imageConfigs);
-        if (input.storage || candidate) await inspectStorage(capture.model, imageConfigs);
+        if (candidate?.startFirst) assertNativeComposeStartFirstConfiguration(capture.model, imageConfigs);
+        if (input.storage || candidate?.startFirst) await inspectStorage(capture.model, imageConfigs);
         for (const service of current.services) {
             const { reference } = acquired.get(service)!;
             const { ownedTag, activationRef } = imageReferences(service);
@@ -1374,13 +1375,13 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
         createStartFirstCandidate() {
             if (input.phase === 'build') return nativeRefusal('deployment_runtime_phase_required');
             const generationName = resolveNativeComposeCandidateProjectName(admissionProjectName, input.source.deploymentId);
-            return createEnvironmentProject({ ...input, physicalProjectName: generationName }, { admissionProjectName });
+            return createEnvironmentProject({ ...input, physicalProjectName: generationName }, { admissionProjectName, startFirst: true });
         },
         async activateStartFirst(request) {
             if (request.target) {
                 if (request.target !== activation || !request.target.isCurrent() || !renderedCaptures.has(request.render))
                     return nativeRefusal('deployment_generation_unavailable');
-            } else if (!candidate) return nativeRefusal('deployment_generation_unavailable');
+            } else if (!candidate?.startFirst) return nativeRefusal('deployment_generation_unavailable');
             return activateNativeComposeStartFirst(request, value => owner.activate(value));
         },
         async describeBuild(options) { return { ...await imagePreparation.describeBuild(options), keys: await readBuildKeys(options?.signal) }; },

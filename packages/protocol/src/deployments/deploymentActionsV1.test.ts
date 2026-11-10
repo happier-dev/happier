@@ -223,32 +223,41 @@ describe('current Environment edge health read', () => {
 });
 
 
-describe('Catalog create reviewed Deploy child transport', () => {
-  it('retains the create root and consumes the exact prepared template.deploy operand', () => {
+describe('Create reviewed Deploy child transport', () => {
+  it.each(['catalog', 'preview'] as const)('retains the %s create root and consumes its exact prepared Deploy operand', kind => {
     const rootInput = { serverId: 'home', projectSourceId: 'source', requestKey: 'create', name: 'Web',
       protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', definition: {
         from: 'catalogApp', templateRef: { sourceId: 'apps', itemId: 'web', version: '1',
           ref: { kind: 'content', digest: `sha256:${'c'.repeat(64)}` } } } };
-    const rootPreparationAdmission = projectDeploymentPreparationAdmissionV1('deployments.environments.create', rootInput);
+    const createInput = kind === 'catalog' ? rootInput : {
+      serverId: rootInput.serverId, projectSourceId: rootInput.projectSourceId, requestKey: rootInput.requestKey,
+      protection: rootInput.protection, purpose: 'preview', deployerMode: rootInput.deployerMode,
+      preview: { templateEnvironmentId: 'template', expectedTemplateRevision: 1, pullRequestId: 'pull-request',
+        runtimeTargetLinkId: 'template-runtime' } };
+    const rootPreparationAdmission = projectDeploymentPreparationAdmissionV1('deployments.environments.create', createInput);
     const input = { serverId: 'home', environmentId: 'allocated', targetLinkId: 'runtime', requestKey: 'create',
       expectedRevision: 2, expectedTargetLinkRevision: 1, contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 };
     const child = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'build', actionId: 'deployments.deploy', input,
       deploymentId: 'deployment', actionOperationId: 'operation',
       machineId: 'receiver', installationId: 'installed' });
-    const reviewedChild = { actionId: child.actionId, role: 'template.deploy',
+    const reviewedChild = { actionId: child.actionId, role: kind === 'catalog' ? 'template.deploy' : 'preview.deploy',
       inputDigest: computeActionInputApprovalDigestV1(child.actionId, input) };
     const transport = { deploymentChildRoot: true as const, rootActionId: 'deployments.environments.create', rootPreparationAdmission, reviewedChild,
       effectActionId: child.actionId, method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: child };
     expect(readDeploymentChildRpcV1(transport)).toEqual(child);
-    expect(doesDeploymentChildInputMatchRootV1({ ...transport, rootInput, child })).toBe(true);
+    expect(doesDeploymentChildInputMatchRootV1({ ...transport, rootInput: createInput, child })).toBe(true);
     for (const patch of [{ environmentId: 'foreign' }, { targetLinkId: 'foreign' }, { requestKey: 'foreign' },
       { contentArtifactId: 'foreign' }, { contentBodyVersion: 2 }, { expectedRevision: 3 }, { expectedTargetLinkRevision: 2 }]) {
-      expect(doesDeploymentChildInputMatchRootV1({ ...transport, rootInput,
+      expect(doesDeploymentChildInputMatchRootV1({ ...transport, rootInput: createInput,
         child: DeploymentChildRpcV1Schema.parse({ ...child, input: { ...input, ...patch } }) })).toBe(false);
     }
-    expect(doesDeploymentChildInputMatchRootV1({ ...transport, rootInput, child, reviewedChild: undefined })).toBe(false);
-    expect(doesDeploymentChildInputMatchRootV1({ ...transport, rootInput, child,
+    expect(doesDeploymentChildInputMatchRootV1({ ...transport, rootInput: createInput, child, reviewedChild: undefined })).toBe(false);
+    expect(doesDeploymentChildInputMatchRootV1({ ...transport, rootInput: createInput, child,
       reviewedChild: { ...reviewedChild, role: 'template.domain:web' } })).toBe(false);
+    expect(doesDeploymentChildInputMatchRootV1({ ...transport, rootInput: createInput, child,
+      reviewedChild: { ...reviewedChild, role: kind === 'catalog' ? 'preview.deploy' : 'template.deploy' } })).toBe(false);
+    expect(doesDeploymentChildInputMatchRootV1({ ...transport, rootInput: createInput, child,
+      rootActionId: 'deployments.rollback' })).toBe(false);
     expect(readDeploymentChildRpcV1({ ...transport, rootPreparationAdmission: undefined })).toBeNull();
   });
   it('derives read-only Catalog deployment preparation from the original attempt before its candidate is reviewed', () => {

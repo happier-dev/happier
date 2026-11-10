@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import { DeploymentTemplateDataV1Schema, DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
 import { DeploymentTemplateRefV1Schema, DeploymentDigestV1Schema, DeploymentRepositoryDefinitionV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
-import { DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentEnvironmentContentCasV1Schema } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { DeploymentRevisionV1Schema } from '@happier-dev/protocol/deployments/deploymentIdentifiersV1';
 
 // Current Environment artifacts may contain the scalar written before multiple database additions.
@@ -26,5 +26,5 @@ export const DeploymentEnvironmentTemplateProvenanceV1Schema = z.strictObject({
 export type DeploymentEnvironmentTemplateProvenanceV1 = z.infer<typeof DeploymentEnvironmentTemplateProvenanceV1Schema>;
 
 /** Instantiation's private metadata CAS transport; a caller cannot acquire another writer with a flag. */
-export const DeploymentEnvironmentTemplateSetInputV1Schema = z.omit(DeploymentEnvironmentUpdateInputV1Schema, { patch: true });
+export const DeploymentEnvironmentTemplateSetInputV1Schema = DeploymentEnvironmentContentCasV1Schema;
 export type DeploymentEnvironmentTemplateSetInputV1 = z.infer<typeof DeploymentEnvironmentTemplateSetInputV1Schema>;

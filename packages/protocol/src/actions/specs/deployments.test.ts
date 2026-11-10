@@ -17,6 +17,21 @@ import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthoriza
   signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from '../externalActionExecutionAuthorization.js';
 
 describe('Deployment Action front door', () => {
+  it('admits candidate backup configuration on the controller before a runtime target exists', () => {
+    const spec = getActionSpec('deployments.backups.configure');
+    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 1,
+      intent: 'markNotNeeded' };
+    expect(spec.inputSchema.safeParse(input).success).toBe(true);
+    expect(spec.sideEffectClass).toBe('write');
+    expect(spec.executionPlacement).toBe('machine');
+    expect(spec.inputSchema.safeParse({ ...input, intent: 'save' }).success).toBe(false);
+  });
+  it('admits the destination write/read/delete probe as a mutation', () => {
+    // Plan 45 §3.4: the exact owned probe writes and removes its own test snapshot.
+    const spec = getActionSpec('deployments.backups.test');
+    expect(spec.sideEffectClass).toBe('write');
+    expect(spec.safety).toBe('danger');
+  });
   it('reviews teardown volumes before confirmation and requires confirmation for removal', () => {
     const actionId = 'deployments.teardown';
     const spec = getActionSpec(actionId);
@@ -222,18 +237,20 @@ describe('Deployment Action front door', () => {
     expect(writes).toEqual([preparedInput]);
   });
 
-  it('retains template-derived preview runtime placement only for the exact admitted preview reference', async () => {
+  it.each(['preview', 'companion'] as const)('retains template-derived preview runtime placement only for the exact admitted preview reference (%s)', async path => {
     const reference = { templateEnvironmentId: 'template', expectedTemplateRevision: 7,
       pullRequestId: 'pr-17', runtimeTargetLinkId: 'template-runtime' };
     const repository = { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' };
     const input = { serverId: 'home', projectSourceId: 'source', requestKey: 'preview-create',
-      purpose: 'preview', protection: 'nonProduction', deployerMode: 'managers', preview: { ...reference,
+      purpose: path === 'companion' ? 'standard' : 'preview', protection: 'nonProduction', deployerMode: 'managers',
+      ...(path === 'companion' ? { previewCompanionOfEnvironmentId: 'main-preview' } : {}), preview: { ...reference,
         headSha: 'a'.repeat(40), provenance: { v: 1, templateEnvironmentId: reference.templateEnvironmentId,
           runtimeTargetLinkId: reference.runtimeTargetLinkId, repository, headRepository: repository,
           pullRequestId: reference.pullRequestId, pullRequestNumber: 17, author: { id: 'author', login: 'contributor' } } } };
     const preparedInput = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: input.serverId,
       projectSourceId: input.projectSourceId, requestKey: input.requestKey, purpose: input.purpose,
       protection: input.protection, deployerMode: input.deployerMode, preview: reference,
+      ...(path === 'companion' ? { previewCompanionOfEnvironmentId: 'main-preview' } : {}),
       controllerMachineId: 'template-controller', buildMachineId: 'template-builder',
       contentArtifactId: 'child-content', contentHeaderVersion: 1, contentBodyVersion: 1,
       firstTargetLink: { machines: [{ machineId: 'template-host', installationId: 'template-installation' }],
@@ -245,7 +262,9 @@ describe('Deployment Action front door', () => {
     let reviewedInput = preparedInput;
     const writes: unknown[] = [];
     const executor = createActionExecutor({
-      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('New preview has no existing record'); }),
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(
+        async () => { throw new Error('New preview has no existing record'); },
+        async ({ environmentId }) => ({ ok: true, environment: { id: environmentId, projectSourceId: 'source', purpose: 'standard' } })),
       // Installed-host preparation is the process boundary. CLI composed tests run
       // the real template reader, admission, defaults and Artifact materializer.
       prepareDeploymentEnvironmentCreate: async () => ({ input: reviewedInput, preview: review }),
@@ -258,6 +277,14 @@ describe('Deployment Action front door', () => {
     if (prepared.kind !== 'ready') throw new Error('Expected admitted preview creation');
     await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: true });
     expect(writes).toEqual([preparedInput]);
+    if (path === 'companion') for (const parent of ['another-main-preview', undefined]) {
+      const { previewCompanionOfEnvironmentId: _parent, ...withoutParent } = preparedInput;
+      reviewedInput = { ...withoutParent, ...(parent ? { previewCompanionOfEnvironmentId: parent } : {}) };
+      await expect(executor.prepare('deployments.environments.create', input, context)).resolves.toMatchObject({
+        kind: 'settled', result: { ok: false, errorCode: parent === undefined ? 'invalid_action_output' : 'approval_stale' },
+      });
+      expect(writes).toEqual([preparedInput]);
+    }
     reviewedInput = { ...preparedInput, preview: { ...reference, expectedTemplateRevision: 8 } };
     await expect(executor.prepare('deployments.environments.create', input, context)).resolves.toMatchObject({
       kind: 'settled', result: { ok: false, errorCode: 'approval_stale' },

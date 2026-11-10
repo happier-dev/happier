@@ -36,7 +36,7 @@ vi.mock('socket.io-client', () => ({ io: wire.io }));
 
 afterEach(() => { vi.restoreAllMocks(); wire.listeners.clear(); });
 
-it.each(['requestKey', 'actionOperationId', 'sourceIntent', 'sourceMethod', 'triggerOccurrence', 'retained link advance'] as const)(
+it.each(['requestKey', 'actionOperationId', 'sourceIntent', 'sourceMethod', 'services', 'triggerOccurrence', 'retained link advance'] as const)(
     'binds opened E2EE pending %s before storage mutation or native custody', async changed => {
         const detail = createDeploymentEnvironmentDetailV1();
         const receipt = createDeploymentReceiptDetailV1();
@@ -59,6 +59,7 @@ it.each(['requestKey', 'actionOperationId', 'sourceIntent', 'sourceMethod', 'tri
                 ? { ...sourceIntent, sha: 'e'.repeat(40) }
                 : { ...sourceIntent, document: `${sourceIntent.document}\n# substituted` } }
             : changed === 'sourceMethod' ? { ...privateIntent, sourceMethod: 'upload' as const }
+                : changed === 'services' ? { ...privateIntent, services: ['db'] }
                 : changed === 'triggerOccurrence' ? { ...privateIntent, triggerOccurrence: { automationId: 'asserted-automation',
                         triggerId: 'asserted-trigger', triggerRevision: 1, occurrenceKey: Buffer.alloc(32).toString('base64url') } }
                         : { ...privateIntent, [changed]: 'another-identity' };

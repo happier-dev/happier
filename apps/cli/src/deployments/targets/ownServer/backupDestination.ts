@@ -1,4 +1,4 @@
-import { PluginError, BackupDestinationOpenV1ProtocolSchema, type BackupDestinationOpenV1 } from '@happier-dev/plugin-sdk';
+import { PluginError, BackupDestinationOpenV1ProtocolSchema, type BackupDestinationOpenV1, type BackupDestinationOpenInputV1 } from '@happier-dev/plugin-sdk';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -13,11 +13,10 @@ import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storag
 import type { DeploymentBackupConfigurationNativeHost } from './backupConfigurationNative';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
-import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { assertDeploymentSecretInvocationCurrent } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { prepareEnvironmentSecretBindings } from '@/deployments/secrets/environmentSecretBindingService';
-import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 
 
 export type OwnServerDatabaseUsernameForHost = Readonly<{ username: string; secretValues: readonly string[] }>;
@@ -71,7 +70,8 @@ export async function openDeploymentBackupDestinationForHost(input: Readonly<{
     const action = descriptor.definition.actions.open;
     await registry.activateContributionsOnDemand([{ ...action, family: 'actions' }]);
     const result = await registry.targetActionInvocations.invoke({ ...action,
-        input: { config: configuration.config, credentialRoles: configuration.credentialBindings.map(binding => binding.role) },
+        input: { config: configuration.config, credentialRoles: configuration.credentialBindings.map(binding => binding.role),
+            ownershipPrefix: configuration.ownership.prefix } satisfies BackupDestinationOpenInputV1,
         surface: 'plugin', requiredReadOnly: true, signal: input.signal, approvalContext: input.context,
     });
     if (result.status !== 'executed') {
@@ -139,6 +139,7 @@ export function createPrepareDeploymentBackupConfigurationDestinationForHost(hos
     serverHttpBaseUrl: string;
     machineId: string;
     savedSecretOperationContext?: SavedSecretOperationContextV1;
+    authorCustody?: ReturnType<typeof resolveRequesterSavedSecretActionCustody>;
     /** The configure coordinator retains the same descriptor lease through save. */
     registry?: DeploymentBackupDestinationRegistryForHost;
     acquirePluginRuntimeRegistryLease?(): Promise<Readonly<{
@@ -148,6 +149,10 @@ export function createPrepareDeploymentBackupConfigurationDestinationForHost(hos
 }>): DeploymentBackupConfigurationNativeHost['prepareDestination'] {
     return async input => {
         input.signal.throwIfAborted();
+        const { operation } = host.authorCustody ?? resolveRequesterSavedSecretActionCustody({
+            authorization: input.context.externalActionExecutionAuthorization,
+            credentials: host.credentials, operationContext: host.savedSecretOperationContext,
+        });
         if (input.environment.environment.controllerMachineId !== host.machineId) throw new PluginError({
             code: 'target_mismatch', message: 'Backup configuration belongs to its Environment controller' });
         await assertDeploymentSecretInvocationCurrent(input.context, input.signal);
@@ -179,21 +184,15 @@ export function createPrepareDeploymentBackupConfigurationDestinationForHost(hos
             // Configure executes on the controller; local repository capacity
             // belongs to the linked runtime Machine's Storage owner.
             const capacity: StoragePathCapacityV1 | undefined = captured.opened.local ? {
-                status: 'unknown', path: expandHomeDirPath(captured.opened.local.path),
+                status: 'unknown', path: captured.opened.local.path,
                 reason: input.environment.environment.runtimeTargetLinkId ? 'runtime_capacity_unavailable' : 'runtime_machine_not_linked',
             } : undefined;
-            const requester = readRequesterAccountActionContext(input.context.externalActionExecutionAuthorization);
-            const operation = requester?.savedSecretOperationContext
-                ?? (input.context.externalActionExecutionAuthorization ? undefined : host.savedSecretOperationContext);
-            const credentials = requester?.credentials ?? host.credentials;
             const prepared = await prepareEnvironmentSecretBindings({ environmentId: input.environment.environment.id,
                 bindings: captured.preparation.backupDestinationUses, previousBindings: [], existingGrants: [],
                 runtimeInstallations: [{ machineId: host.machineId, installationId: identity.installationId,
                     publicKey: decodeBase64(identity.publicKey, 'base64url') }], assertCurrent,
                 materializer: async () => {
                     if (!operation) throw new PluginError({ code: 'client_required', message: 'Backup credential author custody is unavailable' });
-                    if (operation.credentials.token !== credentials.token) throw new PluginError({
-                        code: 'action_forbidden', message: 'Backup credential author custody does not match the requester' });
                     const snapshot = operation.readSnapshot();
                     if (!snapshot?.scopeKey) throw new PluginError({ code: 'client_required', message: 'Backup credential author custody is unavailable' });
                     return (await readSavedSecretMaterializerForOperation({ expectedScopeKey: snapshot.scopeKey,
@@ -236,10 +235,10 @@ export async function prepareOwnServerPreMigrationBackupOperandsForHost(input: B
     if (!databaseBinding || databaseBinding.purpose !== 'variable') throw new PluginError({
         code: 'secret_missing', message: 'The configured database binding is unavailable' });
     const { opened, preparation } = await captureBackupDestination(input);
-    const prepared = await prepareDeploymentBackupEnvironmentForHost({ ...opened, databaseBinding,
+    const prepared = await prepareDeploymentBackupEnvironmentForHost({ ...opened, databaseBindings: [databaseBinding],
         signal: input.signal, isCurrent: input.isCurrent,
         preparation });
     return { ...prepared, configuration, data,
         destination: { environmentId: input.preparation.environmentId, service: data.service,
-            adapter: 'postgres-v1', database: prepared.database } };
+            adapter: 'postgres-v1', database: prepared.databases.get(databaseBinding.name)! } };
 }

@@ -1,5 +1,6 @@
 export { canonicalAbsolutePathsEqual } from '../sessions/fileStores/paths.js';
 export type { FileSystemService } from '../fs.js';
+export { joinNativePath, joinPosixPath, isWindowsAbsolutePath } from '../fs.js';
 export type { FsAtomicWriteJsonInput } from '../fs.js';
 export type { FsAtomicWriteTextInput } from '../fs.js';
 export type { SecureTempDirectory } from '../fs.js';

@@ -15,7 +15,7 @@ import { ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol/artif
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
 import { ExternalActionExecutionAuthorizationV1Schema, createDeploymentEnvironmentContentArtifactIdV1,
-    projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    projectDeploymentNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 afterEach(() => { vi.restoreAllMocks(); });
 

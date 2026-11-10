@@ -1,7 +1,12 @@
 /** @moduleRealm daemon */
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, posix, win32 } from 'node:path';
+
+/** Native filesystem and remote/container namespaces keep their own path rules. */
+export const joinNativePath: (...paths: string[]) => string = join;
+export const joinPosixPath: (...paths: string[]) => string = posix.join;
+export const isWindowsAbsolutePath: (path: string) => boolean = win32.isAbsolute;
 
 import { withJsonOwnerFileLock } from '@happier-dev/cli-common/fs/jsonOwnerFileLock';
 

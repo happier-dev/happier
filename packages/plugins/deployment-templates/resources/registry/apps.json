@@ -10,7 +10,7 @@
         "category": "database",
         "documentationUrl": "https://www.postgresql.org/docs/17/",
         "compose": {
-          "document": "services:\n  database:\n    image: postgres:17\n    environment:\n      POSTGRES_USER: ${DB_USER}\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n      POSTGRES_DB: ${DB_NAME}\n    ports:\n      - target: 5432\n        host_ip: 127.0.0.1\n        protocol: tcp\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\n    healthcheck:\n      test: [CMD-SHELL, 'pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\"']\n      interval: 10s\n      timeout: 5s\n      retries: 5\nvolumes:\n  postgres-data: {}\n",
+          "document": "{\"services\":{\"database\":{\"image\":\"postgres:17\",\"environment\":{\"POSTGRES_USER\":\"${DB_USER}\",\"POSTGRES_PASSWORD\":\"${DB_PASSWORD}\",\"POSTGRES_DB\":\"${DB_NAME}\"},\"ports\":[{\"target\":5432,\"host_ip\":\"127.0.0.1\",\"protocol\":\"tcp\"}],\"volumes\":[\"postgres-data:/var/lib/postgresql/data\"],\"healthcheck\":{\"test\":[\"CMD-SHELL\",\"pg_isready -U \\\"$$POSTGRES_USER\\\" -d \\\"$$POSTGRES_DB\\\"\"],\"interval\":\"10s\",\"timeout\":\"5s\",\"retries\":5}},\"pgbouncer\":{\"image\":\"edoburu/pgbouncer:v1.25.2-p0\",\"environment\":{\"DATABASE_URL\":\"postgres://${DB_USER}:${DB_PASSWORD}@database:5432/${DB_NAME}\",\"AUTH_TYPE\":\"scram-sha-256\",\"POOL_MODE\":\"transaction\",\"MAX_PREPARED_STATEMENTS\":\"200\"},\"depends_on\":{\"database\":{\"condition\":\"service_healthy\"}}}},\"volumes\":{\"postgres-data\":{}}}",
           "profiles": [],
           "services": [
             "database"
@@ -152,6 +152,27 @@
             }
           }
         },
+        "companions": [
+          {
+            "id": "pgbouncer",
+            "title": "Add PgBouncer",
+            "description": "Pools app connections in transaction mode. Session features (SET, LISTEN, advisory locks, WITH HOLD cursors, SQL PREPARE) and startup migrations need DIRECT_URL.",
+            "services": [
+              "pgbouncer"
+            ],
+            "exports": {
+              "DATABASE_URL": {
+                "service": "pgbouncer",
+                "port": 5432,
+                "scheme": "postgres",
+                "defaultExposure": "internal",
+                "env": {
+                  "DATABASE_URL": "postgres://${DB_USER}:${DB_PASSWORD}@pgbouncer:5432/${DB_NAME}"
+                }
+              }
+            }
+          }
+        ],
         "loginFields": {
           "username": "DB_USER",
           "password": "DB_PASSWORD"

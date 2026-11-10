@@ -1,6 +1,22 @@
 import { type BackupDestinationContributionV1, type BackupDestinationOpenV1 } from '@happier-dev/plugin-sdk';
+import { joinNativePath, joinPosixPath, isWindowsAbsolutePath } from '@happier-dev/plugin-sdk/fs';
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString,
-  defineProtocolUnion, defineProtocolUniqueArray } from '@happier-dev/plugin-sdk/protocol';
+  defineProtocolUnion, defineProtocolUniqueArray, ProtocolValidationError } from '@happier-dev/plugin-sdk/protocol';
+
+export function assertExactDestinationPrefix(prefix: string, path: string): void {
+  if (prefix && prefix.split('/').some(part => !part || part === '.' || part === '..')) {
+    throw new ProtocolValidationError([{ path: [path], code: 'invalid_value',
+      message: 'Use an exact repository prefix without empty or dot path segments.' }]);
+  }
+}
+
+export function assertDestinationOwnershipPrefix(prefix: string): void {
+  assertExactDestinationPrefix(prefix, 'ownershipPrefix');
+  if (/[\\\u0000-\u001F\u007F]/.test(prefix) || isWindowsAbsolutePath(prefix)) {
+    throw new ProtocolValidationError([{ path: ['ownershipPrefix'], code: 'invalid_value',
+      message: 'Use a relative repository prefix with forward slashes and no control characters.' }]);
+  }
+}
 
 const text = () => defineProtocolString({ minLength: 1, pattern: '^[^\\u0000-\\u001F\\u007F]+$' });
 export const LocalDestinationConfigSchema = defineProtocolObject({ path: text() }, { policy: 'closed' });
@@ -25,19 +41,24 @@ export const SftpDestinationRolesSchema = defineProtocolUniqueArray(defineProtoc
 const binding = (role: BackupDestinationOpenV1['credentialBindings'][number]['role']) =>
   ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role });
 
-export function prepareLocalDestination(input: unknown, roles: readonly string[] = localRoles): BackupDestinationOpenV1 {
+export function prepareLocalDestination(input: unknown, roles: readonly string[] = localRoles, ownershipPrefix = ''): BackupDestinationOpenV1 {
   const config = LocalDestinationConfigSchema.parse(input);
   LocalDestinationRolesSchema.parse(roles);
+  assertDestinationOwnershipPrefix(ownershipPrefix);
   // Host expansion/canonicalization and mount admission belong to the executing daemon.
-  return { repository: '/run/happier/backup/repository', local: config, credentialBindings: localRoles.map(binding) };
+  return { repository: ownershipPrefix ? joinPosixPath('/run/happier/backup/repository', ownershipPrefix) : '/run/happier/backup/repository',
+    local: ownershipPrefix ? { path: joinNativePath(config.path, ownershipPrefix), mountPath: config.path } : config,
+    credentialBindings: localRoles.map(binding) };
 }
 
-export function prepareSftpDestination(input: unknown, roles: readonly string[] = sftpRoles): BackupDestinationOpenV1 {
+export function prepareSftpDestination(input: unknown, roles: readonly string[] = sftpRoles, ownershipPrefix = ''): BackupDestinationOpenV1 {
   const config = SftpDestinationConfigSchema.parse(input);
   SftpDestinationRolesSchema.parse(roles);
+  assertDestinationOwnershipPrefix(ownershipPrefix);
   // restic 0.19.1 sftp/config.go strips one URL slash before interpreting the
   // remote path. A home-relative path never expands against the sender's home.
-  const path = config.path.startsWith('~/') ? config.path.slice(2) : config.path;
+  const base = config.path.startsWith('~/') ? config.path.slice(2) : config.path;
+  const path = ownershipPrefix ? joinPosixPath(base, ownershipPrefix) : base;
   const host = config.host.includes(':') ? `[${config.host}]` : config.host;
   return { repository: `sftp://${encodeURIComponent(config.username)}@${host}${config.port === undefined ? '' : `:${config.port}`}/${path.split('/').map(encodeURIComponent).join('/')}`,
     credentialBindings: sftpRoles.map(binding),

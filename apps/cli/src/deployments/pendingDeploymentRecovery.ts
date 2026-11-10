@@ -78,6 +78,7 @@ export async function readCompactPendingDeploymentRecovery(request: Omit<Pending
         || captured.targetLinkId !== retained.current.environment.runtimeTargetLinkId
         || input.targetLinkId !== undefined && input.targetLinkId !== captured.targetLinkId
         || sourceMethod !== captured.sourceMethod
+        || !isDeepStrictEqual(input.services, captured.services)
         || (input.onFailure ?? DEFAULT_DEPLOYMENT_ON_FAILURE_V1) !== (captured.onFailure ?? DEFAULT_DEPLOYMENT_ON_FAILURE_V1)
         || input.sourceIntent !== undefined && !isDeepStrictEqual(input.sourceIntent, captured.sourceIntent)
         || input.sha !== undefined && (captured.sourceIntent.kind !== 'repository' || input.sha !== captured.sourceIntent.sha)) {

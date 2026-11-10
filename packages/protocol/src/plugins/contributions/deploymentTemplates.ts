@@ -8,6 +8,8 @@ const text = () => z.string().check(z.minLength(1));
 const key = () => z.string().check(z.regex(/^[A-Za-z_][A-Za-z0-9_]*$/u));
 const port = () => z.number().check(z.int(), z.minimum(1), z.maximum(65535));
 const positive = () => z.number().check(z.int(), z.positive());
+const templateExport = () => z.strictObject({ service: text(), port: port(), scheme: z.optional(text()),
+  defaultExposure: z.enum(['internal', 'privateNetwork', 'public']), env: z.optional(z.record(key(), z.string())) });
 
 /** Host-owned CSPRNG profiles, never executable author code or supplied seeds. */
 export const DeploymentTemplateSecretProfileV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -23,7 +25,8 @@ export const DeploymentTemplateSecretProfileV1Schema = lazyZodSchema(() => z.dis
 export const DeploymentTemplateDataV1Schema = lazyZodSchema(() => z.strictObject({
   engine: z.enum(['postgres', 'mysql', 'mariadb', 'mongo', 'sqlite', 'redis']), version: z.optional(text()),
   service: text(), port: z.optional(port()),
-  variables: z.optional(z.strictObject({ username: z.optional(key()), password: z.optional(key()), database: z.optional(key()) })),
+  variables: z.optional(z.strictObject({ username: z.optional(key()), password: z.optional(key()), database: z.optional(key()),
+    host: z.optional(key()), port: z.optional(key()) })),
   logicalBackup: z.optional(z.strictObject({
     adapter: z.enum(['postgres-v1', 'mysql-v1', 'mongo-v1', 'sqlite-v1']),
     database: z.optional(key()), path: z.optional(text()), username: z.optional(key()),
@@ -60,8 +63,12 @@ export const DeploymentTemplateV1Schema = lazyZodSchema(() => z.strictObject({
   minimumResources: z.optional(z.strictObject({ memoryBytes: z.optional(positive()), freeDiskBytes: z.optional(positive()),
     architectures: z.optional(z.array(z.enum(['amd64', 'arm64']))) })),
   data: z.optional(DeploymentTemplateDataV1Schema),
-  exports: z.optional(z.record(text(), z.strictObject({ service: text(), port: port(), scheme: z.optional(text()),
-    defaultExposure: z.enum(['internal', 'privateNetwork', 'public']), env: z.optional(z.record(key(), z.string())) }))),
+  exports: z.optional(z.record(text(), templateExport())),
+  /** Optional reviewed companions, off unless selected: their services leave the document when unselected,
+   * and their exports replace the template's same-named exports when selected. */
+  companions: z.optional(z.array(z.strictObject({ id: key(), title: PluginLocalizedStringV2Schema,
+    description: z.optional(PluginLocalizedStringV2Schema), services: z.array(text()).check(z.minLength(1)),
+    exports: z.optional(z.record(text(), templateExport())) }))),
   loginFields: z.optional(z.strictObject({ username: z.optional(key()), password: key() })),
   firstRunSetup: z.optional(z.literal(true)),
 }).check(z.superRefine((template, context) => {
@@ -82,6 +89,13 @@ export const DeploymentTemplateV1Schema = lazyZodSchema(() => z.strictObject({
   if (template.loginFields) {
     if (!variables.get(template.loginFields.password)?.secret) context.addIssue({ code: 'custom', path: ['loginFields', 'password'], message: 'Login password must name a declared secret variable.' });
     if (template.loginFields.username && !variables.has(template.loginFields.username)) context.addIssue({ code: 'custom', path: ['loginFields', 'username'], message: 'Login username must name a declared variable.' });
+  }
+  const companionIds = new Set(template.companions?.map(companion => companion.id));
+  if (companionIds.size !== (template.companions?.length ?? 0)) context.addIssue({ code: 'custom', path: ['companions'], message: 'Companion ids must be unique.' });
+  for (const [index, companion] of (template.companions ?? []).entries()) {
+    if (companion.services.some(service => template.compose.services.includes(service) || service === template.compose.primaryService || service === template.data?.service)) {
+      context.addIssue({ code: 'custom', path: ['companions', index, 'services'], message: 'Companion services are separate from the template\'s own services.' });
+    }
   }
   const dataRefs = [...Object.values(template.data?.variables ?? {}), template.data?.logicalBackup?.database, template.data?.logicalBackup?.username];
   if (dataRefs.some(ref => ref !== undefined && !variables.has(ref))) context.addIssue({ code: 'custom', path: ['data'], message: 'Data references must name declared variables.' });

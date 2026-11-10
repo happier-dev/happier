@@ -90,31 +90,34 @@ export function createDeploymentBackupEnvironmentForHost(input: Readonly<{
     return { execEnv, readAccess: () => access ?? refuse() };
 }
 
-/** Resolve a database binding and destination credentials in ONE P42 acquisition.
- * Only the host receives the nonsecret database name; native restic borrows the
+/** Resolve selected database bindings and destination credentials in ONE P42 acquisition.
+ * Only the host receives nonsecret database names; native restic borrows the
  * same retained attachment, without an application environment or another grant read. */
 export async function prepareDeploymentBackupEnvironmentForHost(input: Parameters<typeof createDeploymentBackupEnvironmentForHost>[0] & Readonly<{
-    databaseBinding: Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }>;
-}>): Promise<Readonly<{ database: string; execEnv: DeploymentExecEnvPortV1; readAccess(): ResticAccessV1; dispose(): Promise<void> }>> {
-    const databaseBinding = input.databaseBinding;
-    if (!databaseBinding || databaseBinding.purpose !== 'variable' || databaseBinding.phase !== 'runtime'
-        || databaseBinding.source.kind === 'secret') throw new PluginError({ code: 'secret_missing',
-        message: 'A nonsecret runtime database binding is required' });
+    databaseBindings: readonly Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }>[];
+}>): Promise<Readonly<{ databases: ReadonlyMap<string, string>; execEnv: DeploymentExecEnvPortV1; readAccess(): ResticAccessV1; dispose(): Promise<void> }>> {
+    for (const databaseBinding of input.databaseBindings) {
+        if (!databaseBinding || databaseBinding.purpose !== 'variable' || databaseBinding.phase !== 'runtime'
+            || databaseBinding.source.kind === 'secret') throw new PluginError({ code: 'secret_missing',
+            message: 'A nonsecret runtime database binding is required' });
+    }
     input.signal.throwIfAborted();
-    const material = await prepareEnvironmentSecretBindingsForLaunch({ ...input.preparation, backupDatabaseBinding: databaseBinding,
+    const material = await prepareEnvironmentSecretBindingsForLaunch({ ...input.preparation, backupDatabaseBindings: input.databaseBindings,
         backupDestinationSftp: input.sftp });
     let current = true;
     let attachment: DeploymentExecEnvAttachmentV1 | undefined;
     try {
-        const database = material.backupDatabase;
-        if (!database) throw new PluginError({ code: 'secret_missing', message: 'The database binding is unavailable' });
+        const databases = material.backupDatabases;
+        for (const database of databases.values()) {
+            if (!database) throw new PluginError({ code: 'secret_missing', message: 'The database binding is unavailable' });
+        }
         const access = backupAccess(input, material);
         const execEnv = createDeploymentExecEnvPortForHost({ signal: input.signal, isCurrent: () => current && input.isCurrent(),
             backupDestination: { configKey: 'destination' }, async prepare() { return material; } });
         // Transfer the eager database/credential acquisition to the canonical
         // attachment owner before returning. It defers retirement for native loans.
         attachment = await execEnv.prepare({ backupDestination: { configKey: 'destination' } });
-        return { database, execEnv, readAccess: () => current && !input.signal.aborted ? access : refuse(),
+        return { databases, execEnv, readAccess: () => current && !input.signal.aborted ? access : refuse(),
             async dispose() { current = false; attachment!.dispose(); } };
     } catch (error) { material.dispose(); throw error; }
 }

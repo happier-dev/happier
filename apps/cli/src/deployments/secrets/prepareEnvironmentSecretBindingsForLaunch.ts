@@ -39,9 +39,9 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
     /** Exact roles from one current host-admitted destination configuration. */
     backupDestinationUses?: readonly Extract<EnvironmentSecretBindingV1, { purpose: 'backupDestination' }>[];
     backupDestinationSftp?: BackupDestinationOpenV1['sftp'];
-    /** One nonsecret runtime database name, acquired with its backup credentials.
-     * The host removes this operand before lending the restic environment. */
-    backupDatabaseBinding?: Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }>;
+    /** Selected nonsecret runtime database names, acquired with backup credentials.
+     * The host keeps these operands outside the lent restic environment. */
+    backupDatabaseBindings?: readonly Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }>[];
     backupConfigBaseDir?: string;
     bindings: readonly EnvironmentSecretBindingV1[];
     grants: readonly MachineSecretGrantV1[];
@@ -69,7 +69,7 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
     };
     const registryConfigRequested = input.use?.purpose === 'registry' || input.registryUses !== undefined;
     const backupConfigRequested = input.backupDestinationUses !== undefined;
-    if (input.backupDatabaseBinding !== undefined && !backupConfigRequested) return missing();
+    if (input.backupDatabaseBindings !== undefined && !backupConfigRequested) return missing();
     let selected: readonly EnvironmentSecretBindingV1[];
     if (backupConfigRequested) {
         if (input.phase !== undefined || input.use !== undefined || input.registryUses !== undefined) return missing();
@@ -82,10 +82,12 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
         if (roles.size !== uses.length || !roles.has('repositoryPassword')
             || s3 && (!roles.has('accessKeyId') || !roles.has('secretAccessKey') || roles.has('sshPrivateKey'))
             || input.backupDestinationSftp && !roles.has('sshPrivateKey')) return missing();
-        const database = input.backupDatabaseBinding;
-        if (database && (database.purpose !== 'variable' || database.phase !== 'runtime' || database.source.kind === 'secret'
-            || !bindings.some(binding => isDeepStrictEqual(binding, database)))) return missing();
-        selected = database ? [...uses, database] : uses;
+        const databases = input.backupDatabaseBindings ?? [];
+        for (const database of databases) {
+            if (database.purpose !== 'variable' || database.phase !== 'runtime' || database.source.kind === 'secret'
+                || !bindings.some(binding => isDeepStrictEqual(binding, database))) return missing();
+        }
+        selected = [...uses, ...databases];
     } else if (input.use) {
         if (input.phase || input.registryUses !== undefined) return missing();
         selected = [admitUse(input.use)];
@@ -237,7 +239,8 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
     }
     return {
         env, operationalValues, secretValues, refs, referenceAddresses,
-        backupDatabase: input.backupDatabaseBinding ? definitions.get(input.backupDatabaseBinding.name) ?? missing() : undefined,
+        backupDatabases: new Map((input.backupDatabaseBindings ?? []).map(database =>
+            [database.name, definitions.get(database.name) ?? missing()] as const)),
         credentialFiles: backupConfig?.credentialFiles ?? [],
         async recheck() {
             if (disposed) return missing();

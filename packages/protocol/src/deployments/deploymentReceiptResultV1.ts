@@ -4,6 +4,7 @@ import { ActionOperationAddressV1Schema } from '../actions/operations/addressV1.
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
 import { DeploymentStateV1Schema } from './deploymentStateV1.js';
 import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
+import { DeploymentPreviewCleanupV1Schema } from './deploymentTeardownVolumesV1.js';
 
 /** Accepted deployment outcomes shared by semantic parents and storage transports. */
 export const DeploymentReceiptAcceptedResultV1Schema = lazyZodSchema(() => {
@@ -11,7 +12,7 @@ export const DeploymentReceiptAcceptedResultV1Schema = lazyZodSchema(() => {
   return z.union([
     z.strictObject({ ...result, deploymentId: DeploymentIdentifierV1Schema,
       deploymentRevision: DeploymentRevisionV1Schema, state: DeploymentStateV1Schema,
-      environmentRemoved: z.optional(z.literal(true)) }),
+      environmentRemoved: z.optional(z.literal(true)), previewCleanup: z.optional(DeploymentPreviewCleanupV1Schema) }),
     z.strictObject({ ...result, kind: z.literal('pending'), actionOperationId: DeploymentIdentifierV1Schema,
       operation: z.optional(ActionOperationAddressV1Schema) }),
   ]);

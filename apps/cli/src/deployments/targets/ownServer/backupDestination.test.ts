@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { readFile } from 'node:fs/promises';
 import nacl from 'tweetnacl';
@@ -28,7 +28,9 @@ import { createDeploymentRestoreActionForHost } from '@/deployments/actions/rest
 import { readOrCreateInstallationIdentitySync } from '@/daemon/identity/store';
 import * as identityStore from '@/daemon/identity/store';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse, type ActionExecutorContext } from '@happier-dev/protocol';
+import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { getRandomBytes, libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
@@ -37,11 +39,17 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { consumeDeploymentExecEnvForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 import type { StoredCredentials } from '@/persistence';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each([['plain', 's3'], ['e2ee', 's3'], ['plain', 'local']] as const)(
-    'prepares an unsaved %s %s destination on its controller before any target exists', async (mode, destination) => {
+it.each([['plain', 's3', false], ['e2ee', 's3', false], ['plain', 'local', false],
+    ['plain', 's3', true], ['e2ee', 's3', true]] as const)(
+    'prepares an unsaved %s %s destination on its controller before any target exists (requester %s)', async (mode, destination, requester) => {
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
         plugins: [{ manifest: plugin.manifest,
             files: { '.happier-plugin/daemon.js': 'export function activate() {}', 'package.json': '{"type":"module"}' },
@@ -54,10 +62,16 @@ it.each([['plain', 's3'], ['e2ee', 's3'], ['plain', 'local']] as const)(
     });
     try {
         const detail = createDeploymentEnvironmentDetailV1();
-        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const accountId = requester ? 'requester' : 'owner';
+        const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, mode, destination, requester })).toString('base64url')}.signature`;
         const machineKey = new Uint8Array(32).fill(47);
         const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null : {
-            type: 'dataKey', machineKey, publicKey: libsodiumPublicKeyFromSecretKey(machineKey) } };
+            type: 'dataKey', machineKey, publicKey: nacl.box.keyPair.fromSecretKey(machineKey).publicKey } };
+        const daemonMachineKey = new Uint8Array(32).fill(61);
+        const daemonCredentials: StoredCredentials = requester ? {
+            token: `header.${Buffer.from(JSON.stringify({ sub: 'daemon-owner', mode, destination })).toString('base64url')}.signature`,
+            encryption: mode === 'plain' ? null : { type: 'dataKey', machineKey: daemonMachineKey,
+                publicKey: nacl.box.keyPair.fromSecretKey(daemonMachineKey).publicKey } } : credentials;
         const key = await createResourceDataKey({ credentials, mode });
         const seed = new Uint8Array(32).fill(51), keys = nacl.sign.keyPair.fromSeed(seed);
         vi.spyOn(identityStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
@@ -71,14 +85,23 @@ it.each([['plain', 's3'], ['e2ee', 's3'], ['plain', 'local']] as const)(
         let materialReads = 0;
         // Home resource material is the external authorization boundary; binding
         // selection, mode parsing, seals and operation attachment stay real.
-        vi.spyOn(axios, 'get').mockImplementation(async url => {
+        const settingsContent = credentials.encryption ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+            kind: 'account_settings', material: credentials.encryption, payload: {}, randomBytes: getRandomBytes }) }
+            : { t: 'plain', v: {} };
+        vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: accountId } };
+            if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: settingsContent, version: 1 } };
+            if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200,
+                data: createAccountEncryptionCurrentnessFixture({ mode }) };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode, updatedAt: 0 } };
             if (!url.endsWith('/v1/account/saved-secrets/resources/materials')) throw new Error('Unexpected Home read');
+            expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
             materialReads++;
             return { status: 200, data: { resources: [{ resourceId: 'credential', encryptionMode: mode,
                 recipientEnvelope: key.mode === 'plain' ? null : { encryptedDataKey: key.dataEncryptionKey,
                     recipientContentPublicKeyFingerprint: 'owner-content-key' },
                 entry: { ref: formatSharedSavedSecretRefV1('credential'), source: 'shared_resource', relationship: 'owner',
-                    name: 'Backup', kind: 'token', ownerAccountId: 'owner', revision: 1, materialStatus: 'ready',
+                    name: 'Backup', kind: 'token', ownerAccountId: accountId, revision: 1, materialStatus: 'ready',
                     capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } }, storedContent }] } };
         });
         const serverHttpBaseUrl = 'https://home.test';
@@ -92,25 +115,51 @@ it.each([['plain', 's3'], ['e2ee', 's3'], ['plain', 'local']] as const)(
                 : { endpoint: 'https://storage.invalid', bucket: 'recovery', prefix: 'one', region: 'eu-west-1' },
             credentialBindings: (destination === 'local' ? ['repositoryPassword'] : ['repositoryPassword', 'accessKeyId', 'secretAccessKey']).map(role => ({
                 purpose: 'backupDestination', configKey: 'destination', role })),
-            ownership: { environmentId: detail.environment.id, prefix: 'one' }, retention: { kind: 'keepEverything' },
+            ownership: { environmentId: detail.environment.id, prefix: destination === 'local' ? '' : 'candidate-owner' }, retention: { kind: 'keepEverything' },
             sources: [{ kind: 'dump', sourceId: 'database', service: 'postgres', consistency: 'logical' }] });
         const bindings = configuration.credentialBindings.map(binding => ({ ...binding,
             source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('credential'), resourceRevision: 1 } }));
         const environment = { ...detail, environment: { ...detail.environment, controllerMachineId: 'controller', runtimeTargetLinkId: null },
             content: { ...detail.content, bindings }, targetLinks: [] };
         delete environment.content.backup;
+        let context: ActionExecutorContext = {};
+        if (requester) {
+            const channel = await createRequesterCurrentnessSocketHarness();
+            onTestFinished(() => channel.close());
+            const input = { serverId: 'home', environmentId: detail.environment.id,
+                expectedRevision: detail.environment.revision, intent: 'test' as const, configuration };
+            const admitted = await admitRequesterAccountActionContext({ credentials, serverId: 'home', serverIdentityId: 'home',
+                serverHttpBaseUrl, isCurrent: async () => true,
+                authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'candidate-requester-root', binding: {
+                    accountId, custodianAccountId: 'daemon-owner', accountEncryptionMode: mode, serverIdentityId: 'home',
+                    machineId: 'controller', installationId: 'controller-installation',
+                    actionId: 'deployments.backups.configure', environmentId: detail.environment.id,
+                    requestId: 'candidate-requester', requestEnvelopeDigest: 'a'.repeat(43),
+                    deploymentNativeAdmission: projectDeploymentNativeAdmissionV1('deployments.backups.configure', input),
+                    target: { kind: 'machine', machineId: 'controller' }, authentication: { kind: 'account', tokenEpoch: 1 },
+                } }) });
+            if (!admitted) throw new Error('Expected admitted requester custody');
+            onTestFinished(() => admitted.dispose());
+            const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted.authorization,
+                serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl, target: admitted.authorization.binding.target,
+                installationId: 'controller-installation', privateKey: keys.secretKey, rootAdmitted: true });
+            if (!authorization) throw new Error('Expected admitted requester HTTP projection');
+            context = { externalActionExecutionAuthorization: authorization };
+        }
         let releases = 0;
         let controllerCapacityReads = 0;
-        const host = { credentials, serverId: 'home', serverHttpBaseUrl, machineId: 'controller',
+        const host = { credentials: daemonCredentials, serverId: 'home', serverHttpBaseUrl, machineId: 'controller',
             async capacityForPath(path: string) {
                 controllerCapacityReads++;
                 return { status: 'known' as const, path, freeBytes: 1000, observedAt: 1 };
             },
-            savedSecretOperationContext: operation, async acquirePluginRuntimeRegistryLease() {
+            ...(requester ? { authorCustody: resolveRequesterSavedSecretActionCustody({
+                authorization: context.externalActionExecutionAuthorization, credentials: daemonCredentials }) }
+                : { savedSecretOperationContext: operation }), async acquirePluginRuntimeRegistryLease() {
                 return { registry: runtime.registry, async release() { releases++; } };
             } };
         const prepareDestination = createPrepareDeploymentBackupConfigurationDestinationForHost(host);
-        const request = { environment, configuration, intent: 'test' as const, context: {}, signal: new AbortController().signal };
+        const request = { environment, configuration, intent: 'test' as const, context, signal: new AbortController().signal };
         await expect(prepareDestination({ ...request, environment: { ...environment,
             environment: { ...environment.environment, controllerMachineId: 'different-controller' } } }))
             .rejects.toMatchObject({ data: { code: 'target_mismatch' } });
@@ -126,7 +175,7 @@ it.each([['plain', 's3'], ['e2ee', 's3'], ['plain', 'local']] as const)(
                 if (destination === 's3') expect(material.env.AWS_ACCESS_KEY_ID).toBe(content.value);
                 passwordPath = material.env.RESTIC_PASSWORD_FILE;
                 expect(await readFile(material.env.RESTIC_PASSWORD_FILE, 'utf8')).toBe(content.value);
-                if (destination === 's3') expect(prepared.readAccess().repository).toBe('s3:https://storage.invalid/recovery/one');
+                if (destination === 's3') expect(prepared.readAccess().repository).toBe('s3:https://storage.invalid/recovery/one/candidate-owner');
                 else expect(prepared.readAccess().local).toEqual({ path: expandHomeDirPath('~/candidate-repository') });
                 expect(JSON.stringify(prepared)).not.toContain(content.value);
             } finally { await material.dispose(); }
@@ -151,15 +200,19 @@ const external = definePlugin({ id: 'external.backup.destination', version: '1.0
         dangerLevel: 'safe', readOnly: true,
         inputSchema: defineProtocolObject({ config: externalConfig,
             credentialRoles: defineProtocolArray(DeploymentBackupDestinationCredentialRoleV1ProtocolSchema),
+            ownershipPrefix: defineProtocolString().optional(),
         }, { policy: 'closed' }),
         resultSchema: BackupDestinationOpenV1ProtocolSchema,
-        run: ({ config }) => ({ repository: config.archive,
+        run: ({ config, ownershipPrefix }) => {
+            expect(ownershipPrefix).toBe('');
+            return { repository: config.archive,
             credentialBindings: (['repositoryPassword', 'accessKeyId', 'secretAccessKey'] as const).map(role => ({
-                purpose: 'backupDestination' as const, configKey: 'destination' as const, role })) }),
+                purpose: 'backupDestination' as const, configKey: 'destination' as const, role })) };
+        },
     } },
 });
 
-it.each(['first-party', 'external'] as const)('opens the configured %s destination after a trusted plugin occurrence changes', async kind => {
+it.each(['first-party', 'external'] as const)('prepares selected sources through the configured %s destination after its occurrence changes', async kind => {
     const definition = kind === 'first-party' ? plugin : external;
     const manifest = normalizePluginManifestV2(definition.manifest);
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
@@ -191,7 +244,7 @@ it.each(['first-party', 'external'] as const)('opens the configured %s destinati
         const open = Reflect.get(hostRuntime, 'openDeploymentBackupDestinationForHost');
         expect(open).toBeTypeOf('function');
         const request = { registry, configuration, context: {}, signal: new AbortController().signal };
-        expect(await open(request)).toEqual({ repository: kind === 'first-party' ? 's3:https://storage.invalid/recovery/one'
+        expect(await open(request)).toEqual({ repository: kind === 'first-party' ? 's3:https://storage.invalid/recovery/one/one'
             : externalRepository, credentialBindings: configuration.credentialBindings,
             ...(kind === 'first-party' ? { s3: { region: 'eu-west-1' } } : {}) });
         expect(await open({ ...request, configuration: { ...configuration, occurrenceId: 'retired' } }))
@@ -287,11 +340,11 @@ it.each(['first-party', 'external'] as const)('opens the configured %s destinati
             try {
                 expect(prepared.destination).toEqual({ environmentId: 'environment', service: 'postgres', adapter: 'postgres-v1', database: 'actual_database' });
                 expect(prepared.readAccess().repository).toBe(kind === 'first-party'
-                    ? 's3:https://storage.invalid/recovery/one' : externalRepository);
+                    ? 's3:https://storage.invalid/recovery/one/one' : externalRepository);
                 const inventory = buildResticRequestV1({ environmentId: configuration.ownership.environmentId,
                     access: prepared.readAccess(), command: { kind: 'snapshots' } });
                 expect(inventory.argv).toEqual(['--repo', kind === 'first-party'
-                    ? 's3:https://storage.invalid/recovery/one' : externalRepository, '--json',
+                    ? 's3:https://storage.invalid/recovery/one/one' : externalRepository, '--json',
                     ...(kind === 'first-party' ? ['-o', 's3.region=eu-west-1'] : []),
                     'snapshots', '--host', 'happier-env-environment', '--tag', 'happier,env:environment']);
                 await expect(prepareOperands({ ...operands, data: [unrelated, { ...data, logicalBackup: { ...data.logicalBackup, database: 'ABSENT' } }] }))
@@ -301,6 +354,19 @@ it.each(['first-party', 'external'] as const)('opens the configured %s destinati
             } finally { await prepared.dispose(); }
             const prepareRun = Reflect.get(hostRuntime, 'prepareOwnServerBackupRunOperandsForHost');
             expect(prepareRun).toBeTypeOf('function');
+            if (kind === 'first-party') {
+                const sqlite = { engine: 'sqlite', service: 'application', logicalBackup: {
+                    adapter: 'sqlite-v1', path: '/data/application.sqlite' } } as const;
+                const selected = await prepareRun({ ...operands, data: [data, sqlite],
+                    configuration: { ...configuration, sources: [{ kind: 'dump', sourceId: 'application',
+                        service: 'application', consistency: 'logical' }] } });
+                const selectedAttachment = await selected.execEnv.prepare({ backupDestination: { configKey: 'destination' } });
+                try {
+                    expect(selected.data).toEqual(sqlite);
+                    expect(selected.destination).toEqual({ environmentId: 'environment', service: 'application',
+                        adapter: 'sqlite-v1', path: '/data/application.sqlite' });
+                } finally { selectedAttachment.dispose(); }
+            }
             const volume = await prepareRun({ ...operands, data: [],
                 configuration: { ...configuration, sources: [{ kind: 'volume', sourceId: 'uploads', service: 'app',
                     volume: 'uploads', consistency: 'stopDuringCopy' }] } });
@@ -308,7 +374,7 @@ it.each(['first-party', 'external'] as const)('opens the configured %s destinati
             try {
                 expect(volume).not.toHaveProperty('destination');
                 expect(volume.readAccess().repository).toBe(kind === 'first-party'
-                    ? 's3:https://storage.invalid/recovery/one' : externalRepository);
+                    ? 's3:https://storage.invalid/recovery/one/one' : externalRepository);
             } finally { volumeAttachment.dispose(); }
         });
     } finally { await runtime.dispose(); }

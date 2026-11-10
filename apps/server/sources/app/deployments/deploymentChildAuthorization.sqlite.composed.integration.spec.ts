@@ -2691,38 +2691,53 @@ describe('deployment children retain their controller Action authority', () => {
         }
     });
 
-    it('prepares client-side binding secrets only for the signed Home and Environment without a proposed builder', async () => {
+    it.each(['deployments.bindings.set', 'deployments.templates.instantiate'] as const)(
+        'prepares client-side binding secrets for %s only on the signed Home and Environment', async actionId => {
         const f = await fixture();
         const foreign = await fixture();
-        const actionId = 'deployments.bindings.set';
         const target = { kind: 'machine' as const, machineId: f.controller.id };
-        const input = getActionSpec(actionId).inputSchema.parse({ serverId, environmentId: f.environment.id,
+        const input = actionId === 'deployments.templates.instantiate' ? { ...f.templateInput,
+            environment: { ...f.templateInput.environment, expectedRevision: f.environmentRevision } } : getActionSpec(actionId).inputSchema.parse({ serverId, environmentId: f.environment.id,
             expectedRevision: f.environmentRevision, referencedSavedSecretRevisions: [],
             ...await f.content('deployment-environment.v1') });
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
         const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
             accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
             actionId, machineId: f.controller.id, target, requestId: envelope.requestId,
-            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            ...(actionId === 'deployments.templates.instantiate' ? {
+                deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input),
+            } : {}),
+        }, { input });
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const preparation = EnvironmentSecretClientBindingsInputV1Schema.parse({ kind: 'clientBindings', serverId,
                 environmentId: f.environment.id, expectedRevision: f.environmentRevision });
+            const effectActionId = 'deployments.bindings.set';
+            const reviewedChild: ReviewedActionChildHttpProofV1 | undefined = actionId === 'deployments.templates.instantiate' ? {
+                actionId: effectActionId, role: 'template.bindings',
+                inputDigest: computeActionInputApprovalDigestV1(effectActionId, { serverId,
+                    environmentId: f.environment.id, expectedRevision: f.environmentRevision, set: [], remove: [] }),
+            } : undefined;
             const prepare = (body: typeof preparation) => {
                 const path = `/v1/deployments/environments/${body.environmentId}/secret-launch-admission`;
                 return app.inject({ method: 'POST', url: path, payload: body, headers: {
                     [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
-                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                    ...(reviewedChild ? { [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedChild) } : {}),
                     [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
                     [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
-                        authorizationToken: authorization.token, effectActionId: actionId, target,
+                        authorizationToken: authorization.token, effectActionId, target,
                         installationId: f.controller.installationId, requestId: envelope.requestId,
-                        method: 'POST', path, body, privateKey: f.controller.keys.secretKey }),
+                        method: 'POST', path, body, ...(reviewedChild ? { reviewedChild } : {}),
+                        privateKey: f.controller.keys.secretKey }),
                 } });
             };
             for (const body of [{ ...preparation, serverId: 'another-home' },
-                { ...preparation, environmentId: foreign.environment.id },
-                { ...preparation, buildMachineId: f.controller.id }]) {
+                { ...preparation, environmentId: foreign.environment.id }]) {
                 expect((await prepare(body)).statusCode).toBe(401);
+            }
+            if (actionId === 'deployments.bindings.set') {
+                expect((await prepare({ ...preparation, buildMachineId: f.controller.id })).statusCode).toBe(401);
             }
             const prepared = await prepare(preparation);
             expect(prepared.statusCode, prepared.body).toBe(200);
@@ -5362,6 +5377,68 @@ describe('deployment children retain their controller Action authority', () => {
         await db.deployment.update({ where: { id: sourceReceipt.id }, data: { state: 'failed' } });
         expect(await current()).toBe(false);
         expect(await purpose(`/v1/artifacts/${sourceReceipt.contentArtifactId}`)).toBe(false);
+    });
+
+    it.each(['member', 'build'] as const)('reads only its Account workspace selection through an admitted signed %s child', async kind => {
+        const f = await fixture();
+        const other = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = kind === 'member' ? f.member : f.builder;
+        const job = kind === 'member' ? f.job : DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'build',
+            actionId: 'deployments.deploy', input: f.input, machineId: machine.id, installationId: machine.installationId,
+            deploymentId: f.receipt.id, actionOperationId: f.receipt.actionOperationId });
+        const packet = f.rpc(job);
+        const headers = (path: string, body: unknown, privateKey = machine.keys.secretKey) => ({
+            ...currentAccountStoredContentCompatibilityHeaders,
+            [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: f.authorization.token,
+            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.deploy',
+            [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(f.authorization.binding.target),
+            [EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER]: encodeDeploymentChildExecutionV1(packet),
+            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: f.authorization.token,
+                effectActionId: 'deployments.deploy', target: f.authorization.binding.target, installationId: machine.installationId,
+                requestId: f.authorization.binding.requestId, method: 'POST', path, body, deploymentChildExecution: packet, privateKey }),
+        });
+        await withAuthenticatedTestApp(registerProjectAccountRowRoutes, async app => {
+            const key = { kind: 'workspace-ref', serverId, id: 'checkout' } as const;
+            const graphKey = { kind: 'relationship-graph' } as const;
+            for (const account of [f.account, other]) {
+                const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+                const written = await app.inject({ method: 'POST', url: '/v1/account/project-rows/mutate',
+                    headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${token}` }, payload: {
+                        mutations: [{ key, expectedRevision: 'absent', content: { t: 'plain', v: { key, value: {
+                            id: key.id, serverId, machineId: machine.id, rootPath: '/checkout', label: account.id, createdAtMs: 1,
+                        } } } }, { key: graphKey, expectedRevision: 'absent', content: {
+                            t: 'plain', v: { key: graphKey, value: { relationships: [] } },
+                        } }], expectedRefs: [], topologyChange: true,
+                    } });
+                expect(written.statusCode, written.body).toBe(200);
+                expect(written.json()).toMatchObject({ status: 'updated' });
+            }
+            const path = '/v1/account/project-rows/list';
+            const selection = { kinds: ['workspace-ref'], serverId };
+            const response = await app.inject({ method: 'POST', url: path, payload: selection, headers: headers(path, selection) });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ status: 'listed', rows: [{ key, content: {
+                t: 'plain', v: { key, value: { label: f.account.id } },
+            } }] });
+            expect(response.json().rows).toHaveLength(1);
+            for (const body of [{ ...selection, serverId: 'another-home' }, { kinds: ['workspace-ref'] },
+                { ...selection, kinds: ['workspace-ref', 'relationship-graph'] }]) {
+                const refused = await app.inject({ method: 'POST', url: path, payload: body, headers: headers(path, body) });
+                expect(refused.statusCode, refused.body).toBe(401);
+            }
+            const foreignAccountSelection = { ...selection, accountId: other.id };
+            const malformed = await app.inject({ method: 'POST', url: path, payload: foreignAccountSelection,
+                headers: headers(path, foreignAccountSelection) });
+            expect(malformed.statusCode, malformed.body).toBe(400);
+            expect(malformed.json()).toEqual({ error: 'invalid-params' });
+            for (const [url, body] of [
+                ['/v1/account/project-rows/read', { key }],
+                ['/v1/account/project-rows/mutate', { mutations: [{ key, expectedRevision: 0, content: null }],
+                    expectedRefs: [], topologyChange: true }],
+            ] as const) expect((await app.inject({ method: 'POST', url, payload: body, headers: headers(url, body) })).statusCode).toBe(401);
+            expect((await app.inject({ method: 'POST', url: path, payload: selection,
+                headers: headers(path, selection, f.outsider.keys.secretKey) })).statusCode).toBe(401);
+        }, { authentication: 'real' });
     });
 
     it('opens only scoped source-custody receipt history for a current signed member child', async () => {

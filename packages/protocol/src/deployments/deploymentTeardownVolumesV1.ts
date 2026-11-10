@@ -10,6 +10,13 @@ export const DeploymentTeardownVolumesV1Schema = lazyZodSchema(() => z.array(z.d
 ])).check(z.refine(values => new Set(values.map(value => value.name)).size === values.length,
     { message: 'Choose each volume once.' })));
 export type DeploymentTeardownVolumesV1 = z.infer<typeof DeploymentTeardownVolumesV1Schema>;
+/** Native preview provision retains only its observed database volume identities. */
+export const DeploymentPreviewCleanupV1Schema = lazyZodSchema(() => z.strictObject({
+    machines: z.array(DeploymentIdentifierV1Schema).check(z.minLength(1),
+        z.refine(values => new Set(values).size === values.length)),
+    volumes: DeploymentTeardownVolumesV1Schema.check(z.refine(values => values.every(value => value.disposition === 'delete'))),
+}));
+export type DeploymentPreviewCleanupV1 = z.infer<typeof DeploymentPreviewCleanupV1Schema>;
 export const DeploymentTeardownPreviewV1Schema = lazyZodSchema(() => z.strictObject({
     ok: z.literal(true), kind: z.literal('preview'),
     volumes: z.array(z.strictObject({ name: DeploymentIdentifierV1Schema, machineId: DeploymentIdentifierV1Schema })),

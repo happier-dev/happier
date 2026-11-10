@@ -4,6 +4,17 @@ import { join } from 'node:path';
 import { DeploymentBackupManifestV1Schema } from '@happier-dev/deployment-protocol';
 
 export const archive = Buffer.from([80, 71, 68, 77, 80, 0, 255, 128, 10]);
+/** Fixed valid TAR bytes shared by native and public finite-upload corridors. */
+export const volumeTarFixture = (() => {
+    const bytes = Buffer.alloc(2048);
+    const header = bytes.subarray(0, 512);
+    header.write('restored.txt'); header.write('0000644\0', 100); header.write('0000000\0', 108);
+    header.write('0000000\0', 116); header.write('00000000011\0', 124); header.write('00000000000\0', 136);
+    header.fill(32, 148, 156); header.write('0', 156); header.write('ustar\0', 257); header.write('00', 263);
+    header.write(header.reduce((sum, value) => sum + value, 0).toString(8).padStart(6, '0') + '\0 ', 148);
+    bytes.write('restored\n', 512);
+    return bytes;
+})();
 export const database = "live\\db'";
 export const snapshot = { id: 'a'.repeat(64), tree: 'b'.repeat(64), hostname: 'happier-env-finite-environment',
     time: '2026-10-31T12:00:00Z', paths: ['/database.dump'],
@@ -159,6 +170,13 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
         require('./docker-original.cjs');
     };
     if (argv.includes('backup') && !argv.includes('--stdin')) {
+        if (state.mode !== 'volumeBackupFailure') {
+            state.safetySnapshot = {...state.snapshot,id:'d'.repeat(64),tree:'e'.repeat(64),
+                paths:argv.slice(argv.indexOf('backup')+1).filter(value => value.startsWith('/')),
+                hostname:argv[argv.indexOf('--host')+1],
+                tags:argv.flatMap((value,index)=>value === '--tag' ? [argv[index+1]] : [])};
+            save();
+        }
         if (state.mode === 'volumeBackupFailure') {
             const dockerPath = path.join(__dirname, 'docker-state.json');
             const docker = JSON.parse(fs.readFileSync(dockerPath,'utf8'));

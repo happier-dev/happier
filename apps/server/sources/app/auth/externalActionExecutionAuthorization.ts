@@ -1,4 +1,6 @@
+import { TeamCredentialDirectMaterialOpenRequestV1Schema, TeamCredentialDirectMaterialRouteParamsV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { isSessionStopChildRootV1, isSessionStopChildEffectV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { ExternalActionManagedControlAdmissionV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionIdsV1';
 import { PROJECT_READINESS_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import { isMachineSetupCombinedRunHttpPurpose } from '@/app/auth/externalActionMachineSetupWorkflowPurpose';
@@ -101,7 +103,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { requireActiveManagedResizeInTx } from '@/app/machines/managed/managedRows';
-import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1, resolveManagedMachineEnrollmentAdminAccessV1,
     resolveManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
@@ -194,7 +196,7 @@ import { redactHttpRequestUrlForLog } from '@/utils/logging/redactHttpRequestUrl
 import { readDeploymentChildAdmissionInTx, readDeploymentChildMachineReadInTx, isDeploymentPreparationMachineReadHttpPurposeInTx,
     type DeploymentChildAdmission, type DeploymentChildMachineRead } from '@/app/deployments/deploymentChildAuthorization';
 import { projectAcceptedDeploymentDomainSecretLaunchAdmission } from '@/app/deployments/deploymentDomainService';
-import { readDeploymentChildHttpPurposeInTx, readDeploymentChildPeerGrantTarget } from './deploymentChildHttpPurpose';
+import { readDeploymentChildHttpPurposeInTx, readDeploymentChildPeerGrantTarget, isDeploymentWorkspaceListHttpPurpose } from './deploymentChildHttpPurpose';
 import { isExternalActionManagedResourceAction, readExternalActionManagedAcquireResourceInTx, resolveManagedActionMachineAdmissionInTx } from './externalActionManagedAdmission';
 import { resolveManagedNativeCredentialActionMachineAdmissionInTx, type ExternalActionManagedAdmissionContext } from './externalActionManagedNativeAdmission';
 import { isManagedMachineCreator } from '@/app/machines/managed/managedRead';
@@ -332,6 +334,17 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(reader:
         return admitted ? { ...admitted, role: binding.admittedMachineRole } : { kind: 'denied', code: 'machine_unavailable' };
     }
     const native = input.executionBinding;
+    if (native && (isManagedControlAdmissionActionIdV1(native.actionId)
+        || isExternalActionManagedResourceAction(native.actionId) && native.actionId !== 'machines.managed.credentials.install')
+        && native.managedAdmission?.actionId === native.actionId && input.actionId === native.actionId
+        && input.actorAccountId === native.accountId && input.machineId === native.machineId
+        && native.target.kind === 'machine' && native.target.machineId === native.machineId) {
+        // The signed resource scope admits its carrier. Domain admission still
+        // decides new native work; later effects consume that accepted tuple.
+        const admitted = await readAdmittedExternalActionMachineInTx(reader, native, native.machineId, native.installationId);
+        return admitted ? { ...admitted, role: native.admittedMachineRole ?? admitted.role }
+            : { kind: 'denied', code: 'machine_unavailable' };
+    }
     if (native && (input.capturedMachineAdmission || readAdmittedDeploymentNativePrincipal(native) || readAdmittedTemplateExecutionPrincipal(native)) && input.actionId === native.actionId
         && input.actorAccountId === native.accountId && input.machineId === native.machineId) {
         const admitted = await readAdmittedExternalActionMachineInTx(reader, native, native.machineId, native.installationId, input.capturedMachineAdmission);
@@ -370,7 +383,8 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(reader:
         ...(input.actionId === 'approval.request.decide'
             ? { rpcMethod: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED }
             : accountPlaced ? {} : { actionId: input.actionId }) });
-    return ordinary.kind === 'admitted' || input.actionId !== 'machines.managed.acquire' && !isExternalActionManagedResourceAction(input.actionId)
+    return ordinary.kind === 'admitted' || input.actionId !== 'machines.managed.acquire'
+        && !isExternalActionManagedResourceAction(input.actionId) && !isManagedControlAdmissionActionIdV1(input.actionId)
         ? ordinary : resolveManagedActionMachineAdmissionInTx(reader, input);
 }
 
@@ -920,7 +934,8 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
     deploymentChildMachineRead?: DeploymentChildMachineRead;
     deploymentChildAdmission?: DeploymentChildAdmission;
     /** The receipt owner accepted this exact root and installed controller. */
-    acceptedDeploymentReceipt?: Readonly<{ read?: Readonly<{ environmentId?: string; deploymentId?: string;
+    acceptedDeploymentReceipt?: Readonly<{ platformMaterial?: NonNullable<ReturnType<typeof readDeploymentPlatformMaterialHttpPurpose>>;
+        read?: Readonly<{ environmentId?: string; deploymentId?: string;
         /** Exact finite native read, including its captured content custody. */
         contentCustody?: true }> }>;
     /** Exact Environment selected by an admitted finite registry update check. */
@@ -1070,6 +1085,7 @@ export async function readCurrentManagedGuestActivityInTx(reader: Tx,
         if (!binding.managedAccountExecutor) {
             const controller = await resolveExternalActionExecutionMachineAdmissionInTx(reader, {
                 actorAccountId: binding.accountId, machineId: binding.machineId, actionId: binding.actionId,
+                executionBinding: binding,
             });
             if (controller.kind !== 'admitted' || controller.custodianAccountId !== binding.custodianAccountId
                 || controller.installationId !== binding.installationId) return null;
@@ -1099,8 +1115,8 @@ export async function readCurrentManagedGuestActivityInTx(reader: Tx,
             || row.desired !== (binding.actionId === 'machines.managed.delete' ? 'delete' : 'stop')
             || admission.request.input.intent !== row.desired) return null;
         // The proved controller uses its custodian's transport for this exact
-        // retained guest. Requester Manage is rechecked on the controller above;
-        // no independent guest grant or requester key disclosure is needed.
+        // retained guest. The signed scope admits only this carrier; the guest
+        // activity owner retains its exact bound-operation policy.
         const guest = await resolveManagedGuestActivityAdmissionInTx(reader, { actorAccountId: binding.accountId,
             machineId, rpcMethod: 'action' in currentTarget ? MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD : MANAGED_ACTIVITY_READ_RPC_METHOD,
             target: currentTarget });
@@ -1346,6 +1362,22 @@ type VerifiedSignedChildRequest = VerifiedExternalActionExecutionRequest & Reado
     signedChildPurpose: Awaited<ReturnType<typeof readSignedChildPurpose>>;
 }>;
 
+/** One exact signed finite material purpose, before consuming the accepted receipt. */
+function readDeploymentPlatformMaterialHttpPurpose(proof: ExternalActionExecutionRequestProof) {
+    if (proof.method.toUpperCase() !== 'POST') return null;
+    const path = /^\/v2\/teams\/([^/?#]+)\/credential-resources\/([^/?#]+)\/direct-material$/u.exec(proof.path);
+    if (!path) return null;
+    const body = TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse(proof.body);
+    if (!body.success || body.data.consumer.kind !== 'platform_operation') return null;
+    try {
+        const params = TeamCredentialDirectMaterialRouteParamsV1Schema.safeParse({ teamId: decodeURIComponent(path[1]!), resourceId: decodeURIComponent(path[2]!) });
+        if (!params.success || params.data.resourceId !== body.data.resourceId
+            || proof.path !== `/v2/teams/${encodeURIComponent(params.data.teamId)}/credential-resources/${encodeURIComponent(params.data.resourceId)}/direct-material`
+            || proof.routeInput !== undefined && !sameStrictJsonValue(proof.routeInput, { ...params.data, ...body.data })) return null;
+        return { ...params.data, consumer: body.data.consumer };
+    } catch { return null; }
+}
+
 async function verifyCommon(
     proof: ExternalActionExecutionRequestProof,
 ): Promise<VerifiedSignedChildRequest | null> {
@@ -1535,7 +1567,11 @@ async function verifyCommon(
 
     // Accepted roots retain finite controller custody for every signed call.
     // A transition additionally binds the receipt identity and settlement purpose.
-    const deploymentContinuation: DeploymentReceiptContinuation | undefined = nativeTransition
+    const platformMaterial = effectActionId.data === binding.actionId ? readDeploymentPlatformMaterialHttpPurpose(proof) : null;
+    const deploymentContinuation: DeploymentReceiptContinuation | undefined = platformMaterial
+        && deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined
+        ? { deploymentId: platformMaterial.consumer.deploymentId, environmentId: platformMaterial.consumer.environmentId,
+            actionOperationId: platformMaterial.consumer.operationId, installationId: binding.installationId } : nativeTransition
         && (deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined
             || binding.actionId === 'deployments.receipts.observe') && verifySignature(machine.installationPublicKey) ? {
         deploymentId: nativeTransition.deploymentId, actionOperationId: nativeTransition.actionOperationId,
@@ -1559,12 +1595,14 @@ async function verifyCommon(
         || deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined)
         && verifySignature(machine.installationPublicKey)
         && await hasAcceptedDeploymentReceiptInTx(db, binding, deploymentContinuation, {
-            ...(acceptedPreparationRead ? { state: { in: deploymentInProgressStates() } } : {}),
+            ...(platformMaterial ? { cancelRequestedAt: null, state: { in: deploymentInProgressStates() } }
+                : acceptedPreparationRead ? { state: { in: deploymentInProgressStates() } } : {}),
             ...(acceptedPreparationRead?.environmentId ? { environmentId: acceptedPreparationRead.environmentId }
                 : acceptedPreparationRead?.deploymentId ? { environment: { deployments: { some: {
                     id: acceptedPreparationRead.deploymentId,
                 } } } } : {}),
         });
+    if (platformMaterial && !acceptedDeployment) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
     if (domainContinuation?.kind === 'secret-facts') {
         const input = domainContinuation.input;
         const materialization = domainContinuation.materialization;
@@ -1616,7 +1654,8 @@ async function verifyCommon(
         const principal = projectAcceptedDeploymentPrincipal(binding);
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
             effectiveAuthority: principal.authority,
-            acceptedDeploymentReceipt: acceptedPreparationRead ? { read: acceptedPreparationRead } : {},
+            acceptedDeploymentReceipt: { ...(acceptedPreparationRead ? { read: acceptedPreparationRead } : {}),
+                ...(platformMaterial ? { platformMaterial } : {}) },
             ...(domainPurpose ? { deploymentDomainPurpose: domainPurpose } : {}),
             ...(targetRetentionPurpose ? { deploymentTargetRetentionAdmission: targetRetentionPurpose } : {}),
             ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : null;
@@ -2655,11 +2694,7 @@ export function isDeploymentNativeHttpPurpose(verified: Pick<VerifiedExternalAct
         return false;
     }
     if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
-        if (root === 'deployments.teardown') return false;
-        const selection = ProjectAccountRowListRequestV1Schema.safeParse(proof.body);
-        return selection.success && selection.data.serverId === verified.binding.serverIdentityId
-            && selection.data.kinds?.length === 1 && selection.data.kinds[0] === 'workspace-ref'
-            && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, selection.data));
+        return root !== 'deployments.teardown' && isDeploymentWorkspaceListHttpPurpose(verified.binding.serverIdentityId, proof);
     }
     const admission = schema.safeParse(proof.body);
     if (admission.success && admission.data.serverId === verified.binding.serverIdentityId) {
@@ -3295,7 +3330,7 @@ export async function verifyExternalActionDomainExecutionRequest(
                 && proof.path !== `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`) return null;
     } else if (verified.createPreparationAdmission || verified.deploymentPreparationSourceRead
         || verified.deploymentTargetRetentionAdmission || verified.deploymentLinkReviewedSetupRead
-        || verified.acceptedDeploymentReceipt?.read) {
+        || verified.acceptedDeploymentReceipt?.read || verified.acceptedDeploymentReceipt?.platformMaterial) {
         // verifyCommon already consumed the one purpose + admitted-job result.
     } else if (domainPreparation === true) {
         // The existing owner matched this exact private candidate or prepared
@@ -3480,10 +3515,19 @@ export async function verifyExternalActionDomainExecutionRequest(
         const path = proof.path.split('?')[0];
         const method = proof.method.toUpperCase();
         const recovery = isExternalActionManagedResourceAction(verified.binding.actionId) ? verified.binding.managedAdmission : undefined;
+        const parsedControl = isManagedControlAdmissionActionIdV1(verified.binding.actionId)
+            ? ExternalActionManagedControlAdmissionV1Schema.safeParse(verified.binding.managedAdmission) : undefined;
+        const control = parsedControl?.success ? parsedControl.data : undefined;
         const body = proof.body !== null && typeof proof.body === 'object' && !Array.isArray(proof.body)
             ? proof.body as Readonly<Record<string, unknown>> : null;
         const continuation = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(proof.body);
         const childManagedId = continuation.success ? continuation.data.managedContinuation?.managedId : undefined;
+        if (control) {
+            const admittedControl = method === 'POST' && path === '/v1/machines/managed/controller/admit-control';
+            if (admittedControl ? body?.action !== control.actionId || body.requestId !== verified.binding.requestId
+                || !sameManagedInput(body.input, control.input)
+                : method === 'GET' ? false : body?.homeId !== control.input.homeId || body.managedId !== control.input.managedId) return null;
+        }
         if (managedRoot.data === 'machines.managed.acquire') {
             if (method === 'POST' && path === '/v1/machines/managed/controller/admit') {
                 // Admission creates the row; its canonical route validates the

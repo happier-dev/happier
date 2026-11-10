@@ -1,4 +1,5 @@
 import { BackupDestinationCredentialBindingV1ProtocolSchema, type BackupDestinationContributionV1, type BackupDestinationOpenV1 } from '@happier-dev/plugin-sdk';
+import { assertDestinationOwnershipPrefix, assertExactDestinationPrefix } from './transports.js';
 import {
   defineProtocolArray,
   defineProtocolLiteral,
@@ -65,6 +66,7 @@ function invalid(path: string, message: string): never {
 export function prepareS3Destination(
   input: unknown,
   selectedCredentialRoles: readonly S3DestinationCredentialRole[] = requiredRoles,
+  ownershipPrefix = '',
 ): S3DestinationOpen {
   const config = S3DestinationConfigSchema.parse(input);
   const roles = selectedRolesSchema.parse(selectedCredentialRoles);
@@ -86,10 +88,10 @@ export function prepareS3Destination(
   }
   // restic v0.19.1 internal/backend/s3/config.go uses path.Clean(prefix).
   // Reject identity-changing inputs rather than silently select another prefix.
-  if (config.prefix && config.prefix.split('/').some(part => !part || part === '.' || part === '..')) {
-    invalid('prefix', 'Use an exact repository prefix without empty or dot path segments.');
-  }
-  const prefix = config.prefix.split('/').map(encodeURIComponent).join('/');
+  assertExactDestinationPrefix(config.prefix, 'prefix');
+  assertDestinationOwnershipPrefix(ownershipPrefix);
+  const repositoryPrefix = [config.prefix, ownershipPrefix].filter(Boolean).join('/');
+  const prefix = repositoryPrefix.split('/').map(encodeURIComponent).join('/');
   const normalizedConfig = { ...config, endpoint: endpoint.origin };
   const credentialRoles: readonly S3DestinationCredentialRole[] = roles.includes('sessionToken')
     ? [...requiredRoles, 'sessionToken'] : requiredRoles;

@@ -1,5 +1,7 @@
 import { posix } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { DeploymentTemplateV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
+import type { OwnServerDeploymentSourceV1 } from '@happier-dev/deployment-protocol';
 
 export type NativeComposeStorageWarning = Readonly<{
     kind: 'writable_source' | 'concurrent_writers';
@@ -25,6 +27,9 @@ export async function inspectNativeComposeStorage(input: Readonly<{
     runtimeMachineCount: number;
     /** Start-first runs two physical generations beside each other. */
     requireStateless?: true;
+    previewData?: Readonly<{ projectName: string;
+        volumes: readonly Pick<DeploymentTemplateV1['volumes'][number], 'service' | 'target'>[];
+        namedVolumes?: OwnServerDeploymentSourceV1['namedVolumes'] }>;
     isUnchangedManifestSource(path: string): Promise<boolean>;
 }>): Promise<NativeComposeStorageReview> {
     const warnings: NativeComposeStorageWarning[] = [];
@@ -63,6 +68,22 @@ export async function inspectNativeComposeStorage(input: Readonly<{
         for (const target of Object.keys(config && record(config.Volumes) ? config.Volumes : {})) {
             const normalized = mountTarget(target);
             if (!mounts.has(normalized)) mounts.set(normalized, { type: 'volume' });
+        }
+        const previewData = input.previewData;
+        for (const data of previewData?.volumes.filter(volume => volume.service === service) ?? []) {
+            const mount = mounts.get(mountTarget(data.target));
+            const source = typeof mount?.source === 'string' ? mount.source : undefined;
+            const volume = source && record(input.model.volumes) ? input.model.volumes[source] : undefined;
+            // Receipt-backed runtime bindings and native restore candidates already own their physical allocation.
+            const retained = previewData?.namedVolumes?.find(binding => binding.volume === source);
+            if (mount?.type !== 'volume' || !source || mount.read_only === true || !record(volume)
+                || !retained && (volume.external === true || record(volume.external))
+                || volume.driver !== undefined && volume.driver !== 'local'
+                || record(volume.driver_opts) && Object.keys(volume.driver_opts).length > 0
+                || volume.name !== (retained?.physicalName ?? `${previewData?.projectName}_${source}`)) {
+                throw new PluginError({ code: 'native_failed', message: 'Preview database storage must belong to its Compose project',
+                    details: { reason: 'preview_data_volume_not_isolated', service, target: data.target } });
+            }
         }
         for (const [target, mount] of mounts) {
             if (mount.type === 'volume' && typeof mount.source === 'string') {

@@ -815,7 +815,7 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
             const { actionOperationId: _operation, ...reviewedInput } = parsed.data;
             return admit(isNativeHttpPurpose?.(proof) === true
                 && parsed.data.serverId === binding.serverIdentityId
-                && parsed.data.environmentId === environmentId && parsed.data.requestKey === binding.requestId
+                && parsed.data.environmentId === environmentId
                 && proof.reviewedChild?.actionId === effectActionId
                 && proof.reviewedChild.role === deployRole
                 && computeActionInputApprovalDigestV1(effectActionId, reviewedInput) === proof.reviewedChild.inputDigest);

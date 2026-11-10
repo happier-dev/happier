@@ -3,12 +3,16 @@ import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-prot
 import type { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import type { z } from 'zod/mini';
 import { createHash } from 'node:crypto';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readWorkflowDataCreationResult } from './targets/workflowDataCreationResult';
+import { DeploymentDeployActionInputV1Schema, DeploymentReceiptResultV1Schema,
+    type DeploymentPreviewCleanupV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 export type PreviewCloseWorkflowHost = Readonly<{
     readEnvironments(): Promise<readonly DeploymentEnvironmentHeaderV1[]>;
+    readCompanions?(environmentId: string): Promise<readonly DeploymentEnvironmentHeaderV1[]>;
     readEnvironment(environmentId: string): Promise<DeploymentEnvironmentDetailV1>;
     readInvocations(input: Readonly<{ runId: string; cursor?: string }>): Promise<z.infer<typeof WorkflowInvocationListResultV1Schema>>;
 }>;
@@ -18,11 +22,18 @@ export async function readPreviewCloseWorkflowForHost(host: PreviewCloseWorkflow
     const blocks: WorkflowDefinitionV1['blocks'] = [];
     const literal = (value: unknown) => ({ kind: 'literal' as const, value: normalizeStrictJsonValue(value) });
     const key = (...parts: string[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
-    for (const candidate of await host.readEnvironments()) {
+    const candidates: DeploymentEnvironmentHeaderV1[] = [];
+    for (const preview of await host.readEnvironments()) {
+        // Relation lookup keeps failed or partially provisioned companions reachable on close.
+        candidates.push(...(await host.readCompanions?.(preview.id) ?? []));
+        if (preview.deletedAtMs === undefined) candidates.push(preview);
+    }
+    for (const candidate of candidates) {
         const child = await host.readEnvironment(candidate.id);
         const header = child.environment;
         const runId = child.content.previewCreationRunId;
         let previous: string | undefined;
+        let nativeCleanup: DeploymentPreviewCleanupV1 | undefined;
         const captures: { runId: string; invocationId: string; targetLinkId: string }[] = [];
         if (runId) {
             let cursor: string | undefined;
@@ -31,6 +42,16 @@ export async function readPreviewCloseWorkflowForHost(host: PreviewCloseWorkflow
                 for (const invocation of page.invocationDetails ?? []) {
                     const execution = invocation.progress.execution;
                     const output = execution?.kind === 'action' ? execution.output : undefined;
+                    if (execution?.kind === 'action' && execution.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 && output !== undefined) {
+                        if (invocation.index.runId !== runId) throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+                        const input = DeploymentDeployActionInputV1Schema.parse(execution.input);
+                        if (input.serverId !== header.serverId || input.environmentId !== header.id
+                            || input.targetLinkId !== header.runtimeTargetLinkId) continue;
+                        const result = DeploymentReceiptResultV1Schema.parse(output);
+                        if (result.ok && 'state' in result && result.state === 'succeeded'
+                            && result.environmentId === header.id && result.previewCleanup) nativeCleanup = result.previewCleanup;
+                        continue;
+                    }
                     if (!output || typeof output !== 'object' || Array.isArray(output) || output.kind !== 'deployment_data_created') continue;
                     const captured = readWorkflowDataCreationResult({ invocation }, { runId, invocationId: invocation.index.id });
                     // The Run may contain other effects; choose only this child's captured DATA creation.
@@ -61,6 +82,7 @@ export async function readPreviewCloseWorkflowForHost(host: PreviewCloseWorkflow
             blocks.push({ kind: 'action', id: `runtime-close-${blocks.length}`, actionId: 'deployments.teardown', input: {
                 serverId: literal(header.serverId), environmentId: literal(header.id), reason: literal('previewClosed'),
                 requestKey: literal(key('preview-close', header.id)), removeEnvironment: literal(true),
+                ...(nativeCleanup ? { volumes: literal(nativeCleanup.volumes), machines: literal(nativeCleanup.machines) } : {}),
             } });
         } else if (captures.length === 0) {
             // Empty previews have no native workload to tear down.

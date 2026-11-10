@@ -10,7 +10,7 @@ import { createOwnServerDockerBoundary } from '@/deployments/targets/ownServer/o
 import { createNativeComposeLifecycle } from './nativeComposeLifecycle';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 
-it.skipIf(process.platform === 'win32').each(['proven', 'cancelled', 'unprovedRemoval'] as const)('limits first-deploy cleanup to witnessed introduced containers after %s failure', async mode => {
+it.skipIf(process.platform === 'win32').each(['proven', 'cancelled', 'unprovedRemoval', 'previewFresh', 'previewExisting'] as const)('limits first-deploy cleanup to witnessed introduced containers and fresh preview data after %s failure', async mode => {
     const root = await mkdtemp(join(tmpdir(), 'happier-first-deploy-'));
     const captures = new Set<ProjectNativeEffectCaptureForHost>();
     try {
@@ -42,10 +42,13 @@ it.skipIf(process.platform === 'win32').each(['proven', 'cancelled', 'unprovedRe
             return output;
         } };
         const native = (services: readonly string[], images: readonly DeploymentImageV1[]) => createNativeComposeLifecycle({ kind: 'environmentProject', source, exec, envPort,
-            files: ['compose.yaml'], services, images, io, async settleNative() {
+            files: ['compose.yaml'], services, images, io,
+            storage: { runtimeMachineCount: 1, ...(mode.startsWith('preview')
+                ? { previewDataVolumes: [{ service: 'app', target: '/data' }] } : {}) }, async settleNative() {
                 await Promise.all([...captures].map(capture => capture.waitForSettlement()));
             } });
-        await writeFile(join(root, 'compose.yaml'), JSON.stringify({ services: { db: { image: database.registryReference } } }));
+        await writeFile(join(root, 'compose.yaml'), JSON.stringify({ services: { db: { image: database.registryReference,
+            volumes: [{ type: 'volume', source: 'db_data', target: '/data' }] } }, volumes: { db_data: {} } }));
         const incumbent = native(['db'], [database]);
         let incumbentIds: readonly string[];
         try {
@@ -56,16 +59,21 @@ it.skipIf(process.platform === 'win32').each(['proven', 'cancelled', 'unprovedRe
             await running.dispose();
         } finally { await incumbent.dispose(); }
         await writeFile(join(root, 'compose.yaml'), JSON.stringify({ services: {
-            app: { image: image.registryReference }, db: { image: database.registryReference },
-        } }));
+            app: { image: image.registryReference, volumes: [{ type: 'volume', source: 'app_data', target: '/data' }] },
+            db: { image: database.registryReference, volumes: [{ type: 'volume', source: 'db_data', target: '/data' }] },
+        }, volumes: { app_data: {}, db_data: {} } }));
         const project = native(['app', 'db'], [image, database]);
         cancelAfterUp = mode === 'cancelled';
         const candidateSignal = mode === 'cancelled' ? candidateController.signal : signal;
         try {
             const rendered = await project.render();
+            const appVolume = `${rendered.projectName}_app_data`;
+            const dbVolume = `${rendered.projectName}_db_data`;
+            await docker.seedVolume('source-postgres-data', 'source-project');
+            if (mode === 'previewExisting') await docker.seedVolume(appVolume, rendered.projectName);
             const activation = machineNativeEffectAdmission.run({ operation: { operationId: 'first', kind: 'deployments.deploy', signal: candidateSignal }, keys: rendered.keys },
                 context => project.activate({ render: rendered, context, cleanupOnFailure: true, signal: candidateSignal }));
-            if (mode === 'proven') await expect(activation).rejects.toMatchObject({ code: 'native_failed',
+            if (mode === 'proven' || mode.startsWith('preview')) await expect(activation).rejects.toMatchObject({ code: 'native_failed',
                 details: { reason: 'deployment_activation_failed', firstDeployCleanup: 'removed' } });
             else if (mode === 'unprovedRemoval') {
                 await expect(activation).rejects.toMatchObject({ code: 'native_failed', details: { reason: 'deployment_activation_failed' } });
@@ -73,6 +81,8 @@ it.skipIf(process.platform === 'win32').each(['proven', 'cancelled', 'unprovedRe
             } else await expect(activation).rejects.toBeDefined();
             expect(await docker.readRunningImageConfig('app')).toBe(mode === 'cancelled' ? image.configDigest : null);
             expect(await docker.readRunningImageConfig('db')).toBe(database.configDigest);
+            expect(await docker.readVolumeNames()).toEqual((mode === 'previewFresh'
+                ? [dbVolume, 'source-postgres-data'] : [appVolume, dbVolume, 'source-postgres-data']).sort());
             const invocations = await docker.readInvocations();
             expect(invocations.some(call => call.args[0] === 'container' && call.args[1] === 'rm')).toBe(mode !== 'cancelled');
             expect(invocations.filter(call => call.args[0] === 'container' && call.args[1] === 'rm')

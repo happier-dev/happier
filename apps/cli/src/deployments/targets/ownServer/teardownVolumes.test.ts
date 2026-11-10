@@ -1,7 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { readOwnServerTeardownVolumes, settleOwnServerTeardownVolumes } from './teardownVolumes';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { projectNativeComposeReview } from '@/workspaces/projectSetup/nativeComposeReview';
+import { readOwnServerPreviewCleanup, readOwnServerTeardownVolumes, settleOwnServerTeardownVolumes } from './teardownVolumes';
 
 describe('native teardown volume disposition', () => {
+    it('captures only the observed PostgreSQL volume of an admitted standard companion', async () => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        Object.assign(environment.environment, { purpose: 'standard', previewCompanionOfEnvironmentId: 'main-preview' });
+        environment.content.template = { templateRef: { sourceId: 'apps', itemId: 'postgres', version: '1',
+            ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } }, services: ['db'],
+            definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+            data: [{ engine: 'postgres', service: 'db' }],
+            volumes: [{ id: 'data', service: 'db', target: '/data', persistent: true, backup: true, consistency: 'logicalDump' }] };
+        const cleanup = await readOwnServerPreviewCleanup({ environment, machineId: 'machine-a', services: ['db'],
+            render: { projectName: 'companion-project', review: projectNativeComposeReview({ services: { db: {
+                image: 'postgres:17', volumes: [{ type: 'volume', source: 'data', target: '/data' }],
+            } } }, '/release', value => value) },
+            activation: { nativeIdsForService: () => ['container-db'] },
+            // Docker process boundary: inventory includes an unrelated owned volume, while inspect identifies the actual data mount.
+            async run(args) {
+                if (args[0] === 'volume') return { exitCode: 0, stdout: 'observed-data\nunrelated-data', stderr: '' };
+                if (args[0] === 'inspect') return { exitCode: 0, stdout: JSON.stringify([{ Id: 'container-db',
+                    Config: { Labels: { 'com.docker.compose.project': 'companion-project', 'com.docker.compose.service': 'db' } },
+                    Mounts: [{ Type: 'volume', Name: 'observed-data', Destination: '/data', RW: true }] }]), stderr: '' };
+                throw new Error(`Unexpected native command ${args.join(' ')}`);
+            } });
+        expect(cleanup).toEqual({ machines: ['machine-a'], volumes: [{ name: 'observed-data', disposition: 'delete', confirmation: 'observed-data' }] });
+    });
+
+    it('does not authorize data deletion for an ordinary service subset or an unrelated preview subset', async () => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        environment.content.template = { templateRef: { sourceId: 'apps', itemId: 'postgres', version: '1',
+            ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } }, services: ['db'],
+            definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+            data: [{ engine: 'postgres', service: 'db' }] };
+        const input = { environment, machineId: 'machine-a', services: ['db'],
+            render: { projectName: 'child-project', review: { inspection: 'complete' as const, services: [], risks: [] } },
+            activation: { nativeIdsForService: () => [] }, async run(): Promise<never> { throw new Error('Unadmitted cleanup must not inspect Docker'); } };
+        expect(await readOwnServerPreviewCleanup(input)).toBeUndefined();
+        environment.environment.purpose = 'preview';
+        expect(await readOwnServerPreviewCleanup({ ...input, services: ['app'] })).toBeUndefined();
+    });
     it('removes only the selected exact owned volume and proves retained volumes without deleting them', async () => {
         const volumes = new Set(['app_data', 'app_logs', 'another_app_data']);
         const run = async (args: readonly string[]) => {

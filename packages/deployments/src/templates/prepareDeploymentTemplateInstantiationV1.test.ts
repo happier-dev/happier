@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { DeploymentTemplateV1Schema, DeploymentTemplateRefV1Schema, DeploymentEnvironmentContentV1Schema, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentTemplateV1Schema, DeploymentTemplateRefV1Schema, DeploymentEnvironmentContentV1Schema, type DeploymentEnvironmentContentV1,
+    type DeploymentTemplateV1 } from '@happier-dev/deployment-protocol';
 import { createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { prepareDeploymentTemplateInstantiationV1 } from './prepareDeploymentTemplateInstantiationV1.js';
 
@@ -449,5 +450,72 @@ describe('stored template preparation', () => {
         const colliding = { ...existing, source: { services: { ...existing.source.services, db: { image: 'foreign:1' } } } };
         expect(() => prepareDeploymentTemplateInstantiationV1({ template, templateRef, source, current: colliding, bindings: [binding] }))
             .toThrowError(expect.objectContaining({ code: 'template_service_conflict' }));
+    });
+});
+
+async function packagedPostgres() {
+    const raw: unknown = JSON.parse(await readFile(new URL('../../../plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8'));
+    if (!raw || typeof raw !== 'object' || !('apps' in raw) || !Array.isArray(raw.apps)) throw new Error('Expected packaged app catalog');
+    const selected: unknown = raw.apps.find((entry: unknown) => !!entry && typeof entry === 'object' && 'itemId' in entry && entry.itemId === 'postgresql');
+    if (!selected || typeof selected !== 'object' || !('app' in selected)) throw new Error('Expected PostgreSQL catalog item');
+    return DeploymentTemplateV1Schema.parse(selected.app);
+}
+function preparePostgres(app: DeploymentTemplateV1, options: Readonly<{ companions?: string[]; existing?: ReturnType<typeof current> }> = {}) {
+    return prepareDeploymentTemplateInstantiationV1({ template: app, templateRef: { ...templateRef, itemId: 'postgresql' },
+        source: JSON.parse(app.compose.document), current: options.existing ?? current(), intent: 'add', connectTo: { service: 'app' },
+        ...(options.companions ? { companions: options.companions } : {}),
+        bindings: app.generatedSecrets.map(secret => ({ purpose: 'variable', name: secret.key, phase: 'runtime',
+            source: { kind: 'generated', key: secret.key } })) });
+}
+
+describe('PostgreSQL PgBouncer companion (P45-R37)', () => {
+    it('adds nothing unless selected: the app keeps its direct connection and no pooler service exists', async () => {
+        const prepared = preparePostgres(await packagedPostgres());
+        const document = JSON.parse(prepared.document);
+        expect(document.services.pgbouncer).toBeUndefined();
+        expect(prepared.services).not.toContain('pgbouncer');
+        expect(document.services.app.environment.DATABASE_URL).toBe('postgres://${DB_USER}:${DB_PASSWORD}@database:5432/${DB_NAME}');
+    });
+
+    it('selected, pools the app through a pinned transaction/SCRAM companion built from the same credential bindings', async () => {
+        const app = await packagedPostgres();
+        const prepared = preparePostgres(app, { companions: ['pgbouncer'] });
+        const document = JSON.parse(prepared.document);
+        const pooler = document.services.pgbouncer;
+        // The image writes its own auth_file at start from ordinary env; no Happier file producer or custody path.
+        expect(pooler.image).toMatch(/^edoburu\/pgbouncer:v1\.\d+\.\d+-p\d+$/u);
+        expect(pooler.environment).toEqual(expect.objectContaining({ AUTH_TYPE: 'scram-sha-256', POOL_MODE: 'transaction',
+            MAX_PREPARED_STATEMENTS: '200', DATABASE_URL: 'postgres://${DB_USER}:${DB_PASSWORD}@database:5432/${DB_NAME}' }));
+        expect(pooler.depends_on).toEqual({ database: { condition: 'service_healthy' } });
+        expect(pooler.ports).toBeUndefined();
+        expect(prepared.services).toEqual(expect.arrayContaining(['database', 'pgbouncer']));
+        // The same generated password binding feeds both services; nothing new is generated.
+        expect(prepared.generatedSecrets.map(secret => secret.key)).toEqual(['DB_PASSWORD']);
+        expect(document.services.app.environment).toEqual(expect.objectContaining({
+            DATABASE_URL: 'postgres://${DB_USER}:${DB_PASSWORD}@pgbouncer:5432/${DB_NAME}',
+            DIRECT_URL: 'postgres://${DB_USER}:${DB_PASSWORD}@database:5432/${DB_NAME}' }));
+        expect(prepared.template.exports).toEqual(expect.objectContaining({
+            DATABASE_URL: expect.objectContaining({ service: 'pgbouncer', port: 5432 }),
+            DIRECT_URL: expect.objectContaining({ service: 'database', port: 5432 }) }));
+        // Query, dump/restore and the database card stay on Postgres, never the pooler.
+        expect(prepared.template.data).toEqual([expect.objectContaining({ engine: 'postgres', service: 'database' })]);
+        expect(DeploymentEnvironmentContentV1Schema.safeParse({ ...current().content,
+            template: { ...prepared.template, definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` } } }).success).toBe(true);
+    });
+
+    it('a second Add renames the companion with its database and keeps each pooler on its own Postgres', async () => {
+        const app = await packagedPostgres();
+        const first = preparePostgres(app, { companions: ['pgbouncer'] });
+        const existing = current();
+        const occupied = { content: { ...existing.content, definition: { ...existing.content.definition, document: first.document,
+            services: first.services } }, source: JSON.parse(first.document) };
+        const second = JSON.parse(preparePostgres(app, { companions: ['pgbouncer'], existing: occupied as ReturnType<typeof current> }).document);
+        expect(second.services['pgbouncer-2'].environment.DATABASE_URL).toBe('postgres://${DB_USER_2}:${DB_PASSWORD_2}@database-2:5432/${DB_NAME_2}');
+        expect(second.services['pgbouncer-2'].depends_on).toEqual({ 'database-2': { condition: 'service_healthy' } });
+    });
+
+    it('refuses an undeclared companion instead of ignoring it', async () => {
+        expect(() => preparePostgres(template, { companions: ['pgbouncer'] }))
+            .toThrowError(expect.objectContaining({ code: 'template_companion_unknown' }));
     });
 });

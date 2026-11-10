@@ -80,6 +80,7 @@ export type { SessionPendingNextOutput } from './specs/session/pendingNext.js';
 import { PROJECT_WORKER_ACTION_SPECS, ProjectWorkerActionInputSchemasV1, ProjectWorkerActionOutputSchemasV1,
   type ProjectWorkerActionIdV1 } from './specs/projectWorkers.js';
 import { ACTION_OPERATION_ACTION_SPECS, ActionOperationActionInputSchemasV1, ActionOperationActionOutputSchemasV1,
+  ActionOperationListActionInputV1Schema, ActionOperationListPluginInputV1Schema,
   type ActionOperationActionIdV1 } from './specs/actionOperations.js';
 import { SESSION_ORGANIZATION_MOVE_ACTION_SPECS } from './sessionOrganizationMoveAction.js';
 import { LIST_REORDER_ACTION_SPECS } from './listReorderAction.js';
@@ -1340,13 +1341,17 @@ type ProjectWorkerActionSpecDefinition = {
   >;
 }[ProjectWorkerActionIdV1];
 
-type ActionOperationActionSpecDefinition = {
-  [TActionId in ActionOperationActionIdV1]: CanonicalActionSchemaDefinition<
+type ActionOperationActionSpecDefinition = (CanonicalActionSchemaDefinition<
+  'action.operations.list', typeof ActionOperationListActionInputV1Schema,
+  (typeof ActionOperationActionOutputSchemasV1)['action.operations.list'],
+  Readonly<{ plugin: Readonly<{ inputSchema: typeof ActionOperationListPluginInputV1Schema }> }>
+> & Readonly<{ surfaceBindings: Readonly<{ plugin: Readonly<{ inputSchema: typeof ActionOperationListPluginInputV1Schema }> }> }>) | {
+  [TActionId in Exclude<ActionOperationActionIdV1, 'action.operations.list'>]: CanonicalActionSchemaDefinition<
     TActionId,
     (typeof ActionOperationActionInputSchemasV1)[TActionId],
     (typeof ActionOperationActionOutputSchemasV1)[TActionId]
   >;
-}[ActionOperationActionIdV1];
+}[Exclude<ActionOperationActionIdV1, 'action.operations.list'>];
 
 type EphemeralRunnerActionSpecDefinition = {
   [TActionId in EphemeralRunnerActionIdV1]: CanonicalActionSchemaDefinition<

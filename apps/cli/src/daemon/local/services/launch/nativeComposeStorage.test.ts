@@ -32,6 +32,8 @@ type StorageOptions = Readonly<{
     readOnly?: boolean;
     shared?: boolean;
     activate?: boolean;
+    previewPostgres?: boolean;
+    retainNamedVolumes?: boolean;
     absentIncumbent?: boolean;
     incumbentBind?: Readonly<{ source: string; target: string; foreign?: boolean; service?: string; status?: string }>;
     incumbentBinds?: readonly Readonly<{ source: string; target: string; service: string }>[];
@@ -127,6 +129,7 @@ async function withStorageFixture(run: (fixture: Readonly<{
                     images: [{ service: 'app', platform: 'linux/amd64', configDigest, manifestDigest }],
                     sourceKind: options.sourceKind ?? 'repository' as const,
                     storage: { runtimeMachineCount: options.machines ?? 2,
+                        ...(options.previewPostgres ? { previewDataVolumes: [{ service: 'app', target: '/var/lib/postgresql/data' }] } : {}),
                         ...(options.shared ? { sharedData: { environmentRoot: join(root, 'deployments', 'instance'),
                             readSourceCustody: createOwnServerSourceCustodyReader({ deploymentRoot: join(root, 'deployments'),
                                 environmentId: source.environmentId,
@@ -188,8 +191,13 @@ async function withStorageFixture(run: (fixture: Readonly<{
                         throw new Error('Review must not activate or mutate images');
                     } }, async settleNative() {} };
                 const project = createNativeComposeLifecycle(projectInput);
+                let retainedProject: ReturnType<typeof project.createVolumeRestoreCandidate> | undefined;
                 try {
-                    const rendered = await project.render();
+                    const initial = await project.render();
+                    // The runtime reopens the exact native volume bindings retained by its source receipt.
+                    retainedProject = options.retainNamedVolumes ? project.createVolumeRestoreCandidate(initial.namedVolumes) : undefined;
+                    const effectiveProject = retainedProject ?? project;
+                    const rendered = retainedProject ? await effectiveProject.render() : initial;
                     // Review is the owner's final effective model, after shared
                     // bind projection; earlier config also runs discovery passes.
                     renderedBindSources.push(...rendered.review.services.flatMap(service => service.mounts
@@ -197,17 +205,68 @@ async function withStorageFixture(run: (fixture: Readonly<{
                     activeProjectName = rendered.projectName;
                     await options.beforeActivate?.();
                     if (options.activate) await machineNativeEffectAdmission.run({ operation: { operationId: 'seed-operation', kind: 'deployments.deploy', signal },
-                        keys: rendered.keys, settleNative: project.settleNative }, context => project.activate({ render: rendered, context, signal,
+                        keys: rendered.keys, settleNative: effectiveProject.settleNative }, context => effectiveProject.activate({ render: rendered, context, signal,
                             onIncumbentServicesChanged: options.onIncumbentServicesChanged }));
                     return rendered;
                 }
-                finally { await project.dispose(); }
+                finally { try { await retainedProject?.dispose(); } finally { await project.dispose(); } }
             } });
         } finally { await source.abort(); }
     } finally { await rm(root, { recursive: true, force: true }); }
 }
 
 describe('resolved image and effective Compose storage admission', () => {
+    it.each([{ name: 'production-postgres-data' }, { name: 'production-postgres-data', external: true },
+        { name: '${COMPOSE_PROJECT_NAME}_data', external: true }])(
+        'refuses a merged preview PostgreSQL volume retaining unsafe repository attributes %j before startup', async volume => {
+            await withStorageFixture(async fixture => {
+                const options = { machines: 1, previewPostgres: true,
+                    volumes: [{ type: 'volume', source: 'data', target: '/var/lib/postgresql/data' }], topVolumes: { data: volume } };
+                await expect(fixture.render(options)).rejects.toMatchObject({ code: 'native_failed',
+                    details: { reason: 'preview_data_volume_not_isolated' } });
+                expect(fixture.nativeMutations).toEqual([]);
+                await expect(fixture.render({ ...options, previewPostgres: false })).resolves.toBeDefined();
+            });
+        });
+    it('admits native child-scoped PostgreSQL named storage after effective Compose normalization', async () => {
+        await withStorageFixture(async fixture => {
+            await expect(fixture.render({ machines: 1, previewPostgres: true,
+                volumes: [{ type: 'volume', source: 'data', target: '/var/lib/postgresql/data' },
+                    { type: 'bind', source: '/repository/logs', target: '/logs' }], topVolumes: { data: {} } }))
+                .resolves.toBeDefined();
+            expect(fixture.nativeMutations).toEqual([]);
+        });
+    });
+    it('reopens preview PostgreSQL through its retained native named-volume projection', async () => {
+        await withStorageFixture(async fixture => {
+            await expect(fixture.render({ machines: 1, previewPostgres: true, retainNamedVolumes: true,
+                volumes: [{ type: 'volume', source: 'data', target: '/var/lib/postgresql/data' }], topVolumes: { data: {} } }))
+                .resolves.toMatchObject({ namedVolumes: [{ volume: 'data', physicalName: expect.stringContaining('_data') }] });
+            expect(fixture.nativeMutations).toEqual([]);
+        });
+    });
+    it('refuses a preview PostgreSQL data target replaced by a repository bind before startup', async () => {
+        await withStorageFixture(async fixture => {
+            const options = { machines: 1, previewPostgres: true,
+                volumes: [{ type: 'bind', source: '/repository/production-data', target: '/var/lib/postgresql/data' }] };
+            await expect(fixture.render(options)).rejects.toMatchObject({ code: 'native_failed',
+                details: { reason: 'preview_data_volume_not_isolated' } });
+            expect(fixture.nativeMutations).toEqual([]);
+            await expect(fixture.render({ ...options, previewPostgres: false })).resolves.toBeDefined();
+        });
+    });
+    it('refuses a child-named preview data volume backed by a repository driver bind before startup', async () => {
+        await withStorageFixture(async fixture => {
+            const options = { machines: 1, previewPostgres: true,
+                volumes: [{ type: 'volume', source: 'data', target: '/var/lib/postgresql/data' }],
+                topVolumes: { data: { name: '${COMPOSE_PROJECT_NAME}_data', driver: 'local',
+                    driver_opts: { type: 'none', o: 'bind', device: '/production/postgres' } } } };
+            await expect(fixture.render(options)).rejects.toMatchObject({ code: 'native_failed',
+                details: { reason: 'preview_data_volume_not_isolated' } });
+            expect(fixture.nativeMutations).toEqual([]);
+            await expect(fixture.render({ ...options, previewPostgres: false })).resolves.toBeDefined();
+        });
+    });
     it('reviews a mixed native incumbent outside selected and serving receipts through one exact custody read', async () => {
         await withStorageFixture(async fixture => {
             const priorDatabasePath = join(fixture.sourcePath, 'config', 'state.sqlite');

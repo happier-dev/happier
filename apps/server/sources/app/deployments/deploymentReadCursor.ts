@@ -22,7 +22,8 @@ const path = (actorAccountId: string, input: DeploymentListCursorInput) => 'scop
             [...new Set(input.previewPullRequestIds)].sort()]),
         ...(input.previewRepository === undefined ? [] : ['previewRepository', normalizeScmHostingRepositoryIdentity(input.previewRepository),
             [...new Set(input.previewPullRequestIds)].sort()]),
-        ...(input.previewTemplateEnvironmentId === undefined ? [] : ['previewTemplate', input.previewTemplateEnvironmentId])]),
+        ...(input.previewTemplateEnvironmentId === undefined ? [] : ['previewTemplate', input.previewTemplateEnvironmentId]),
+        ...(input.previewCompanionOfEnvironmentId === undefined ? [] : ['previewCompanion', input.previewCompanionOfEnvironmentId])]),
 ];
 
 /** A filtered-out candidate must advance the page without disclosing its identity. */

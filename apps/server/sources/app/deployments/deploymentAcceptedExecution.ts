@@ -7,7 +7,7 @@ import type { Prisma } from '@prisma/client';
 import { deploymentFailure } from './deploymentAdmission';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
 import { readTemplateDeploymentEnvironmentIdInTx } from './deploymentPreparationAuthorization';
-import { isDeploymentDomainAddActionIdV1, isDeploymentMembershipActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentDomainAddActionIdV1, isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 type AcceptedIdentity = Omit<DeploymentAcceptedExecutionV1, 'v'>;
@@ -41,7 +41,9 @@ export function readDeploymentExecutionEffectFromRequest(request: FastifyRequest
         || actionId === `deployments.${deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission)}`
         || isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission) && isDeploymentDomainAddActionIdV1(actionId)
         || binding.actionId === 'deployments.environments.create' && reviewed?.actionId === actionId
-            && (actionId === 'deployments.bindings.set' || actionId === 'deployments.domains.add')
+            && (actionId === 'deployments.bindings.set' || actionId === 'deployments.domains.add' || actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1)
+        || binding.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 && actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+            && reviewed?.actionId === actionId && reviewed.role === 'backup.bindings'
         || reviewed !== undefined && isDeploymentDomainAddActionIdV1(reviewed.actionId) && actionId === reviewed.actionId
             && deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, actionId) === actionId
         ? { binding, actionId } : null;

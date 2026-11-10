@@ -12,14 +12,15 @@ const unavailable = (): never => {
 
 type ServicePublications = Pick<Parameters<typeof privateServicePublicationBindings>[0], 'exports' | 'services'>;
 
-function readServicePublication(input: ServicePublications, exported: ServicePublications['exports'][number]) {
+function readServicePublication(input: ServicePublications, exported: ServicePublications['exports'][number], loopback = false) {
     const service = input.services.find(value => value.name === exported.service);
     const ports = (service?.ports ?? []).filter(port =>
         port.protocol === 'tcp' && Number(port.target) === exported.containerPort);
-    if (ports.length !== 1) return unavailable();
-    const port = ports[0]!;
+    const dual = exported.exposure === 'privateNetwork' && exported.transport?.kind === 'iroh';
+    const selected = dual ? ports.filter(port => Boolean(port.bindAddress && isLiteralLoopbackHostname(port.bindAddress)) === loopback) : ports;
+    if (ports.length !== (dual ? 2 : 1) || selected.length !== 1) return unavailable();
+    const port = selected[0]!;
     const hostPort = Number(port.published);
-    if (!DeploymentServiceExportV1Schema.shape.containerPort.safeParse(hostPort).success) return unavailable();
     return { port, hostPort };
 }
 
@@ -29,7 +30,11 @@ export function assertIrohServicePublications(input: ServicePublications
     for (const exported of input.exports) {
         if (exported.transport?.kind !== 'iroh') continue;
         if (input.risks.some(risk => risk.kind === 'host_network' && risk.service === exported.service)) return unavailable();
-        const { port } = readServicePublication(input, exported);
+        const { port, hostPort } = readServicePublication(input, exported, true);
+        // Omitted or zero asks Docker for an ephemeral port; inspection supplies
+        // the positive assigned port before any connection can resolve.
+        if (port.published !== null && port.published !== 0 && port.published !== '0'
+            && !DeploymentServiceExportV1Schema.shape.containerPort.safeParse(hostPort).success) return unavailable();
         if (!port.bindAddress || !isLiteralLoopbackHostname(port.bindAddress)) return unavailable();
     }
 }
@@ -47,6 +52,7 @@ export function privateServicePublicationBindings(input: Readonly<{
         // An additional wildcard or public bind would expose the same exported
         // service outside the reviewed private Network.
         const { port, hostPort } = readServicePublication(input, exported);
+        if (!DeploymentServiceExportV1Schema.shape.containerPort.safeParse(hostPort).success) return unavailable();
         const matched = input.privateNetworks.flatMap(network => {
             if (network.state !== 'ready' || !exported.privateNetwork || network.networkIdentity !== exported.privateNetwork
                 || !network.interfaceName || !network.sourceRanges.length) return [];

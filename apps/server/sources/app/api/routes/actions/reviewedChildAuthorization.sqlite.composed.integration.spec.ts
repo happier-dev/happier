@@ -783,11 +783,63 @@ describe('public roots through real reviewed-child packet producers', () => {
         } finally { await f.close(); }
     });
 
+    it('admits a signed standard preview companion only for its captured main Environment', async () => {
+        const f = await deploymentFixture();
+        try {
+            await db.projectSource.update({ where: { id: f.source.id }, data: { repository: {
+                provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.example' },
+                repository: { nameWithOwner: 'owner/app', cloneUrl: 'https://github.example/owner/app.git' }, protocol: 'https',
+            } } });
+            await db.automation.create({ data: { accountId: f.account.id, name: 'Preview admission',
+                deploymentEnvironmentId: f.environment.id, deploymentPreviewRole: 'preview_admission', enabled: true,
+                templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                    directory: '/workspace/app', prompt: 'Preview' })) } });
+            const mainInput = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: f.serverId,
+                projectSourceId: f.source.id, requestKey: crypto.randomUUID(), protection: 'nonProduction',
+                purpose: 'preview', deployerMode: 'managers', controllerMachineId: f.machine.id,
+                preview: { templateEnvironmentId: f.environment.id, expectedTemplateRevision: f.environment.revision,
+                    runtimeTargetLinkId: f.link.id, pullRequestId: 'companion-pr' },
+                ...await f.artifact(), firstTargetLink: { machines: [{ machineId: f.machine.id,
+                    installationId: f.machine.installationId! }], ...await f.artifact('deployment-target-link.v1') } });
+            const mainRoot = await f.withAccountProjection(await f.root('deployments.environments.create', mainInput));
+            const path = '/v1/deployments/environments';
+            const main = await f.resourceApp.inject({ method: 'POST', url: path, payload: mainInput,
+                headers: await f.headers(mainRoot, { effectActionId: 'deployments.environments.create', method: 'POST', path, body: mainInput }) });
+            expect(main.statusCode, main.body).toBe(200);
+            const mainId: string = main.json().environmentId;
+            const input = DeploymentEnvironmentCreateInputV1Schema.parse({ ...mainInput, purpose: 'standard',
+                requestKey: crypto.randomUUID(), previewCompanionOfEnvironmentId: mainId, ...await f.artifact(),
+                firstTargetLink: { machines: [{ machineId: f.machine.id, installationId: f.machine.installationId! }],
+                    ...await f.artifact('deployment-target-link.v1') } });
+            const root = await f.withAccountProjection(await f.root('deployments.environments.create', input));
+            for (const [id, status] of [[mainId, 200], [crypto.randomUUID(), 401]] as const) {
+                const readPath = `/v1/deployments/environments/${encodeURIComponent(id)}?serverId=${encodeURIComponent(f.serverId)}`;
+                const read = await f.resourceApp.inject({ method: 'GET', url: readPath,
+                    headers: await f.headers(root, { effectActionId: 'deployments.environments.get', method: 'GET', path: readPath }) });
+                expect(read.statusCode, read.body).toBe(status);
+            }
+            const artifactPath = `/v1/artifacts/${encodeURIComponent(mainInput.contentArtifactId)}`;
+            const artifact = await f.resourceApp.inject({ method: 'GET', url: artifactPath,
+                headers: await f.headers(root, { effectActionId: 'deployments.environments.create', method: 'GET', path: artifactPath }) });
+            expect(artifact.statusCode, artifact.body).toBe(200);
+            const substituted = { ...input, previewCompanionOfEnvironmentId: f.environment.id };
+            const denied = await f.resourceApp.inject({ method: 'POST', url: path, payload: substituted,
+                headers: await f.headers(root, { effectActionId: 'deployments.environments.create', method: 'POST', path, body: substituted }) });
+            expect(denied.statusCode, denied.body).toBe(401);
+            const created = await f.resourceApp.inject({ method: 'POST', url: path, payload: input,
+                headers: await f.headers(root, { effectActionId: 'deployments.environments.create', method: 'POST', path, body: input }) });
+            expect(created.statusCode, created.body).toBe(200);
+            expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.json().environmentId } }))
+                .toMatchObject({ purpose: 'standard', previewCompanionOfEnvironmentId: mainId,
+                    previewTemplateEnvironmentId: null, previewRepositoryId: null, previewPullRequestId: null, previewTargetLinkId: null });
+        } finally { await f.close(); }
+    });
+
     it.each([
         { actionId: 'deployments.bindings.set', role: 'preview.bindings', status: 200 },
-        { actionId: 'deployments.environments.update', role: 'preview.backup', status: 200 },
-        { actionId: 'deployments.environments.update', role: 'preview.bindings', status: 401 },
-        { actionId: 'deployments.environments.update', role: 'preview.backup', status: 200, privateBackup: true },
+        { actionId: 'deployments.backups.configure', role: 'preview.backup', status: 200 },
+        { actionId: 'deployments.backups.configure', role: 'preview.bindings', status: 401 },
+        { actionId: 'deployments.environments.update', role: 'preview.backup', status: 401 },
     ] as const)('retains the preview Create root for $role/$actionId only on its allocated Environment ($status)', async selection => {
         const { actionId, role, status } = selection;
         const f = await deploymentFixture();
@@ -816,12 +868,13 @@ describe('public roots through real reviewed-child packet producers', () => {
             const common = { serverId: f.serverId, environmentId: environment.id, expectedRevision: environment.revision,
                 contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
                 contentBodyVersion: environment.contentBodyVersion };
-            const backup = 'privateBackup' in selection ? { configRevision: 1,
+            const backup = actionId === 'deployments.backups.configure' ? { configRevision: 1,
                 destinationRef: { pluginId: 'example.backups', localId: 'open' }, occurrenceId: 'preview-backup', config: {},
                 credentialBindings: [], sources: [{ kind: 'dump' as const, sourceId: 'database', service: 'app', consistency: 'logical' as const }],
                 retention: { kind: 'keepEverything' as const }, ownership: { environmentId: environment.id, prefix: `previews/${environment.id}` } } : undefined;
             const childInput = actionId === 'deployments.bindings.set' ? { ...common, referencedSavedSecretRevisions: [] }
-                : { ...common, ...(backup ? { patch: { backup } } : {}) };
+                : backup ? { serverId: f.serverId, environmentId: environment.id, expectedRevision: environment.revision,
+                    intent: 'initializeAndSave', configuration: backup, backupBindings: [] } : common;
             const result = await f.child(root, { actionId: 'deployments.environments.create', input },
                 { action: actionId, role, input: childInput }, async context => {
                     for (const [environmentId, expectedStatus] of [[f.environment.id, 401], [environment.id, status]] as const) {
@@ -831,18 +884,26 @@ describe('public roots through real reviewed-child packet producers', () => {
                                 effectActionId: actionId, method: 'GET', path: readPath }) });
                         expect(read.statusCode, read.body).toBe(expectedStatus);
                     }
-                    const method = actionId === 'deployments.bindings.set' ? 'POST' : 'PATCH';
-                    const writePath = `/v1/deployments/environments/${environment.id}${actionId === 'deployments.bindings.set' ? '/bindings' : ''}`;
+                    const method = actionId === 'deployments.environments.update' ? 'PATCH' : 'POST';
+                    const writePath = `/v1/deployments/environments/${environment.id}${actionId === 'deployments.bindings.set'
+                        ? '/bindings' : backup ? '/backup' : ''}`;
                     const native = readHostAdmittedReviewedChildV1(context)?.deploymentNativeAdmission;
+                    if (backup && role === 'preview.backup') expect(native).toMatchObject({ kind: 'backupConfigure', environmentId: environment.id,
+                        inputDigest: expect.any(String), intent: 'initializeAndSave' });
                     const body = actionId === 'deployments.bindings.set' ? { ...childInput, grants: [] }
                         : backup ? { ...common, ...await f.artifact('deployment-environment.v1',
                             { ...createDeploymentEnvironmentDetailV1().content, backup }, undefined,
-                            createDeploymentEnvironmentContentArtifactIdV1({ ...root.binding, environmentId: environment.id })),
-                            authoredInputDigest: native && 'inputDigest' in native ? native.inputDigest : undefined, patch: {} } : childInput;
+                            createDeploymentEnvironmentContentArtifactIdV1({ ...root.binding, actionId, environmentId: environment.id })),
+                            } : childInput;
                     const written = await f.resourceApp.inject({ method, url: writePath, payload: body,
                         headers: await f.headers(context.externalActionExecutionAuthorization!, {
                             effectActionId: actionId, method, path: writePath, body }) });
                     expect(written.statusCode, written.body).toBe(status);
+                    if (backup && status === 200) {
+                        const stored = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } });
+                        expect(stored.contentArtifactId).toBe(body.contentArtifactId);
+                        expect(stored.revision).toBeGreaterThan(environment.revision);
+                    }
                     return { ok: true, result: null };
                 });
             expect(result).toMatchObject({ ok: true });

@@ -1,4 +1,5 @@
-import { DeploymentTargetPreparationBaseV1ProtocolSchema, type JsonValue, type DeploymentTargetPreparationBaseV1 } from '@happier-dev/plugin-sdk';
+import { DeploymentTargetPreparationBaseV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1,
+  type JsonValue, type DeploymentTargetPreparationBaseV1 } from '@happier-dev/plugin-sdk';
 import { defineProtocolArray as array, defineProtocolLiteral as literal, defineProtocolNumber as number,
   defineProtocolObject as object, defineProtocolString as string, defineProtocolUnion as union,
   ScmHostingRepositoryIdentityV1ProtocolSchema, DeploymentDataParentBranchRefV1ProtocolSchema,
@@ -68,11 +69,12 @@ export const mutationResult = object({ status: union([literal('provisioned'), li
 
 /** Canonical custody fields retain their exact JSON Schema; this leaf adds only product operands. */
 export function inputSchema(product: ProtocolComposableSchema<unknown>, selected = false): PluginJsonSchema {
-  const base = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema;
+  const base = (product === branchListInput ? DeploymentTargetRoleInputProtocolSchemasV1['branches.list']
+    : selected ? DeploymentTargetRoleInputProtocolSchemasV1['branches.create']
+      : DeploymentTargetPreparationBaseV1ProtocolSchema).jsonSchema;
   const variants = (product.jsonSchema.anyOf ?? [product.jsonSchema]).map(member => ({
-    type: 'object' as const, properties: { ...base.properties, ...member.properties },
-    required: [...base.required ?? [], ...member.required ?? [],
-      ...(selected ? ['providerIdentity', 'targetLinkId', 'expectedTargetLinkRevision'] : [])], additionalProperties: false as const }));
+    type: 'object' as const, properties: { ...member.properties, ...base.properties },
+    required: [...new Set([...base.required ?? [], ...member.required ?? []])], additionalProperties: false as const }));
   if (variants.length === 1) return variants[0]!;
   return { type: 'object', properties: Object.fromEntries(variants.flatMap(member => Object.entries(member.properties))),
     required: variants[0]!.required.filter(key => variants.every(member => member.required.includes(key))),

@@ -28,7 +28,7 @@ import { listDeploymentTargetLinksInTx } from '@/app/deployments/deploymentTarge
 import { createDeploymentInTx, transitionDeploymentInTx } from '@/app/deployments/deploymentService';
 import { cancelDeploymentPendingInTx, cancelDeploymentPendingOperationInTx } from '@/app/deployments/deploymentPendingService';
 import { promoteDeploymentInTx } from '@/app/deployments/deploymentPromotionService';
-import { readDeploymentExecutionBindingFromRequest } from '@/app/deployments/deploymentAcceptedExecution';
+import { readDeploymentExecutionBindingFromRequest, readDeploymentExecutionEffectFromRequest } from '@/app/deployments/deploymentAcceptedExecution';
 import { readDeploymentEnvironmentInTx, readDeploymentReceiptInTx, readDeploymentEnvironmentAccessInTx, readDeploymentApprovalEnvironmentInTx,
     listDeploymentEnvironmentsInTx, listDeploymentReceiptsInTx, readDeploymentMachineReferencesInTx } from '@/app/deployments/deploymentReadService';
 import type { Fastify } from '../../types';
@@ -133,9 +133,10 @@ export function registerDeploymentRoutes(app: Fastify): void {
             response: responses(outputs['deployments.environments.update']) },
     }, async (request, reply) => {
         if (request.validationError || request.params.environmentId !== request.body.environmentId) return reply.code(400).send(invalid);
+        const execution = readDeploymentExecutionEffectFromRequest(request);
         const result = await inTx(tx => updateDeploymentEnvironmentInTx(tx, request.userId, request.body,
             readTeamOperationAuthenticationFromRequest(request), 'environment', undefined, undefined,
-            readDeploymentExecutionBindingFromRequest(request)), { isolationLevel: 'Serializable' });
+            execution?.binding), { isolationLevel: 'Serializable' });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/controller', {

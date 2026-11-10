@@ -4,7 +4,10 @@ import { ProjectDeploymentDefaultsPayloadV1Schema, type ProjectDeploymentDefault
     type ProjectDeploymentDefaultsSetInputV1, type ProjectDeploymentDefaultsChangeHintV1,
     type ProjectDeploymentDefaultsOutputV1 } from '@happier-dev/protocol';
 import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_KIND_V1,
+    PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { projectSourceContentTeamCustodyLevels } from './sources/projectSourceContentReferences';
+import { isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1, type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { readArtifactForCallerInTx, resolveArtifactAudienceInTx } from '@/app/artifacts/artifactAccessService';
@@ -41,7 +44,7 @@ async function admitContentInTx(tx: Tx, actorAccountId: string, projectSourceId:
     const read = access === 'write'
         ? await readArtifactForCallerInTx(tx, { actorAccountId, artifactId: content.contentArtifactId })
         : await readArtifactForCallerInTx(tx, { actorAccountId, artifactId: content.contentArtifactId, projection: 'headers' });
-    if (!read.ok || read.artifact.publicAudience !== 'none' || read.artifact.kindHint !== 'project-deployment-defaults.v1'
+    if (!read.ok || read.artifact.publicAudience !== 'none' || read.artifact.kindHint !== PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_KIND_V1
         || (access === 'write' && read.artifact.access === 'view')) return failure('project_defaults_content_unavailable');
     if (read.artifact.headerVersion !== content.contentHeaderVersion || read.artifact.bodyVersion !== content.contentBodyVersion) {
         return failure('project_defaults_conflict');
@@ -71,7 +74,18 @@ export async function readProjectDeploymentDefaultsInTx(tx: Tx, actorAccountId: 
 ): Promise<ProjectDeploymentDefaultsOutputV1> {
     if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return failure('project_defaults_unavailable');
     let sourceRevision: number;
-    if (admittedBinding?.deploymentPreparationAdmission) {
+    const native = admittedBinding?.deploymentNativeAdmission;
+    if (admittedBinding && (isDeploymentBackupConfigureNativeAdmissionV1(native)
+        || admittedBinding.actionId === 'deployments.environments.update'
+            && isDeploymentEnvironmentUpdateNativeAdmissionV1(native) && native.defaultsFor !== undefined)) {
+        // The HTTP purpose owner already bound this exact Source to the admitted Environment.
+        // Consume custody for the response revision; do not re-admit Source management.
+        if (admittedBinding.accountId !== actorAccountId || admittedBinding.serverIdentityId !== input.serverId)
+            return failure('project_defaults_unavailable');
+        const custody = await readProjectSourceCustodyInTx(tx, input.projectSourceId);
+        if (!custody) return failure('project_defaults_unavailable');
+        sourceRevision = custody.source.revision;
+    } else if (admittedBinding?.deploymentPreparationAdmission) {
         const preparation = admittedBinding.deploymentPreparationAdmission;
         const source: Readonly<{ id: string; revision?: number }> | undefined = preparation.operation === 'setup'
             ? preparation.catalogSources?.find(selected => selected.source.id === input.projectSourceId)?.source
@@ -108,7 +122,8 @@ export async function readProjectDeploymentDefaultsContentInTx(tx: Tx, actorAcco
         // A member's direct grant cannot replace the future Team's durable write grant.
         if (prospectiveOwner?.kind === 'team' && !await tx.artifactTeamGrant.findFirst({ where: {
             artifactId: content.contentArtifactId, teamId: prospectiveOwner.teamId,
-            accessLevel: { in: ['edit', 'admin'] }, team: { archivedAt: null },
+            accessLevel: { in: projectSourceContentTeamCustodyLevels(PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_STORED_KIND_V1) },
+            team: { archivedAt: null },
         }, select: { artifactId: true } })) return failure('project_defaults_content_unavailable');
         if (prospectiveOwner?.kind === 'account') {
             const ownerRead = await admitContentInTx(tx, prospectiveOwner.accountId, projectSourceId, content, null, 'write');

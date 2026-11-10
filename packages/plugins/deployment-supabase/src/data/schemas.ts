@@ -1,4 +1,4 @@
-import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/plugin-sdk';
+import { DeploymentTargetPreparationBaseV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1 } from '@happier-dev/plugin-sdk';
 import type { DeploymentTargetPreparationBaseV1, JsonValue } from '@happier-dev/plugin-sdk';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion,
   DeploymentDataParentBranchRefV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
@@ -36,12 +36,13 @@ const selected = new Set<Operation>(['branches-list', 'branches-create', 'branch
 
 /** Compose the public common input contract with strict provider operands. */
 export function actionSchema(operation: Operation): PluginJsonSchema {
-  const base = DeploymentTargetPreparationBaseV1ProtocolSchema;
+  const base = operation === 'branches-list' ? DeploymentTargetRoleInputProtocolSchemasV1['branches.list']
+    : selected.has(operation) ? DeploymentTargetRoleInputProtocolSchemasV1['branches.create']
+      : DeploymentTargetPreparationBaseV1ProtocolSchema;
   const product = operands[operation];
   return { ...base.jsonSchema,
-    properties: { ...base.jsonSchema.properties, ...product.jsonSchema.properties },
-    required: [...(base.jsonSchema.required ?? []), ...(product.jsonSchema.required ?? []),
-      ...(selected.has(operation) ? ['providerIdentity', 'targetLinkId', 'expectedTargetLinkRevision'] : [])], additionalProperties: false };
+    properties: { ...product.jsonSchema.properties, ...base.jsonSchema.properties },
+    required: [...new Set([...(base.jsonSchema.required ?? []), ...(product.jsonSchema.required ?? [])])], additionalProperties: false };
 }
 
 export function parseInput<K extends Operation>(operation: K, value: JsonValue): Scope & Operands<K> {

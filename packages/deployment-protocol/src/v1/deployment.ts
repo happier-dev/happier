@@ -1,11 +1,12 @@
 import { z } from 'zod/mini';
+import { DeploymentPreviewCleanupV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDataCreationReferenceV1Schema, DeploymentReceiptFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentIngressV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentReceiptMetadataV1Schema, DeploymentReceiptListResultV1Schema, DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
 import { DeploymentStateV1Schema, deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentStateV1';
-import { DeploymentOnFailureV1Schema, DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentOnFailureV1Schema, DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema, DeploymentServiceSubsetV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 import { DeploymentDigestV1Schema, DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentTextV1Schema as text } from './ids.js';
 import { EnvironmentSecretBindingV1Schema, OwnServerEnvironmentConfigurationV1Schema } from './environment.js';
@@ -52,6 +53,7 @@ export const OwnServerDeploymentSourceV1Schema = z.strictObject({
     restorationForDeploymentId: z.optional(id), manifestFingerprint: text,
     manifestEntries: z.array(WorkspaceManifestEntrySchema), rootFingerprint: text,
     sharedBinds: z.array(z.strictObject({ relativePath: text, services: z.array(text) })),
+    namedVolumes: z.optional(z.array(z.strictObject({ volume: text, physicalName: text }))),
 });
 export type OwnServerDeploymentSourceV1 = z.infer<typeof OwnServerDeploymentSourceV1Schema>;
 const images = z.array(DeploymentImageV1Schema).check(z.refine(values =>
@@ -106,6 +108,7 @@ z.refine(basis => basis.runtimeProjections === undefined
 export type OwnServerDeploymentInputBasisV1 = z.infer<typeof OwnServerDeploymentInputBasisV1Schema>;
 export const OwnServerDeploymentDetailsV1Schema = z.strictObject({
     approvedInputBasis: OwnServerDeploymentInputBasisV1Schema,
+    previewCleanup: z.optional(DeploymentPreviewCleanupV1Schema),
     referenceAddresses: z.optional(z.array(DeploymentReferenceAddressV1Schema)),
     preMigrationBackup: z.optional(DeploymentPreMigrationBackupV1Schema),
     sources: z.optional(z.array(OwnServerDeploymentSourceV1Schema)),
@@ -146,6 +149,7 @@ export { DeploymentReceiptFailureV1Schema, type DeploymentReceiptFailureV1 } fro
 /** The existing native serialized arm retains its exact builder/member/image proofs. */
 export const DeploymentOwnServerContentV1Schema = z.strictObject({
     sourceIntent: ownServerSourceIntentV1Schema,
+    services: z.optional(DeploymentServiceSubsetV1Schema),
     commitSubject: z.optional(z.string()), failure: z.optional(DeploymentReceiptFailureV1Schema),
     sourceMethod: z.optional(DeploymentSourceMethodV1Schema),
     correlations: z.optional(z.array(DeploymentCorrelationV1Schema)),
@@ -181,6 +185,7 @@ export const DeploymentPlatformContentV1Schema = z.strictObject({
     platform: DeploymentPlatformProvenanceV1Schema,
     buildMachineId: z.optional(z.never()), ingress: z.optional(z.never()), onFailure: z.optional(z.never()),
     ownServer: z.optional(z.never()), teardown: z.optional(z.never()),
+    services: z.optional(z.never()),
 });
 export type DeploymentPlatformContentV1 = z.infer<typeof DeploymentPlatformContentV1Schema>;
 /** Data cleanup spends its retained provider custody; it has no runtime source/build provenance. */

@@ -1,4 +1,6 @@
 import { prepareWorkflowDataCreationResultCapture } from '@/deployments/targets/workflowDataCreationResult';
+import { prepareWorkflowDeploymentResultCapture } from '@/deployments/targets/workflowDeploymentResult';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { resolveDeploymentPreviewWorkflowSourceForHost } from '@/deployments/previewWorkflowSourceForHost';
 import { ScmHostingPullRequestLifecycleV1Schema } from '@happier-dev/protocol/scm/pullRequestLifecycleV1';
 import { AutomationRunPluginEventTriggerEvidenceV1Schema } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
@@ -455,6 +457,9 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             executor: actionExecutor,
             buildContext: resolveWorkflowActionContext,
             prepareResultCapture: async actionId => {
+              const native = prepareWorkflowDeploymentResultCapture(actionId);
+              if (native) return native;
+              if (!parseQualifiedPluginActionId(actionId)) return;
               const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
               try { return prepareWorkflowDataCreationResultCapture(actionId, lease.registry.contributes); }
               finally { await lease.release(); }

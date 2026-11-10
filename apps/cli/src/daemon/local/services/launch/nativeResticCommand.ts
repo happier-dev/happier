@@ -20,12 +20,12 @@ import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot } from '
 
 export type NativeResticCommandInput = Readonly<{
     render: Pick<NativeComposeProjectRender, 'engine' | 'platform' | 'projectName'>; context: MachineNativeEffectContext;
-    runtimeImage: DeploymentImageV1; request: ResticRequestV1;
-    destinationAttachment: DeploymentExecEnvAttachmentV1;
+    runtimeImage: DeploymentImageV1;
     /** Absent for repository metadata/dump; volume names are native model keys. */
     selector?: Readonly<{ kind: 'volume'; sourceId: string; service: string; volume: string; consistency: 'stopDuringCopy' }>;
     signal?: AbortSignal;
-}>;
+}> & (Readonly<{ request: ResticRequestV1; destinationAttachment: DeploymentExecEnvAttachmentV1; archive?: never }>
+    | Readonly<{ archive: Readonly<{ mode: 'list' | 'extract' }>; request?: never; destinationAttachment?: never }>);
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const refuse = (): never => { throw new PluginError({ code: 'service_admission_unavailable',
     message: 'The admitted native restic operation is unavailable' }); };
@@ -49,14 +49,16 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
         const { runtimeImage, request, selector } = input;
         const index = RESTIC_RUNTIME_V1.image.split('@')[1];
         const platform = normalizeNativeComposePlatform(input.render.platform);
-        if (request.runtime.image !== RESTIC_RUNTIME_V1.image || request.runtime.version !== RESTIC_RUNTIME_V1.version
-            || request.runtime.repositoryVersion !== RESTIC_RUNTIME_V1.repositoryVersion
+        if (request && (request.runtime.image !== RESTIC_RUNTIME_V1.image || request.runtime.version !== RESTIC_RUNTIME_V1.version
+            || request.runtime.repositoryVersion !== RESTIC_RUNTIME_V1.repositoryVersion)
             || runtimeImage.indexDigest !== index && runtimeImage.manifestDigest !== index
             || normalizeNativeComposePlatform(runtimeImage.platform) !== platform
             || !runtimeImage.registryReference) return refuse();
         // P45's request builder owns the fixed --repo pair. Loopback remote
         // endpoints need the selected Engine host's network namespace.
-        const repository = request.argv[1];
+        const argv = request?.argv ?? (input.archive?.mode === 'list' ? ['-tf', '-'] : ['-xf', '-', '-C', RESTIC_VOLUME_STAGE_PATH_V1]);
+        if (input.archive?.mode === 'extract' && !owner.targetVolume) return refuse();
+        const repository = request?.argv[1];
         const endpoint = repository && /^s3:https?:\/\//u.test(repository) ? repository.slice(3)
             : repository?.startsWith('sftp://') ? repository : undefined;
         const hostname = endpoint ? new URL(endpoint).hostname.replace(/^\[|\]$/gu, '') : undefined;
@@ -68,12 +70,12 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
             return refuseNativeResticHostNetwork();
         }
         const mounts: string[] = [];
-        const repositoryPath = request.repositoryMount ? await realpath(request.repositoryMount.hostPath) : undefined;
+        const repositoryPath = request?.repositoryMount ? await realpath(request.repositoryMount.hostPath) : undefined;
         if (repositoryPath) {
             if (!(await stat(repositoryPath)).isDirectory()) return refuse();
             await access(repositoryPath, constants.R_OK | constants.W_OK);
             mounts.push('--mount', ['type=bind', `source=${repositoryPath}`,
-                `target=${request.repositoryMount!.containerPath}`].map(csv).join(','));
+                `target=${request!.repositoryMount!.containerPath}`].map(csv).join(','));
         }
         if (owner.targetVolume) mounts.push('--mount', ['type=volume', `source=${owner.targetVolume}`,
             `target=${RESTIC_VOLUME_STAGE_PATH_V1}`, 'volume-nocopy'].map(csv).join(','));
@@ -103,7 +105,7 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
             if (repositoryPath) {
                 // The bind may expose an existing base so restic init can create
                 // the repository. Recursion concerns the final repository only.
-                const repositoryHostPath = request.repositoryMount?.repositoryHostPath;
+                const repositoryHostPath = request?.repositoryMount?.repositoryHostPath;
                 const repositorySourcePath = repositoryHostPath !== undefined ? await realpath(repositoryHostPath) : repositoryPath;
                 for (const row of mounted) for (const value of row.mounts) {
                     if (!record(value) || value.Type !== 'volume' || value.Name !== volume.name) continue;
@@ -114,20 +116,21 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
             }
             mounts.push('--mount', ['type=volume', `source=${volume.name}`, `target=${RESTIC_VOLUME_SOURCE_PATH_V1}`, 'readonly', 'volume-nocopy'].map(csv).join(','));
         }
-        for (const file of request.credentialFiles) {
+        for (const file of request?.credentialFiles ?? []) {
             if (file.readOnly !== true) return refuse();
             const path = await realpath(file.hostPath);
             await access(path, constants.R_OK);
             mounts.push('--mount', ['type=bind', `source=${path}`, `target=${file.containerPath}`, 'readonly'].map(csv).join(','));
         }
-        if (!request.credentialFiles.some(file => file.containerPath === request.passwordFilePath)) return refuse();
+        if (request && !request.credentialFiles.some(file => file.containerPath === request.passwordFilePath)) return refuse();
         await owner.identity.prove(runtimeImage.registryReference, runtimeImage);
         const name = `happier-op-${createHash('sha256').update(JSON.stringify([
-            owner.source.environmentInstanceId, input.context.operation.operationId, request.argv])).digest('hex')}`;
+            owner.source.environmentInstanceId, input.context.operation.operationId, argv])).digest('hex')}`;
         const createArgs = ['create', '--interactive', '--pull', 'never', '--name', name,
             '--label', `happier.operation=${name}`, ...(hostNetwork ? ['--network', 'host'] : []),
-            ...mounts, '--env', `RESTIC_PASSWORD_FILE=${request.passwordFilePath}`,
-            ...request.environmentVariableNames.flatMap(value => ['--env', value]), runtimeImage.registryReference, ...request.argv];
+            ...(input.archive ? ['--read-only', '--network', 'none', '--entrypoint', '/bin/tar'] : []), ...mounts,
+            ...(request ? ['--env', `RESTIC_PASSWORD_FILE=${request.passwordFilePath}`,
+                ...request.environmentVariableNames.flatMap(value => ['--env', value])] : []), runtimeImage.registryReference, ...argv];
         const tool = await owner.exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-native-compose',
             cwd: owner.source.rootPath, ...(signal ? { signal } : {}) });
         let createLaunch: HostAuthorizedPluginExecLaunch | undefined;
@@ -208,7 +211,7 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
         return admitNativeServiceCommandForHost({ context: input.context, ...(signal ? { signal } : {}),
             // P45's builder places --json after its fixed --repo pair for
             // metadata; dump alone deliberately selects raw stdout instead.
-            ...(request.argv[2] !== '--json' ? { rawStdout: true } : {}),
+            ...(input.archive || request?.argv[2] !== '--json' ? { rawStdout: true } : {}),
             assertCurrent: owner.assertCurrent, stopNative, observeNativeSettlement,
             async launch() {
                 try {
@@ -218,7 +221,7 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
                         args: ['start', '--attach', '--interactive', id], cwd: owner.source.rootPath }, { agentIsolation: null, signal });
                     const created = createLaunch!;
                     if (startLaunch.secretRedactionLease) created.secretRedactionLease?.add(startLaunch.secretRedactionLease.values());
-                    return { ...startLaunch, ...(request.stdin ? { stdin: request.stdin } : {}), secretRedactionLease: created.secretRedactionLease,
+                    return { ...startLaunch, ...(request?.stdin ? { stdin: request.stdin } : {}), secretRedactionLease: created.secretRedactionLease,
                         async recheckInputs() { await startLaunch!.recheckInputs?.(); await created.recheckInputs?.(); }, release };
                 } catch (error) {
                     if (nativeId) {

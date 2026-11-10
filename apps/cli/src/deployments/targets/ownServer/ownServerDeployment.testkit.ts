@@ -43,6 +43,8 @@ export async function createOwnServerDockerBoundary(directory: string, options?:
         ...(options?.nativeCloudflare ? { nativeCloudflare: options.nativeCloudflare } : {}),
         ...(options?.expectedDockerHost !== undefined ? { expectedDockerHost: options.expectedDockerHost } : {}) }));
     await writeFile(invocationsPath, '');
+    const failuresPath = join(directory, 'docker-failures.jsonl');
+    await writeFile(failuresPath, '');
     const require = createRequire(import.meta.url);
     await writeFile(executablePath, `#!${process.execPath}\nconst tar = require(${JSON.stringify(require.resolve('tar'))});\nconst yaml = require(${JSON.stringify(require.resolve('yaml'))});\n` + String.raw`
 const fs = require('node:fs');
@@ -65,6 +67,15 @@ while (rootOffset < nativeArgs.length) {
     break;
 }
 const args = nativeArgs.slice(rootOffset);
+process.on('uncaughtExceptionMonitor', error => {
+    // Preserve a secret-free reason from the substituted native executable.
+    // Arguments, source documents and environment values stay private.
+    fs.appendFileSync(path.join(__dirname, 'docker-failures.jsonl'), JSON.stringify({
+        command: args[0], operation: args[0] === 'compose'
+            ? ['config', 'create', 'up', 'start'].find(operation => args.includes(operation)) : args[1],
+        errorClass: error?.name, fixtureCode: /^fixture_[a-z_]+/.exec(error?.message || '')?.[0],
+    }) + '\n');
+});
 const statePath = path.join(__dirname, 'docker-state.json');
 const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
 const files = args.flatMap((arg, index) => arg === '--file' ? [{ path: args[index + 1],
@@ -148,7 +159,32 @@ const loadNativeModel = (file, noInterpolate = false) => {
         }
         model.volumes[key] = volume;
     }
+    for (const service of Object.values(model.services || {})) {
+        if (service.network_mode !== undefined) continue;
+        service.networks = Array.isArray(service.networks)
+            ? Object.fromEntries(service.networks.map(key => [key, null])) : service.networks || { default: null };
+        for (const key of Object.keys(service.networks)) {
+            model.networks ||= {};
+            const network = model.networks[key] ||= {};
+            if (network.name === undefined) {
+                const project = nativeEnvironment.COMPOSE_PROJECT_NAME || model.name;
+                if (!network.external && !project) throw new Error('fixture_network_project_unavailable');
+                network.name = network.external ? key : project + '_' + key;
+            }
+        }
+    }
     return model;
+};
+const ensureNetworks = (model, project) => {
+    for (const [key, definition] of Object.entries(model.networks || {})) {
+        if (state.networks.some(row => row.Name === definition.name)) continue;
+        if (definition.external) throw new Error('fixture_external_network_unavailable');
+        const gateway = Object.values(require('node:os').networkInterfaces()).flat()
+            .find(address => address.family === 'IPv4' && !address.internal)?.address || '127.0.0.1';
+        state.networks.push({ Id: hash(definition.name), Name: definition.name, Driver: definition.driver || 'bridge', Scope: 'local',
+            IPAM: { Config: [{ Subnet: gateway + '/32', Gateway: gateway }] },
+            Labels: { 'com.docker.compose.project': project, 'com.docker.compose.network': key }, Containers: {} });
+    }
 };
 if (args[0] === 'system' && args[1] === 'dial-stdio') {
     // The production owner consumes Engine HTTP events over this native transport.
@@ -402,6 +438,12 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     save();
     if (state.containers.some(row => row.Config.Labels['com.docker.compose.project'] === project
         && services.includes(row.Config.Labels['com.docker.compose.service']) && row.State.Health?.Status === 'unhealthy')) process.exit(1);
+} else if (args[0] === 'compose' && args.includes('create')) {
+    if (!args.includes('--no-build') || args[args.indexOf('--pull') + 1] !== 'never'
+        || !args.includes('--scale') || !args[args.indexOf('--scale') + 1].endsWith('=0'))
+        throw new Error('fixture_unsupported_compose_create');
+    ensureNetworks(loadNativeModel(files[0]), args[args.indexOf('--project-name') + 1]);
+    save();
 } else if (args[0] === 'compose' && args.includes('up')) {
     if (!args.includes('--no-build') || args[args.indexOf('--pull') + 1] !== 'never') throw new Error('fixture_unpinned_activation');
     if (state.activationCommandFailure === true) {
@@ -410,6 +452,7 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     }
     const model = loadNativeModel(files[0]);
     const project = args[args.indexOf('--project-name') + 1];
+    ensureNetworks(model, project);
     state.containers = [...state.containers.filter(row => row.Config.Labels['com.docker.compose.project'] !== project),
         ...Object.entries(model.services).flatMap(([service, definition]) => {
         const image = imageFor(definition.image);
@@ -438,7 +481,12 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
             RestartCount: previous?.RestartCount ?? 0, NetworkSettings: { Ports: Object.fromEntries(
                 [...new Set((definition.ports || []).map(port => String(port.target) + '/' + (port.protocol || 'tcp')))]
                     .map(key => [key, definition.ports.filter(port => String(port.target) + '/' + (port.protocol || 'tcp') === key)
-                        .map(port => ({ HostIp: port.host_ip || '0.0.0.0', HostPort: String(port.published) }))])),
+                        .map(port => {
+                            // Docker assigns an ephemeral host port when Compose omits it or requests zero.
+                            const published = Number(port.published) > 0 ? port.published
+                                : (state.nextPublishedPort = (state.nextPublishedPort || 49151) + 1);
+                            return { HostIp: port.host_ip || '0.0.0.0', HostPort: String(published) };
+                        })])),
                 Networks: { [project + '_default']: {} } } };
         });
     })];
@@ -487,7 +535,8 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     }))] : []);
     for (const mount of mounts) {
         const repository = mount.type === 'bind' && mount.target === '/run/happier/backup/repository';
-        if (!repository && mount.readonly !== true) throw new Error('fixture_writable_backup_mount');
+        const restoreStage = mount.type === 'volume' && mount.target === '/happier/staging';
+        if (!repository && !restoreStage && mount.readonly !== true) throw new Error('fixture_writable_backup_mount');
         if (mount.type === 'bind' && !(repository ? fs.statSync(mount.source).isDirectory() : fs.statSync(mount.source).isFile())) {
             throw new Error('fixture_missing_bind_source');
         }
@@ -498,8 +547,9 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     const image = args.find(arg => imageFor(arg));
     if (!image) throw new Error('fixture_missing_operation_image');
     const password = mounts.find(mount => mount.type === 'bind' && mount.target === environment.RESTIC_PASSWORD_FILE);
-    if (!password) throw new Error('fixture_missing_operation_credentials');
-    const output = { passwordReadable: fs.readFileSync(password.source, 'utf8').startsWith('repository-'),
+    const archiveTool = args[args.indexOf('--entrypoint') + 1] === '/bin/tar';
+    if (!password && !archiveTool) throw new Error('fixture_missing_operation_credentials');
+    const output = { passwordReadable: password ? fs.readFileSync(password.source, 'utf8').startsWith('repository-') : false,
         accessPresent: environment.AWS_ACCESS_KEY_ID?.startsWith('access-') === true,
         secretPresent: environment.AWS_SECRET_ACCESS_KEY?.startsWith('secret-') === true,
         readOnlyData: mounts.some(mount => mount.type === 'volume' && mount.readonly === true && mount['volume-nocopy'] === true) };
@@ -631,6 +681,10 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     const names = args.slice(2);
     state.volumes = state.volumes.filter(row => !names.includes(row.name));
     save();
+} else if (args[0] === 'network' && args[1] === 'inspect') {
+    const selected = state.networks.filter(row => args.slice(2).some(identity => identity === row.Id || identity === row.Name));
+    if (selected.length !== args.length - 2) process.exitCode = 1;
+    else write(selected);
 } else if (args[0] === 'network' && args[1] === 'ls') {
     const filters = args.flatMap((arg, index) => arg === '--filter' ? [args[index + 1]] : []);
     write(state.networks.filter(row => filters.every(filter => {
@@ -746,12 +800,14 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
 `);
     await chmod(executablePath, 0o755);
 
-    async function registerImage(service: string, revision: string, options?: Readonly<{ volumes: readonly string[] }>): Promise<DeploymentImageV1> {
+    async function registerImage(service: string, revision: string, options?: Readonly<{
+        volumes?: readonly string[]; registryReferences?: readonly string[];
+    }>): Promise<DeploymentImageV1> {
         const imageDirectory = join(directory, `image-${service}-${revision}`);
         await mkdir(imageDirectory);
         const config = Buffer.from(JSON.stringify({ architecture: 'amd64', os: 'linux',
             config: { Labels: { 's0.revision': revision, 's0.service': service },
-                ...(options ? { Volumes: Object.fromEntries(options.volumes.map(target => [target, {}])) } : {}) },
+                ...(options?.volumes ? { Volumes: Object.fromEntries(options.volumes.map(target => [target, {}])) } : {}) },
             rootfs: { type: 'layers', diff_ids: [] } }));
         const configHex = createHash('sha256').update(config).digest('hex');
         const configFile = `${configHex}.json`;
@@ -768,10 +824,21 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
         await createTar({ cwd: imageDirectory, file: archive }, [configFile, 'manifest.json']);
         const fixture = { image, archive, archiveDirectory: imageDirectory, nativeId: `sha256:${createHash('sha256').update(`native-store:${service}:${revision}`).digest('hex')}`,
             manifest: manifestBytes.toString('utf8'), configuration: config.toString('utf8') };
-        const state = JSON.parse(await readFile(statePath, 'utf8')) as { images: Record<string, DockerImageFixture> };
+        const state = JSON.parse(await readFile(statePath, 'utf8')) as { images: Record<string, DockerImageFixture>;
+            tags: Record<string, string>; registryManifests?: Record<string, string> };
         state.images[reference] = fixture;
         state.images[image.configDigest] = fixture;
         state.images[fixture.nativeId] = fixture;
+        // The substituted registry serves the same CONFIG/manifest through its
+        // authored tag and immutable repository digest, as Docker/Buildx does.
+        for (const alias of options?.registryReferences ?? []) {
+            const repository = alias.replace(/:[^/:@]+$/u, '');
+            const immutable = `${repository}@${image.manifestDigest}`;
+            state.tags[alias] = reference;
+            state.tags[immutable] = reference;
+            state.registryManifests = { ...state.registryManifests, [alias]: fixture.manifest,
+                [immutable]: fixture.manifest };
+        }
         await writeState(state);
         return image;
     }
@@ -779,6 +846,9 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
     return {
         executablePath,
         registerImage,
+        async readFailures(): Promise<readonly Readonly<{ command: string; operation?: string; errorClass: string; fixtureCode?: string }>[]> {
+            return (await readFile(failuresPath, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+        },
         async setImageContainerReference(nativeId: string, stateKind: 'running' | 'exited' | null) {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { containers: Array<{ Id: string; Image: string;
                 State: { Status: string }; Config: { Labels: Record<string, string>; Env: string[] } }> };

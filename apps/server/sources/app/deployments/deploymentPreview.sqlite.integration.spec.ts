@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, DeploymentEnvironmentCreateResultV1Schema,
+    DeploymentEnvironmentCreateStorageInputV1Schema,
     MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -14,6 +15,7 @@ import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
 import { createAutomationWorkflowRecipeFixture } from '@/testkit/automationWorkflowRecipe';
 import { registerAutomationV3Routes } from '@/app/api/routes/automations/registerAutomationV3Routes';
 import { updateAutomation } from '@/app/automations/automationCrudService';
+import { admitPreviewEnvironmentRelationInTx } from './previewEnvironmentRelation';
 
 describe('preview Environment relation admission', () => {
     const serverId = `srv_${'b'.repeat(32)}`;
@@ -195,6 +197,65 @@ describe('preview Environment relation admission', () => {
             expect(childLinks.find(row => row.role === 'runtime')).toMatchObject({ id: created.runtimeTargetLinkId,
                 hostTargetId: 'own-server', ...childRuntimeContent });
             expect(created.runtimeTargetLinkId).not.toBe(link.targetLinkId);
+            const companionContent = await artifactFor('deployment-environment.v1', {
+                name: 'Preview data', retainPreviousDeployments: 1, bindings: [],
+                definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
+                    document: 'services:\n  database:\n    image: postgres:17\n', profiles: [], services: ['database'] },
+            });
+            const companionRuntimeContent = await artifactFor('deployment-target-link.v1', {});
+            const companionInput = { ...placement, ...companionContent, purpose: 'standard',
+                requestKey: crypto.randomUUID(), previewCompanionOfEnvironmentId: created.environmentId,
+                preview: input.preview,
+                firstTargetLink: { ...companionRuntimeContent, machines: [{ machineId: machine.id, installationId }] } };
+            expect(await inTx(tx => admitPreviewEnvironmentRelationInTx(tx, owner.id,
+                DeploymentEnvironmentCreateStorageInputV1Schema.parse(companionInput), {}))).toMatchObject({
+                ok: true, relation: { previewCompanionOfEnvironmentId: created.environmentId } });
+            for (const substitution of [
+                { previewCompanionOfEnvironmentId: parent.environmentId },
+                { preview: { ...input.preview, pullRequestId: 'another-pr' } },
+                { controllerMachineId: crypto.randomUUID() },
+                { buildMachineId: crypto.randomUUID() },
+                { protection: 'production' },
+            ]) {
+                const denied = await postCreate({ ...companionInput, ...substitution, requestKey: crypto.randomUUID() });
+                expect(denied.statusCode, denied.body).toBe(409);
+            }
+            const companionInventoryUrl = `/v1/deployments/environments?serverId=${encodeURIComponent(serverId)}&previewCompanionOfEnvironmentId=${encodeURIComponent(created.environmentId)}`;
+            const refusedCompanions = await app.inject({ method: 'GET', url: `${companionInventoryUrl}&includeDeleted=true`,
+                headers: { 'x-test-user-id': owner.id } });
+            expect(refusedCompanions.statusCode, refusedCompanions.body).toBe(200);
+            expect(refusedCompanions.json()).toMatchObject({ ok: true, items: [] });
+            const companionResponse = await postCreate(companionInput);
+            expect(companionResponse.statusCode, companionResponse.body).toBe(200);
+            const companion = DeploymentEnvironmentCreateResultV1Schema.parse(companionResponse.json());
+            if (!companion.ok) throw new Error(companion.error);
+            expect((await postCreate(companionInput)).json()).toEqual(companion);
+            const companionDuplicate = await postCreate({ ...companionInput, requestKey: crypto.randomUUID() });
+            expect(companionDuplicate.statusCode, companionDuplicate.body).toBe(409);
+            const companionList = await app.inject({ method: 'GET',
+                url: `/v1/deployments/environments?serverId=${encodeURIComponent(serverId)}&previewCompanionOfEnvironmentId=${encodeURIComponent(created.environmentId)}`,
+                headers: { 'x-test-user-id': owner.id } });
+            expect(companionList.statusCode, companionList.body).toBe(200);
+            expect(companionList.json()).toMatchObject({ ok: true, items: [{ id: companion.environmentId,
+                purpose: 'standard', previewCompanionOfEnvironmentId: created.environmentId,
+                previewTemplateEnvironmentId: parent.environmentId }] });
+            for (const key of ['previewRepositoryId', 'previewPullRequestId', 'previewTargetLinkId']) {
+                expect(companionList.json().items[0]).not.toHaveProperty(key);
+            }
+            const companionRead = await app.inject({ method: 'GET',
+                url: `/v1/deployments/environments/${encodeURIComponent(companion.environmentId)}?serverId=${encodeURIComponent(serverId)}`,
+                headers: { 'x-test-user-id': owner.id } });
+            expect(companionRead.statusCode, companionRead.body).toBe(200);
+            expect(companionRead.json()).toMatchObject({ ok: true, environment: {
+                id: companion.environmentId, purpose: 'standard', previewCompanionOfEnvironmentId: created.environmentId,
+                previewTemplateEnvironmentId: parent.environmentId } });
+            const companionApproval = await app.inject({ method: 'GET',
+                url: `/v1/deployments/environments/${encodeURIComponent(companion.environmentId)}?serverId=${encodeURIComponent(serverId)}&projection=approvalScope`,
+                headers: { 'x-test-user-id': owner.id } });
+            expect(companionApproval.statusCode, companionApproval.body).toBe(200);
+            expect(companionApproval.json()).toEqual({ ok: true, environment: { id: companion.environmentId,
+                projectSourceId: source.source.id, purpose: 'standard', previewCompanionOfEnvironmentId: created.environmentId,
+                previewTemplateEnvironmentId: parent.environmentId } });
             const replay = await postCreate(input);
             expect(replay.statusCode, replay.body).toBe(200);
             expect(DeploymentEnvironmentCreateResultV1Schema.parse(replay.json())).toEqual(created);
@@ -280,6 +341,15 @@ describe('preview Environment relation admission', () => {
             expect(committedRetry.statusCode, committedRetry.body).toBe(200);
             expect(DeploymentEnvironmentCreateResultV1Schema.parse(committedRetry.json())).toEqual(created);
             expect(await db.deploymentEnvironment.count({ where: { projectSourceId: source.source.id } })).toBe(before);
+            // Close/recovery discovers the same relation after ordinary soft deletion.
+            await db.deploymentEnvironment.updateMany({ where: { id: { in: [created.environmentId, companion.environmentId] } },
+                data: { deletedAt: new Date() } });
+            const removedCompanions = await app.inject({ method: 'GET', url: `${companionInventoryUrl}&includeDeleted=true`,
+                headers: { 'x-test-user-id': owner.id } });
+            expect(removedCompanions.statusCode, removedCompanions.body).toBe(200);
+            expect(removedCompanions.json()).toMatchObject({ ok: true, items: [{ id: companion.environmentId,
+                previewCompanionOfEnvironmentId: created.environmentId, previewTemplateEnvironmentId: parent.environmentId,
+                deletedAtMs: expect.any(Number) }] });
         });
     });
 });

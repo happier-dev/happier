@@ -178,7 +178,8 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
         if (deploymentChildEffectActionIdForRootV1(input.rootActionId, input.rootPreparationAdmission, child.actionId) !== child.actionId) return false;
         if (child.actionId === 'deployments.deploy') {
             if (input.reviewedChild) return input.reviewedChild.actionId === child.actionId
-                && input.reviewedChild.role === 'template.deploy'
+                && input.reviewedChild.role === (input.rootPreparationAdmission?.operation === 'create'
+                    && input.rootPreparationAdmission.preview ? 'preview.deploy' : 'template.deploy')
                 && input.reviewedChild.inputDigest === computeActionInputApprovalDigestV1(child.actionId, child.input);
             // Read-only preparation precedes the final candidate revision. Home
             // binds its allocated Environment; the original request names this attempt.

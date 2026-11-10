@@ -1,18 +1,52 @@
-import type { DeploymentTeardownResourceV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1, DeploymentTeardownResourceV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentPreviewCleanupV1Schema, type DeploymentPreviewCleanupV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { NativeComposeActivatedProject, NativeComposeProjectRender } from '@/daemon/local/services/launch/nativeComposeLifecycle';
+import { readNativeComposeProjectVolumeNames, selectNativeComposePreviewVolumeNames, settleNativeComposeVolumeRemoval } from '@/daemon/local/services/launch/nativeComposeVolumes';
 
 export type TeardownNativeRun = (args: readonly string[]) => Promise<Readonly<{ exitCode: number; stdout: string; stderr: string }>>;
+
+export function isOwnServerPreviewDataEnvironment(environment: DeploymentEnvironmentDetailV1['environment']): boolean {
+    return environment.purpose === 'preview' || environment.previewCompanionOfEnvironmentId !== undefined;
+}
 
 /** Compose labels, rather than caller supplied names or prefixes, own native volume membership. */
 export async function readOwnServerTeardownVolumes(input: Readonly<{
     projects: Iterable<string>; machineId: string; run: TeardownNativeRun;
 }>): Promise<DeploymentTeardownResourceV1[]> {
-    const names = new Set<string>();
-    for (const project of input.projects) {
-        const listed = await input.run(['volume', 'ls', '--filter', `label=com.docker.compose.project=${project}`, '--format', '{{.Name}}']);
-        if (listed.exitCode !== 0) throw Object.assign(new Error('volume_observation_unavailable'), { code: 'volume_observation_unavailable' });
-        for (const name of listed.stdout.trim().split('\n').filter(Boolean)) names.add(name);
-    }
-    return [...names].sort().map(id => ({ id, kind: 'data', machineId: input.machineId, ownership: 'owned', disposition: 'retain' }));
+    const names = await readNativeComposeProjectVolumeNames(input);
+    return names.map(id => ({ id, kind: 'data', machineId: input.machineId, ownership: 'owned', disposition: 'retain' }));
+}
+
+/** Capture only mounted named PostgreSQL data from this preview's admitted provision. */
+export async function readOwnServerPreviewCleanup(input: Readonly<{
+    environment: DeploymentEnvironmentDetailV1;
+    services?: readonly string[];
+    render: Pick<NativeComposeProjectRender, 'projectName' | 'review'>;
+    activation: Pick<NativeComposeActivatedProject, 'nativeIdsForService'>;
+    machineId: string;
+    run: TeardownNativeRun;
+}>): Promise<DeploymentPreviewCleanupV1 | undefined> {
+    const dataServices = new Set(input.environment.content.template?.data?.filter(data => data.engine === 'postgres').map(data => data.service));
+    if (!isOwnServerPreviewDataEnvironment(input.environment.environment) || !input.services?.length
+        || input.services.length !== dataServices.size || !input.services.every(service => dataServices.has(service))) return undefined;
+    const dataTargets = new Map(input.services.map(service => [service,
+        new Set(input.environment.content.template?.volumes?.filter(volume => volume.service === service && volume.persistent)
+            .map(volume => volume.target))]));
+    const targets = input.render.review.services.filter(service => dataServices.has(service.name)).flatMap(service =>
+        service.mounts.filter(mount => mount.type === 'volume' && mount.source && mount.target && !mount.readOnly
+            && dataTargets.get(service.name)?.has(mount.target))
+            .map(mount => ({ service: service.name, target: mount.target })));
+    const expected = new Map(input.services.flatMap(service => input.activation.nativeIdsForService(service).map(id => [id, service] as const)));
+    const unavailable = (): never => { throw Object.assign(new Error('volume_observation_unavailable'), { code: 'volume_observation_unavailable' }); };
+    if (!expected.size) return unavailable();
+    const inspected = await input.run(['inspect', '--type', 'container', ...expected.keys()]);
+    if (inspected.exitCode !== 0) return unavailable();
+    let rows: unknown;
+    try { rows = JSON.parse(inspected.stdout); } catch { return unavailable(); }
+    const ownedNames = await readNativeComposeProjectVolumeNames({ projects: [input.render.projectName], run: input.run });
+    const names = selectNativeComposePreviewVolumeNames({ projectName: input.render.projectName, targets, expected, observations: rows, ownedNames });
+    return DeploymentPreviewCleanupV1Schema.parse({ machines: [input.machineId], volumes: names
+        .map(name => ({ name, disposition: 'delete', confirmation: name })) });
 }
 
 export async function observeOwnServerTeardownVolumes(input: Readonly<{
@@ -29,12 +63,6 @@ export async function observeOwnServerTeardownVolumes(input: Readonly<{
 export async function settleOwnServerTeardownVolumes(input: Readonly<{
     resources: readonly DeploymentTeardownResourceV1[]; run: TeardownNativeRun;
 }>): Promise<Readonly<{ kind: 'failed'; reason: 'volume_removal_failed' }> | null> {
-    const selected = input.resources.filter(resource => resource.kind === 'data' && resource.disposition === 'remove');
-    if (!selected.length) return null;
-    const listed = await input.run(['volume', 'ls', '--format', '{{.Name}}']);
-    if (listed.exitCode !== 0) return { kind: 'failed', reason: 'volume_removal_failed' };
-    const present = new Set(listed.stdout.trim().split('\n'));
-    const names = selected.filter(resource => present.has(resource.id)).map(resource => resource.id);
-    if (names.length && (await input.run(['volume', 'rm', ...names])).exitCode !== 0) return { kind: 'failed', reason: 'volume_removal_failed' };
-    return null;
+    return settleNativeComposeVolumeRemoval({ names: input.resources.filter(resource => resource.kind === 'data'
+        && resource.disposition === 'remove').map(resource => resource.id), run: input.run });
 }

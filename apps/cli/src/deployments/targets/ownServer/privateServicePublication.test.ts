@@ -40,6 +40,30 @@ it.each(['127.0.0.1', '127.0.0.2', '::1'])('admits an Iroh export published on l
     expect(() => assertIrohServicePublications({ exports: [irohExport], ...review(host) })).not.toThrow();
 });
 
+it.each([undefined, 0])('admits an ephemeral Iroh loopback publication with published=%s before Docker assigns its port', published => {
+    const nativeReview = projectNativeComposeReview({ services: { db: { ports: [
+        { target: 5432, ...(published === undefined ? {} : { published }), host_ip: '127.0.0.1', protocol: 'tcp' },
+    ] } } }, '/release', value => value);
+    expect(() => assertIrohServicePublications({ exports: [irohExport], ...nativeReview })).not.toThrow();
+});
+
+it.each([undefined, 0])('refuses an ephemeral private Network publication with published=%s without a concrete firewall port', published => {
+    const nativeReview = projectNativeComposeReview({ services: { db: { ports: [
+        { target: 5432, ...(published === undefined ? {} : { published }), host_ip: '100.81.1.12', protocol: 'tcp' },
+    ] } } }, '/release', value => value);
+    expect(() => privateServicePublicationBindings({ environmentId: 'environment-db', exports: [exported],
+        services: nativeReview.services, privateNetworks: [network] }))
+        .toThrow(expect.objectContaining({ code: 'private_scope_unenforceable' }));
+});
+
+it.each([-1, 65536, 'invalid'])('refuses a malformed Iroh publication with published=%s', published => {
+    const nativeReview = projectNativeComposeReview({ services: { db: { ports: [
+        { target: 5432, published, host_ip: '127.0.0.1', protocol: 'tcp' },
+    ] } } }, '/release', value => value);
+    expect(() => assertIrohServicePublications({ exports: [irohExport], ...nativeReview }))
+        .toThrow(expect.objectContaining({ code: 'private_scope_unenforceable' }));
+});
+
 it.each(['0.0.0.0', '::', '100.81.1.12', 'remote.example'])('refuses an Iroh export published outside loopback on %s', host => {
     expect(() => assertIrohServicePublications({ exports: [irohExport], ...review(host) }))
         .toThrow(expect.objectContaining({ code: 'private_scope_unenforceable' }));
@@ -63,4 +87,16 @@ it.each(['db', 'other'])('checks host networking on the exported service rather 
     if (hostService === 'db') expect(() => assertIrohServicePublications(input))
         .toThrow(expect.objectContaining({ code: 'private_scope_unenforceable' }));
     else expect(() => assertIrohServicePublications(input)).not.toThrow();
+});
+
+it('admits exact network plus loopback for one dual export, but refuses an additional wildcard', () => {
+    const dual = { ...exported, transport: { kind: 'iroh' as const } };
+    const services = review('100.81.1.12').services;
+    services[0]!.ports.push({ target: 5432, published: '25432', bindAddress: '127.0.0.1', protocol: 'tcp' });
+    expect(() => assertIrohServicePublications({ exports: [dual], ...review('100.81.1.12'), services })).not.toThrow();
+    expect(privateServicePublicationBindings({ environmentId: 'environment-db', exports: [dual], services, privateNetworks: [network] })
+        .bindings[0]!.exposure.hostAddress).toBe('100.81.1.12');
+    services[0]!.ports.push({ target: 5432, published: '35432', bindAddress: '0.0.0.0', protocol: 'tcp' });
+    expect(() => privateServicePublicationBindings({ environmentId: 'environment-db', exports: [dual], services, privateNetworks: [network] }))
+        .toThrow(expect.objectContaining({ code: 'private_scope_unenforceable' }));
 });

@@ -378,6 +378,25 @@ inspected `../0.2` frontier at `519c05dc1320396738f42babf2d6a2a2af754e4f`, inclu
 scoped staged and unstaged changes, has no Workflow trigger contract or V2 recipe
 at these paths. No released compatibility direction or adapter is inferred.
 
+## Shared-Session managed Browser (unreleased 0.3)
+
+Session Browser reads and commands use the existing Session RPC selector. Home
+resolves canonical Session capabilities and mints the closed `session.browser`
+transport context bound to its current Machine and installation. Browser
+discovery accepts an omitted Machine selector on this path and returns the safe
+source Machine route. Installed ephemeral-source proofs carry an optional
+`sessionBrowserSessionId`; the closed personal relay V2 carries optional
+`sessionBrowserAccess`, binding the same Session, actor and installation. These
+facts select the Session encryption mode (its key for E2EE, keyless for plaintext)
+and retain the canonical input capability;
+they grant no generic Machine access. Missing Session authority never widens a
+Machine-scoped caller. Persistent profiles stay excluded for nonowners.
+
+This is the coordinated unpublished 0.3 direct cut: matching Protocol, Home,
+daemon and UI reload together. Older strict development readers reject the new
+closed fields; no released predecessor, persisted format, new epoch or adapter
+is introduced.
+
 ## Browser view discovery push (unreleased 0.3)
 
 Browser parity inputs add optional `engineOverride: 'embedded' | 'managed'` to workspace
@@ -663,7 +682,9 @@ This rename therefore needs no predecessor alias or second persisted format.
 The host-private Action declaration may set
 `originalExecution.requesterCredentials: 'none'` for an Action that needs no
 requester Account credentials. `machines.agents.signIn.status`,
-`machines.agents.list` and `localServices.actions.stopManaged` opt in.
+`machines.agents.list`, `machines.agents.install.status`,
+`machines.agents.install.cancel`, `machines.work.summary.get` and
+`localServices.actions.stopManaged` opt in.
 Foreign-Machine dispatch uses the existing sealed
 invocation codec carrier; it conveys a fresh request/reply key and invocation,
 never the requester's ordinary bearer or Account encryption key. Omission keeps
@@ -10614,3 +10635,24 @@ no readiness or wake claim. This changes no retained database field or protocol
 epoch. The inspected 0.2 frontier `ead3f779118d6a3d17e167517a64660f9e2c2c0d`
 has passthrough new/update Machine readers and no managed-input producer; that
 parser tolerance does not establish managed wake support against an older Home.
+
+## Devcontainer preset operands and acquisition review (unreleased 0.3)
+
+Devcontainer launch choices now use the provider's author-input schema and omit
+native `reviewedEffectDigest`. Native options compute that digest at use; the
+canonical receipt builder captures it in `reviewedFacts.reviewedEffectDigest`,
+which the existing acquisition approval signature binds. Native acquire receives
+it separately from launch operands and retains the provider's effect-time drift
+check. Full native effect descriptions stay transient.
+
+Matching Protocol, SDK, UI, Home and controller declarations must reload
+together; older strict development readers reject the new optional review-fact
+and acquire-input fields. Earlier development presets project saved values
+through the current author-input schema when edited. Retained Machine resources
+keep their existing executable digest and identity; power and resize keep the
+retained-resource contract. Earlier unfinished acquisitions without the admitted
+review fact require a fresh review rather than reconstructing approval from
+their launch or resource. This changes no wire epoch and adds
+no fallback or person-entered digest. The inspected `../0.2` frontier
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no Devcontainer plugin or managed
+Machine preset contracts.

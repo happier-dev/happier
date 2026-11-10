@@ -36,6 +36,21 @@ describe('protected pending transport', () => {
 });
 
 describe('platform upload and PR-head provenance', () => {
+    it('refuses repository overlays through source, pending and receipt admission while preserving exact repository provenance', () => {
+        const receipt = createDeploymentV1();
+        if (receipt.content.t !== 'plain' || receipt.content.v.sourceIntent.kind !== 'repository') throw new Error('Expected repository fixture');
+        const sourceIntent = { ...receipt.content.v.sourceIntent, compose: { path: 'compose.yaml', profiles: [], services: [],
+            augmentation: { document: 'services:\n  database:\n    image: postgres:17\n',
+                publicFiles: [{ path: 'config/database.conf', content: 'shared_buffers=128MB' }] } } };
+        const content = { ...receipt.content.v, sourceIntent };
+        expect(DeploymentSourceIntentV1Schema.safeParse(sourceIntent).success).toBe(false);
+        expect(DeploymentV1Schema.safeParse({ ...receipt, content: { t: 'plain', v: content } }).success).toBe(false);
+        const pending = { t: 'plain', v: { sourceIntent, targetLinkId: receipt.targetLinkId,
+            requestKey: receipt.requestKey, actionOperationId: receipt.actionOperationId } };
+        expect(DeploymentPendingDeployV1Schema.safeParse(JSON.parse(JSON.stringify(pending))).success).toBe(false);
+        expect(DeploymentSourceIntentV1Schema.parse(receipt.content.v.sourceIntent)).toEqual(receipt.content.v.sourceIntent);
+    });
+
     it('admits the explicit platform method on the originating deploy intent without selecting a fallback', () => {
         const intent = { serverId: 'home', environmentId: 'environment', targetLinkId: 'platform', sourceMethod: 'upload' };
         expect(DeploymentDeployIntentInputV1Schema.parse(intent)).toEqual(intent);
@@ -44,6 +59,19 @@ describe('platform upload and PR-head provenance', () => {
         expect(DeploymentDeployIntentInputV1Schema.parse(existingIntent)).toEqual(existingIntent);
         expect(DeploymentDeployIntentInputV1Schema.parse({ ...existingIntent, onFailure: 'keepPartial' }))
             .toMatchObject({ onFailure: 'keepPartial' });
+    });
+    it('keeps an explicit native subset distinct from the complete source and rejects an empty restriction', () => {
+        const intent = { serverId: 'home', environmentId: 'environment', targetLinkId: 'native', services: ['database'] };
+        expect(DeploymentDeployIntentInputV1Schema.parse(intent)).toEqual(intent);
+        expect(DeploymentDeployIntentInputV1Schema.safeParse({ ...intent, services: [] }).success).toBe(false);
+        expect(DeploymentDeployIntentInputV1Schema.safeParse({ ...intent, services: ['database', 'database'] }).success).toBe(false);
+        const receipt = createDeploymentV1();
+        if (receipt.content.t !== 'plain') throw new Error('Expected opened native fixture');
+        const content = { ...receipt.content.v, services: intent.services };
+        expect(DeploymentV1Schema.parse({ ...receipt, content: { t: 'plain', v: content } }).content).toEqual({ t: 'plain', v: content });
+        expect(DeploymentPendingDeployV1Schema.parse({ t: 'plain', v: { services: intent.services,
+            sourceIntent: content.sourceIntent, requestKey: receipt.requestKey, targetLinkId: receipt.targetLinkId,
+            actionOperationId: receipt.actionOperationId } })).toMatchObject({ v: { services: intent.services, sourceIntent: content.sourceIntent } });
     });
     it('reads the normalized managed capability without runtime roles or a provider bag', () => {
         const runtime = createDeploymentTargetV1();
