@@ -8,6 +8,7 @@ import { createBrowserDaemonControlRoutes } from '../control/routes';
 import { createBrowserDaemonControlBroker } from '../control/broker';
 import { createBrowserProfileStore } from '../profiles/store';
 import { createBrowserStoragePartitionOwner } from '../storage/partitions';
+import { createBrowserSidecarCdpControlAdapter } from '../sidecar/controlAdapter';
 import type { BrowserDaemonViewV1 } from '@happier-dev/protocol';
 
 const fixtureSource = new URL('../../../../../../packages/tests/src/testkit/actionExecutorBoundary.ts', import.meta.url).href;
@@ -63,6 +64,37 @@ it('creates and deletes saved profiles through admitted Actions and retains them
     expect(await executor.execute('browser.profile.delete', { machineId: 'machine', profileId: 'work' }, context))
       .toMatchObject({ ok: true, result: { status: 'unavailable', code: 'profile_not_found' } });
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('reopens the selected profile in the Action receipt after closing its previous logical view', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-profile-reopen-'));
+  const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'session', sidecarId: 'sidecar',
+    // CDP is the process boundary; profile Actions, broker and view publication remain real.
+    transport: { openPage: async () => ({ targetId: 'page' }), dispatchPageCommand: async () => ({}),
+      dispatchBrowserCommand: async () => ({ success: true }) } });
+  try {
+    const profiles = createBrowserProfileStore({ storageRootDirectory: root,
+      partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+    await profiles.registerPersistentProfile({ profileId: 'work', storageMode: 'user', owner: { kind: 'user', id: 'work' } });
+    const broker = createBrowserDaemonControlBroker();
+    broker.registerAdapter(adapter);
+    const control = createBrowserDaemonControlRoutes({ broker, profiles });
+    const target = { kind: 'externalUrl', targetId: 'page', url: 'https://example.test' } as const;
+    await control.dispatchCommand({ kind: 'openView', commandId: 'initial', browserSessionId: 'session',
+      viewId: 'view', platform: 'web', target });
+    const daemon = createBrowserDaemonRuntimeActionExecutor({ control,
+      featureGate: { isEnabled: () => true, refresh: async () => {} } });
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute: daemon }));
+    const result = await executor.execute('browser.profile.select', { machineId: 'machine', kind: 'openView',
+      commandId: 'select', browserSessionId: 'session', viewId: 'view', platform: 'web', target, profileId: 'work' },
+    { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home',
+      runtimeAccountId: 'account', defaultSessionId: 'session', externalActionTarget: { kind: 'machine', machineId: 'machine' } });
+    expect(result).toMatchObject({ ok: true, result: { status: 'dispatched', events: expect.arrayContaining([
+      expect.objectContaining({ kind: 'viewClosed', browserSessionId: 'session', viewId: 'view' }),
+      expect.objectContaining({ kind: 'viewOpened', browserSessionId: 'session', viewId: 'view', target,
+        adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface' }),
+    ]) } });
+  } finally { adapter.dispose(); await rm(root, { recursive: true, force: true }); }
 });
 
 it('selects a saved profile through the existing close/open owner and leaves views intact for a missing profile', async () => {

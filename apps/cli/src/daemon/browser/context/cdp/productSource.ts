@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { TransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 
@@ -46,7 +48,8 @@ function defaultScreenshotTarget(input: Readonly<{
 }>): BrowserContextSessionMediaTarget {
     return {
         sessionId: input.browserSessionId,
-        messageLocalId: `browser_context_${input.viewId}_${input.navigationGeneration}`,
+        // View identities contain URLs; media buckets require one filesystem path component.
+        messageLocalId: `browser_context_${createHash('sha256').update(JSON.stringify([input.viewId, input.navigationGeneration])).digest('hex')}`,
     };
 }
 

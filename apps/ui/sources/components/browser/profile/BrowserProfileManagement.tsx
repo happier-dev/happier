@@ -38,7 +38,8 @@ const profileKey = (profile: BrowserProfileV1) => profile.profileId;
 export function BrowserProfileManagement(props: Readonly<{ model: BrowserProfileManagementModel; testID: string }>) {
     const { source } = props.model;
     const { executeValue, ready } = useMountedActionExecution(source.scope);
-    const operation = React.useMemo(() => ({ externalActionTarget: { kind: 'machine' as const, machineId: source.machineId } }), [source.machineId]);
+    const operation = React.useMemo(() => ({ externalActionTarget: { kind: 'machine' as const, machineId: source.machineId },
+        retainEffectResult: true as const }), [source.machineId]);
     const [profiles, setProfiles] = React.useState<readonly BrowserProfileV1[]>([]);
     const [busy, setBusy] = React.useState(false);
     const [failed, setFailed] = React.useState(false);

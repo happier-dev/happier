@@ -5,14 +5,16 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 const execute = createFrontDoorActionExecute();
 
 /** UI and automation use the same answering-client file handoff Action. */
-export async function requestSaveFile(input: FileSaveInput, scope?: ServerAccountScope): Promise<'saved' | 'canceled' | 'failed'> {
+export async function requestSaveFile(input: FileSaveInput, scope?: ServerAccountScope): Promise<
+    ReturnType<typeof FileSaveResultSchema.parse> | Readonly<{ status: 'failed'; errorCode: string }>
+> {
     try {
         const result = await execute('files.save', input, { surface: 'ui', actionCaller: { kind: 'host' },
             ...(scope ? { serverId: scope.serverId, expectedAccountId: scope.accountId } : {}) });
-        if (!result.ok) return 'failed';
+        if (!result.ok) return { status: 'failed', errorCode: result.errorCode ?? 'file_save_failed' };
         const saved = FileSaveResultSchema.safeParse(result.result);
-        return saved.success ? saved.data.status : 'failed';
+        return saved.success ? saved.data : { status: 'failed', errorCode: 'file_save_failed' };
     } catch {
-        return 'failed';
+        return { status: 'failed', errorCode: 'file_save_failed' };
     }
 }

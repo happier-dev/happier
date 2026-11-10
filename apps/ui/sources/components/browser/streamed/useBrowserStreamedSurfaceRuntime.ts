@@ -292,9 +292,9 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     const saveDownload = useEventCallback(async (downloadId: string) => {
         const download = metadata?.interaction?.downloads.find(candidate => candidate.downloadId === downloadId);
         if (!download || !viewId || !browserSessionId || !accountBinding) return;
-        const status = await requestSaveFile({ fileName: download.name, source: { kind: 'browserDownload',
+        const result = await requestSaveFile({ fileName: download.name, source: { kind: 'browserDownload',
             reference: { machineId, browserSessionId, viewId, downloadId } } }, accountBinding.scope);
-        if (status === 'failed') Modal.alert(t('common.error'), t('errors.operationFailed'));
+        if (result.status === 'failed') Modal.alert(t('common.error'), `${t('errors.operationFailed')}: ${result.errorCode}`);
     });
     const clipboardShortcut = React.useMemo(() => inputRelay && metadata?.viewerInput?.controlling
         ? createRemoteViewerClipboardShortcut({

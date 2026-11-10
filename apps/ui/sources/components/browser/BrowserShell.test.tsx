@@ -658,7 +658,9 @@ describe('BrowserShell', () => {
     try {
       await screen.pressByTestIdAsync('browser-shell-mark-up');
       expect(captureScreenshot).not.toHaveBeenCalled();
-      expect(onAttachUnavailable).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: 'action_disabled' }));
+      expect(onAttachUnavailable).toHaveBeenCalledWith(expect.objectContaining({
+        reasonCode: 'browser_context_annotation_capture_unavailable', message: 'action_disabled',
+      }));
       startEnabled = true;
       await screen.pressByTestIdAsync('browser-shell-mark-up');
       await flushHookEffects();

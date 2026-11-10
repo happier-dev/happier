@@ -125,9 +125,9 @@ export function useDeploymentStepLog(
   > => {
     const { reference: target, readLogs: readPage, lifetime, fileName } = latest.current;
     if (!target || !readPage || !lifetime?.isCurrent()) return 'canceled';
-    return requestSaveFile({ fileName, source: {
+    return (await requestSaveFile({ fileName, source: {
       kind: 'deploymentLog', reference: { ...target, serverId: lifetime.scope.serverId },
-    } }, lifetime.scope);
+    } }, lifetime.scope)).status;
   }, []);
   return { ...logs, download };
 }

@@ -9,12 +9,10 @@ type BrowserContextAnnotationRegistration = Readonly<{
 }>;
 
 /**
- * UX-7: keyed by the canonical `browserViewKey` so each live view owns its own annotation adapter
- * slot. The previous single-slot registry was last-write-wins — a second view's mount evicted the
- * first, leaving all-but-one view unbacked (and ANNO-7 multi-tab isolation impossible). A `Map`
- * lets every mounted view coexist; the runtime-action front door resolves the exact view's owner.
+ * Keep every mounted host for each exact Account/view. Closing a duplicate panel must expose
+ * the still-mounted host again; it must not remove that view's annotation owner.
  */
-const registrations = new Map<string, BrowserContextAnnotationRegistration>();
+const registrations = new Map<string, BrowserContextAnnotationRegistration[]>();
 
 function registrationKey(input: Readonly<{ browserSessionId: string; viewId: string; scope: ServerAccountScope }>): string {
     return serverAccountScopedResourceKey(input.scope, browserViewKey(input));
@@ -38,20 +36,18 @@ export function registerBrowserContextAnnotationAdapter(
 ): () => void {
     const token = Symbol('browserContextAnnotationAdapter');
     const key = registrationKey(input);
-    registrations.set(key, { token, adapter: input.adapter });
+    registrations.set(key, [...(registrations.get(key) ?? []), { token, adapter: input.adapter }]);
     return () => {
-        // Token-checked: only clear the slot if this exact registration still owns it. A remount that
-        // re-registered the same key before this disposer fires must not be clobbered.
-        if (registrations.get(key)?.token === token) {
-            registrations.delete(key);
-        }
+        const remaining = (registrations.get(key) ?? []).filter(registration => registration.token !== token);
+        if (remaining.length) registrations.set(key, remaining);
+        else registrations.delete(key);
     };
 }
 
 export function readRegisteredBrowserContextAnnotationAdapter(
     input: Readonly<{ browserSessionId: string; viewId: string; scope: ServerAccountScope }>,
 ): BrowserContextAnnotationAdapter | null {
-    return registrations.get(registrationKey(input))?.adapter ?? null;
+    return registrations.get(registrationKey(input))?.at(-1)?.adapter ?? null;
 }
 
 export function clearBrowserContextAnnotationRegistryForTests(): void {

@@ -679,7 +679,11 @@ export function createBrowserSidecarCdpControlAdapter(
                     return cdpFailure(command);
                 }
             }
-            return dispatchState(command);
+            const openedView = boundViews.get(browserViewKey(command));
+            if (!openedView) return cdpFailure(command);
+            const opened = openedViewEvent(openedView);
+            publishEvent(opened);
+            return { ...dispatched(command), events: [opened, stateEvent(openedView)] };
         } catch {
             return cdpFailure(command);
         }
@@ -696,15 +700,9 @@ export function createBrowserSidecarCdpControlAdapter(
                     streamId: browserViewKey(command), daemonView: { browserSessionId: command.browserSessionId, viewId: command.viewId } };
                 // Chromium's active content tab remains the popup's tabs.query target.
                 // The streamed view can still be selected in Happier independently.
-                const result = await openView({ ...command, target, platform: command.platform ?? 'web',
+                return openView({ ...command, target, platform: command.platform ?? 'web',
                     focus: command.focus ?? command.kind !== 'actionPopup' },
                     `chrome-extension://${command.extension.id}/${path}`, scope);
-                if (result.status !== 'dispatched') return result;
-                const view = boundViews.get(browserViewKey(command));
-                if (!view) return cdpFailure(command);
-                const opened = openedViewEvent(view);
-                publishEvent(opened);
-                return { ...result, events: [opened, ...result.events] };
             },
         },
         viewportOwner,

@@ -324,9 +324,9 @@ describe('browser sidecar CDP control adapter', () => {
             },
         });
         const opened = BrowserCommandDispatchResultV1Schema.parse(await adapter.dispatchCommand(externalOpenViewCommand()));
-        expect(opened).toMatchObject({ status: 'dispatched', events: [expect.objectContaining({
-            loadingState: readyState === 'complete' ? 'ready' : 'loading', navigationGeneration: 0,
-        })] });
+        expect(opened).toMatchObject({ status: 'dispatched', events: expect.arrayContaining([expect.objectContaining({
+            kind: 'navigationStateChanged', loadingState: readyState === 'complete' ? 'ready' : 'loading', navigationGeneration: 0,
+        })]) });
         adapter.dispose();
     });
 

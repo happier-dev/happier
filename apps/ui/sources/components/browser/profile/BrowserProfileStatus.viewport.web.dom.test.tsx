@@ -39,6 +39,7 @@ it('gives persisted profiles a visible scroll viewport and usable select/delete 
     const serverIdentityId = 'srv_profile_viewport';
     const serverId = await homes.addHome({ name: 'Profile Home', serverUrl, serverIdentityId, accountId: 'owner', currentAccount: true });
     await network.addHome(serverUrl, 'owner', { serverIdentityId });
+    network.resetRequests();
     const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' };
     const work: BrowserProfileV1 = { profileId: 'work', displayName: 'Work', storageMode: 'user',
@@ -53,7 +54,7 @@ it('gives persisted profiles a visible scroll viewport and usable select/delete 
         const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
         expect(request.input).toMatchObject({ profileId: work.profileId, machineId: 'machine' });
         return { body: { v: 1, actionId: 'browser.profile.select', requestId: request.requestId,
-            execution: { ok: true, result: { v: 1, commandId: 'select', status: 'dispatched', events: [] } } } };
+            execution: { ok: true, result: { v: 1, commandId: 'select', status: 'dispatched', adapterKind: 'chromiumSidecar', events: [] } } } };
     } });
     homes.answer(serverId, '/v1/actions/browser.profile.delete', { select: body => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
@@ -94,10 +95,15 @@ it('gives persisted profiles a visible scroll viewport and usable select/delete 
         expect(scroller!.contains(select)).toBe(true);
         await act(async () => select.click());
         await waitForHomeGovernance(() => expect(onSelected).toHaveBeenCalledWith(work, []));
-        await act(async () => harness.container.querySelector<HTMLElement>('[data-testid="profiles-profile-delete-work"]')!.click());
         await waitForHomeGovernance(async () => {
             await harness.flush();
-            expect(harness.container.querySelector('[data-testid="profiles-profile-delete-work"]')).toBeNull();
+            expect(harness.container.querySelector('[data-testid="profiles-profile-delete-work"]')?.getAttribute('aria-disabled')).not.toBe('true');
+        });
+        await act(async () => harness.container.querySelector<HTMLElement>('[data-testid="profiles-profile-delete-work"]')!.click());
+        await waitForHomeGovernance(() => expect(profiles).toEqual([]));
+        await waitForHomeGovernance(async () => {
+            await harness.flush();
+            expect(harness.container.querySelector('[data-testid="profiles-profile-delete-work"]')?.getBoundingClientRect().height ?? 0).toBe(0);
         });
         expect(profiles).toEqual([]);
     } finally { disposeLoader(); }

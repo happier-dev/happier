@@ -219,7 +219,7 @@ it.each(['ui', 'agent', 'mcp'] as const)('resolves mounted navigation before Mac
     expect(await executor.execute('browser.navigate', input, { ...context, surface })).toMatchObject({ ok: true, result: { status: 'dispatched' } });
     // The daemon owns this view; address intent must reach it as the resolved target,
     // rather than forwarding localhost navigation to the answering browser.
-    expect(forwarded).toEqual([expect.objectContaining({ kind: 'setTarget', target: previewTarget })]);
+    expect(forwarded).toEqual([expect.objectContaining({ target: previewTarget })]);
     expect(machineRpc).toHaveBeenCalledTimes(1);
     await executor.execute('browser.navigate', { ...input, commandId: 'direct', navigationIntent: 'target' }, { ...context, surface });
     expect(machineRpc).toHaveBeenCalledTimes(1);

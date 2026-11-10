@@ -11,5 +11,5 @@ export async function exportMachineServiceLogIndex(input: Readonly<{
   if (!input.isCurrent()) return 'canceled';
   const log = input.index.log;
   const text = 'text' in log ? log.text : log.fragments.map(fragment => fragment.text).join('');
-  return requestSaveFile({ fileName: input.fileName, source: { kind: 'text', text } }, input.scope);
+  return (await requestSaveFile({ fileName: input.fileName, source: { kind: 'text', text } }, input.scope)).status;
 }
