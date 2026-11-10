@@ -1135,6 +1135,11 @@
       "types": "./dist/actions/executor/projects/dispatch.d.ts",
       "default": "./dist/actions/executor/projects/dispatch.js"
     },
+    "./actions/executor/projects/starters": {
+      "happier-source": "./src/actions/executor/projects/starters.ts",
+      "types": "./dist/actions/executor/projects/starters.d.ts",
+      "default": "./dist/actions/executor/projects/starters.js"
+    },
     "./actions/executor/publicProfileActions": {
       "happier-source": "./src/actions/executor/publicProfileActions.ts",
       "types": "./dist/actions/executor/publicProfileActions.d.ts",
@@ -1329,6 +1334,11 @@
       "happier-source": "./src/actions/executor/workflowRunActions.ts",
       "types": "./dist/actions/executor/workflowRunActions.d.ts",
       "default": "./dist/actions/executor/workflowRunActions.js"
+    },
+    "./actions/executor/workflowRunApproval": {
+      "happier-source": "./src/actions/executor/workflowRunApproval.ts",
+      "types": "./dist/actions/executor/workflowRunApproval.d.ts",
+      "default": "./dist/actions/executor/workflowRunApproval.js"
     },
     "./actions/executor/workflowSessionScope": {
       "happier-source": "./src/actions/executor/workflowSessionScope.ts",
@@ -2364,6 +2374,16 @@
       "happier-source": "./src/actions/specs/projectSourcesActionIdsV1.ts",
       "types": "./dist/actions/specs/projectSourcesActionIdsV1.d.ts",
       "default": "./dist/actions/specs/projectSourcesActionIdsV1.js"
+    },
+    "./actions/specs/projectStarters": {
+      "happier-source": "./src/actions/specs/projectStarters.ts",
+      "types": "./dist/actions/specs/projectStarters.d.ts",
+      "default": "./dist/actions/specs/projectStarters.js"
+    },
+    "./actions/specs/projectStartersActionIdsV1": {
+      "happier-source": "./src/actions/specs/projectStartersActionIdsV1.ts",
+      "types": "./dist/actions/specs/projectStartersActionIdsV1.d.ts",
+      "default": "./dist/actions/specs/projectStartersActionIdsV1.js"
     },
     "./actions/specs/projectWorkers": {
       "happier-source": "./src/actions/specs/projectWorkers.ts",
@@ -4950,6 +4970,16 @@
       "types": "./dist/deployments/deploymentBackupActionsV1.d.ts",
       "default": "./dist/deployments/deploymentBackupActionsV1.js"
     },
+    "./deployments/deploymentBackupAnotherMachineV1": {
+      "happier-source": "./src/deployments/deploymentBackupAnotherMachineV1.ts",
+      "types": "./dist/deployments/deploymentBackupAnotherMachineV1.d.ts",
+      "default": "./dist/deployments/deploymentBackupAnotherMachineV1.js"
+    },
+    "./deployments/deploymentBackupConfigureV1": {
+      "happier-source": "./src/deployments/deploymentBackupConfigureV1.ts",
+      "types": "./dist/deployments/deploymentBackupConfigureV1.d.ts",
+      "default": "./dist/deployments/deploymentBackupConfigureV1.js"
+    },
     "./deployments/deploymentBackupHistoryV1": {
       "happier-source": "./src/deployments/deploymentBackupHistoryV1.ts",
       "types": "./dist/deployments/deploymentBackupHistoryV1.d.ts",
@@ -5015,6 +5045,11 @@
       "types": "./dist/deployments/deploymentDomainHealthCheckV1.d.ts",
       "default": "./dist/deployments/deploymentDomainHealthCheckV1.js"
     },
+    "./deployments/deploymentDomainProviderResultV1": {
+      "happier-source": "./src/deployments/deploymentDomainProviderResultV1.ts",
+      "types": "./dist/deployments/deploymentDomainProviderResultV1.d.ts",
+      "default": "./dist/deployments/deploymentDomainProviderResultV1.js"
+    },
     "./deployments/deploymentDomainV1": {
       "happier-source": "./src/deployments/deploymentDomainV1.ts",
       "types": "./dist/deployments/deploymentDomainV1.d.ts",
@@ -5059,6 +5094,11 @@
       "happier-source": "./src/deployments/deploymentInvalidV1.ts",
       "types": "./dist/deployments/deploymentInvalidV1.d.ts",
       "default": "./dist/deployments/deploymentInvalidV1.js"
+    },
+    "./deployments/deploymentMoveToRepositoryV1": {
+      "happier-source": "./src/deployments/deploymentMoveToRepositoryV1.ts",
+      "types": "./dist/deployments/deploymentMoveToRepositoryV1.d.ts",
+      "default": "./dist/deployments/deploymentMoveToRepositoryV1.js"
     },
     "./deployments/deploymentPendingAdmissionV1": {
       "happier-source": "./src/deployments/deploymentPendingAdmissionV1.ts",
@@ -7160,6 +7200,11 @@
       "types": "./dist/machines/resources/machineUsageAttribution.d.ts",
       "default": "./dist/machines/resources/machineUsageAttribution.js"
     },
+    "./machines/setup/backupReceiverV1": {
+      "happier-source": "./src/machines/setup/backupReceiverV1.ts",
+      "types": "./dist/machines/setup/backupReceiverV1.d.ts",
+      "default": "./dist/machines/setup/backupReceiverV1.js"
+    },
     "./machines/setup/machineFirewallV1": {
       "happier-source": "./src/machines/setup/machineFirewallV1.ts",
       "types": "./dist/machines/setup/machineFirewallV1.d.ts",
@@ -7680,6 +7725,11 @@
       "types": "./dist/plugins/actions/daemonInvocationV1.d.ts",
       "default": "./dist/plugins/actions/daemonInvocationV1.js"
     },
+    "./plugins/actions/failureResponse": {
+      "happier-source": "./src/plugins/actions/failureResponse.ts",
+      "types": "./dist/plugins/actions/failureResponse.d.ts",
+      "default": "./dist/plugins/actions/failureResponse.js"
+    },
     "./plugins/actions/inputSchemaTraversal": {
       "happier-source": "./src/plugins/actions/inputSchemaTraversal.ts",
       "types": "./dist/plugins/actions/inputSchemaTraversal.d.ts",
@@ -8024,6 +8074,11 @@
       "happier-source": "./src/plugins/contributions/deploymentTargetRolesV1.ts",
       "types": "./dist/plugins/contributions/deploymentTargetRolesV1.d.ts",
       "default": "./dist/plugins/contributions/deploymentTargetRolesV1.js"
+    },
+    "./plugins/contributions/deploymentTargetVariablesV1": {
+      "happier-source": "./src/plugins/contributions/deploymentTargetVariablesV1.ts",
+      "types": "./dist/plugins/contributions/deploymentTargetVariablesV1.d.ts",
+      "default": "./dist/plugins/contributions/deploymentTargetVariablesV1.js"
     },
     "./plugins/contributions/deploymentTargets": {
       "happier-source": "./src/plugins/contributions/deploymentTargets.ts",
@@ -9210,6 +9265,11 @@
       "types": "./dist/projects/starters/bundledProjectStartersV1.d.ts",
       "default": "./dist/projects/starters/bundledProjectStartersV1.js"
     },
+    "./projects/starters/createV1": {
+      "happier-source": "./src/projects/starters/createV1.ts",
+      "types": "./dist/projects/starters/createV1.d.ts",
+      "default": "./dist/projects/starters/createV1.js"
+    },
     "./projects/starters/projectStarterV1": {
       "happier-source": "./src/projects/starters/projectStarterV1.ts",
       "types": "./dist/projects/starters/projectStarterV1.d.ts",
@@ -10250,6 +10310,11 @@
       "types": "./dist/registries/registryActionsV1.d.ts",
       "default": "./dist/registries/registryActionsV1.js"
     },
+    "./registries/registryAppMappingV1": {
+      "happier-source": "./src/registries/registryAppMappingV1.ts",
+      "types": "./dist/registries/registryAppMappingV1.d.ts",
+      "default": "./dist/registries/registryAppMappingV1.js"
+    },
     "./registries/registryAppUpdateAdmissionV1": {
       "happier-source": "./src/registries/registryAppUpdateAdmissionV1.ts",
       "types": "./dist/registries/registryAppUpdateAdmissionV1.d.ts",
@@ -10840,6 +10905,11 @@
       "types": "./dist/scm/pathScope.d.ts",
       "default": "./dist/scm/pathScope.js"
     },
+    "./scm/pullRequestLifecycleV1": {
+      "happier-source": "./src/scm/pullRequestLifecycleV1.ts",
+      "types": "./dist/scm/pullRequestLifecycleV1.d.ts",
+      "default": "./dist/scm/pullRequestLifecycleV1.js"
+    },
     "./scm/pullRequests": {
       "happier-source": "./src/scm/pullRequests.ts",
       "types": "./dist/scm/pullRequests.d.ts",
@@ -10869,6 +10939,16 @@
       "happier-source": "./src/scm/repositoryClone.ts",
       "types": "./dist/scm/repositoryClone.d.ts",
       "default": "./dist/scm/repositoryClone.js"
+    },
+    "./scm/repositoryFilesPullRequest": {
+      "happier-source": "./src/scm/repositoryFilesPullRequest.ts",
+      "types": "./dist/scm/repositoryFilesPullRequest.d.ts",
+      "default": "./dist/scm/repositoryFilesPullRequest.js"
+    },
+    "./scm/repositoryFilesPullRequestActionIds": {
+      "happier-source": "./src/scm/repositoryFilesPullRequestActionIds.ts",
+      "types": "./dist/scm/repositoryFilesPullRequestActionIds.d.ts",
+      "default": "./dist/scm/repositoryFilesPullRequestActionIds.js"
     },
     "./scm/repositoryProvisioning": {
       "happier-source": "./src/scm/repositoryProvisioning.ts",
@@ -14240,6 +14320,11 @@
       "happier-source": "./src/voice/realtime/providerSettings.ts",
       "types": "./dist/voice/realtime/providerSettings.d.ts",
       "default": "./dist/voice/realtime/providerSettings.js"
+    },
+    "./voice/realtime/toolArguments": {
+      "happier-source": "./src/voice/realtime/toolArguments.ts",
+      "types": "./dist/voice/realtime/toolArguments.d.ts",
+      "default": "./dist/voice/realtime/toolArguments.js"
     },
     "./voice/realtime/transcriptLadder": {
       "happier-source": "./src/voice/realtime/transcriptLadder.ts",
