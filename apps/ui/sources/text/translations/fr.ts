@@ -18293,6 +18293,7 @@ settingsSession: {
         defaultProtected: "Le tableau de bord par défaut ne peut pas être supprimé. Tu peux retirer ses widgets.",
         widgets: "Widgets",
         openInProject: "Ouvrir dans le projet",
+        notAttached: "Non rattaché à un projet",
         empty: "Ajoute des widgets à ce tableau de bord.",
         identity: ({ name, owner, access }: { name: string; owner: string; access: string }) => `${name} · ${owner} · ${access}`,
         ownerDashboard: ({ owner }: { owner: string }) => `Tableau de bord de ${owner}`,

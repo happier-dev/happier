@@ -18333,6 +18333,7 @@ settingsSession: {
         defaultProtected: "既定のダッシュボードは削除できません。ウィジェットは削除できます。",
         widgets: "ウィジェット",
         openInProject: "プロジェクトで開く",
+        notAttached: "プロジェクトに関連付けられていません",
         empty: "このダッシュボードにウィジェットを追加してください。",
         identity: ({ name, owner, access }: { name: string; owner: string; access: string }) => `${name} · ${owner} · ${access}`,
         ownerDashboard: ({ owner }: { owner: string }) => `${owner} のダッシュボード`,

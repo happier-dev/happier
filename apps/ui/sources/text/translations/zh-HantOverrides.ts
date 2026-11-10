@@ -14019,6 +14019,7 @@ settingsSession: {
             defaultProtected: "預設儀表板無法刪除。你可以移除其中的小工具。",
             widgets: "小工具",
             openInProject: "在專案中開啟",
+            notAttached: "未關聯到專案",
             empty: "為此儀表板新增小工具。",
             identity: ({ name, owner, access }: { name: string; owner: string; access: string }) => `${name} · ${owner} · ${access}`,
             ownerDashboard: ({ owner }: { owner: string }) => `${owner} 的儀表板`,

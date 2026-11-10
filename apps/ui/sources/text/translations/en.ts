@@ -21855,6 +21855,7 @@ const enProjects = {
       defaultProtected: "The default dashboard can’t be deleted. You can remove its widgets.",
       widgets: "Widgets",
       openInProject: "Open in project",
+      notAttached: "Not attached to a project",
       empty: "Add widgets to this dashboard.",
       identity: ({ name, owner, access }: { name: string; owner: string; access: string }) => `${name} · ${owner} · ${access}`,
       ownerDashboard: ({ owner }: { owner: string }) => `${owner}’s dashboard`,

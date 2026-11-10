@@ -18372,6 +18372,7 @@ settingsSession: {
         defaultProtected: "Дашборд по умолчанию нельзя удалить. Можно удалить его виджеты.",
         widgets: "Виджеты",
         openInProject: "Открыть в проекте",
+        notAttached: "Не привязано к проекту",
         empty: "Добавьте виджеты на этот дашборд.",
         identity: ({ name, owner, access }: { name: string; owner: string; access: string }) => `${name} · ${owner} · ${access}`,
         ownerDashboard: ({ owner }: { owner: string }) => `Дашборд ${owner}`,

@@ -9,6 +9,7 @@ import {
 import { useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import { useOpenProject } from '@/components/projects/useOpenProject';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -79,7 +80,7 @@ export function ArtifactDashboardBody(
   );
 }
 
-/** One way back to where the dashboard lives; nothing when its Project is gone (an orphaned default). */
+/** One way back to where the dashboard lives; one quiet line when its Project is gone (an orphaned default). */
 function DashboardProject(
   props: Readonly<{
     serverId: string;
@@ -102,7 +103,14 @@ function DashboardProject(
       )?.value.label,
   );
   const openProject = useOpenProject();
-  if (!ref) return null;
+  if (!ref)
+    return (
+      <EmptyState
+        testID="artifact:dashboard.unattached"
+        layout="line"
+        title={t('projects.dashboard.notAttached')}
+      />
+    );
   return (
     <ItemGroup testID="artifact:dashboard.project">
       <Item

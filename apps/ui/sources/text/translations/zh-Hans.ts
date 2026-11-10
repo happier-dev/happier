@@ -18038,6 +18038,7 @@ settingsSession: {
         defaultProtected: "默认仪表板无法删除。你可以移除其中的小组件。",
         widgets: "小组件",
         openInProject: "在项目中打开",
+        notAttached: "未关联到项目",
         empty: "为此仪表板添加小组件。",
         identity: ({ name, owner, access }: { name: string; owner: string; access: string }) => `${name} · ${owner} · ${access}`,
         ownerDashboard: ({ owner }: { owner: string }) => `${owner} 的仪表板`,

@@ -18525,6 +18525,7 @@ settingsSession: {
             defaultProtected: "Das Standard-Dashboard kann nicht gelöscht werden. Du kannst seine Widgets entfernen.",
             widgets: "Widgets",
             openInProject: "Im Projekt öffnen",
+            notAttached: "Keinem Projekt zugeordnet",
             empty: "Füge diesem Dashboard Widgets hinzu.",
             identity: ({ name, owner, access }: { name: string; owner: string; access: string }) => `${name} · ${owner} · ${access}`,
             ownerDashboard: ({ owner }: { owner: string }) => `Dashboard von ${owner}`,

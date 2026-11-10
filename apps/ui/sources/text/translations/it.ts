@@ -18421,6 +18421,7 @@ settingsSession: {
         defaultProtected: "La dashboard predefinita non può essere eliminata. Puoi rimuoverne i widget.",
         widgets: "Widget",
         openInProject: "Apri nel progetto",
+        notAttached: "Non collegato a un progetto",
         empty: "Aggiungi widget a questa dashboard.",
         identity: ({ name, owner, access }: { name: string; owner: string; access: string }) => `${name} · ${owner} · ${access}`,
         ownerDashboard: ({ owner }: { owner: string }) => `Dashboard di ${owner}`,

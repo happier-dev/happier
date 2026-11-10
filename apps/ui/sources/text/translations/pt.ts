@@ -18525,6 +18525,7 @@ settingsSession: {
         defaultProtected: "O painel padrão não pode ser excluído. Você pode remover os widgets dele.",
         widgets: "Widgets",
         openInProject: "Abrir no projeto",
+        notAttached: "Não associado a um projeto",
         empty: "Adicione widgets a este painel.",
         identity: ({ name, owner, access }: { name: string; owner: string; access: string }) => `${name} · ${owner} · ${access}`,
         ownerDashboard: ({ owner }: { owner: string }) => `Painel de ${owner}`,

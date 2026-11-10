@@ -433,6 +433,7 @@ describe('dashboard Artifacts', () => {
             for (const id of widgetIds()) expect(screen.findByTestId(`artifact:dashboard.widget:${id}`)).not.toBeNull();
             // Its stored layout is never offered as a text document.
             expect(screen.findByTestId('artifact:body') === null).toBe(true);
+            expect(screen.findByTestId('artifact:dashboard.unattached') === null).toBe(true);
             expect(screen.findByTestId('artifact:edit') === null).toBe(true);
             expect(screen.findByTestId('artifact:comments') === null).toBe(true);
             expect(screen.findByTestId('artifact:share')).not.toBeNull();
@@ -444,7 +445,7 @@ describe('dashboard Artifacts', () => {
         }
     });
 
-    it('shows an orphaned default dashboard by its widgets with no Open action', async () => {
+    it('shows an orphaned default dashboard by its widgets, says it is not attached to a Project, and offers no Open action', async () => {
         seedProject('another-project');
         const row = dashboardRow({ kind: 'project', projectId: 'forgotten-project' });
         const screen = await renderScreen(<ArtifactView artifactId={row.id} artifact={row} presentation="page" />);
@@ -456,7 +457,9 @@ describe('dashboard Artifacts', () => {
             expect(header.meta[0]).toMatchObject({ key: 'kind', text: 'artifacts.browser.kindOne.dashboard' });
             for (const id of widgetIds()) expect(screen.findByTestId(`artifact:dashboard.widget:${id}`)).not.toBeNull();
             expect(screen.findByTestId('artifact:dashboard.open') === null).toBe(true);
+            expect(screen.findByTestId('artifact:dashboard.unattached')).not.toBeNull();
             expect(screen.findByTestId('artifact:edit') === null).toBe(true);
+            expect(screen.findByTestId('artifact:comments') === null).toBe(true);
         } finally {
             await screen.unmount();
         }

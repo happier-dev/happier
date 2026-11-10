@@ -18419,6 +18419,7 @@ settingsSession: {
         defaultProtected: "El panel predeterminado no se puede eliminar. Puedes quitar sus widgets.",
         widgets: "Widgets",
         openInProject: "Abrir en el proyecto",
+        notAttached: "No vinculado a un proyecto",
         empty: "Añade widgets a este panel.",
         identity: ({ name, owner, access }: { name: string; owner: string; access: string }) => `${name} · ${owner} · ${access}`,
         ownerDashboard: ({ owner }: { owner: string }) => `Panel de ${owner}`,

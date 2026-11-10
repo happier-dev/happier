@@ -18244,6 +18244,7 @@ settingsSession: {
         defaultProtected: "Domyślnego pulpitu nie można usunąć. Możesz usunąć jego widżety.",
         widgets: "Widżety",
         openInProject: "Otwórz w projekcie",
+        notAttached: "Nie przypisano do projektu",
         empty: "Dodaj widżety do tego pulpitu.",
         identity: ({ name, owner, access }: { name: string; owner: string; access: string }) => `${name} · ${owner} · ${access}`,
         ownerDashboard: ({ owner }: { owner: string }) => `Pulpit: ${owner}`,
