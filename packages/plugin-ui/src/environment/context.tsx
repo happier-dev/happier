@@ -329,7 +329,35 @@ function snapshotPalette(theme: PluginUiThemeV1): HappierUiPalette {
 export function useOptionalHappierUiPalette(theme?: PluginUiThemeV1 | null): HappierUiPalette | null {
   const installed = useContext(HappierUiPaletteContext);
   const environmentTheme = useContext(HappierUiThemeContext);
-  if (installed) return installed;
+  const contrast = useContext(HappierUiAccessibilityContext)?.contrast ?? 'normal';
   const resolvedTheme = theme ?? environmentTheme;
-  return resolvedTheme ? snapshotPalette(resolvedTheme) : null;
+  const palette = installed ?? (resolvedTheme ? snapshotPalette(resolvedTheme) : null);
+  if (palette === null || !resolvedTheme) return palette;
+  return resolveHappierUiPresentationPalette(palette, resolvedTheme, contrast);
+}
+
+const contrastPalettes = new WeakMap<HappierUiPalette, WeakMap<PluginUiThemeV1, HappierUiPalette>>();
+
+/**
+ * High contrast reaches the palette through the same decision as the theme (`resolveHappierUiPresentationTheme`):
+ * a field's inside and a bordered secondary action take the contrast-adjusted control fill and border, so inactive
+ * controls stay distinct on every plane without component-local contrast policy. `theme` is the presentation theme
+ * (already contrast-adjusted). Cached per palette and theme, so consumers keep a stable reference.
+ */
+export function resolveHappierUiPresentationPalette(
+  palette: HappierUiPalette,
+  theme: PluginUiThemeV1,
+  contrast: HappierUiAccessibility['contrast'],
+): HappierUiPalette {
+  if (contrast !== 'high') return palette;
+  let byTheme = contrastPalettes.get(palette);
+  if (byTheme === undefined) {
+    byTheme = new WeakMap();
+    contrastPalettes.set(palette, byTheme);
+  }
+  const existing = byTheme.get(theme);
+  if (existing) return existing;
+  const adjusted = Object.freeze({ ...palette, fieldBackground: theme.colors.control, controlBorder: theme.colors.border });
+  byTheme.set(theme, adjusted);
+  return adjusted;
 }
