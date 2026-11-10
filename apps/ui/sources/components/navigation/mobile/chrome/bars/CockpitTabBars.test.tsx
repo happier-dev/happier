@@ -215,6 +215,8 @@ function MountedSessionCockpitTabBar(props: Omit<React.ComponentProps<typeof Ses
     const catalog = React.useMemo(() => resolveSessionCockpitMobileCatalog({
         terminalTabAvailable: props.terminalTabAvailable, pluginPlacements: props.pluginPlacements,
         sessionSharingAvailable: collaborationAdmissionState.state === 'available',
+        // The Browser feature decision is the catalog's producer input (`useAppRightSidebarTabInputs`); admitted here.
+        browserFeatureEnabled: true,
     }), [props.terminalTabAvailable, props.pluginPlacements, collaborationAdmissionState.state]);
     return <SessionBarSubject {...props} catalog={catalog} />;
 }
@@ -823,6 +825,32 @@ describe('cockpit tab bars', () => {
         });
 
         expect(pressed).toEqual(['services']);
+    });
+
+    it('opens Browser from More when it is not kept on the bar (native More → Browser)', async () => {
+        const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+        const pressed: string[] = [];
+        cockpitPinsState.value = ['browse'];
+
+        const screen = await renderScreen(
+            <MountedSessionCockpitTabBar
+                sessionId="sess_1"
+                activeSurface="chat"
+                terminalTabAvailable={false}
+                openDetailsTabCount={0}
+                onSurfacePress={(surface) => pressed.push(surface)}
+            />,
+        );
+
+        expect(screen.findHostByTestId('session-cockpit-tab-browser')).toBeNull();
+        const menu = screen.tree.findByType(DropdownMenu);
+        expect(menu.props.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'browser', title: 'en:browserSurface.title' }),
+        ]));
+        await act(async () => {
+            menu.props.onSelect('browser');
+        });
+        expect(pressed).toEqual(['browser']);
     });
 
     it('puts Chat and the default tools on the bar and lists the rest, pinnable, in the shared More', async () => {
