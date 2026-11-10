@@ -1,5 +1,6 @@
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import * as React from 'react';
+import { useRouter } from 'expo-router';
 import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -79,7 +80,10 @@ export type SecretRequirementModalProps = CustomModalInjectedProps & Readonly<{
      */
     variant?: SecretRequirementModalVariant;
     titleOverride?: string;
-    /** The surface lets the person add, rename, rotate and delete personal keys (through the Saved Secret catalog). */
+    /**
+     * The surface lets the person add a personal key while choosing (through the Saved Secret catalog).
+     * Renaming, replacing and deleting stay on the Secrets settings page, which the prompt links to.
+     */
     allowManage?: boolean;
     onResolve: (result: SecretRequirementModalResult) => void;
     allowSessionOnly?: boolean;
@@ -103,6 +107,13 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
         ...(Object.prototype.hasOwnProperty.call(props, 'accountScope') ? { scope: props.accountScope ?? null } : {}),
     });
     const canManage = props.allowManage === true && savedSecretCatalog.personalMutationsAvailable;
+    const router = useRouter();
+    // The prompt chooses; managing saved secrets is the Secrets page's job, so it leads there.
+    const openSecretsSettings = React.useCallback(() => {
+        props.onResolve({ action: 'cancel' });
+        props.onClose();
+        router.push('/settings/secrets');
+    }, [props.onClose, props.onResolve, router]);
 
     const layoutVariant: 'modal' | 'screen' = props.layoutVariant ?? 'modal';
     const useCardChrome = layoutVariant === 'modal';
@@ -120,6 +131,9 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
         subtitle: modalSubtitle,
         testID: 'secret-requirement:modal',
         closeButtonTestID: 'secret-requirement:close',
+        // A pick list: the card takes its full bound and keeps it while a search narrows the list;
+        // the prompt's own scroller moves the rows inside it.
+        scrollHost: 'body' as const,
         dimensions: {
             width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide,
             maxHeightRatio: 0.92,
@@ -437,7 +451,6 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                         <Item
                                             selected={false}
                                             title={activeEnvVarName}
-                                            subtitle={t('profiles.requirements.modalHelpWithEnv', { env: activeEnvVarName })}
                                             icon={<Icon name="key" size={24} color={theme.colors.text.secondary} />}
                                             rightElement={(
                                                 <Icon
@@ -615,11 +628,8 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                             sharedEntries={savedSecretCatalog.sharedEntries}
                             resolveSharedReference={savedSecretCatalog.resolveReference}
                             onCreatePersonal={canManage ? savedSecretCatalog.personalMutations.create : undefined}
-                            onRenamePersonal={canManage ? savedSecretCatalog.personalMutations.rename : undefined}
-                            onRotatePersonal={canManage ? savedSecretCatalog.personalMutations.rotate : undefined}
-                            onDeletePersonal={canManage ? savedSecretCatalog.personalMutations.delete : undefined}
                             allowAdd={canManage}
-                            allowEdit
+                            allowEdit={false}
                             title={t('secrets.savedTitle')}
                             footer={null}
                             includeNoneRow={variant === 'defaultForProfile'}
@@ -671,6 +681,19 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                             }}
                         />
                     )}
+
+                    {/* Renaming, replacing and deleting live on the Secrets page; the prompt leads there, last. */}
+                    {selectedSource === 'saved' ? (
+                        <ItemGroup>
+                            <Item
+                                testID="secret-requirement:manage"
+                                title={t('profiles.requirements.manageSavedSecrets')}
+                                icon={<Icon name="gear" size={24} color={theme.colors.text.secondary} />}
+                                onPress={openSecretsSettings}
+                                showDivider={false}
+                            />
+                        </ItemGroup>
+                    ) : null}
 
                     {selectedSource === 'once' && props.allowSessionOnly !== false && (
                         <ItemGroup title={t('profiles.requirements.sections.useOnceTitle')} description={t('profiles.requirements.sections.useOnceFooter')}>

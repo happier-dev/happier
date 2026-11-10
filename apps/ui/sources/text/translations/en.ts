@@ -13323,16 +13323,15 @@ const enLocalServices = {
       tunnelSigningUnconfigured:
         'The Home has no signing key for machine tunnels.',
     },
-    createActionA11y: 'Create public preview link',
+    createActionA11y: 'Share a link to this service',
     shareCta: 'Share a link',
-    revokeActionA11y: 'Revoke public preview link',
+    revokeActionA11y: 'Revoke this link',
     confirmTitle: 'Share a link to this service?',
     confirmMessage: ({ service }: { service: string }) =>
       `"${service}" gets a link that opens it from other devices.`,
     confirmCta: `Create link`,
-    revokeConfirmTitle: 'Revoke public link?',
-    revokeConfirmMessage: ({ url }: { url: string }) =>
-      `Revoke the public preview link ${url}? Anyone using it will lose access.`,
+    revokeConfirmTitle: 'Revoke this link?',
+    revokeConfirmMessage: ({ url }: { url: string }) => `Revoke the link ${url}? Anyone using it will lose access.`,
     revokeConfirmCta: 'Revoke link',
     consequenceReach:
       'Anyone who has the link can open this service. No sign-in is required.',

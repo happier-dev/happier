@@ -37,6 +37,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         minHeight: 0,
     },
+    pictureFrame: {
+        position: 'absolute',
+    },
     inputOverlay: {
         ...StyleSheet.absoluteFillObject,
     },
@@ -120,11 +123,13 @@ const supportsBrowserInput = (kind: LiveStreamInputGesture['kind']): boolean => 
 /**
  * Where a `contain`-fitted frame of `frame` size is drawn inside `viewport`. `maxScale` caps the fit
  * (a picture that must not be drawn larger than its own pixels passes `1 / devicePixelRatio`).
+ * `align: 'top'` keeps the frame against the top edge, as a page reads; `center` letterboxes evenly.
  */
 export function containRect(
     viewport: Readonly<{ width: number; height: number }>,
     frame: Readonly<{ width: number; height: number }> | null,
     maxScale: number = Number.POSITIVE_INFINITY,
+    align: 'center' | 'top' = 'center',
 ) {
     if (!frame || !(frame.width > 0 && frame.height > 0) || !(viewport.width > 0 && viewport.height > 0)) {
         return { x: 0, y: 0, width: viewport.width, height: viewport.height };
@@ -132,7 +137,7 @@ export function containRect(
     const scale = Math.min(viewport.width / frame.width, viewport.height / frame.height, maxScale);
     const width = frame.width * scale;
     const height = frame.height * scale;
-    return { x: (viewport.width - width) / 2, y: (viewport.height - height) / 2, width, height };
+    return { x: (viewport.width - width) / 2, y: align === 'top' ? 0 : (viewport.height - height) / 2, width, height };
 }
 
 /** A kept last frame is not the live page: it recedes while the status capsule says why (lab ST). */
@@ -195,9 +200,14 @@ export function BrowserStreamedConnecting(props: Readonly<{ testID: string; titl
     );
 }
 
-function StreamedPicture(props: Readonly<{ stalled: boolean; children: React.ReactNode }>): React.ReactElement {
+function StreamedPicture(props: Readonly<{
+    stalled: boolean;
+    /** Where the page is drawn once its shape is known; the player then fills exactly that rect. */
+    frame: Readonly<{ left: number; top: number; width: number; height: number }> | null;
+    children: React.ReactNode;
+}>): React.ReactElement {
     const opacity = usePictureOpacity(props.stalled);
-    return <Animated.View style={[stylesheet.picture, { opacity }]}>{props.children}</Animated.View>;
+    return <Animated.View style={[props.frame ? [stylesheet.pictureFrame, props.frame] : stylesheet.picture, { opacity }]}>{props.children}</Animated.View>;
 }
 
 /**
@@ -352,7 +362,9 @@ export function BrowserStreamedTarget(props: Readonly<{
     // The daemon's applied page size is the page's shape once it is known (the controlling viewer may
     // have resized it since the first frame); the first frame stands in until then.
     const pageShape = input?.viewport ?? frameSize;
-    const pageRect = pictureUp && viewport ? { ...containRect(viewport, pageShape), pageSize: frameSize } : null;
+    // A page someone else sized reads like a page: across the pane, from the top. Below it the inset stays;
+    // the page itself scrolls through the forwarded wheel and swipe, so the pane needs no scroller of its own.
+    const pageRect = pictureUp && viewport ? { ...containRect(viewport, pageShape, Number.POSITIVE_INFINITY, 'top'), pageSize: frameSize } : null;
     const controlling = input?.viewerInput?.controlling === true;
     const sendInput = input?.sendInput;
     // The controlling viewer's screen sets the page's size; everyone else letterboxes it.
@@ -433,7 +445,8 @@ export function BrowserStreamedTarget(props: Readonly<{
                     <BrowserStreamInput input={input} viewport={viewport} content={pageRect} controls={controls} keyboard={keyboardActions}
                         onRemoteActionsChange={onRemoteActionsChange} probeEditable={phone} testID={`${props.testID}-input`} />
                 ) : null}>
-            <StreamedPicture stalled={surfaceState === 'stalled'}>
+            <StreamedPicture stalled={surfaceState === 'stalled'}
+                frame={pageRect && pageShape ? { left: pageRect.x, top: pageRect.y, width: pageRect.width, height: pageRect.height } : null}>
                 <LiveStreamPlayer
                     testID={`${props.testID}-player`}
                     state={playerState}

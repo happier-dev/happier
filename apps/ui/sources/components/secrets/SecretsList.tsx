@@ -13,6 +13,8 @@ import type { TextInput } from '@/components/ui/text/Text';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon } from '@/components/ui/icons/Icon';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { COLLECTION_LIST_SEARCH_THRESHOLD } from '@/components/ui/lists/collection/CollectionList';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
@@ -68,14 +70,23 @@ export function SecretsList(props: SecretsListProps) {
         onDeletePersonal,
     } = props;
 
+    // A pick list long enough to need it gets the one search field; it narrows rows by name.
+    const [query, setQuery] = React.useState('');
+    const searchable = Boolean(onSelectId)
+        && secrets.length + (props.sharedEntries?.length ?? 0) > COLLECTION_LIST_SEARCH_THRESHOLD;
+    const needle = searchable ? query.trim().toLocaleLowerCase() : '';
+    const matches = React.useCallback((name: string | null | undefined) => needle.length === 0
+        || (name ?? '').toLocaleLowerCase().includes(needle), [needle]);
+
     const orderedSecrets = React.useMemo(() => {
+        const shown = needle.length === 0 ? secrets : secrets.filter((secret) => matches(secret.name));
         const resolvedDefaultId = defaultId ?? null;
-        if (!resolvedDefaultId) return secrets;
-        const defaultSecret = secrets.find((k) => k.id === resolvedDefaultId) ?? null;
-        if (!defaultSecret) return secrets;
-        const rest = secrets.filter((k) => k.id !== resolvedDefaultId);
+        if (!resolvedDefaultId) return shown;
+        const defaultSecret = shown.find((k) => k.id === resolvedDefaultId) ?? null;
+        if (!defaultSecret) return shown;
+        const rest = shown.filter((k) => k.id !== resolvedDefaultId);
         return [defaultSecret, ...rest];
-    }, [defaultId, secrets]);
+    }, [defaultId, matches, needle, secrets]);
 
     const [isAddExpanded, setIsAddExpanded] = React.useState(false);
     const [draftName, setDraftName] = React.useState('');
@@ -122,8 +133,10 @@ export function SecretsList(props: SecretsListProps) {
         ? t('secrets.catalog.relationship.owner')
         : t('settings.secrets'));
     const groupFooter = props.footer === undefined ? t('settings.secretsSubtitle') : (props.footer ?? undefined);
-    const ownerSharedEntries = (props.sharedEntries ?? []).filter((entry) => entry.relationship === 'owner');
-    const recipientSharedEntries = (props.sharedEntries ?? []).filter((entry) => entry.relationship === 'recipient');
+    const ownerSharedEntries = (props.sharedEntries ?? []).filter((entry) => entry.relationship === 'owner' && matches(entry.name));
+    const recipientSharedEntries = (props.sharedEntries ?? []).filter((entry) => entry.relationship === 'recipient' && matches(entry.name));
+    const noMatches = needle.length > 0 && orderedSecrets.length === 0
+        && ownerSharedEntries.length === 0 && recipientSharedEntries.length === 0;
     // A configured shared ref the Home no longer authorizes (revoked, deleted,
     // or not yet readable) has no catalog row. The binding itself survives, so
     // the picker keeps showing it — selected, with the canonical resolver's
@@ -152,6 +165,8 @@ export function SecretsList(props: SecretsListProps) {
                 key={entry.ref}
                 testID={`saved-secret:${entry.ref}`}
                 title={entry.name ?? t('secrets.catalog.unavailableName')}
+                // A pick list names each secret in full; similar names differ only at the end.
+                titleLines={0}
                 subtitle={[...provenance, ...(resolvedStatus === 'temporarily_unavailable' ? [] : [sharedSecretStatusLabel(resolvedStatus)])].join(' · ') || undefined}
                 accessibilityLabel={[
                     entry.name ?? t('secrets.catalog.unavailableName'),
@@ -173,6 +188,15 @@ export function SecretsList(props: SecretsListProps) {
 
     const group = (
         <>
+            {searchable ? (
+                <CompactSearchField
+                    testID="saved-secret-search"
+                    placement="page"
+                    value={query}
+                    onChangeText={setQuery}
+                    placeholder={t('secrets.searchSaved')}
+                />
+            ) : null}
             <ItemGroup title={groupTitle}>
                 {props.sharedCatalogStale && props.onRetrySharedCatalog ? (
                     <Item
@@ -222,7 +246,13 @@ export function SecretsList(props: SecretsListProps) {
                     />
                 ) : null}
 
-                {!unavailableSelection && props.secrets.length === 0 && (props.sharedEntries?.length ?? 0) === 0 ? (
+                {noMatches ? (
+                    <Item
+                        testID="saved-secret:no-matches"
+                        title={t('common.noMatches')}
+                        showChevron={false}
+                    />
+                ) : !unavailableSelection && props.secrets.length === 0 && (props.sharedEntries?.length ?? 0) === 0 ? (
                     <Item
                         testID="saved-secret:empty"
                         title={t('secrets.emptyTitle')}
@@ -240,6 +270,8 @@ export function SecretsList(props: SecretsListProps) {
                                 key={secret.id}
                                 testID={`saved-secret:${secret.id}`}
                                 title={secret.name}
+                                // A pick list names each secret in full; similar names differ only at the end.
+                                titleLines={0}
                                 subtitle={t('secrets.savedHiddenSubtitle')}
                                 icon={<Icon name="key" size={29} color={theme.colors.button.secondary.tint} />}
                                 onPress={props.onSelectId ? () => props.onSelectId?.(secret.id) : undefined}

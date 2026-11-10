@@ -163,4 +163,33 @@ describe('SecretsList saved-secret rows (react-native-web)', () => {
         expect(modalMock.prompt).not.toHaveBeenCalled();
         expect(onSelectId).not.toHaveBeenCalled();
     });
+
+    it('narrows a long pick list by name and says so when nothing matches', async () => {
+        const names = ['OpenAI API key', 'Gemini API key', 'Upstash API Key', 'Northwind gateway', 'Managed bootstrap',
+            'Staging deploy token', 'Linear token', 'Sentry DSN', 'Anthropic API key'];
+        const secrets = names.map((name, index): SavedSecret => ({ ...SECRET, id: `secret-${index}`, name }));
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        mounted = { root, container };
+        await act(async () => {
+            root.render(<SecretsList secrets={secrets} selectedId="" onSelectId={vi.fn()} allowAdd={false} />);
+        });
+        const search = container.querySelector<HTMLInputElement>('[data-testid="saved-secret-search"]');
+        if (!search) throw new Error('a long pick list offers a search field');
+        const type = async (value: string) => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            await act(async () => {
+                setter?.call(search, value);
+                search.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+        };
+        await type('api');
+        const shown = () => [...container.querySelectorAll('[data-testid^="saved-secret:secret-"]')]
+            .map((node) => node.getAttribute('data-testid'));
+        expect(shown()).toEqual(['saved-secret:secret-0', 'saved-secret:secret-1', 'saved-secret:secret-2', 'saved-secret:secret-8']);
+        await type('nothing like this');
+        expect(shown()).toEqual([]);
+        expect(container.querySelector('[data-testid="saved-secret:no-matches"]')).not.toBeNull();
+    });
 });

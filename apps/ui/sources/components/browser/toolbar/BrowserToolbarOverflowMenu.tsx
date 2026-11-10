@@ -23,6 +23,10 @@ export type BrowserToolbarOverflowItem = Readonly<{
     label: string;
     subtitle?: string;
     onPress: () => void;
+    /** The item is the applied value of a choice (a page size): menus mark it checked. */
+    selected?: boolean;
+    /** A labelled set of choices drawn as its own section after the ungrouped tools. */
+    group?: Readonly<{ id: string; title: string }>;
     disabled?: boolean;
     disabledReason?: string | null;
     /** A destructive one-shot (discard a recording): drawn in the menu's destructive tone. */
@@ -59,6 +63,17 @@ export function BrowserToolbarOverflowMenu(props: Readonly<{
     if (props.items.length === 0) {
         return null;
     }
+    // Ungrouped tools first, then each labelled set of choices as its own section, in item order.
+    const sections: { id: string; title?: string; items: BrowserToolbarOverflowItem[] }[] = [];
+    for (const item of props.items) {
+        const id = item.group?.id ?? '';
+        let section = sections.find((candidate) => candidate.id === id);
+        if (!section) {
+            section = { id, ...(item.group ? { title: item.group.title } : {}), items: [] };
+            sections.push(section);
+        }
+        section.items.push(item);
+    }
 
     return (
         <>
@@ -93,30 +108,36 @@ export function BrowserToolbarOverflowMenu(props: Readonly<{
                     {({ maxHeight }) => (
                         <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme">
                             <View testID={`${props.testID}-panel`}>
-                                <ActionListSection
-                                    actions={props.items.map((item) => ({
-                                        id: item.id,
-                                        testID: `${props.testID}-item-${item.id}`,
-                                        label: item.label,
-                                        subtitle: item.disabled === true && item.disabledReason ? item.disabledReason : item.subtitle,
-                                        disabled: item.disabled === true,
-                                        destructive: item.destructive === true,
-                                        icon: (
-                                            <Icon
-                                                name={item.iconName}
-                                                size={ICON_SIZE.sm}
-                                                color={item.destructive
-                                                    ? theme.colors.state.danger.foreground
-                                                    : theme.colors.text.secondary}
-                                            />
-                                        ),
-                                        onPress: () => {
-                                            if (item.disabled === true) return;
-                                            onOpenChange(false);
-                                            item.onPress();
-                                        },
-                                    }))}
-                                />
+                                {sections.map((section, index) => (
+                                    <ActionListSection
+                                        key={section.id}
+                                        title={section.title}
+                                        separatorAbove={index > 0}
+                                        actions={section.items.map((item) => ({
+                                            id: item.id,
+                                            testID: `${props.testID}-item-${item.id}`,
+                                            label: item.label,
+                                            subtitle: item.disabled === true && item.disabledReason ? item.disabledReason : item.subtitle,
+                                            disabled: item.disabled === true,
+                                            destructive: item.destructive === true,
+                                            selected: item.selected,
+                                            icon: (
+                                                <Icon
+                                                    name={item.iconName}
+                                                    size={ICON_SIZE.sm}
+                                                    color={item.destructive
+                                                        ? theme.colors.state.danger.foreground
+                                                        : theme.colors.text.secondary}
+                                                />
+                                            ),
+                                            onPress: () => {
+                                                if (item.disabled === true) return;
+                                                onOpenChange(false);
+                                                item.onPress();
+                                            },
+                                        }))}
+                                    />
+                                ))}
                             </View>
                         </FloatingOverlay>
                     )}

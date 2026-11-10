@@ -94,7 +94,8 @@ import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockp
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import { BrowserStatusBar } from './BrowserStatusBar';
 import { BrowserToolbar } from './BrowserToolbar';
-import { BrowserViewportPicker } from './BrowserViewportPicker';
+import type { BrowserViewportEmulationV1 } from '@happier-dev/protocol/browser/input/v1';
+import { BrowserViewportPicker, browserViewportChoices, selectedBrowserViewportChoiceId } from './BrowserViewportPicker';
 import { BrowserViewHost } from './BrowserViewHost';
 import { isDaemonAuthoritativeBrowserView } from '@/sync/domains/browser/control/commands';
 import type { BrowserOpenExternalAvailability } from '@/sync/domains/browser/actions/openExternal';
@@ -608,6 +609,35 @@ export function BrowserShell(props: Readonly<{
         // The header's menu lists its rows whenever it is drawn; the toolbar's only while it is open.
         localizePluginText: toolbarOverflowOpen || paneHeaderOwnsMenu ? localizePluginText : undefined,
     });
+    // A narrow pane gives the address its room: the page size, a rare choice, moves from the row into
+    // the ⋯ as its own checked set. A phone keeps it in the bottom bar; a wide row keeps its picker.
+    const viewportView = activeView && isDaemonAuthoritativeBrowserView(activeView) ? activeView : null;
+    const viewportInMenu = chromeDensity.density === 'pane' && viewportView !== null;
+    const viewportEmulation = streamedChrome?.viewport?.emulation ?? null;
+    const selectViewport = React.useCallback((emulation: BrowserViewportEmulationV1) => {
+        if (!viewportView) return;
+        props.onCommand({
+            kind: 'setViewport',
+            commandId: createCommandId('setViewport', viewportView.viewId),
+            browserSessionId: viewportView.browserSessionId,
+            viewId: viewportView.viewId,
+            emulation,
+        });
+    }, [props.onCommand, viewportView]);
+    const menuItems = React.useMemo((): readonly BrowserToolbarOverflowItem[] => {
+        if (!viewportInMenu) return overflowItems;
+        const selectedId = selectedBrowserViewportChoiceId(viewportEmulation ?? { kind: 'fitViewer' });
+        const group = { id: 'browser-viewport', title: t('browserShell.viewport.title') };
+        return [...overflowItems, ...browserViewportChoices().map((choice): BrowserToolbarOverflowItem => ({
+            id: `browser-viewport:${choice.id}`,
+            iconName: 'device-mobile',
+            label: choice.title,
+            subtitle: choice.subtitle,
+            selected: choice.id === selectedId,
+            group,
+            onPress: () => selectViewport(choice.emulation),
+        }))];
+    }, [overflowItems, selectViewport, viewportEmulation, viewportInMenu]);
     // While the agent drives its own (daemon) browser the page is moving under it: the page tools
     // step out of the chrome until the person has the page (lab `browser` A/H). The controller is the
     // daemon's, already in the view state.
@@ -764,10 +794,10 @@ export function BrowserShell(props: Readonly<{
             model={props.browserProfile}
         />
     ) : null;
-    const overflowMenu = paneHeaderOwnsMenu ? <BrowserPaneHeaderMenuPublisher items={overflowItems} /> : (
+    const overflowMenu = paneHeaderOwnsMenu ? <BrowserPaneHeaderMenuPublisher items={menuItems} /> : (
         <BrowserToolbarOverflowMenu
             testID={`${testID}-overflow`}
-            items={overflowItems}
+            items={menuItems}
             onOpenChange={setToolbarOverflowOpen}
             size={controlMetrics.size}
             iconSize={controlMetrics.iconSize}
@@ -775,7 +805,7 @@ export function BrowserShell(props: Readonly<{
             placement={phone ? 'top' : 'bottom'}
         />
     );
-    const viewportPicker = activeView && isDaemonAuthoritativeBrowserView(activeView) ? (
+    const viewportPicker = activeView && isDaemonAuthoritativeBrowserView(activeView) && !viewportInMenu ? (
         <BrowserViewportPicker
             testID={`${testID}-viewport`}
             emulation={streamedChrome?.viewport?.emulation ?? { kind: 'fitViewer' }}
@@ -989,6 +1019,8 @@ function BrowserPaneHeaderMenuPublisher(props: Readonly<{ items: readonly Browse
             onPress: item.disabled ? undefined : item.onPress,
             disabled: item.disabled,
             destructive: item.destructive,
+            ...(item.selected === undefined ? {} : { selected: item.selected }),
+            ...(item.group ? { group: item.group } : {}),
         })),
     }), [items]));
     return null;

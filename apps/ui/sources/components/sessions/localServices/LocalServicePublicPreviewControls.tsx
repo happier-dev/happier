@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { useSharePrincipalNames } from '@/components/sharing/sharePrincipalNames';
+import { sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
+import { joinList } from '@/utils/text/joinList';
 import { View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
@@ -261,6 +264,15 @@ const PUBLIC_PREVIEW_MODE_LABEL_KEYS = {
     people: 'localServices.publicPreview.peopleMode',
     public: 'localServices.publicPreview.publicMode',
 } as const satisfies Record<LocalServicePublicExposureModeV1, string>;
+
+/** An issued link is titled for who can open it: a people share is not a public link. */
+function exposureLinkTitle(mode: LocalServicePublicExposureModeV1): string {
+    switch (mode) {
+        case 'people': return t('localServices.publicPreview.peopleLinkTitle');
+        case 'secret_link': return t('localServices.publicPreview.secretLinkMode');
+        case 'public': return t('localServices.pane.publicLinkTitle');
+    }
+}
 
 function modeLabel(mode: LocalServicePublicExposureModeV1): string {
     return t(PUBLIC_PREVIEW_MODE_LABEL_KEYS[mode]);
@@ -566,15 +578,23 @@ function ExposureRow(props: Readonly<{
                 clock: formatCountdownClock(countdown.remainingMs),
             })
             : coarseExpiresInLabel(countdown.remainingMs);
-    const reach = exposure.mode === 'people'
-        ? t('localServices.publicPreview.consequenceReachPeople')
-        : t('localServices.publicPreview.consequenceReach');
+    // The audience the share already names says who can open it; until its names read, the mode's sentence.
+    const audienceNames = useSharePrincipalNames(exposure.mode === 'people' ? exposure.audience ?? null : null,
+        props.actions.serverId ?? null).names;
+    const namedAudience = exposure.mode === 'people' && audienceNames
+        ? (exposure.audience ?? []).map((ref) => audienceNames.get(sharePrincipalKey(ref))).filter((name): name is string => Boolean(name))
+        : [];
+    const reach = exposure.mode !== 'people'
+        ? t('localServices.publicPreview.consequenceReach')
+        : namedAudience.length > 0 && namedAudience.length === (exposure.audience ?? []).length
+            ? t('localServices.publicPreview.consequenceReachNamed', { names: joinList(namedAudience) })
+            : t('localServices.publicPreview.consequenceReachPeople');
 
     return (
         <Animated.View style={entrance.style}>
             <View testID={props.testID} style={styles.link}>
                 <View style={styles.linkHeader}>
-                    <Text style={styles.linkLabel}>{t('localServices.pane.publicLinkTitle')}</Text>
+                    <Text style={styles.linkLabel}>{exposureLinkTitle(exposure.mode)}</Text>
                     <Text
                         testID={`${props.testID}-countdown`}
                         style={[

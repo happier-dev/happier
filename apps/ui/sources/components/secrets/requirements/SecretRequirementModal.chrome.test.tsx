@@ -199,6 +199,22 @@ describe('SecretRequirementModal', () => {
         expect(observedListProps.onCreatePersonal).toBeUndefined();
     });
 
+    it('picks a secret without managing it, and leads to Secrets settings for that', async () => {
+        const { renderScreen } = await import('@/dev/testkit');
+        const { SecretRequirementModal } = await import('./SecretRequirementModal');
+        const profile = ({ id: 'p6', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile;
+        renderedItemTitles.length = 0;
+        await renderScreen(React.createElement(SecretRequirementModal, {
+            profile, secretEnvVarName: 'OPENAI_API_KEY', machineId: null, defaultSecretId: null,
+            allowManage: true, onResolve: () => {}, onClose: () => {},
+        }));
+        expect(observedListProps.onSelectId).toBeTypeOf('function');
+        expect(observedListProps.onRenamePersonal).toBeUndefined();
+        expect(observedListProps.onRotatePersonal).toBeUndefined();
+        expect(observedListProps.onDeletePersonal).toBeUndefined();
+        expect(renderedItemTitles).toContain('profiles.requirements.manageSavedSecrets');
+    });
+
     it('feeds Profile requirements from the same shared catalog as other pickers', async () => {
         const { renderScreen } = await import('@/dev/testkit');
         const { SecretRequirementModal } = await import('./SecretRequirementModal');

@@ -2646,6 +2646,40 @@ describe('BrowserShell', () => {
     expect(testState.fetchBrowserDiagnosticsSnapshotViaMachineRpc).not.toHaveBeenCalled();
   });
 
+  it("keeps the address its room in a narrow pane by folding the page size into the pane header's ⋯", async () => {
+    const { BrowserShell } = await import('./BrowserShell');
+    const { PaneHeaderSlotProvider, PaneHeaderSlotScope, usePublishedPaneHeaderContent } = await import('@/components/appShell/panes/paneHeaderSlot');
+    const state = await createShellState();
+    const view = { ...state.viewsById.view_1!, adapterKind: 'chromiumSidecar' as const, engineKind: 'streamedSurface' as const,
+      adapterCapabilities: buildBrowserAdapterCapabilities({ adapterKind: 'chromiumSidecar',
+        supportedTargetKinds: ['localServicePreview'], supportedRenderEngines: ['streamedSurface'] }) };
+    const managedState = { ...state, viewsById: { ...state.viewsById, [view.viewId]: view } };
+    const onCommand = vi.fn();
+    const published: { current: ReturnType<typeof usePublishedPaneHeaderContent> } = { current: null };
+    function HeaderProbe() { published.current = usePublishedPaneHeaderContent('browser'); return null; }
+    const screen = await renderScreen(
+      <PaneHeaderSlotProvider>
+        <HeaderProbe />
+        <PaneHeaderSlotScope slotKey="browser">
+          <BrowserShell browserSessionId="browser_session_1" platform="web" state={managedState} onCommand={onCommand}
+            streamedBrowserRuntime={{ machineName: 'Remote', playerState: null, input: {
+              sourceId: 'source_1', streamId: 'stream_1',
+              viewport: { width: 800, height: 600, deviceScaleFactor: 1, emulation: { kind: 'fitViewer' } }, send: () => {},
+            } }} testID="browser-shell" />
+        </PaneHeaderSlotScope>
+      </PaneHeaderSlotProvider>,
+    );
+    await act(async () => {
+      screen.findHostByTestId('browser-shell')?.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 380, height: 700 } } });
+    });
+    expect(screen.findHostByTestId('browser-shell-viewport')).toBeNull();
+    const sizes = (published.current?.menuActions ?? []).filter(action => action.group?.id === 'browser-viewport');
+    expect(sizes.find(action => action.id === 'browser-viewport:fitViewer')?.selected).toBe(true);
+    await act(async () => { sizes.find(action => action.id === 'browser-viewport:phone')?.onPress?.(); });
+    expect(onCommand).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'setViewport',
+      emulation: { kind: 'preset', presetId: 'phone' } }));
+  });
+
   it('offers canonical managed viewport presets and waits for the daemon selection projection', async () => {
     const { BrowserShell } = await import('./BrowserShell');
     const { BROWSER_VIEWPORT_PRESETS } = await import('@happier-dev/protocol/browser/input/v1');

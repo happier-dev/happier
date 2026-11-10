@@ -634,4 +634,28 @@ describe('LocalServicePublicPreviewControls (consequence sheet before create)', 
         expect(result.tree.root.findAll((node) => node.props?.children === 'secret_link')).toHaveLength(0);
         await result.unmount();
     });
+
+    it('titles a people share for its audience, never as a public link', async () => {
+        const peopleState = applyLocalServicePublicPreviewSnapshot(
+            createLocalServicePublicPreviewState(),
+            {
+                ...snapshot,
+                policy: { ...snapshot.policy, allowedModes: ['secret_link', 'people'] },
+                exposures: [{ ...activeCurrentPreviewExposure, mode: 'people',
+                    audience: [{ kind: 'account', accountId: 'account_b' }] }],
+            },
+        );
+        const result = await renderWithAppProviders(
+            <LocalServicePublicPreviewControls
+                launchTargets={[target]}
+                state={peopleState}
+                actions={{ create: vi.fn(), copyUrl: vi.fn(async () => true), revoke: vi.fn() }}
+            />,
+        );
+        const texts = result.tree.root.findAll((node) => typeof node.props?.children === 'string')
+            .map((node) => node.props.children as string);
+        expect(texts).toContain('Link for specific people');
+        expect(texts.some((text) => /public link/i.test(text))).toBe(false);
+        await result.unmount();
+    });
 });
