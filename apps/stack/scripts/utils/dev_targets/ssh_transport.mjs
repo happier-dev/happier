@@ -6,6 +6,12 @@ export function classifyDevTargetSshDiagnostic(line) {
   if (/^ssh: connect to host .+ port \d+: Connection timed out$/i.test(diagnostic)) return 'ssh-connect-timeout';
   if (/^ssh: connect to host .+ port \d+: (Connection refused|No route to host|Network is unreachable)$/i.test(diagnostic)) return 'ssh-connect-unreachable';
   if (/permission denied \(|host key verification failed|too many authentication failures/i.test(diagnostic)) return 'ssh-authentication-failed';
+  if (/^Connection timed out during banner exchange$/i.test(diagnostic)) return 'ssh-connect-timeout';
+  if (/^Connection closed by .+ port \d+$/i.test(diagnostic)
+    || /^banner exchange: Connection to .+ port \d+: Broken pipe$/i.test(diagnostic)
+    || /^kex_exchange_identification: (Connection closed by remote host|read: Connection reset by peer)$/i.test(diagnostic)
+    || /^stdio forwarding failed$/i.test(diagnostic)
+    || /^ssh: Could not resolve hostname .+: .+$/i.test(diagnostic)) return 'ssh-connect-unreachable';
   if (/mux_client_request_session: session request failed: Session open refused by peer/i.test(diagnostic)) return 'ssh-multiplex-session-refused';
   return null;
 }
