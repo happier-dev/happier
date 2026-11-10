@@ -199,9 +199,9 @@ type BranchGroup = Marks & { branch: UsageWorkBranch; amount: AmountAccumulator;
   projects: Set<string | null>; commits: Set<string>; evidence: RepositoryCheckpointCommitEvidence[];
   linkedPullRequests: Map<string, ScmPullRequestSummary> };
 function groupBranches(allocations: UsageWorkProjection['branchAllocations'], basis: UsageWorkAmount,
-  outcomeAllocations: UsageWorkProjection['allocations'], anchor: (key: string | null) => string | null = key => key): UsageWorkBranchRow[] {
+  outcomeByContribution: ReadonlyMap<string, UsageWorkProjection['allocations'][number]>,
+  anchor: (key: string | null) => string | null = key => key): UsageWorkBranchRow[] {
   const rows = new Map<string, BranchGroup>();
-  const outcomeByContribution = new Map(outcomeAllocations.map(row => [row.contribution.id, row]));
   for (const allocation of allocations) {
     if (!allocation.branch) continue;
     const row: BranchGroup = rows.get(allocation.branch.key) ?? { ...newMarks(), branch: allocation.branch, amount: newAmount(), parts: new Map(),
@@ -299,9 +299,11 @@ export function summarizeUsageWork(
     }
   >();
   const agentAmounts = new Map<string, AmountAccumulator>();
+  const outcomeByContribution = new Map<string, UsageWorkProjection['allocations'][number]>();
   for (const row of work.allocations) {
     const amount = usageWorkContributionAmount(row, basis);
     const { contribution } = row;
+    outcomeByContribution.set(contribution.id, row);
     accumulate(total, row, basis);
     addPart(agentAmounts, contribution.agentId, row, basis);
     if (amount === null) missingMoneyCount += 1;
@@ -387,6 +389,15 @@ export function summarizeUsageWork(
     }))
     .sort(byAmount);
   const outcomeByKey = new Map(outcomes.map((row) => [row.key, row]));
+  // Partition once: each Project consumes its own branches, never the whole contribution inventory.
+  const branchesByProject = new Map<string | null, UsageWorkProjection['branchAllocations'][number][]>();
+  for (const allocation of work.branchAllocations) {
+    if (!allocation.branch) continue;
+    const key = displayProjectKey(allocation.contribution.projectKey);
+    const branches = branchesByProject.get(key) ?? [];
+    branches.push(allocation);
+    branchesByProject.set(key, branches);
+  }
   const projects = [...projectRows.entries()]
     .map(([projectKey, row]): UsageWorkProjectRow => ({
       projectKey,
@@ -405,7 +416,7 @@ export function summarizeUsageWork(
         .flatMap((key) => outcomeByKey.get(key) ?? [])
         .sort(byAmount),
       sessions: sessionParts(row.parts),
-      branches: groupBranches(work.branchAllocations.filter((allocation) => displayProjectKey(allocation.contribution.projectKey) === projectKey), basis, work.allocations, anchor),
+      branches: groupBranches(branchesByProject.get(projectKey) ?? [], basis, outcomeByContribution, anchor),
     }))
     .sort(byAmount);
   const sessions = [...sessionRows.entries()]
@@ -435,7 +446,7 @@ export function summarizeUsageWork(
     unallocatedByReason: { missing_turn: unallocatedAmounts.missing_turn.amount, missing_evidence: unallocatedAmounts.missing_evidence.amount,
       ambiguous_outcome: unallocatedAmounts.ambiguous_outcome.amount, uncertain_writers: unallocatedAmounts.uncertain_writers.amount },
     outcomes,
-    branches: groupBranches(work.branchAllocations, basis, work.allocations, anchor),
+    branches: groupBranches(work.branchAllocations, basis, outcomeByContribution, anchor),
     projects,
     sessions,
     agents: sessionParts(agentAmounts).map((row) => ({ agentId: row.sessionId, amount: row.amount, moneyBasis: row.moneyBasis })),

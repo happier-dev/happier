@@ -73,6 +73,40 @@ function evidence(
 }
 
 describe('Work display grouping of the canonical allocation', () => {
+  it('visits allocations in proportion to contributions, without multiplying by Project count', () => {
+    // Reload 145's Account has over 3,800 Sessions; each Project must not re-scan that inventory.
+    const measure = (projectCount: number) => {
+      const contributions = Array.from({ length: 3_800 }, (_, index) =>
+        contribution(`cost-${index}`, `session-${index}`, 't1', `project-${index % projectCount}`));
+      const witness = { sessionId: 'session-0', turnId: 't1', repositoryKey: 'repo', checkpointRef: 'checkpoint/0',
+        checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed' as const,
+        branch: { ref: 'refs/heads/work', headSha: 'c'.repeat(40) } };
+      const work = allocateUsageOutcomes({ contributions, evidence: [], branchEvidence: [witness] });
+      let projectReads = 0;
+      let identityReads = 0;
+      // Instrument admitted data, leaving the real allocation and grouping path intact.
+      const measured = new Map(contributions.map(row => [row.id, { ...row,
+        get projectKey() { projectReads++; return row.projectKey; },
+        get id() { identityReads++; return row.id; },
+      }]));
+      const input = { ...work,
+        allocations: work.allocations.map(row => ({ ...row, contribution: measured.get(row.contribution.id)! })),
+        branchAllocations: work.branchAllocations.map(row => ({ ...row, contribution: measured.get(row.contribution.id)! })),
+      };
+      const summary = summarizeUsageWork(input, { metric: 'cost', costBasis: 'reported' });
+      expect(summary.total).toBe(3 * contributions.length);
+      expect(summary.projects).toHaveLength(projectCount);
+      expect(summary.projects.find(row => row.projectKey === 'project-0')?.branches).toEqual(summary.branches);
+      expect(summary.branches[0]?.amount).toBe(3);
+      // One contribution pass, plus grouping and presentation of the actual branch rows.
+      expect(projectReads).toBeLessThanOrEqual(2 * contributions.length + 3 * work.branchAllocations.length);
+      return identityReads;
+    };
+    const identityReads = measure(40);
+    // Money aggregation visits the real populations of several displayed totals. More Projects
+    // partition those populations; they must not cause more full-inventory identity scans.
+    expect(measure(80)).toBeLessThanOrEqual(identityReads);
+  });
   it('retains measured token amounts beside unknown allocations without fabricating unknown-only zeroes', () => {
     const measured = contribution('known', 'session', 'turn-known');
     const unknown = { ...contribution('unknown', 'session', 'turn-unknown'),
