@@ -14,7 +14,7 @@ export const DeploymentFailureRecoveryV1Schema = lazyZodSchema(() => z.strictObj
  */
 export type DeploymentFailureRecoveryDestinationV1 =
     | 'source' | 'domains' | 'variables' | 'permissions' | 'settings' | 'history' | 'logs'
-    | 'machines' | 'connectedAccounts' | 'store' | 'review';
+    | 'machines' | 'buildMachineSetup' | 'connectedAccounts' | 'store' | 'review';
 export type DeploymentFailureRecoveryNextActionV1 = Readonly<{
     kind: 'navigate'; destination: DeploymentFailureRecoveryDestinationV1; label: string;
 }>;
@@ -29,6 +29,8 @@ function recovery(remedy: string, destination: DeploymentFailureRecoveryDestinat
 // Read-only presentation, never persisted into strict receipts or approval details.
 // Keep diagnostic codes out of the prose; all surfaces consume this one owner.
 const recoveries = {
+    build_platform_unsupported: recovery('The build Machine could not execute a platform required by this build. Open its Setup and check Build emulation, or choose a capable build Machine in Environment Settings. Emulated builds are slower.', 'buildMachineSetup', 'Open build Machine Setup'),
+    native_build_failed: recovery('The image build failed. Read its build output to fix the reported command or executable before deploying again.', 'logs', 'Open build output'),
     deployment_source_unavailable: recovery('Open Source details and set the Repository address and default branch or revision. Then open or accept its checkout on the selected Machine. Choose a revision containing your Compose file, then review the deployment again.', 'source', 'Open Source details'),
     required_fact_unavailable: recovery("Happier could not confirm the deployment's current state. Open its history to check what ran before trying again.", 'history', 'Review deployment history'),
     template_domain_route_required: recovery('This app needs a route for its address. Choose how to reach it, or leave the address out if the template makes it optional.', 'domains', 'Choose address'),

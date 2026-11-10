@@ -155,8 +155,7 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
             const source = await createDeploymentSourceMaterializationPort({ admit: async () => ({ ...runtime.source,
                 assertCurrent: runtime.assertSourceCurrent }),
                 onProgress: phase => recordDeploymentSourceProgress(sourceOutput, request.context, phase) })
-                .materialize({ environmentId: initial.environment.environment.id, deploymentId: initial.receipt.deployment.id,
-                    expectedManifestFingerprint: initial.basis.manifestFingerprint }, { signal });
+                .materialize({ environmentId: initial.environment.environment.id, deploymentId: initial.receipt.deployment.id }, { signal });
             let committed = false;
             try {
                 const sourceProvenance = await captureOwnServerDeploymentSource({ source, admission: runtime.source });
@@ -204,10 +203,6 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
                 try {
                     const servicePlatforms = requiredServicePlatforms(initial.basis);
                     const described = await project.describeBuild({ servicePlatforms, signal });
-                    if (!isDeepStrictEqual(described.basis, { manifestFingerprint: initial.basis.manifestFingerprint,
-                        configInputDigests: initial.basis.configInputDigests, physicalProjectName: initial.basis.physicalProjectName,
-                        toolVersion: initial.basis.toolVersion }) || !isDeepStrictEqual(described.services, initial.basis.services)
-                        || !isDeepStrictEqual(described.buildServices, initial.basis.buildServices ?? [])) refuse('deployment_conflict');
                     const buildBindings = initial.environment.content.bindings.filter(binding =>
                         binding.purpose === 'variable' && binding.phase === 'build' && binding.source.kind === 'secret');
                     const revisions: BuildSecretRevision[] = described.buildSecretVariables.map(({ service, names }) => ({ service,
@@ -233,7 +228,7 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
                         operation: { operationId: initial.receipt.deployment.actionOperationId, kind: request.actionId, signal },
                         keys: described.keys, settleNative: project.settleNative,
                     }, async context => {
-                        const images = await project.prepareImages({ servicePlatforms,
+                        const { images } = await project.prepareImages({ servicePlatforms,
                             build: { noCacheServices, secretVariableNames: buildBindings.flatMap(binding => binding.purpose === 'variable' ? [binding.name] : []) },
                             signal, context });
                         for (const image of images) {

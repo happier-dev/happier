@@ -720,7 +720,7 @@ describe('Environment project native activation', () => {
             const candidate = createNativeComposeLifecycle({ kind: 'environmentProject', exec, envPort, source,
                 files: ['compose.yaml'], services: ['web'], images: [], io, async settleNative() {} });
             try {
-                const images = await candidate.prepareImages();
+                const { images } = await candidate.prepareImages();
                 expect(images).toEqual([{ service: 'web', platform: 'linux/amd64', configDigest, manifestDigest }]);
                 expect(JSON.stringify(images)).not.toContain('native-secret');
                 expect(requests.filter(request => request.args.includes('up'))).toHaveLength(2);

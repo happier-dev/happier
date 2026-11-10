@@ -52,13 +52,15 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
 }>) => Promise<void>, options?: Readonly<{ environmentInstanceId?: string; secretArgument?: boolean; corruptArchive?: boolean; dynamicSecretName?: boolean;
     prebuilt?: boolean; prebuiltIndex?: boolean; preapprovalIndex?: boolean; extensionSecret?: boolean; selectedSubset?: boolean;
     missingBuildx?: boolean;
+    bakeFailure?: 'unsupportedPlatform' | 'execFormat' | 'buildFailed';
+    bakeFailurePlatform?: string;
     prebuiltContainerd?: 'unchanged' | 'changed' | 'movesAfterLookup';
     effectivePlatforms?: boolean;
     preapprovalArmOnly?: boolean;
     prebuiltSecretReference?: boolean;
     coincidentRuntime?: boolean;
     stageOutput?: NativeComposeEnvironmentProjectInput['stageOutput'];
-    publication?: 'ok' | 'missingRepository' | 'pushFailure' | 'revoked' | 'tamperedIndex' | 'secretRepository' | 'engineMismatch' }>) {
+    publication?: 'ok' | 'missingRepository' | 'pushFailure' | 'resourceChanged' | 'tamperedIndex' | 'secretRepository' | 'engineMismatch' }>) {
     const root = await mkdtemp(join(tmpdir(), 'happier-native-builder-'));
     try {
         const repository = join(root, 'repository');
@@ -222,6 +224,13 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
             if (options?.missingBuildx && request.args[0] === 'buildx') {
                 return { exitCode: 125, stdout: '', stderr: 'unknown flag: --raw\nprivate-registry-sentinel' };
             }
+            if (options?.bakeFailure && request.args[0] === 'buildx' && request.args[1] === 'bake' && !request.args.includes('--print')
+                && (!options.bakeFailurePlatform || request.args.includes(`*.platform=${options.bakeFailurePlatform}`))) {
+                const reason = options.bakeFailure === 'unsupportedPlatform'
+                    ? 'no support for running processes with linux/arm64 platform, supported: linux/amd64'
+                    : options.bakeFailure === 'execFormat' ? 'exec user process caused: exec format error' : 'process did not complete successfully: exit code: 2';
+                return { exitCode: 1, stdout: '', stderr: `${reason}\nprivate-registry-sentinel` };
+            }
             // Docker output is this fixture's OS boundary. Exercise the real
             // admitted launch's streaming sanitizer before delivering bytes.
             if (request.output) {
@@ -291,7 +300,7 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
                     const data = pushedData(image.service, image.platform);
                     published.set(reference, data.manifest);
                     published.set(`registry.example.test/${image.service}@${data.manifestDigest}`, data.manifest);
-                    if (options?.publication === 'revoked') registryResource.revision += 1;
+                    if (options?.publication === 'resourceChanged') registryResource.revision += 1;
                     return { exitCode: 0, stdout: '' };
                 }
                 if (request.args[1] === 'pull') {

@@ -1,3 +1,4 @@
+import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
@@ -5,6 +6,7 @@ import { BROWSER_LOGIN_APP_BOUND_ENCRYPTION_MESSAGE_V1 } from '@happier-dev/prot
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
 import { deploymentEditorsTranslations } from './deploymentEditorsTranslations';
+import { deploymentPreparationTranslations } from './deploymentPreparationTranslations';
 import { deploymentSettingsTranslations } from './deploymentSettingsTranslations';
 import { deploymentReceiptTranslations } from './deploymentReceiptTranslations';
 import { pluginPublishTranslations } from './pluginPublishTranslations';
@@ -15,7 +17,7 @@ import { screenCaptureCopy } from './screenCaptureTranslations.shared';
 import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
 import { deploymentPlatformLinkTranslations } from './deploymentPlatformLinkTranslations';
 import { deploymentPromotionTranslations } from './deploymentPromotionTranslations';
-import { PUBLIC_USAGE_CHART_COPY_EN, PUBLIC_USAGE_ORIGINAL_COPY_EN } from '@happier-dev/protocol/account/publicProfilePublication';
+import { PUBLIC_USAGE_CHART_COPY_EN, PUBLIC_USAGE_ORIGINAL_COPY_EN } from '@happier-dev/protocol/account/publicProfilePresentationCopy';
 
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
@@ -38,6 +40,7 @@ import { mediaKeyboardTranslations } from './mediaKeyboardTranslations';
 import { quickOpenTranslations } from './quickOpenTranslations';
 import { paneMainColumnTranslations } from './paneMainColumnTranslations';
 import { paneEmptyEditorTranslations, paneShortcutsSheetTranslations } from './paneEmptyEditorTranslations';
+import { llmTaskRunnerTranslations } from './llmTaskRunnerTranslations';
 import { actionSettingsResourcesTranslations } from './actionSettingsResourcesTranslations.shared';
 import { resourceProposalTranslations } from './resourceProposalTranslations.shared';
 import { machineResourceUiTranslations } from './machineResourceUiTranslations.shared';
@@ -8560,8 +8563,10 @@ const enErrors = {
     'Happier can’t reach the daemon on this machine. It may be offline, still starting, or disconnected from the Home.',
   agentIsolationMemberSetupAskManager: "Ask a Machine manager to set up separate users for you.",
   agentIsolationMemberSetupOpenSecurity: "Open this Machine’s Security page to inspect separate-user setup for you.",
+  agentIsolationWorkspaceUnavailable: 'Choose an accepted Workspace or path for this Session, then try again.',
   pluginCodeUnreadableAskManager: "Plugin code isn’t available to your separate user. Ask a Machine manager to run separate-user setup and restart Happier on the Machine, then try again.",
   pluginCodeUnreadableOpenSecurity: "Plugin code isn’t available to your separate user. Open this Machine’s Security page and run separate-user setup, then restart Happier on the Machine and try again.",
+  requesterSessionCustodyUnavailable: "This session’s requester access could not be restored. Reopen it from the original Account or ask a Machine manager to check access.",
   agentIsolationUnavailable:
     'Agent isolation isn’t ready on this machine. Ask the machine owner to check its setup, then try again.',
   tryAgain: 'Please try again',
@@ -8882,6 +8887,10 @@ const enNewSession = {
   startNewSessionInFolder: 'New session here',
   failedToStart:
     'Couldn’t start the session. Try again or review the selected machine and session settings.',
+  checkoutUnavailableBody:
+    'The selected checkout is not available on this machine. Choose an available checkout or folder, then start the session again.',
+  requesterCredentialsUnavailableBody:
+    'Your session credentials are not available. Reconnect to this Home, then start the session again. Your draft is kept.',
   actionMethodUnavailable:
     'Update Happier on the target machine to create a new session.',
   sessionTimeout:
@@ -11448,9 +11457,9 @@ const enSessionInfo = {
   markSessionReadSubtitle: 'Clear unread attention for this session',
   markSessionUnread: 'Mark as unread',
   markSessionUnreadSubtitle: 'Keep this session in your unread list',
-  keepInAttention: 'Keep in Needs attention',
+  keepInAttention: "Keep in Needs you",
   keepInAttentionSubtitle: 'Keeps it here even after you read it',
-  removeFromAttention: 'Remove from Needs attention',
+  removeFromAttention: "Remove from Needs you",
   removeFromAttentionSubtitle: 'Let it move down the list again when read',
   executionRunsSubtitle: 'See Subagents for this session',
   automationsTitle: 'Workflows',
@@ -11732,6 +11741,8 @@ const enAgentInput = {
   agent: {
     sectionTitle: 'Agent',
     unselected: 'Choose an agent',
+    sameAsSession: 'Same as session',
+    sameAsParent: 'Same as parent',
     noLongerAvailableOn: ({ machine }: { machine: string }) =>
       `No longer available on ${machine} · Choose another`,
     noLongerAvailable: 'No longer available · Choose another',
@@ -12810,6 +12821,8 @@ const enFiles = {
         teamSignIn: "Sign in to your team again, then retry",
         updateRequired: ({ machine }: { machine: string }) => `${machine} needs a Happier update`,
         tooLarge: "Too large to upload",
+        sourceUnavailable: "Can’t read this attachment · choose it again",
+        sessionUnavailable: "This Session’s upload connection is unavailable · reopen the Session and retry",
         unconfirmed: "Not sure it finished · check the folder",
         other: ({ machine }: { machine: string }) => `${machine} couldn’t take it`,
     },
@@ -14951,8 +14964,8 @@ const enSettingsSession = {
     backgroundWorkAttentionKeepWorkingSubtitle: "Keep the working status and show a blue center dot for unread replies",
     backgroundWorkAttentionKeepWorkingUnreadTitle: "Show unread status in Working",
     backgroundWorkAttentionKeepWorkingUnreadSubtitle: "Keep sessions in Working and show unread status until you read the reply",
-    backgroundWorkAttentionShowUnreadTitle: "Move unread sessions to Needs attention",
-    backgroundWorkAttentionShowUnreadSubtitle: "Move sessions with unread replies to Needs attention while background work continues",
+    backgroundWorkAttentionShowUnreadTitle: "Move unread sessions to Needs you",
+    backgroundWorkAttentionShowUnreadSubtitle: "Move sessions with unread replies to Needs you while background work continues",
     attentionPromotionModeTitle: 'Sessions needing attention',
     attentionPromotionModeSubtitle:
       'Choose where sessions waiting for you or ready to review appear',
@@ -14968,7 +14981,7 @@ const enSettingsSession = {
     reminderAutoClearOnOpenTitle: 'Clear reminders on open',
     reminderAutoClearOnOpenSubtitle:
       'Turn off to remove due reminders manually. Future reminders stay scheduled.',
-    attentionStandingDefaultTitle: 'Keep sessions in Needs attention',
+    attentionStandingDefaultTitle: 'Keep sessions in Needs you',
     attentionStandingDefaultEnabledSubtitle:
       'Every session stays until you remove it',
     attentionStandingDefaultDisabledSubtitle: 'Keep sessions one at a time',
@@ -15766,8 +15779,7 @@ const enSettingsSession = {
       customTitle: 'Custom',
       customBackendIdSubtitle: 'Enter a backend id (e.g. claude).',
       customModelIdSubtitle: 'Enter a model id (e.g. default).',
-      requiresModelNotice:
-        'Pick a summary model below. Without one, replay falls back to recent messages only.',
+      requiresModelNotice: 'Pick a summary model below. Without one, replay falls back to recent messages only.',
       requiresExecutionRunsNotice:
         'Summaries need background runs, which are off for this account. Replay will use recent messages only.',
     },
@@ -20037,7 +20049,7 @@ const enUsage = {
       paceWithin: "Within even pace",
       legendEvenPace: "│ even pace",
       legendHatched: "hatched = what this pace uses before the reset",
-      estimatedFrom: ({ count }: { count: string | number }) => `estimated from ${count} readings`,
+      estimatedFrom: ({ count }: { count: string | number }) => `estimated from ${count} ${plural({ count: Number(count), singular: 'reading', plural: 'readings' })}`,
       rangeFrom: ({ min, max, count }: { min: string | number; max: string | number; count: string | number }) => `pace ranged ${min}–${max}× over ${count} readings`,
       burnObserved: "Used",
       burnProjected: "At this pace",
@@ -20210,6 +20222,7 @@ const enUsage = {
       resetStartUnavailableCount: ({ count }: { count: number }) => count === 1 ? '1 more can\'t be held for a reset here' : `${count} more can't be held for a reset here`,
       fitTitle: "Fit",
       fitNoneEnded: "no ended window recorded yet",
+      fitNoneEndedOnce: "No ended window recorded yet",
       fitUsedUp: ({ count, total }: { count: string | number; total: string | number }) => `${count} of ${total} ended windows fully used`,
       fitNeverRanOut: ({ total }: { total: string | number }) => `never ran out in ${total} resets`,
       fitRanOut: ({ count, total }: { count: string | number; total: string | number }) => `ran out in ${count} of ${total} resets`,
@@ -21395,6 +21408,7 @@ const enProfiles = {
 };
 
 const enProjects = {
+        readiness: projectReadinessTranslations['en'],
   authoring: {
     fromPage: ({ project, page }: { project: string; page: string }) => `From ${project} · ${page}`,
     scriptsCount: ({ count }: { count: number }) => (count === 1 ? `1 script` : `${count} scripts`),
@@ -22007,6 +22021,7 @@ const enProjects = {
       copy: deploymentCopyTranslations['en'],
       overviewStatus: deploymentOverviewTranslations['en'],
       editors: deploymentEditorsTranslations['en'],
+      preparation: deploymentPreparationTranslations['en'],
       settingsSections: deploymentSettingsTranslations['en'],
       platformLink: deploymentPlatformLinkTranslations['en'],
       promotion: deploymentPromotionTranslations['en'],
@@ -22281,7 +22296,43 @@ const enProjects = {
       databaseStatusFailed: "Backup failed",
       databaseGoneTitle: "This database isn’t in this Environment anymore",
       databaseBackToOverview: "Back to Overview",
+      databaseQuery: {
+        title: "Read-only query",
+        run: "Run query",
+        sql: "SQL",
+        parameters: "Parameters (JSON)",
+        setup: "Read-only login",
+        setupDescription: "Choose a Saved Secret for the dedicated read-only password. Setup opens the normal review before changing the database role and its Environment binding.",
+        reviewSetup: "Review setup",
+        working: "Working…",
+        unavailable: "Query unavailable",
+        empty: "No rows returned",
+        incomplete: "Results may be incomplete",
+        roleUnavailable: "The database needs a dedicated read-only role. Review setup, or ask its owner to configure the required schema privileges.",
+        nativeParameters: "Use PostgreSQL :'name' or MySQL/MariaDB @name parameters. JSON values are text.",
+        password: "Password",
+        description: ({ name }: { name: string }) => `Read-only SQL for ${name}.`,
+        row: ({ number }: { number: number }) => `Row ${number}`,
+      },
       databaseProviderTitle: "Provider",
+      managedData: {
+        title: "Managed database",
+        empty: "No managed database provider is installed",
+        operation: "What would you like to do?",
+        unknown: "The provider outcome is uncertain",
+        recover: "Read the provider’s projects or branches and link the exact resource. Reconcile an earlier create before creating again.",
+        partial: "Some connections still need saving",
+        link: "Link this database",
+        linked: "Database linked",
+        connections: "Saved connections",
+        saved: "Saved securely",
+        bind: "Use these connections in Variables",
+        bound: "Connections added to Variables",
+        result: "Provider details",
+        reviewCreate: "Review creation options",
+        add: "Managed database",
+        manage: "Manage database",
+      },
       restoreStepsTitle: "Steps",
       restoreStepSafety: "Save the current data",
       restoreStepStop: "Stop the app",
@@ -22454,6 +22505,8 @@ const enProjects = {
         approvePromote: ({ version }: { version: string }) => `Promote ${version}`,
         approveRollback: ({ version }: { version: string }) => `Roll back to ${version}`,
         replacesNote: ({ revision }: { revision: string }) => `Replaces ${revision}`,
+        buildPlatforms: "Build platforms",
+        emulationCost: "Emulated builds are slower. The build Machine checks support when the build runs.",
         secretsNoteOn: ({ machine }: { machine: string }) => `Names only. Sealed to ${machine} and opened only while a release starts.`,
         secretsNote: "Names only. The values stay sealed and open only while a release starts.",
         environment: "Environment",
@@ -23257,7 +23310,7 @@ const enUpdates = {
     quietTitle: 'Nothing to update',
     offlineTitle: 'Offline machines',
     offlineDescription: 'Updates wait until each machine is back online.',
-    offlineMachines: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'machine', plural: 'machines' })}`,
+    offlineMachines: ({ count }: { count: number }) => `${count} other ${plural({ count, singular: 'machine', plural: 'machines' })} on this Home`,
   },
   offline: 'Offline',
   pill: {
@@ -23612,6 +23665,7 @@ const enPluginRuntime = {
     'This plugin view needs a compatible Happier or plugin version.',
   installationConflict:
     'Your machines have different versions of this plugin. Choose the machine it should run on.',
+  localArtifactFailure: "This plugin view failed on this device. Try loading it again.",
   authorFailure:
     'This plugin view could not start because its built UI is missing or invalid. Rebuild the plugin, or ask its author for a fixed version.',
   retired:
@@ -23778,6 +23832,7 @@ export const en: TranslationStructure = {
     screenCapture: screenCaptureCopy.en,
     hunkReview: hunkReviewTranslations['en'],
     storeInstalled: storeInstalledTranslations['en'], newApp: newAppTranslations['en'],
+  llmTaskRunner: llmTaskRunnerTranslations['en'],
   panes: { mainColumn: paneMainColumnTranslations['en'], emptyEditor: paneEmptyEditorTranslations['en'], shortcutsSheet: paneShortcutsSheetTranslations['en'] },
     sessionCoordinator: {
         make: {

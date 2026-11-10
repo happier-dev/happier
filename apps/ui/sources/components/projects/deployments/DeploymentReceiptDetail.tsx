@@ -68,6 +68,7 @@ import { useDeploymentCancellation } from './useDeploymentCancellation';
 import type { createDeploymentActions } from './deploymentActions';
 import { useDeploymentEnvironment, useDeploymentReceipt } from './useDeploymentReads';
 import { DeploymentStepLogs } from './DeploymentStepLogs';
+import { DeploymentUploadProvenance } from './DeploymentUploadProvenance';
 import { showDeploymentPromotionSheet } from './DeploymentPromotionSheet';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
 
@@ -112,7 +113,7 @@ export const DeploymentReceiptDetail = React.memo(
       /** The Action owner's per-step stage-log read; absent while the Source's Account is not current. */
       readLogs: DeploymentReadLogs | null;
       /** Opens the Environment where a failure's canonical next action points (RECOVERY-COPY); absent, it is not offered. */
-      onOpenRecoveryDestination?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
+      onOpenRecoveryDestination?: (destination: DeploymentFailureRecoveryDestinationV1, machineId?: string) => void;
     }>,
   ) {
     // The serving pointer lives on the Environment's runtime link; the controller shares that read.
@@ -148,13 +149,17 @@ export const DeploymentReceiptDetail = React.memo(
       serverId: props.serverId, environmentId: props.environmentId, deploymentId: props.deploymentId } : null,
     [failed, props.serverId, props.environmentId, props.deploymentId]);
     // The person's Investigate and this receipt's own records; an unresolved placement opens the composer.
-    const investigation = useInvestigateFailure(investigateSubject, RECEIPT_AGENT_ACTIONS);
+    const controllerMachineId = environmentValue?.environment.controllerMachineId;
+    const investigationOptions = React.useMemo(() => ({ ...RECEIPT_AGENT_ACTIONS,
+      ...(controllerMachineId ? { externalActionTarget: { kind: 'machine' as const, machineId: controllerMachineId } } : {}),
+    }), [controllerMachineId]);
+    const investigation = useInvestigateFailure(investigateSubject, investigationOptions);
     const investigationOwner = useAccountNoticeInvestigation();
     const showInvestigationOutcome = investigation.showOutcome;
     const fallbackInvestigate = React.useMemo((): readonly InvestigationAgentActionButtonModel[] => [{
       label: t('inbox.work.healthNotice.investigate'), launchMode: 'review', startable: true,
     }], []);
-    const persistedInvestigation = useInvestigationSessionResult(investigationOwner, investigateSubject, investigation.outcome);
+    const persistedInvestigation = useInvestigationSessionResult(investigationOwner, investigateSubject, investigation.outcome, investigationOptions);
     const outcomeInput = React.useMemo(() => persistedInvestigation && investigateSubject ? {
       subject: investigateSubject,
       finding: { kind: 'investigate' as const, ...persistedInvestigation },
@@ -232,7 +237,8 @@ export const DeploymentReceiptDetail = React.memo(
         return;
       }
       if (!deploy || !againTarget || !againSha) return;
-      void againPress.press(() => deploy({ environmentId, targetLinkId: againTarget, sha: againSha }));
+      void againPress.press(() => deploy({ environmentId, targetLinkId: againTarget, sha: againSha,
+        ...(content.sourceMethod ? { sourceMethod: content.sourceMethod } : {}) }));
     };
     const machineName = (machineId: string) =>
       machineNames[machineId] ?? t('projects.deployments.aMachine');
@@ -470,7 +476,9 @@ export const DeploymentReceiptDetail = React.memo(
                 moreActions={recovery && props.onOpenRecoveryDestination ? [{
                   label: recovery.nextAction.label,
                   testID: 'project-deployments.receipt.outcome.failed.recovery',
-                  onPress: () => props.onOpenRecoveryDestination?.(recovery.nextAction.destination),
+                  onPress: () => recovery.nextAction.destination === 'buildMachineSetup'
+                    ? props.onOpenRecoveryDestination?.(recovery.nextAction.destination, content.buildMachineId)
+                    : props.onOpenRecoveryDestination?.(recovery.nextAction.destination),
                 }] : undefined}
                 details={facts.failure ? [facts.failure.code] : undefined}
               />
@@ -508,6 +516,8 @@ export const DeploymentReceiptDetail = React.memo(
                 </View>
               </ItemGroup>
             ) : null}
+            <DeploymentUploadProvenance testID="project-deployments.receipt.upload"
+              provenance={content.platform?.observation.uploadProvenance} />
             {images.length > 0 ? (
               // The exact images this release ran (lab `rollback/image`): what a rollback to it starts again.
               <ItemGroup
@@ -632,7 +642,6 @@ function ReceiptMenu(props: Readonly<{
       items={items}
       matchTriggerWidth={false}
       placement="bottom"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={t('common.more')}
       onSelect={(id) => {
         if (id === 'cancel') props.onCancel?.();

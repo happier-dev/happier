@@ -18,6 +18,8 @@ it.each([
 
 // These codes reach people through Deploy, Domain review, and Store preparation.
 const reachableFailures = [
+    ['build_platform_unsupported', 'buildMachineSetup'],
+    ['native_build_failed', 'logs'],
     ['deployment_source_unavailable', 'source'],
     ['required_fact_unavailable', 'history'],
     ['template_domain_route_required', 'domains'],

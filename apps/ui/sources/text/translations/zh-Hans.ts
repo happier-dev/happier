@@ -1,9 +1,11 @@
+import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
 import { deploymentEditorsTranslations } from './deploymentEditorsTranslations';
+import { deploymentPreparationTranslations } from './deploymentPreparationTranslations';
 import { deploymentSettingsTranslations } from './deploymentSettingsTranslations';
 import { deploymentReceiptTranslations } from './deploymentReceiptTranslations';
 import { pluginPublishTranslations } from './pluginPublishTranslations';
@@ -37,6 +39,7 @@ import { mediaKeyboardTranslations } from './mediaKeyboardTranslations';
 import { quickOpenTranslations } from './quickOpenTranslations';
 import { paneMainColumnTranslations } from './paneMainColumnTranslations';
 import { paneEmptyEditorTranslations, paneShortcutsSheetTranslations } from './paneEmptyEditorTranslations';
+import { llmTaskRunnerTranslations } from './llmTaskRunnerTranslations';
 import { actionSettingsResourcesTranslations } from './actionSettingsResourcesTranslations.shared';
 import { resourceProposalTranslations } from './resourceProposalTranslations.shared';
 import { machineResourceUiTranslations } from './machineResourceUiTranslations.shared';
@@ -1330,6 +1333,7 @@ export const zhHans: TranslationStructure = {
     screenCapture: screenCaptureCopy['zh-Hans'],
     hunkReview: hunkReviewTranslations['zh-Hans'],
     storeInstalled: storeInstalledTranslations['zh-Hans'], newApp: newAppTranslations['zh-Hans'],
+  llmTaskRunner: llmTaskRunnerTranslations['zh-Hans'],
   panes: { mainColumn: paneMainColumnTranslations['zh-Hans'], emptyEditor: paneEmptyEditorTranslations['zh-Hans'], shortcutsSheet: paneShortcutsSheetTranslations['zh-Hans'] },
   sessionCoordinator: {
     make: {
@@ -7079,6 +7083,7 @@ export const zhHans: TranslationStructure = {
       agentIsolationMemberSetupOpenSecurity: "打开此机器的“安全”页面，检查独立用户设置。",
       pluginCodeUnreadableAskManager: "你的独立用户无法访问插件代码。请让机器管理员配置独立用户并重启机器上的 Happier，然后重试。",
       pluginCodeUnreadableOpenSecurity: "你的独立用户无法访问插件代码。请打开此机器的“安全”页面，配置独立用户，然后重启机器上的 Happier 并重试。",
+      requesterSessionCustodyUnavailable: "无法恢复此会话请求者的访问权限。请从原来的账户重新打开，或请机器管理员检查访问权限。",
       agentIsolationUnavailable:
         "这台机器上的智能体隔离尚未就绪。请让机器所有者检查设置，然后重试。",
       tryAgain: "请重试",
@@ -9444,9 +9449,9 @@ export const zhHans: TranslationStructure = {
     markSessionReadSubtitle: "清除此会话的未读提醒",
     markSessionUnread: "标为未读",
     markSessionUnreadSubtitle: "将此会话保留在未读列表中",
-    keepInAttention: "保留在需要注意",
+    keepInAttention: "保留在需要你",
     keepInAttentionSubtitle: "即使已读，也会留在这里",
-    removeFromAttention: "从需要注意中移除",
+    removeFromAttention: "从需要你中移除",
     removeFromAttentionSubtitle: "已读后可以重新排回列表下方",
     executionRunsSubtitle: "查看此会话的运行",
     automationsTitle: "工作流",
@@ -9683,6 +9688,8 @@ export const zhHans: TranslationStructure = {
     agent: {
       sectionTitle: "代理",
       unselected: "选择代理",
+      sameAsSession: "与会话相同",
+      sameAsParent: "与父会话相同",
       noLongerAvailableOn: ({ machine }: { machine: string }) => `${machine} 上已不可用 · 选择其他`,
       noLongerAvailable: '已不可用 · 选择其他',
       claude: "Claude",
@@ -12400,8 +12407,8 @@ settingsSession: {
 	        backgroundWorkAttentionKeepWorkingSubtitle: "保持工作状态，并在有未读回复时显示蓝色中心圆点",
 	        backgroundWorkAttentionKeepWorkingUnreadTitle: "在“正在工作”中显示未读状态",
 	        backgroundWorkAttentionKeepWorkingUnreadSubtitle: "将会话保留在“正在工作”，在你阅读回复前显示未读状态",
-	        backgroundWorkAttentionShowUnreadTitle: "将未读会话移至“需要注意”",
-	        backgroundWorkAttentionShowUnreadSubtitle: "后台工作继续进行时，将有未读回复的会话移至“需要注意”",
+	        backgroundWorkAttentionShowUnreadTitle: "将未读会话移至“需要你”",
+	        backgroundWorkAttentionShowUnreadSubtitle: "后台工作继续进行时，将有未读回复的会话移至“需要你”",
 	        attentionPromotionModeTitle: '需要注意的会话',
 	        attentionPromotionModeSubtitle: '选择等待你处理或可供查看的会话出现的位置',
 	        attentionPromotionModeOffTitle: '保留在常规位置',
@@ -12412,7 +12419,7 @@ settingsSession: {
 	        attentionPromotionModeWithinGroupsSubtitle: '将会话保留在其文件夹或工作区内',
 	        reminderAutoClearOnOpenTitle: "打开时清除提醒",
 	        reminderAutoClearOnOpenSubtitle: "关闭后需手动移除已到期的提醒。未来的提醒仍按计划保留。",
-	        attentionStandingDefaultTitle: '将会话保留在需要注意',
+	        attentionStandingDefaultTitle: '将会话保留在需要你',
 	        attentionStandingDefaultEnabledSubtitle: '每个会话都会一直保留，直到你移除它',
 	        attentionStandingDefaultDisabledSubtitle: '逐个保留会话',
 	        attentionStandingDefaultUnavailableSubtitle: '请先在“需要注意的会话”中选择显示位置',
@@ -16365,6 +16372,7 @@ settingsSession: {
             resetStartUnavailableCount: ({ count }: { count: number }) => `另有 ${count} 条无法在此保留到重置`,
             fitTitle: "匹配度",
             fitNoneEnded: "尚未记录已结束的窗口",
+            fitNoneEndedOnce: "尚未记录已结束的窗口",
             fitUsedUp: ({ total, count }: { total: string | number; count: string | number }) => `${total} 个已结束窗口中有 ${count} 个用完`,
             fitNeverRanOut: ({ total }: { total: string | number }) => `${total} 次中从未用尽`,
             fitRanOut: ({ count, total }: { count: string | number; total: string | number }) => `${total} 次中用尽 ${count} 次`,
@@ -17586,6 +17594,7 @@ settingsSession: {
   },
 
     projects: {
+        readiness: projectReadinessTranslations['zh-Hans'],
     authoring: {
       open: "使用智能体设置",
       opening: "正在准备草稿…",
@@ -18203,6 +18212,7 @@ settingsSession: {
       copy: deploymentCopyTranslations['zh-Hans'],
       overviewStatus: deploymentOverviewTranslations['zh-Hans'],
       editors: deploymentEditorsTranslations['zh-Hans'],
+      preparation: deploymentPreparationTranslations['zh-Hans'],
       settingsSections: deploymentSettingsTranslations['zh-Hans'],
         platformLink: deploymentPlatformLinkTranslations['zh-Hans'],
         promotion: deploymentPromotionTranslations['zh-Hans'],
@@ -18461,7 +18471,43 @@ settingsSession: {
       databaseStatusFailed: "备份失败",
       databaseGoneTitle: "此数据库已不在这个 Environment 中",
       databaseBackToOverview: "返回概览",
+      databaseQuery: {
+        title: "只读查询",
+        run: "运行查询",
+        sql: "SQL",
+        parameters: "参数 (JSON)",
+        setup: "只读登录",
+        setupDescription: "为专用只读密码选择已保存的密钥。设置会在修改数据库角色及其环境绑定之前打开常规审核。",
+        reviewSetup: "审核设置",
+        working: "运行中…",
+        unavailable: "查询不可用",
+        empty: "未返回任何行",
+        incomplete: "结果可能不完整",
+        roleUnavailable: "数据库需要专用只读角色。请审核设置，或让所有者配置所需的架构权限。",
+        nativeParameters: "使用 PostgreSQL :'name' 或 MySQL/MariaDB @name 参数。JSON 值为文本。",
+        password: "密码",
+        description: ({ name }: { name: string }) => `${name} 的只读 SQL。`,
+        row: ({ number }: { number: number }) => `行 ${number}`,
+      },
       databaseProviderTitle: "提供方",
+      managedData: {
+        title: "托管数据库",
+        empty: "尚未安装托管数据库提供商",
+        operation: "你想做什么？",
+        unknown: "提供商的操作结果不确定",
+        recover: "请查看提供商的项目或分支并关联准确的资源。再次创建前，请先确认上次创建的结果。",
+        partial: "部分连接仍需保存",
+        link: "关联此数据库",
+        linked: "数据库已关联",
+        connections: "已保存的连接",
+        saved: "已安全保存",
+        bind: "在变量中使用这些连接",
+        bound: "连接已添加到变量",
+        result: "提供商详情",
+        reviewCreate: "查看创建选项",
+        add: "托管数据库",
+        manage: "管理数据库",
+      },
       restoreStepsTitle: "步骤",
       restoreStepSafety: "保存当前数据",
       restoreStepStop: "停止应用",
@@ -18634,7 +18680,9 @@ settingsSession: {
           approvePromote: ({ version }: { version: string }) => `晋升 ${version}`,
           approveRollback: ({ version }: { version: string }) => `回滚到 ${version}`,
           replacesNote: ({ revision }: { revision: string }) => `替换 ${revision}`,
-          secretsNoteOn: ({ machine }: { machine: string }) => `仅名称。为 ${machine} 密封，仅在发布启动时打开。`,
+          buildPlatforms: "构建平台",
+        emulationCost: "模拟构建速度较慢。构建机器会在构建运行时检查支持情况。",
+        secretsNoteOn: ({ machine }: { machine: string }) => `仅名称。为 ${machine} 密封，仅在发布启动时打开。`,
           secretsNote: "仅名称。值保持密封，仅在发布启动时打开。",
           environment: "环境",
           version: "版本",
@@ -19250,7 +19298,7 @@ settingsSession: {
           quietTitle: '无需更新',
           offlineTitle: '离线机器',
           offlineDescription: '更新会等到每台机器重新上线。',
-          offlineMachines: ({ count }: { count: number }) => `${count} 台机器`,
+          offlineMachines: ({ count }: { count: number }) => `此 Home 上的其他 ${count} 台机器`,
         },
         offline: "离线",
         pill: {
@@ -19500,6 +19548,7 @@ settingsSession: {
         integrityFailed: 'Happier 无法验证此插件视图。请打开插件设置以修复所选安装。',
         incompatible: '此视图需要兼容的 Happier 或插件版本。',
         installationConflict: '你的机器上安装了此插件的不同版本。请选择要运行它的机器。',
+        localArtifactFailure: "此插件视图在这台设备上出现问题。请尝试重新加载。",
         authorFailure: '此视图无法启动，因为其可执行界面无效。请联系插件作者重新构建。',
         retired: '此插件视图已不再启用。请打开插件设置以启用或重新安装。',
     },

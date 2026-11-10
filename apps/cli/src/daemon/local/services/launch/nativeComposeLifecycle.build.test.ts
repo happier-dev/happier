@@ -5,8 +5,31 @@ import { nativeBuildFixtureDigest as digest, withNativeComposeBuildFixture as wi
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 import { readDeploymentSystemToolFailure } from '@/deployments/deploymentSystemToolFailure';
 import { readDeploymentChildResult } from '@/deployments/deploymentChild';
+import { projectDeploymentFailure, projectDeploymentReceiptFailure } from '@/deployments/deploymentFailure';
 
 describe('phase-correct native platform image production', () => {
+    it.each([
+        ['unsupportedPlatform', 'build_platform_unsupported', 'runtime_platform_unsupported'],
+        ['execFormat', 'native_build_failed', 'execution_format_error'],
+        ['buildFailed', 'native_build_failed', 'build_failed'],
+    ] as const)('keeps the observed bake cause and builder remedy (%s)', async (bakeFailure, errorCode, cause) => {
+        await withBuilder(async ({ project, requests }) => {
+            const error: unknown = await admitted(project, context => project.prepareImages({ context,
+                platforms: ['linux/amd64', 'linux/arm64'], build: { noCacheServices: [], secretVariableNames: ['BUILD_SECRET'] } }))
+                .catch((failure: unknown) => failure);
+            expect(error).toMatchObject({ code: errorCode });
+            const failure = projectDeploymentFailure(errorCode, error);
+            expect(failure).toMatchObject({ ok: false, errorCode, details: { buildSupport: {
+                status: 'failed', requestedPlatforms: ['linux/amd64', 'linux/arm64'], builtPlatforms: ['linux/amd64'], cause, exitCode: 1,
+            } } });
+            const child = readDeploymentChildResult(JSON.parse(JSON.stringify(failure)));
+            expect(projectDeploymentFailure(errorCode, new Error(errorCode, { cause: child }))).toEqual(failure);
+            expect(projectDeploymentReceiptFailure(failure, 'build')).toMatchObject({ code: errorCode,
+                failureCause: { phase: `deployment.native.build.${cause}` }, effectAttempted: true });
+            expect(JSON.stringify(failure)).not.toContain('private-registry-sentinel');
+            expect(requests.some(request => request.args.includes('up') || request.args.includes('load'))).toBe(false);
+        }, { bakeFailure, bakeFailurePlatform: 'linux/arm64' });
+    });
     it.each(['image inspection', 'source build'] as const)('retains the missing Buildx remedy for %s without native output', async phase => {
         await withBuilder(async ({ project, requests }) => {
             const failure = await (phase === 'source build' ? project.describeBuild() : project.prepareImages({ planOnly: true }))
@@ -42,7 +65,7 @@ describe('phase-correct native platform image production', () => {
                             second.project.prepareImages({ context: rightContext, platforms: ['linux/amd64'],
                                 build: { noCacheServices: [], secretVariableNames: ['BUILD_SECRET'] } }),
                         ]);
-                        expect(images.map(value => value.length)).toEqual([2, 2]);
+                        expect(images.map(value => value.images.length)).toEqual([2, 2]);
                     });
                 });
                 expect(setupEffects).toBe(0);
@@ -55,7 +78,7 @@ describe('phase-correct native platform image production', () => {
         await withBuilder(async ({ project, source, requests, runtimeMachineIds, readRuntimeProjection }) => {
             expect(source.machineId).toBe('builder-c');
             expect(runtimeMachineIds).toEqual([coincidentRuntime ? 'builder-c' : 'runtime-a', 'runtime-b']);
-            const images = await admitted(project, context => project.prepareImages({ context, platforms: ['linux/amd64'],
+            const { images } = await admitted(project, context => project.prepareImages({ context, platforms: ['linux/amd64'],
                 build: { noCacheServices: [], secretVariableNames: ['BUILD_SECRET'] } }));
             for (const machineId of runtimeMachineIds) {
                 const runtime = await readRuntimeProjection({ machineId, images });
@@ -89,7 +112,7 @@ describe('phase-correct native platform image production', () => {
     });
     it.each(['linux/amd64', 'linux/arm64'])('uses a redacted indexed source privately for reviewed platform %s', async platform => {
         await withBuilder(async ({ project, requests, withApprovedImages }) => {
-            const seed = await project.prepareImages({ planOnly: true });
+            const { images: seed } = await project.prepareImages({ planOnly: true });
             expect(seed.map(image => image.platform)).toEqual(['linux/arm64', 'linux/arm64']);
             for (const image of seed) {
                 expect(image.registryReference).toBeUndefined();
@@ -97,7 +120,7 @@ describe('phase-correct native platform image production', () => {
             }
             const discoveryEnd = requests.length;
             await withApprovedImages(seed, queued => admitted(queued, async context => {
-                const images = await queued.prepareImages({ context, servicePlatforms: [
+                const { images } = await queued.prepareImages({ context, servicePlatforms: [
                     { service: 'web', platform }, { service: 'worker', platform }],
                     build: { noCacheServices: [], secretVariableNames: ['BUILD_SECRET'] } });
                 expect(images.map(image => image.platform)).toEqual([platform, platform]);
@@ -124,7 +147,7 @@ describe('phase-correct native platform image production', () => {
                     services: ['web', 'worker'], buildServices: ['web', 'worker'],
                     buildSecretVariables: [{ service: 'web', names: ['BUILD_SECRET'] }, { service: 'worker', names: [] }],
                 });
-                const images = await project.prepareImages(selection);
+                const { images } = await project.prepareImages(selection);
                 expect(images.map(({ service, platform }) => ({ service, platform }))).toEqual(selection.servicePlatforms);
                 expect(await project.exportImages({ images, context })).toHaveLength(2);
                 const builds = requests.filter(request => request.args.includes('bake') && !request.args.includes('--print'));
@@ -140,7 +163,7 @@ describe('phase-correct native platform image production', () => {
                 const selection = { context, platforms: ['linux/amd64'], servicePlatforms: [
                     { service: 'web', platform: 'linux/amd64' }, { service: 'worker', platform: 'linux/amd64' }],
                     build: { noCacheServices: [], secretVariableNames: [] } };
-                const images = await project.prepareImages(selection);
+                const { images } = await project.prepareImages(selection);
                 expect(images.map(({ service, platform }) => ({ service, platform }))).toEqual(selection.servicePlatforms);
             });
         }, { prebuiltContainerd: 'unchanged', effectivePlatforms: true });
@@ -153,7 +176,7 @@ describe('phase-correct native platform image production', () => {
             expect(description.buildSecretVariables).toEqual([
                 { service: 'web', names: ['BUILD_SECRET'] }, { service: 'base', names: ['BUILD_SECRET'] }]);
             await admitted(project, async context => {
-                const images = await project.prepareImages({ context, platforms: ['linux/amd64'],
+                const { images } = await project.prepareImages({ context, platforms: ['linux/amd64'],
                     build: { noCacheServices: ['base'], secretVariableNames: ['BUILD_SECRET'] } });
                 expect(images.map(image => image.service)).toEqual(['web']);
                 expect((await project.exportImages({ images, context })).map(archive => archive.image.service)).toEqual(['web']);
@@ -176,8 +199,11 @@ describe('phase-correct native platform image production', () => {
         const stageChunks: string[] = [];
         await withBuilder(async ({ project, requests, expected }) => {
             await admitted(project, async context => {
-            const images = await project.prepareImages({ context, platforms: ['linux/amd64', 'linux/arm64', 'linux/amd64', 'linux/arm64/v8'],
+            const prepared = await project.prepareImages({ context, platforms: ['linux/amd64', 'linux/arm64', 'linux/amd64', 'linux/arm64/v8'],
                 build: { noCacheServices: ['web'], secretVariableNames: ['BUILD_SECRET'] } });
+            expect(prepared).toHaveProperty('buildSupport', { status: 'built',
+                requestedPlatforms: ['linux/amd64', 'linux/arm64'], builtPlatforms: ['linux/amd64', 'linux/arm64'] });
+            const images = prepared.images;
             expect(images).toHaveLength(4);
             for (const image of images) expect(image).toEqual({ service: image.service, platform: image.platform,
                 ...expected.get(`${image.service}/${image.platform}`) });
@@ -204,7 +230,7 @@ describe('phase-correct native platform image production', () => {
 
     it('plans source builds without build effects and describes only their admitted build inputs', async () => {
         await withBuilder(async ({ project, requests }) => {
-            expect(await project.prepareImages({ planOnly: true })).toEqual([]);
+            expect(await project.prepareImages({ planOnly: true })).toEqual({ images: [] });
             expect(requests.some(request => request.args.includes('bake'))).toBe(false);
             const description = await project.describeBuild();
             expect(description).toMatchObject({ services: ['web', 'worker'], buildServices: ['web', 'worker'],
@@ -254,7 +280,7 @@ describe('phase-correct native platform image production', () => {
         const stageChunks: string[] = [];
         await withBuilder(async ({ project, requests, expected }) => {
             await admitted(project, async context => {
-            const images = await project.prepareImages({ context, platforms: ['linux/amd64'], build: { noCacheServices: [], secretVariableNames: [] } });
+            const { images } = await project.prepareImages({ context, platforms: ['linux/amd64'], build: { noCacheServices: [], secretVariableNames: [] } });
             expect(images).toHaveLength(2);
             for (const image of images) expect(image).toEqual({ service: image.service, platform: 'linux/amd64',
                 ...expected.get(`${image.service}/linux/amd64`) });
@@ -278,7 +304,7 @@ describe('phase-correct native platform image production', () => {
     it('selects a missing prebuilt platform only from its approved immutable index with registry-only credentials', async () => {
         await withBuilder(async ({ project, expected }) => {
             await admitted(project, async context => {
-                const images = await project.prepareImages({ context, platforms: ['linux/amd64', 'linux/arm64'],
+                const { images } = await project.prepareImages({ context, platforms: ['linux/amd64', 'linux/arm64'],
                     build: { noCacheServices: [], secretVariableNames: [] } });
                 expect(images).toHaveLength(4);
                 for (const image of images) expect(image).toMatchObject({ service: image.service, platform: image.platform,
@@ -291,7 +317,7 @@ describe('phase-correct native platform image production', () => {
     it.each(['unchanged', 'movesAfterLookup'] as const)('locates an approved local-only containerd image (%s) without assuming CONFIG is a native alias', async prebuiltContainerd => {
         await withBuilder(async ({ project, requests, expected }) => {
             await admitted(project, async context => {
-                const images = await project.prepareImages({ context, platforms: ['linux/amd64'],
+                const { images } = await project.prepareImages({ context, platforms: ['linux/amd64'],
                     build: { noCacheServices: [], secretVariableNames: [] } });
                 for (const image of images) expect(image).toEqual({ service: image.service, platform: image.platform,
                     ...expected.get(`${image.service}/${image.platform}`) });
@@ -321,7 +347,7 @@ describe('phase-correct native platform image production', () => {
 
     it.each([false, true])('discovers one actual preapproval index variant without requiring a builder-host variant (ARM-only: %s)', async preapprovalArmOnly => {
         await withBuilder(async ({ project, requests }) => {
-            const images = await project.prepareImages({ planOnly: true });
+            const { images } = await project.prepareImages({ planOnly: true });
             expect(images).toHaveLength(2);
             for (const image of images) {
                 expect(image.indexDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);

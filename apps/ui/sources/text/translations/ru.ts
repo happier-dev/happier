@@ -1,9 +1,11 @@
+import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
 import { deploymentEditorsTranslations } from './deploymentEditorsTranslations';
+import { deploymentPreparationTranslations } from './deploymentPreparationTranslations';
 import { deploymentSettingsTranslations } from './deploymentSettingsTranslations';
 import { deploymentReceiptTranslations } from './deploymentReceiptTranslations';
 import { pluginPublishTranslations } from './pluginPublishTranslations';
@@ -37,6 +39,7 @@ import { mediaKeyboardTranslations } from './mediaKeyboardTranslations';
 import { quickOpenTranslations } from './quickOpenTranslations';
 import { paneMainColumnTranslations } from './paneMainColumnTranslations';
 import { paneEmptyEditorTranslations, paneShortcutsSheetTranslations } from './paneEmptyEditorTranslations';
+import { llmTaskRunnerTranslations } from './llmTaskRunnerTranslations';
 import { actionSettingsResourcesTranslations } from './actionSettingsResourcesTranslations.shared';
 import { resourceProposalTranslations } from './resourceProposalTranslations.shared';
 import { machineResourceUiTranslations } from './machineResourceUiTranslations.shared';
@@ -1344,6 +1347,7 @@ export const ru: TranslationStructure = {
     screenCapture: screenCaptureCopy.ru,
     hunkReview: hunkReviewTranslations['ru'],
     storeInstalled: storeInstalledTranslations['ru'], newApp: newAppTranslations['ru'],
+  llmTaskRunner: llmTaskRunnerTranslations['ru'],
   panes: { mainColumn: paneMainColumnTranslations['ru'], emptyEditor: paneEmptyEditorTranslations['ru'], shortcutsSheet: paneShortcutsSheetTranslations['ru'] },
   sessionCoordinator: {
     make: {
@@ -7115,6 +7119,7 @@ export const ru: TranslationStructure = {
       agentIsolationMemberSetupOpenSecurity: "Откройте страницу «Безопасность» этой машины, чтобы проверить настройку отдельных пользователей.",
       pluginCodeUnreadableAskManager: "Код плагинов недоступен вашему отдельному пользователю. Попросите управляющего машиной настроить отдельных пользователей и перезапустить Happier на машине, затем повторите попытку.",
       pluginCodeUnreadableOpenSecurity: "Код плагинов недоступен вашему отдельному пользователю. Откройте страницу «Безопасность» этой машины и настройте отдельных пользователей, затем перезапустите Happier на машине и повторите попытку.",
+      requesterSessionCustodyUnavailable: "Не удалось восстановить доступ инициатора к этому сеансу. Откройте его из исходной учётной записи или попросите управляющего машиной проверить доступ.",
       agentIsolationUnavailable:
         "Изоляция агентов на этой машине не готова. Попросите владельца машины проверить настройки и повторите попытку.",
       tryAgain: "Пожалуйста, попробуйте снова",
@@ -8206,9 +8211,9 @@ export const ru: TranslationStructure = {
     markSessionReadSubtitle: "Снять непрочитанное внимание с этой сессии",
     markSessionUnread: "Отметить как непрочитанную",
     markSessionUnreadSubtitle: "Оставить эту сессию в списке непрочитанных",
-    keepInAttention: "Оставить в «Требует внимания»",
+    keepInAttention: "Оставить в «Ждут вас»",
     keepInAttentionSubtitle: "Останется здесь даже после прочтения",
-    removeFromAttention: "Убрать из «Требует внимания»",
+    removeFromAttention: "Убрать из «Ждут вас»",
     removeFromAttentionSubtitle: "После прочтения снова опустится ниже в списке",
     executionRunsSubtitle: "Посмотреть запуски этой сессии",
     automationsTitle: "Рабочие процессы",
@@ -9882,6 +9887,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     agent: {
       sectionTitle: "Агент",
       unselected: "Выберите агента",
+      sameAsSession: "Как в сессии",
+      sameAsParent: "Как в родительской сессии",
       noLongerAvailableOn: ({ machine }: { machine: string }) => `Больше недоступно на ${machine} · Выберите другое`,
       noLongerAvailable: 'Больше недоступно · Выберите другое',
       claude: "Claude",
@@ -12620,8 +12627,8 @@ settingsSession: {
 	        backgroundWorkAttentionKeepWorkingSubtitle: "Сохранять статус работы и показывать синюю точку в центре для непрочитанных ответов",
 	        backgroundWorkAttentionKeepWorkingUnreadTitle: "Показывать статус непрочитанного в «В работе»",
 	        backgroundWorkAttentionKeepWorkingUnreadSubtitle: "Оставлять сессии в «В работе» и показывать статус непрочитанного, пока вы не прочитаете ответ",
-	        backgroundWorkAttentionShowUnreadTitle: "Перемещать непрочитанные сессии в «Требует внимания»",
-	        backgroundWorkAttentionShowUnreadSubtitle: "Перемещать сессии с непрочитанными ответами в «Требует внимания», пока продолжается фоновая работа",
+	        backgroundWorkAttentionShowUnreadTitle: "Перемещать непрочитанные сессии в «Ждут вас»",
+	        backgroundWorkAttentionShowUnreadSubtitle: "Перемещать сессии с непрочитанными ответами в «Ждут вас», пока продолжается фоновая работа",
 	        attentionPromotionModeTitle: 'Сессии, требующие внимания',
 	        attentionPromotionModeSubtitle: 'Выберите, где показывать сессии, ожидающие вас или готовые к проверке',
 	        attentionPromotionModeOffTitle: 'Оставлять на обычном месте',
@@ -12632,7 +12639,7 @@ settingsSession: {
 	        attentionPromotionModeWithinGroupsSubtitle: 'Оставлять сессии в их папке или рабочей области',
 	        reminderAutoClearOnOpenTitle: "Убирать напоминания при открытии",
 	        reminderAutoClearOnOpenSubtitle: "Отключите, чтобы убирать наступившие напоминания вручную. Будущие остаются запланированными.",
-	        attentionStandingDefaultTitle: 'Оставлять сессии в «Требует внимания»',
+	        attentionStandingDefaultTitle: 'Оставлять сессии в «Ждут вас»',
 	        attentionStandingDefaultEnabledSubtitle: 'Каждая сессия остаётся, пока вы её не уберёте',
 	        attentionStandingDefaultDisabledSubtitle: 'Оставляйте сессии по одной',
 	        attentionStandingDefaultUnavailableSubtitle: 'Сначала выберите размещение в «Сессии, требующие внимания»',
@@ -16668,6 +16675,7 @@ settingsSession: {
             resetStartUnavailableCount: ({ count }: { count: number }) => `Ещё ${count} нельзя здесь отложить до сброса`,
             fitTitle: "Соответствие",
             fitNoneEnded: "завершённых окон пока не записано",
+            fitNoneEndedOnce: "Завершённых окон пока не записано",
             fitUsedUp: ({ count, total }: { count: string | number; total: string | number }) => `${count} из ${total} завершённых окон использованы полностью`,
             fitNeverRanOut: ({ total }: { total: string | number }) => `ни разу не исчерпан из ${total}`,
             fitRanOut: ({ count, total }: { count: string | number; total: string | number }) => `исчерпан ${count} из ${total}`,
@@ -17920,6 +17928,7 @@ settingsSession: {
   },
 
     projects: {
+        readiness: projectReadinessTranslations['ru'],
     authoring: {
       open: "Настроить с агентом",
       opening: "Готовим черновик…",
@@ -18537,6 +18546,7 @@ settingsSession: {
       copy: deploymentCopyTranslations['ru'],
       overviewStatus: deploymentOverviewTranslations['ru'],
       editors: deploymentEditorsTranslations['ru'],
+      preparation: deploymentPreparationTranslations['ru'],
       settingsSections: deploymentSettingsTranslations['ru'],
         platformLink: deploymentPlatformLinkTranslations['ru'],
         promotion: deploymentPromotionTranslations['ru'],
@@ -18795,7 +18805,43 @@ settingsSession: {
       databaseStatusFailed: "Ошибка копирования",
       databaseGoneTitle: "Этой базы больше нет в этом Environment",
       databaseBackToOverview: "Назад к обзору",
+      databaseQuery: {
+        title: "Запрос только для чтения",
+        run: "Выполнить запрос",
+        sql: "SQL",
+        parameters: "Параметры (JSON)",
+        setup: "Доступ только для чтения",
+        setupDescription: "Выберите сохранённый секрет для отдельного пароля только для чтения. Перед изменением роли и привязки к окружению откроется обычная проверка.",
+        reviewSetup: "Проверить настройку",
+        working: "Выполняется…",
+        unavailable: "Запрос недоступен",
+        empty: "Строки не возвращены",
+        incomplete: "Результаты могут быть неполными",
+        roleUnavailable: "Базе нужна отдельная роль только для чтения. Проверьте настройку или попросите владельца настроить права схемы.",
+        nativeParameters: "Используйте PostgreSQL :'name' или MySQL/MariaDB @name. Значения JSON — текст.",
+        password: "Пароль",
+        description: ({ name }: { name: string }) => `SQL только для чтения для ${name}.`,
+        row: ({ number }: { number: number }) => `Строка ${number}`,
+      },
       databaseProviderTitle: "Провайдер",
+      managedData: {
+        title: "Управляемая база данных",
+        empty: "Провайдер управляемых баз не установлен",
+        operation: "Что вы хотите сделать?",
+        unknown: "Результат у провайдера неизвестен",
+        recover: "Проверьте проекты или ветки провайдера и подключите точный ресурс. Уточните результат предыдущего создания перед повторным созданием.",
+        partial: "Некоторые подключения ещё нужно сохранить",
+        link: "Подключить эту базу",
+        linked: "База подключена",
+        connections: "Сохранённые подключения",
+        saved: "Надёжно сохранено",
+        bind: "Использовать подключения в Переменных",
+        bound: "Подключения добавлены в Переменные",
+        result: "Сведения о провайдере",
+        reviewCreate: "Проверить параметры создания",
+        add: "Управляемая база данных",
+        manage: "Управление базой",
+      },
       restoreStepsTitle: "Шаги",
       restoreStepSafety: "Сохранить текущие данные",
       restoreStepStop: "Остановить приложение",
@@ -18968,7 +19014,9 @@ settingsSession: {
           approvePromote: ({ version }: { version: string }) => `Продвинуть ${version}`,
           approveRollback: ({ version }: { version: string }) => `Откатить к ${version}`,
           replacesNote: ({ revision }: { revision: string }) => `Заменяет ${revision}`,
-          secretsNoteOn: ({ machine }: { machine: string }) => `Только имена. Запечатаны для ${machine} и открываются только при запуске релиза.`,
+          buildPlatforms: "Платформы сборки",
+        emulationCost: "Сборка с эмуляцией медленнее. Машина проверяет поддержку во время сборки.",
+        secretsNoteOn: ({ machine }: { machine: string }) => `Только имена. Запечатаны для ${machine} и открываются только при запуске релиза.`,
           secretsNote: "Только имена. Значения остаются запечатанными и открываются только при запуске релиза.",
           environment: "Среда",
           version: "Версия",
@@ -19584,7 +19632,7 @@ settingsSession: {
           quietTitle: 'Нечего обновлять',
           offlineTitle: 'Машины не в сети',
           offlineDescription: 'Обновления ждут, пока каждая машина снова будет в сети.',
-          offlineMachines: ({ count }: { count: number }) => `${count} ${plural({ count, one: 'машина', few: 'машины', many: 'машин' })}`,
+          offlineMachines: ({ count }: { count: number }) => `${count} ${plural({ count, one: 'другая машина', few: 'другие машины', many: 'других машин' })} в этой Home`,
         },
         offline: "Не в сети",
         pill: {
@@ -19834,6 +19882,7 @@ settingsSession: {
         integrityFailed: 'Happier не удалось проверить это представление плагина. Откройте настройки плагина, чтобы восстановить выбранную установку.',
         incompatible: 'Для этого представления требуется совместимая версия Happier или плагина.',
         installationConflict: 'На ваших машинах установлены разные версии этого плагина. Выберите машину, на которой он должен работать.',
+        localArtifactFailure: "Представление плагина не сработало на этом устройстве. Попробуйте загрузить его снова.",
         authorFailure: 'Не удалось запустить это представление: его исполняемый интерфейс недействителен. Попросите автора плагина пересобрать его.',
         retired: 'Это представление плагина больше не активно. Откройте настройки плагина, чтобы включить или переустановить его.',
     },

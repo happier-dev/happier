@@ -41,6 +41,7 @@ vi.mock(
 afterEach(standardCleanup);
 
 const { DeploymentReceiptDetail } = await import('./DeploymentReceiptDetail');
+const { EnvironmentLogsCompanion } = await import('./EnvironmentLogsCompanion');
 const { AccountNoticeInvestigationBoundary } =
   await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
 const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
@@ -145,13 +146,13 @@ describe('Receipt → Images', () => {
 });
 
 describe('Receipt → failed', () => {
-  it('offers Investigate as the shared agent-action control and says the canonical remedy for the recorded cause', async () => {
+  it.each(['deployment_image_unavailable', 'build_platform_unsupported'])('offers the canonical remedy for the recorded cause (%s)', async code => {
     const base = createDeploymentReceiptDetailV1();
-    const failure = { code: 'deployment_image_unavailable', phase: 'build' as const };
-    const content = DeploymentOwnServerContentV1Schema.parse({ ...base.content, failure });
+    const failure = { code, phase: 'build' as const };
+    const content = DeploymentOwnServerContentV1Schema.parse({ ...base.content, buildMachineId: 'builder-c', failure });
     const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ state: 'failed' }), content });
     const detail = createDeploymentEnvironmentDetailV1();
-    const opened: string[] = [];
+    const opened: unknown[][] = [];
     const controller = createDeploymentReadControllerV1({ scope, transport: {
       listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
       readEnvironment: async () => ({ ok: true, value: detail }),
@@ -164,7 +165,7 @@ describe('Receipt → failed', () => {
           deploymentId={receipt.deployment.id} environmentName="Staging" demand={{ mounted: true, visible: true, focused: true }}
           accountId={scope.accountId} serverId={scope.serverId} readLogs={null} onBack={() => {}} rollback={null}
           cancel={null} deploy={null} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }}
-          onOpenRecoveryDestination={(destination) => { opened.push(destination); }}
+          onOpenRecoveryDestination={(...destination) => { opened.push(destination); }}
           onOpenReceipt={() => {}} />
       </AccountNoticeInvestigationBoundary>,
     );
@@ -183,7 +184,8 @@ describe('Receipt → failed', () => {
       expect(String(banner?.props.description)).toContain(readDeploymentFailureRecoveryV1(failure.code, failure).remedy);
       // The canonical next action opens where the cause is fixed.
       await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.recovery');
-      expect(opened).toEqual([readDeploymentFailureRecoveryV1(failure.code, failure).nextAction.destination]);
+      expect(opened).toEqual([[readDeploymentFailureRecoveryV1(failure.code, failure).nextAction.destination,
+        ...(code === 'build_platform_unsupported' ? ['builder-c'] : [])]]);
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
@@ -194,7 +196,8 @@ describe('Receipt → release cleaned up', () => {
     // Nothing is kept for rollback; another release serves now.
     const detail = { ...base, content: { ...base.content, retainPreviousDeployments: 0 },
       targetLinks: base.targetLinks.map(link => ({ ...link, targetLink: { ...link.targetLink, activeDeploymentId: 'serving' } })) };
-    const old = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'old', state: 'succeeded' }) });
+    const old = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'old', state: 'succeeded' }),
+      content: { ...createDeploymentReceiptDetailV1().content, sourceMethod: 'upload' } });
     if (old.content.sourceIntent.kind !== 'repository') throw new Error('Expected repository fixture');
     const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'serving', state: 'succeeded',
       requestedAtMs: 2000, startedAtMs: 2001, settledAtMs: 2002 }),
@@ -225,7 +228,7 @@ describe('Receipt → release cleaned up', () => {
       });
       expect(screen.findByTestId('project-deployments.receipt.rollback')).toBeNull();
       await screen.pressByTestIdAsync('project-deployments.receipt.pruned.deployAgain');
-      expect(deploy).toHaveBeenCalledWith(expect.objectContaining({ sha: old.content.sourceIntent.sha }));
+      expect(deploy).toHaveBeenCalledWith(expect.objectContaining({ sha: old.content.sourceIntent.sha, sourceMethod: 'upload' }));
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
@@ -269,6 +272,56 @@ describe('Receipt → failed rollback (PAGE-ACCEPT-85 D11)', () => {
       expect(String(banner.props.description ?? '')).not.toContain(readDeploymentFailureRecoveryV1('unknown_code').remedy);
       await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.action');
       expect(rollback).toHaveBeenCalledWith(expect.objectContaining({ deploymentId: 'retained' }));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});
+
+describe('Receipt → upload provenance', () => {
+  it.each(['provider', 'controller'] as const)('shows the recorded source and actual %s build evidence', async location => {
+    const base = createDeploymentReceiptDetailV1();
+    const provenance = { sourceManifestFingerprint: 'approved-source-manifest', build: location === 'provider'
+      ? { location } : { location, image: 'container@sha256:recorded-pin',
+        toolchain: { name: 'wrangler', version: 'recorded-version' }, outputManifestFingerprint: 'recorded-output-manifest' } };
+    const receipt = createDeploymentReceiptDetailV1({ content: { sourceIntent: base.content.sourceIntent, sourceMethod: 'upload',
+      machines: [], images: [], machineResults: [], steps: [],
+      platform: { targetLinkRevision: 1, credentialPrincipal: { kind: 'account', accountId: 'owner',
+        purpose: { consumer: { pluginId: 'acme.platform', localId: 'inspect' }, purpose: 'deploy' },
+        target: { kind: 'account', account: { service: { pluginId: 'acme.platform', localId: 'account' }, accountId: 'profile' } } },
+        providerIdentity: { providerAccountId: 'account', providerResourceId: 'project', providerEnvironment: 'production' },
+        providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
+          providerDeploymentId: 'native-deployment', uploadProvenance: provenance } } } });
+    const detail = createDeploymentEnvironmentDetailV1();
+    const controller = createDeploymentReadControllerV1({ scope, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: detail }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    const screen = await renderScreen(<AccountNoticeInvestigationBoundary><DeploymentReceiptDetail controller={controller}
+      environmentId={detail.environment.id} deploymentId={receipt.deployment.id} environmentName="Staging"
+      demand={{ mounted: true, visible: true, focused: true }} accountId={scope.accountId} serverId={scope.serverId}
+      readLogs={null} onBack={() => {}} rollback={null} cancel={null} deploy={null} phone={false} linkPath={null}
+      review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />
+      <EnvironmentLogsCompanion open onClose={() => {}} services={[]} service={null} serverId={scope.serverId}
+        environmentId={detail.environment.id} machineId={null} machineName="Controller" machineNames={{}}
+        controller={controller} deploymentId={receipt.deployment.id}
+        demand={{ mounted: true, visible: true, focused: true }} readLogs={null} />
+    </AccountNoticeInvestigationBoundary>);
+    try {
+      await act(async () => { await waitForTestEvent(screen.subscribe,
+        () => screen.findByTestId('project-deployments.receipt'), node => node !== null); });
+      await act(async () => { await waitForTestEvent(screen.subscribe,
+        () => screen.findByTestId('environment-logs.build'), node => node !== null); });
+      const row = (id: string) => screen.findAll(node => node.props.testID === id && node.props.subtitle !== undefined)[0];
+      for (const prefix of ['project-deployments.receipt.upload', 'environment-logs.build.upload']) {
+        expect(screen.findByTestId(prefix)).not.toBeNull();
+        expect(row(`${prefix}.source`)?.props.subtitle).toBe('approved-source-manifest');
+        if (location === 'controller') {
+          expect(row(`${prefix}.image`)?.props.subtitle).toBe('container@sha256:recorded-pin');
+          expect(row(`${prefix}.toolchain`)?.props.subtitle).toBe('wrangler recorded-version');
+          expect(row(`${prefix}.output`)?.props.subtitle).toBe('recorded-output-manifest');
+        } else expect(screen.findByTestId(`${prefix}.image`)).toBeNull();
+      }
     } finally { await screen.unmount(); controller.retire(); }
   });
 });

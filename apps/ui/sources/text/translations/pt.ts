@@ -1,9 +1,11 @@
+import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
 import { deploymentEditorsTranslations } from './deploymentEditorsTranslations';
+import { deploymentPreparationTranslations } from './deploymentPreparationTranslations';
 import { deploymentSettingsTranslations } from './deploymentSettingsTranslations';
 import { deploymentReceiptTranslations } from './deploymentReceiptTranslations';
 import { pluginPublishTranslations } from './pluginPublishTranslations';
@@ -37,6 +39,7 @@ import { mediaKeyboardTranslations } from './mediaKeyboardTranslations';
 import { quickOpenTranslations } from './quickOpenTranslations';
 import { paneMainColumnTranslations } from './paneMainColumnTranslations';
 import { paneEmptyEditorTranslations, paneShortcutsSheetTranslations } from './paneEmptyEditorTranslations';
+import { llmTaskRunnerTranslations } from './llmTaskRunnerTranslations';
 import { actionSettingsResourcesTranslations } from './actionSettingsResourcesTranslations.shared';
 import { resourceProposalTranslations } from './resourceProposalTranslations.shared';
 import { machineResourceUiTranslations } from './machineResourceUiTranslations.shared';
@@ -1365,6 +1368,7 @@ export const pt: TranslationStructure = {
     screenCapture: screenCaptureCopy.pt,
     hunkReview: hunkReviewTranslations['pt'],
     storeInstalled: storeInstalledTranslations['pt'], newApp: newAppTranslations['pt'],
+  llmTaskRunner: llmTaskRunnerTranslations['pt'],
   panes: { mainColumn: paneMainColumnTranslations['pt'], emptyEditor: paneEmptyEditorTranslations['pt'], shortcutsSheet: paneShortcutsSheetTranslations['pt'] },
   sessionCoordinator: {
     make: {
@@ -7465,6 +7469,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       agentIsolationMemberSetupOpenSecurity: "Abra a página Segurança desta máquina para verificar a configuração de utilizadores separados.",
       pluginCodeUnreadableAskManager: "Seu usuário separado não tem acesso ao código dos plugins. Peça a um administrador da máquina para configurar usuários separados e reiniciar o Happier na máquina; depois, tente novamente.",
       pluginCodeUnreadableOpenSecurity: "Seu usuário separado não tem acesso ao código dos plugins. Abra a página Segurança desta máquina e configure usuários separados; depois, reinicie o Happier na máquina e tente novamente.",
+      requesterSessionCustodyUnavailable: "Não foi possível restaurar o acesso do solicitante a esta sessão. Abra-a novamente pela conta original ou peça a um gestor da máquina para verificar o acesso.",
       agentIsolationUnavailable:
         "O isolamento de agentes não está pronto nesta máquina. Peça ao proprietário da máquina para verificar a configuração e tente novamente.",
       tryAgain: "Por favor, tente novamente",
@@ -9897,9 +9902,9 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     markSessionReadSubtitle: "Limpar a atenção não lida desta sessão",
     markSessionUnread: "Marcar como não lida",
     markSessionUnreadSubtitle: "Manter esta sessão na lista de não lidas",
-    keepInAttention: "Manter em Precisa de atenção",
+    keepInAttention: "Manter em Precisa de você",
     keepInAttentionSubtitle: "Mantém aqui mesmo depois de você ler",
-    removeFromAttention: "Remover de Precisa de atenção",
+    removeFromAttention: "Remover de Precisa de você",
     removeFromAttentionSubtitle: "Deixa voltar para baixo na lista quando lida",
     executionRunsSubtitle: "Ver execuções desta sessão",
     automationsTitle: "Fluxos de trabalho",
@@ -10145,6 +10150,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     agent: {
       sectionTitle: "Agente",
       unselected: "Escolher agente",
+      sameAsSession: "Igual à sessão",
+      sameAsParent: "Igual à sessão principal",
       noLongerAvailableOn: ({ machine }: { machine: string }) => `Não está mais disponível em ${machine} · Escolha outro`,
       noLongerAvailable: 'Não está mais disponível · Escolha outro',
       claude: "Claude",
@@ -12886,8 +12893,8 @@ settingsSession: {
 	          backgroundWorkAttentionKeepWorkingSubtitle: "Manter o status de trabalho e mostrar um ponto central azul para respostas não lidas",
 	          backgroundWorkAttentionKeepWorkingUnreadTitle: "Mostrar o status não lido em Trabalhando",
 	          backgroundWorkAttentionKeepWorkingUnreadSubtitle: "Manter as sessões em Trabalhando e mostrar o status não lido até você ler a resposta",
-	          backgroundWorkAttentionShowUnreadTitle: "Mover sessões não lidas para Precisa de atenção",
-	          backgroundWorkAttentionShowUnreadSubtitle: "Mover as sessões com respostas não lidas para Precisa de atenção enquanto o trabalho continua em segundo plano",
+	          backgroundWorkAttentionShowUnreadTitle: "Mover sessões não lidas para Precisa de você",
+	          backgroundWorkAttentionShowUnreadSubtitle: "Mover as sessões com respostas não lidas para Precisa de você enquanto o trabalho continua em segundo plano",
 	          attentionPromotionModeTitle: 'Sessões que precisam de atenção',
 	          attentionPromotionModeSubtitle: 'Escolha onde aparecem as sessões aguardando você ou prontas para revisão',
 	          attentionPromotionModeOffTitle: 'Deixar na posição normal',
@@ -12898,7 +12905,7 @@ settingsSession: {
 	          attentionPromotionModeWithinGroupsSubtitle: 'Mantenha as sessões na pasta ou workspace delas',
 	          reminderAutoClearOnOpenTitle: "Limpar lembretes ao abrir",
 	          reminderAutoClearOnOpenSubtitle: "Desative para remover manualmente os lembretes vencidos. Os futuros continuam agendados.",
-	          attentionStandingDefaultTitle: 'Manter sessões em Precisa de atenção',
+	          attentionStandingDefaultTitle: 'Manter sessões em Precisa de você',
 	          attentionStandingDefaultEnabledSubtitle: 'Cada sessão fica até você remover',
 	          attentionStandingDefaultDisabledSubtitle: 'Mantenha as sessões uma de cada vez',
 	          attentionStandingDefaultUnavailableSubtitle: 'Escolha primeiro um posicionamento em Sessões que precisam de atenção',
@@ -16831,6 +16838,7 @@ settingsSession: {
             resetStartUnavailableCount: ({ count }: { count: number }) => `Mais ${count} não podem aguardar uma redefinição aqui`,
             fitTitle: "Adequação",
             fitNoneEnded: "nenhuma janela encerrada registrada ainda",
+            fitNoneEndedOnce: "Nenhuma janela encerrada registrada ainda",
             fitUsedUp: ({ count, total }: { count: string | number; total: string | number }) => `${count} de ${total} janelas encerradas totalmente usadas`,
             fitNeverRanOut: ({ total }: { total: string | number }) => `nunca esgotou em ${total}`,
             fitRanOut: ({ count, total }: { count: string | number; total: string | number }) => `esgotou em ${count} de ${total}`,
@@ -18075,6 +18083,7 @@ settingsSession: {
   },
 
     projects: {
+        readiness: projectReadinessTranslations['pt'],
     authoring: {
       open: "Configurar com um agente",
       opening: "Preparando seu rascunho…",
@@ -18690,6 +18699,7 @@ settingsSession: {
       copy: deploymentCopyTranslations['pt'],
       overviewStatus: deploymentOverviewTranslations['pt'],
       editors: deploymentEditorsTranslations['pt'],
+      preparation: deploymentPreparationTranslations['pt'],
       settingsSections: deploymentSettingsTranslations['pt'],
         platformLink: deploymentPlatformLinkTranslations['pt'],
         promotion: deploymentPromotionTranslations['pt'],
@@ -18948,7 +18958,43 @@ settingsSession: {
       databaseStatusFailed: "Backup falhou",
       databaseGoneTitle: "Esta base já não está neste Environment",
       databaseBackToOverview: "Voltar à visão geral",
+      databaseQuery: {
+        title: "Consulta somente leitura",
+        run: "Executar consulta",
+        sql: "SQL",
+        parameters: "Parâmetros (JSON)",
+        setup: "Acesso somente leitura",
+        setupDescription: "Escolha um segredo salvo para a senha dedicada de somente leitura. A configuração abre a revisão habitual antes de alterar a função e seu vínculo com o ambiente.",
+        reviewSetup: "Revisar configuração",
+        working: "Executando…",
+        unavailable: "Consulta indisponível",
+        empty: "Nenhuma linha retornada",
+        incomplete: "Os resultados podem estar incompletos",
+        roleUnavailable: "O banco precisa de uma função dedicada de somente leitura. Revise a configuração ou peça ao proprietário para configurar as permissões do esquema.",
+        nativeParameters: "Use PostgreSQL :'name' ou MySQL/MariaDB @name. Os valores JSON são texto.",
+        password: "Senha",
+        description: ({ name }: { name: string }) => `SQL somente leitura para ${name}.`,
+        row: ({ number }: { number: number }) => `Linha ${number}`,
+      },
       databaseProviderTitle: "Fornecedor",
+      managedData: {
+        title: "Banco de dados gerenciado",
+        empty: "Nenhum provedor de banco gerenciado instalado",
+        operation: "O que você deseja fazer?",
+        unknown: "O resultado do provedor é incerto",
+        recover: "Consulte os projetos ou branches do provedor e vincule o recurso exato. Verifique a criação anterior antes de criar novamente.",
+        partial: "Algumas conexões ainda precisam ser salvas",
+        link: "Vincular este banco",
+        linked: "Banco vinculado",
+        connections: "Conexões salvas",
+        saved: "Salvo com segurança",
+        bind: "Usar estas conexões em Variáveis",
+        bound: "Conexões adicionadas a Variáveis",
+        result: "Detalhes do provedor",
+        reviewCreate: "Revisar opções de criação",
+        add: "Banco de dados gerenciado",
+        manage: "Gerenciar banco",
+      },
       restoreStepsTitle: "Passos",
       restoreStepSafety: "Guardar os dados atuais",
       restoreStepStop: "Parar a app",
@@ -19121,7 +19167,9 @@ settingsSession: {
           approvePromote: ({ version }: { version: string }) => `Promover ${version}`,
           approveRollback: ({ version }: { version: string }) => `Reverter para ${version}`,
           replacesNote: ({ revision }: { revision: string }) => `Substitui ${revision}`,
-          secretsNoteOn: ({ machine }: { machine: string }) => `Apenas nomes. Selados para ${machine} e abertos só ao iniciar uma versão.`,
+          buildPlatforms: "Plataformas de compilação",
+        emulationCost: "As compilações emuladas são mais lentas. A máquina verifica a compatibilidade ao compilar.",
+        secretsNoteOn: ({ machine }: { machine: string }) => `Apenas nomes. Selados para ${machine} e abertos só ao iniciar uma versão.`,
           secretsNote: "Apenas nomes. Os valores continuam selados e só abrem ao iniciar uma versão.",
           environment: "Ambiente",
           version: "Versão",
@@ -19741,7 +19789,7 @@ settingsSession: {
           quietTitle: 'Nada para atualizar',
           offlineTitle: 'Máquinas offline',
           offlineDescription: 'As atualizações aguardam até que cada máquina volte a ficar online.',
-          offlineMachines: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'máquina', plural: 'máquinas' })}`,
+          offlineMachines: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'outra máquina', plural: 'outras máquinas' })} nesta Home`,
         },
         offline: "Offline",
         pill: {
@@ -19991,6 +20039,7 @@ settingsSession: {
         integrityFailed: 'O Happier não conseguiu verificar esta vista do plugin. Abra as definições do plugin para reparar a instalação selecionada.',
         incompatible: 'Esta vista requer uma versão compatível do Happier ou do plugin.',
         installationConflict: 'As suas máquinas têm versões diferentes deste plugin. Escolha a máquina onde deve ser executado.',
+        localArtifactFailure: "Esta visualização do plugin falhou neste dispositivo. Tente carregá-la novamente.",
         authorFailure: 'Esta vista não iniciou porque a sua interface executável é inválida. Peça ao autor do plugin para a recompilar.',
         retired: 'Esta vista do plugin já não está ativa. Abra as definições do plugin para a ativar ou reinstalar.',
     },

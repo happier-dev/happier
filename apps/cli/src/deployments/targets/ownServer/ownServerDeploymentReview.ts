@@ -4,6 +4,7 @@ import type { NativeComposeRuntimeReview } from '@/workspaces/projectSetup/nativ
 import { projectDeploymentDowntimeClassV1, projectDeploymentReviewRevisionV1 } from '@happier-dev/deployment-protocol/v1';
 import type { DeploymentReferenceAddressV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { environmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { projectNativeComposeBuildSupport } from '@/daemon/local/services/launch/nativeComposeImagePreparation';
 
 function referenceAddressesByBinding(addresses: readonly DeploymentReferenceAddressV1[]) {
     const result = new Map<string, { reference: DeploymentReferenceAddressV1; address: string | null }>();
@@ -32,6 +33,8 @@ export function projectOwnServerDeploymentReview(input: Readonly<{
 }>): DeploymentMachineReviewV1 {
     const { environment, inputBasis, servingReceipt } = input;
     const downtime = projectDeploymentDowntimeClassV1(environment.content.ownServer?.rollout, servingReceipt !== null);
+    const buildPlatforms = (inputBasis.servicePlatforms ?? []).filter(pair => inputBasis.buildServices?.includes(pair.service))
+        .map(pair => pair.platform);
     const secretBindingNames = [...new Set(inputBasis.bindings.flatMap(binding => binding.purpose === 'variable'
         && binding.source.kind === 'secret' && (binding.phase === 'runtime' || inputBasis.buildServices?.length)
         ? [binding.name] : []))];
@@ -50,6 +53,7 @@ export function projectOwnServerDeploymentReview(input: Readonly<{
         replaces: servingReceipt ? { deploymentId: servingReceipt.deployment.id,
             revision: projectDeploymentReviewRevisionV1(servingReceipt.content.sourceIntent, servingReceipt.content.commitSubject) } : null,
         secretBindingNames,
+        ...(buildPlatforms.length ? { buildSupport: projectNativeComposeBuildSupport(buildPlatforms) } : {}),
         ...(referenceChanges.length ? { referenceChanges } : {}),
         ...(input.onFailure === undefined ? {} : { onFailure: input.onFailure }),
         ...(downtime ? { downtime } : {}),

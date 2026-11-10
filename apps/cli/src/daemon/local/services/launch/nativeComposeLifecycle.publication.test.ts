@@ -7,7 +7,7 @@ describe('admitted native registry publication', () => {
     it('publishes the same built CONFIGs and actual variants into one index per declared repository without rebuilding', async () => {
         await withBuilder(async ({ project, requests, expected }) => {
             await admitted(project, async context => {
-                const images = await project.prepareImages({ context, platforms: ['linux/amd64', 'linux/arm64'],
+                const { images } = await project.prepareImages({ context, platforms: ['linux/amd64', 'linux/arm64'],
                     build: { noCacheServices: [], secretVariableNames: ['BUILD_SECRET'] } });
                 expect(images).toHaveLength(4);
                 for (const image of images) {
@@ -44,7 +44,7 @@ describe('admitted native registry publication', () => {
         await withBuilder(async ({ project, requests }) => {
             await admitted(project, async context => {
                 const before = requests.filter(request => request.args.includes('info')).length;
-                const images = await project.prepareImages({ context, platforms: ['linux/amd64'],
+                const { images } = await project.prepareImages({ context, platforms: ['linux/amd64'],
                     build: { noCacheServices: [], secretVariableNames: ['BUILD_SECRET'] } });
                 expect(images).toHaveLength(2);
                 expect(requests.filter(request => request.args.includes('info'))).toHaveLength(before);
@@ -53,13 +53,28 @@ describe('admitted native registry publication', () => {
         }, { publication: 'engineMismatch' });
     });
 
-    it.each(['pushFailure', 'revoked', 'tamperedIndex'] as const)('does not downgrade %s publication to archives', async publication => {
+    it('finishes publication with its admitted credentials after the resource catalog changes', async () => {
+        await withBuilder(async ({ project, expected, requests }) => {
+            await admitted(project, async context => {
+                const { images } = await project.prepareImages({ context, platforms: ['linux/amd64', 'linux/arm64'],
+                    build: { noCacheServices: [], secretVariableNames: ['BUILD_SECRET'] } });
+                expect(images).toHaveLength(4);
+                for (const image of images) {
+                    expect(image.configDigest).toBe(expected.get(`${image.service}/${image.platform}`)?.configDigest);
+                    expect(image.indexDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+                    expect(image.registryReference).toContain(`registry.example.test/${image.service}@`);
+                }
+                expect(requests.some(request => request.args[2] === 'create')).toBe(true);
+            });
+        }, { publication: 'resourceChanged' });
+    });
+
+    it.each(['pushFailure', 'tamperedIndex'] as const)('does not downgrade %s publication to archives', async publication => {
         await withBuilder(async ({ project, requests }) => {
             await admitted(project, async context => {
                 await expect(project.prepareImages({ context, platforms: ['linux/amd64', 'linux/arm64'],
                     build: { noCacheServices: [], secretVariableNames: ['BUILD_SECRET'] } }))
-                    .rejects.toMatchObject(publication === 'revoked' ? { code: 'secret_missing' }
-                        : { code: 'native_failed', details: { reason: publication === 'pushFailure'
+                    .rejects.toMatchObject({ code: 'native_failed', details: { reason: publication === 'pushFailure'
                             ? 'native_compose_command_failed' : 'deployment_image_manifest_mismatch' } });
                 if (publication !== 'tamperedIndex') expect(requests.some(request => request.args[2] === 'create')).toBe(false);
                 expect(requests.some(request => request.args.includes('up'))).toBe(false);

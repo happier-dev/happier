@@ -1,9 +1,11 @@
+import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
 import { deploymentEditorsTranslations } from './deploymentEditorsTranslations';
+import { deploymentPreparationTranslations } from './deploymentPreparationTranslations';
 import { deploymentSettingsTranslations } from './deploymentSettingsTranslations';
 import { deploymentReceiptTranslations } from './deploymentReceiptTranslations';
 import { pluginPublishTranslations } from './pluginPublishTranslations';
@@ -37,6 +39,7 @@ import { mediaKeyboardTranslations } from './mediaKeyboardTranslations';
 import { quickOpenTranslations } from './quickOpenTranslations';
 import { paneMainColumnTranslations } from './paneMainColumnTranslations';
 import { paneEmptyEditorTranslations, paneShortcutsSheetTranslations } from './paneEmptyEditorTranslations';
+import { llmTaskRunnerTranslations } from './llmTaskRunnerTranslations';
 import { actionSettingsResourcesTranslations } from './actionSettingsResourcesTranslations.shared';
 import { resourceProposalTranslations } from './resourceProposalTranslations.shared';
 import { machineResourceUiTranslations } from './machineResourceUiTranslations.shared';
@@ -1343,6 +1346,7 @@ export const pl: TranslationStructure = {
     screenCapture: screenCaptureCopy.pl,
     hunkReview: hunkReviewTranslations['pl'],
     storeInstalled: storeInstalledTranslations['pl'], newApp: newAppTranslations['pl'],
+  llmTaskRunner: llmTaskRunnerTranslations['pl'],
   panes: { mainColumn: paneMainColumnTranslations['pl'], emptyEditor: paneEmptyEditorTranslations['pl'], shortcutsSheet: paneShortcutsSheetTranslations['pl'] },
   sessionCoordinator: {
     make: {
@@ -7201,6 +7205,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       agentIsolationMemberSetupOpenSecurity: "Otwórz stronę Zabezpieczenia tej maszyny, aby sprawdzić konfigurację oddzielnych użytkowników.",
       pluginCodeUnreadableAskManager: "Twoje oddzielne konto użytkownika nie ma dostępu do kodu wtyczek. Poproś administratora maszyny o skonfigurowanie oddzielnych użytkowników i ponowne uruchomienie Happier na maszynie, a następnie spróbuj ponownie.",
       pluginCodeUnreadableOpenSecurity: "Twoje oddzielne konto użytkownika nie ma dostępu do kodu wtyczek. Otwórz stronę Zabezpieczenia tej maszyny i skonfiguruj oddzielnych użytkowników, a następnie uruchom ponownie Happier na maszynie i spróbuj ponownie.",
+      requesterSessionCustodyUnavailable: "Nie udało się przywrócić dostępu osoby żądającej do tej sesji. Otwórz ją ponownie z pierwotnego konta lub poproś administratora maszyny o sprawdzenie dostępu.",
       agentIsolationUnavailable:
         "Izolacja agentów nie jest gotowa na tej maszynie. Poproś właściciela maszyny o sprawdzenie konfiguracji i spróbuj ponownie.",
       tryAgain: "Spróbuj ponownie",
@@ -9614,9 +9619,9 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     markSessionReadSubtitle: "Wyczyść nieprzeczytaną uwagę dla tej sesji",
     markSessionUnread: "Oznacz jako nieprzeczytaną",
     markSessionUnreadSubtitle: "Zostaw tę sesję na liście nieprzeczytanych",
-    keepInAttention: "Zostaw w sekcji Wymaga uwagi",
+    keepInAttention: "Zostaw w sekcji Czeka na Ciebie",
     keepInAttentionSubtitle: "Zostanie tutaj nawet po przeczytaniu",
-    removeFromAttention: "Usuń z sekcji Wymaga uwagi",
+    removeFromAttention: "Usuń z sekcji Czeka na Ciebie",
     removeFromAttentionSubtitle: "Po przeczytaniu znów zejdzie niżej na liście",
     executionRunsSubtitle: "Zobacz uruchomienia tej sesji",
     automationsTitle: "Przepływy pracy",
@@ -9864,6 +9869,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       coderabbit: 'CodeRabbit',
       deepsec: 'DeepSec',
       unselected: "Wybierz agenta",
+      sameAsSession: "Tak jak sesja",
+      sameAsParent: "Tak jak sesja nadrzędna",
       noLongerAvailableOn: ({ machine }: { machine: string }) => `Niedostępne już na ${machine} · Wybierz inne`,
       noLongerAvailable: 'Już niedostępne · Wybierz inne',
       claude: "Claude",
@@ -12598,8 +12605,8 @@ settingsSession: {
 	          backgroundWorkAttentionKeepWorkingSubtitle: "Zachowaj status pracy i pokaż niebieską kropkę na środku dla nieprzeczytanych odpowiedzi",
 	          backgroundWorkAttentionKeepWorkingUnreadTitle: "Pokaż status nieprzeczytanej odpowiedzi w sekcji Pracuje",
 	          backgroundWorkAttentionKeepWorkingUnreadSubtitle: "Pozostaw sesje w sekcji „Pracuje” i pokazuj status nieprzeczytanej odpowiedzi, dopóki jej nie przeczytasz",
-	          backgroundWorkAttentionShowUnreadTitle: "Przenieś sesje z nieprzeczytanymi odpowiedziami do sekcji Wymaga uwagi",
-	          backgroundWorkAttentionShowUnreadSubtitle: "Przenieś sesje z nieprzeczytanymi odpowiedziami do sekcji Wymaga uwagi, gdy praca w tle trwa nadal",
+	          backgroundWorkAttentionShowUnreadTitle: "Przenieś sesje z nieprzeczytanymi odpowiedziami do sekcji Czeka na Ciebie",
+	          backgroundWorkAttentionShowUnreadSubtitle: "Przenieś sesje z nieprzeczytanymi odpowiedziami do sekcji Czeka na Ciebie, gdy praca w tle trwa nadal",
 	          attentionPromotionModeTitle: 'Sesje wymagające uwagi',
 	          attentionPromotionModeSubtitle: 'Wybierz, gdzie pojawiają się sesje czekające na Ciebie lub gotowe do przeglądu',
 	          attentionPromotionModeOffTitle: 'Zostaw w zwykłym miejscu',
@@ -12610,7 +12617,7 @@ settingsSession: {
 	          attentionPromotionModeWithinGroupsSubtitle: 'Zachowaj sesje w ich folderze lub obszarze roboczym',
 	          reminderAutoClearOnOpenTitle: "Usuwaj przypomnienia po otwarciu",
 	          reminderAutoClearOnOpenSubtitle: "Wyłącz, aby ręcznie usuwać przypomnienia, których termin minął. Przyszłe pozostają zaplanowane.",
-	          attentionStandingDefaultTitle: 'Zatrzymuj sesje w sekcji Wymaga uwagi',
+	          attentionStandingDefaultTitle: 'Zatrzymuj sesje w sekcji Czeka na Ciebie',
 	          attentionStandingDefaultEnabledSubtitle: 'Każda sesja zostaje, dopóki jej nie usuniesz',
 	          attentionStandingDefaultDisabledSubtitle: 'Zatrzymuj sesje pojedynczo',
 	          attentionStandingDefaultUnavailableSubtitle: 'Najpierw wybierz umiejscowienie w Sesje wymagające uwagi',
@@ -16995,6 +17002,7 @@ settingsSession: {
       resetStartUnavailableCount: ({ count }: { count: number }) => `Jeszcze ${count} nie można tu wstrzymać do resetu`,
       fitTitle: "Dopasowanie",
       fitNoneEnded: "nie zapisano jeszcze zakończonego okna",
+      fitNoneEndedOnce: "Nie zapisano jeszcze zakończonego okna",
       fitUsedUp: ({ count, total }: { count: string | number; total: string | number }) => `${count} z ${total} zakończonych okien w pełni wykorzystanych`,
       fitNeverRanOut: ({ total }: { total: string | number }) => `limit nigdy nie został wyczerpany · liczba odnowień: ${total}`,
       fitRanOut: ({ count, total }: { count: string | number; total: string | number }) => `limit wyczerpany w ${count} z ${total} odnowień`,
@@ -17794,6 +17802,7 @@ settingsSession: {
   },
 
     projects: {
+        readiness: projectReadinessTranslations['pl'],
     authoring: {
       open: "Skonfiguruj z agentem",
       opening: "Przygotowywanie szkicu…",
@@ -18409,6 +18418,7 @@ settingsSession: {
       copy: deploymentCopyTranslations['pl'],
       overviewStatus: deploymentOverviewTranslations['pl'],
       editors: deploymentEditorsTranslations['pl'],
+      preparation: deploymentPreparationTranslations['pl'],
       settingsSections: deploymentSettingsTranslations['pl'],
         platformLink: deploymentPlatformLinkTranslations['pl'],
         promotion: deploymentPromotionTranslations['pl'],
@@ -18667,7 +18677,43 @@ settingsSession: {
       databaseStatusFailed: "Kopia nieudana",
       databaseGoneTitle: "Tej bazy nie ma już w tym Environment",
       databaseBackToOverview: "Wróć do przeglądu",
+      databaseQuery: {
+        title: "Zapytanie tylko do odczytu",
+        run: "Uruchom zapytanie",
+        sql: "SQL",
+        parameters: "Parametry (JSON)",
+        setup: "Dostęp tylko do odczytu",
+        setupDescription: "Wybierz zapisany sekret z osobnym hasłem tylko do odczytu. Konfiguracja otwiera zwykły przegląd przed zmianą roli i powiązania ze środowiskiem.",
+        reviewSetup: "Sprawdź konfigurację",
+        working: "Wykonywanie…",
+        unavailable: "Zapytanie niedostępne",
+        empty: "Nie zwrócono wierszy",
+        incomplete: "Wyniki mogą być niepełne",
+        roleUnavailable: "Baza wymaga osobnej roli tylko do odczytu. Sprawdź konfigurację lub poproś właściciela o skonfigurowanie uprawnień schematu.",
+        nativeParameters: "Użyj PostgreSQL :'name' lub MySQL/MariaDB @name. Wartości JSON są tekstem.",
+        password: "Hasło",
+        description: ({ name }: { name: string }) => `SQL tylko do odczytu dla ${name}.`,
+        row: ({ number }: { number: number }) => `Wiersz ${number}`,
+      },
       databaseProviderTitle: "Dostawca",
+      managedData: {
+        title: "Zarządzana baza danych",
+        empty: "Nie zainstalowano dostawcy zarządzanej bazy",
+        operation: "Co chcesz zrobić?",
+        unknown: "Wynik dostawcy jest niepewny",
+        recover: "Sprawdź projekty lub gałęzie dostawcy i połącz dokładny zasób. Zweryfikuj poprzednie tworzenie przed ponownym utworzeniem.",
+        partial: "Niektóre połączenia wymagają jeszcze zapisania",
+        link: "Połącz tę bazę",
+        linked: "Baza połączona",
+        connections: "Zapisane połączenia",
+        saved: "Zapisano bezpiecznie",
+        bind: "Użyj tych połączeń w Zmiennych",
+        bound: "Połączenia dodano do Zmiennych",
+        result: "Szczegóły dostawcy",
+        reviewCreate: "Sprawdź opcje tworzenia",
+        add: "Zarządzana baza danych",
+        manage: "Zarządzaj bazą",
+      },
       restoreStepsTitle: "Kroki",
       restoreStepSafety: "Zapisz bieżące dane",
       restoreStepStop: "Zatrzymaj aplikację",
@@ -18840,7 +18886,9 @@ settingsSession: {
           approvePromote: ({ version }: { version: string }) => `Promuj ${version}`,
           approveRollback: ({ version }: { version: string }) => `Przywróć ${version}`,
           replacesNote: ({ revision }: { revision: string }) => `Zastępuje ${revision}`,
-          secretsNoteOn: ({ machine }: { machine: string }) => `Tylko nazwy. Zapieczętowane dla ${machine} i otwierane tylko przy starcie wydania.`,
+          buildPlatforms: "Platformy kompilacji",
+        emulationCost: "Emulowane kompilacje są wolniejsze. Maszyna sprawdza obsługę podczas kompilacji.",
+        secretsNoteOn: ({ machine }: { machine: string }) => `Tylko nazwy. Zapieczętowane dla ${machine} i otwierane tylko przy starcie wydania.`,
           secretsNote: "Tylko nazwy. Wartości pozostają zapieczętowane i otwierane są tylko przy starcie wydania.",
           environment: "Środowisko",
           version: "Wersja",
@@ -19460,7 +19508,7 @@ settingsSession: {
           quietTitle: 'Nic do aktualizacji',
           offlineTitle: 'Maszyny offline',
           offlineDescription: 'Aktualizacje czekają, aż każda maszyna wróci online.',
-          offlineMachines: ({ count }: { count: number }) => `${count} ${plural({ count, one: 'maszyna', few: 'maszyny', many: 'maszyn' })}`,
+          offlineMachines: ({ count }: { count: number }) => `${count} ${plural({ count, one: 'inna maszyna', few: 'inne maszyny', many: 'innych maszyn' })} w tym Home`,
         },
         offline: "Offline",
         pill: {
@@ -19710,6 +19758,7 @@ settingsSession: {
         integrityFailed: 'Happier nie mógł zweryfikować tego widoku wtyczki. Otwórz ustawienia wtyczki, aby naprawić wybraną instalację.',
         incompatible: 'Ten widok wymaga zgodnej wersji Happier lub wtyczki.',
         installationConflict: 'Twoje maszyny mają różne wersje tej wtyczki. Wybierz maszynę, na której ma działać.',
+        localArtifactFailure: "Widok wtyczki nie zadziałał na tym urządzeniu. Spróbuj wczytać go ponownie.",
         authorFailure: 'Nie udało się uruchomić tego widoku, ponieważ jego wykonywalny interfejs jest nieprawidłowy. Poproś autora wtyczki o ponowne zbudowanie.',
         retired: 'Ten widok wtyczki nie jest już aktywny. Otwórz ustawienia wtyczki, aby go włączyć lub ponownie zainstalować.',
     },

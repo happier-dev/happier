@@ -40,6 +40,21 @@ const machineReview = {
 };
 
 describe('DeploymentReviewApprovalFacts', () => {
+  it.each([false, true])('shows required build platforms and the emulation cost without claiming an observed execution mode (controller: %s)', async controller => {
+    const review = { ...machineReview,
+      buildSupport: { status: 'notObserved' as const, requestedPlatforms: ['linux/amd64', 'linux/arm64'] } };
+    const screen = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={{ review: controller ? { ...machineReview,
+        runtimeMachines: ['linux/amd64', 'linux/arm64'].map((platform, index) => ({ machineId: `runtime-${index}`,
+          review: { ...review, buildSupport: { status: 'notObserved' as const, requestedPlatforms: [platform] } } })) } : review,
+        promotion: null }}
+        serverId={getActiveServerSnapshot().serverId} testID="build-facts" />,
+    );
+    const text = screen.getTextContent();
+    expect(text).toContain('linux/amd64, linux/arm64');
+    expect(text).toContain('projects.deployments.review.buildPlatforms');
+    expect(text).toContain('projects.deployments.review.emulationCost');
+  });
   it.each([false, true])('shows changed reference names and phases from the host review (controller: %s)', async controller => {
     const review = { ...machineReview, risks: [], referenceChanges: [
       { name: 'DATABASE_URL', phase: 'runtime' as const },

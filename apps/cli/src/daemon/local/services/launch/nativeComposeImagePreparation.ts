@@ -1,7 +1,7 @@
 import { readFile, realpath, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import type { DeploymentImageV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBuildSupportV1, DeploymentImageV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
 import { isDeploymentSourceUnchangedManifestInput } from '@/deployments/targets/ownServer/exactCommitRelease';
 import { createNativeComposeImageIdentity, resolveNativeComposeDeploymentOwnedImageTag, normalizeNativeComposePlatform,
@@ -24,6 +24,12 @@ export type NativeComposePrepareImagesOptions = NativeComposeBuildSelection & Re
     authority?: NativeComposeEffectAuthority;
 }>;
 
+export type NativeComposePreparedImages = Readonly<{
+    images: readonly DeploymentImageV1[];
+    /** Present only for source builds; prebuilt acquisition establishes no engine build support. */
+    buildSupport?: DeploymentBuildSupportV1;
+}>;
+
 export type NativeComposeBuildDescription = Readonly<{
     services: readonly string[];
     buildServices: readonly string[];
@@ -32,6 +38,29 @@ export type NativeComposeBuildDescription = Readonly<{
     basis: Readonly<{ manifestFingerprint: string; configInputDigests: readonly Readonly<{ path: string; digest: string }>[];
         toolVersion: string; physicalProjectName: string }>;
 }>;
+
+/** The native process boundary retains only a closed cause, never Bake's private output. */
+export class NativeComposeBakeFailure extends Error {
+    readonly observedCause: Extract<DeploymentBuildSupportV1, { status: 'failed' }>['cause'];
+    constructor(readonly exitCode: number, stderr: string, readonly effectAttempted?: true) {
+        super('Native image build failed');
+        // BuildKit's explicit execution-platform refusal is distinct from an app's
+        // malformed executable, which can also produce an exec-format error.
+        this.observedCause = /no support for running processes with [^\r\n]+ platform,\s*supported:/iu.test(stderr)
+            ? 'runtime_platform_unsupported' : /exec format error/iu.test(stderr) ? 'execution_format_error' : 'build_failed';
+    }
+}
+
+/** A review declares requirements; only actual native preparation establishes built platforms or a failure. */
+export function projectNativeComposeBuildSupport(platforms: readonly string[],
+    observation?: Readonly<{ builtPlatforms: readonly string[]; failure?: NativeComposeBakeFailure }>): DeploymentBuildSupportV1 {
+    const requestedPlatforms = [...new Set(platforms.map(normalizeNativeComposePlatform))];
+    if (!observation) return { status: 'notObserved', requestedPlatforms };
+    const builtPlatforms = [...new Set(observation.builtPlatforms.map(normalizeNativeComposePlatform))];
+    return observation.failure ? { status: 'failed', requestedPlatforms, builtPlatforms,
+        cause: observation.failure.observedCause, exitCode: observation.failure.exitCode }
+        : { status: 'built', requestedPlatforms, builtPlatforms };
+}
 
 function record(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -258,7 +287,7 @@ export function createNativeComposeImagePreparation(input: Readonly<{
                 buildServices: builds.map(({ service }) => service), buildSecretVariables: variables, basis: {
                     manifestFingerprint: input.source.manifestFingerprint, configInputDigests, toolVersion, physicalProjectName: input.projectName } };
         },
-        async prepareImages(options?: NativeComposePrepareImagesOptions): Promise<readonly DeploymentImageV1[]> {
+        async prepareImages(options?: NativeComposePrepareImagesOptions): Promise<NativeComposePreparedImages> {
             const signal = options?.signal;
             if (options?.build && !options.planOnly && (input.phase !== 'build' || !input.executionDirectory)) return refuse('deployment_build_phase_required');
             const { model } = await input.normalize(signal);
@@ -270,11 +299,14 @@ export function createNativeComposeImagePreparation(input: Readonly<{
             }
             const selectedBuilds = options?.planOnly ? [] : builds;
             const prebuilt = services.filter(({ definition }) => definition.build === undefined);
-            if (!selectedBuilds.length && !prebuilt.length) return [];
+            if (!selectedBuilds.length && !prebuilt.length) return { images: [] };
             // Before runtime review, discover one actual source variant, not a
             // variant inferred from the controller/build machine's platform.
             const platforms = options?.planOnly ? []
                 : await selectedPlatforms(options?.servicePlatforms?.map(item => item.platform) ?? options?.platforms, signal);
+            const requestedBuildPlatforms = platforms.filter(platform => selectedBuilds.some(item =>
+                needsPlatform(item.service, platform, options?.servicePlatforms)));
+            const builtPlatforms: string[] = [];
             const images: DeploymentImageV1[] = [];
             let localSourceReferences: ReadonlyMap<string, string> | undefined;
             const localSourceReference = async (service: string) => {
@@ -396,11 +428,23 @@ export function createNativeComposeImagePreparation(input: Readonly<{
                         ...built.flatMap(target => options.build!.noCacheServices.includes(target.service)
                             ? ['--set', `${target.target}.no-cache=true`] : []),
                         ...selections.map(selection => selection.target)];
-                    await input.run(args, signal, true, undefined, options.authority);
+                    try { await input.run(args, signal, true, undefined, options.authority); }
+                    catch (error) {
+                        if (!(error instanceof NativeComposeBakeFailure)) throw error;
+                        const buildSupport = projectNativeComposeBuildSupport(requestedBuildPlatforms, { builtPlatforms, failure: error });
+                        const code = error.observedCause === 'runtime_platform_unsupported' ? 'build_platform_unsupported' : 'native_build_failed';
+                        const failureCause = { phase: `deployment.native.build.${error.observedCause}`, errorClass: 'Error',
+                            errorCode: code, httpStatus: null };
+                        throw new PluginError({ code, message: 'The build Machine could not build the requested image platform',
+                            details: { buildSupport }, failureCause }, { cause: { ok: false, errorCode: code, error: code,
+                            details: { buildSupport }, failureCause,
+                            ...(error.effectAttempted ? { effectAttempted: true } : {}) } });
+                    }
                     const metadata: unknown = JSON.parse(await readFile(metadataPath, 'utf8'));
                     if (!record(metadata)) return refuse('deployment_image_identity_unavailable');
                     for (const output of outputs) images.push(await identity.resolveBuildArchive({ service: output.service, platform,
                         archivePath: output.path, metadata: metadata[output.target] }));
+                    builtPlatforms.push(platform);
                 }
             }
             const published = await publishNativeComposeImages({ phase: input.phase, source: input.source, model, images,
@@ -410,7 +454,9 @@ export function createNativeComposeImagePreparation(input: Readonly<{
             images.splice(0, images.length, ...published);
             await input.assertCurrent(signal);
             for (const image of images) prepared.add(imageKey(image));
-            return images;
+            return { images, ...(selectedBuilds.length ? {
+                buildSupport: projectNativeComposeBuildSupport(requestedBuildPlatforms, { builtPlatforms }),
+            } : {}) };
         },
         async exportImages(request: Readonly<{ images: readonly DeploymentImageV1[]; signal?: AbortSignal;
             authority?: NativeComposeEffectAuthority }>): Promise<readonly NativeComposeImageArchive[]> {

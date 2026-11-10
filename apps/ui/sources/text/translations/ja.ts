@@ -1,9 +1,11 @@
+import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
 import { deploymentEditorsTranslations } from './deploymentEditorsTranslations';
+import { deploymentPreparationTranslations } from './deploymentPreparationTranslations';
 import { deploymentSettingsTranslations } from './deploymentSettingsTranslations';
 import { deploymentReceiptTranslations } from './deploymentReceiptTranslations';
 import { pluginPublishTranslations } from './pluginPublishTranslations';
@@ -37,6 +39,7 @@ import { mediaKeyboardTranslations } from './mediaKeyboardTranslations';
 import { quickOpenTranslations } from './quickOpenTranslations';
 import { paneMainColumnTranslations } from './paneMainColumnTranslations';
 import { paneEmptyEditorTranslations, paneShortcutsSheetTranslations } from './paneEmptyEditorTranslations';
+import { llmTaskRunnerTranslations } from './llmTaskRunnerTranslations';
 import { actionSettingsResourcesTranslations } from './actionSettingsResourcesTranslations.shared';
 import { resourceProposalTranslations } from './resourceProposalTranslations.shared';
 import { machineResourceUiTranslations } from './machineResourceUiTranslations.shared';
@@ -1314,6 +1317,7 @@ export const ja: TranslationStructure = {
     screenCapture: screenCaptureCopy.ja,
     hunkReview: hunkReviewTranslations['ja'],
     storeInstalled: storeInstalledTranslations['ja'], newApp: newAppTranslations['ja'],
+  llmTaskRunner: llmTaskRunnerTranslations['ja'],
   panes: { mainColumn: paneMainColumnTranslations['ja'], emptyEditor: paneEmptyEditorTranslations['ja'], shortcutsSheet: paneShortcutsSheetTranslations['ja'] },
   sessionCoordinator: {
     make: {
@@ -7667,6 +7671,7 @@ localTailscale: {
       agentIsolationMemberSetupOpenSecurity: "このマシンの「セキュリティ」ページを開き、個別ユーザーの設定を確認してください。",
       pluginCodeUnreadableAskManager: "個別ユーザーからプラグインのコードにアクセスできません。マシンの管理者に個別ユーザーの設定とマシン上の Happier の再起動を依頼してから、もう一度お試しください。",
       pluginCodeUnreadableOpenSecurity: "個別ユーザーからプラグインのコードにアクセスできません。このマシンの「セキュリティ」ページで個別ユーザーを設定し、マシン上の Happier を再起動してから、もう一度お試しください。",
+      requesterSessionCustodyUnavailable: "このセッションの要求者のアクセスを復元できませんでした。元のアカウントから開き直すか、マシンの管理者にアクセスの確認を依頼してください。",
       agentIsolationUnavailable:
         "このマシンではエージェントの分離の準備ができていません。マシンの所有者に設定の確認を依頼してから、もう一度お試しください。",
       tryAgain: "再試行してください",
@@ -10087,9 +10092,9 @@ localTailscale: {
     markSessionReadSubtitle: "このセッションの未読表示を解除",
     markSessionUnread: "未読にする",
     markSessionUnreadSubtitle: "このセッションを未読リストに残します",
-    keepInAttention: "「確認が必要」に残す",
+    keepInAttention: "「対応待ち」に残す",
     keepInAttentionSubtitle: "既読にしてもここに残ります",
-    removeFromAttention: "「確認が必要」から外す",
+    removeFromAttention: "「対応待ち」から外す",
     removeFromAttentionSubtitle: "既読になったらリストの下に戻します",
     executionRunsSubtitle: "このセッションの実行を表示",
     automationsTitle: "ワークフロー",
@@ -10332,6 +10337,8 @@ localTailscale: {
     agent: {
       sectionTitle: "エージェント",
       unselected: "エージェントを選択",
+      sameAsSession: "セッションと同じ",
+      sameAsParent: "親セッションと同じ",
       noLongerAvailableOn: ({ machine }: { machine: string }) => `${machine} では利用できなくなりました · 別のものを選択`,
       noLongerAvailable: '利用できなくなりました · 別のものを選択',
       claude: "Claude",
@@ -13066,8 +13073,8 @@ settingsSession: {
 	        backgroundWorkAttentionKeepWorkingSubtitle: "処理中のステータスを維持し、未読返信があるときは中央に青い点を表示します",
 	        backgroundWorkAttentionKeepWorkingUnreadTitle: "「処理中」で未読ステータスを表示",
 	        backgroundWorkAttentionKeepWorkingUnreadSubtitle: "セッションを「処理中」に残し、返信を読むまで未読ステータスを表示します",
-	        backgroundWorkAttentionShowUnreadTitle: "未読セッションを「確認が必要」に移動",
-	        backgroundWorkAttentionShowUnreadSubtitle: "バックグラウンド処理中でも、未読返信のあるセッションを「確認が必要」に移動します",
+	        backgroundWorkAttentionShowUnreadTitle: "未読セッションを「対応待ち」に移動",
+	        backgroundWorkAttentionShowUnreadSubtitle: "バックグラウンド処理中でも、未読返信のあるセッションを「対応待ち」に移動します",
 	        attentionPromotionModeTitle: '確認が必要なセッション',
 	        attentionPromotionModeSubtitle: '対応待ちまたはレビュー準備完了のセッションを表示する場所を選択します',
 	        attentionPromotionModeOffTitle: '通常の位置のまま',
@@ -13078,7 +13085,7 @@ settingsSession: {
 	        attentionPromotionModeWithinGroupsSubtitle: 'フォルダーまたはワークスペース内に維持します',
 	        reminderAutoClearOnOpenTitle: "開いたときにリマインダーを解除",
 	        reminderAutoClearOnOpenSubtitle: "オフにすると期限を迎えたリマインダーを手動で解除します。今後のリマインダーは予約されたままです。",
-	        attentionStandingDefaultTitle: 'セッションを「確認が必要」に残す',
+	        attentionStandingDefaultTitle: 'セッションを「対応待ち」に残す',
 	        attentionStandingDefaultEnabledSubtitle: 'すべてのセッションが、外すまでここに残ります',
 	        attentionStandingDefaultDisabledSubtitle: 'セッションを1件ずつ残す',
 	        attentionStandingDefaultUnavailableSubtitle: 'まず「確認が必要なセッション」で表示位置を選んでください',
@@ -17001,6 +17008,7 @@ settingsSession: {
             resetStartUnavailableCount: ({ count }: { count: number }) => `ほかの ${count} 件はここではリセットまで保留できません`,
             fitTitle: "適合度",
             fitNoneEnded: "終了したウィンドウの記録がまだありません",
+            fitNoneEndedOnce: "終了したウィンドウの記録がまだありません",
             fitUsedUp: ({ total, count }: { total: string | number; count: string | number }) => `終了した ${total} 件中 ${count} 件を使い切り`,
             fitNeverRanOut: ({ total }: { total: string | number }) => `${total} 回中一度も使い切っていません`,
             fitRanOut: ({ count, total }: { count: string | number; total: string | number }) => `${total} 回中 ${count} 回使い切りました`,
@@ -17881,6 +17889,7 @@ settingsSession: {
   },
 
     projects: {
+        readiness: projectReadinessTranslations['ja'],
     authoring: {
       open: "エージェントでセットアップ",
       opening: "下書きを準備しています…",
@@ -18498,6 +18507,7 @@ settingsSession: {
       copy: deploymentCopyTranslations['ja'],
       overviewStatus: deploymentOverviewTranslations['ja'],
       editors: deploymentEditorsTranslations['ja'],
+      preparation: deploymentPreparationTranslations['ja'],
       settingsSections: deploymentSettingsTranslations['ja'],
         platformLink: deploymentPlatformLinkTranslations['ja'],
         promotion: deploymentPromotionTranslations['ja'],
@@ -18756,7 +18766,43 @@ settingsSession: {
       databaseStatusFailed: "バックアップ失敗",
       databaseGoneTitle: "このデータベースはもうこの Environment にありません",
       databaseBackToOverview: "概要に戻る",
+      databaseQuery: {
+        title: "読み取り専用クエリ",
+        run: "クエリを実行",
+        sql: "SQL",
+        parameters: "パラメーター (JSON)",
+        setup: "読み取り専用アクセス",
+        setupDescription: "読み取り専用の専用パスワードに使う保存済みシークレットを選択します。データベースのロールと環境へのバインドを変更する前に通常のレビューが開きます。",
+        reviewSetup: "設定をレビュー",
+        working: "実行中…",
+        unavailable: "クエリを利用できません",
+        empty: "行が返されませんでした",
+        incomplete: "結果が不完全な可能性があります",
+        roleUnavailable: "データベースには読み取り専用ロールが必要です。設定をレビューするか、所有者にスキーマ権限の設定を依頼してください。",
+        nativeParameters: "PostgreSQL :'name' または MySQL/MariaDB @name を使用します。JSON 値は文字列です。",
+        password: "パスワード",
+        description: ({ name }: { name: string }) => `${name} の読み取り専用 SQL。`,
+        row: ({ number }: { number: number }) => `行 ${number}`,
+      },
       databaseProviderTitle: "プロバイダー",
+      managedData: {
+        title: "マネージドデータベース",
+        empty: "マネージドデータベースのプロバイダーがインストールされていません",
+        operation: "何をしますか？",
+        unknown: "プロバイダーでの結果が不明です",
+        recover: "プロバイダーのプロジェクトやブランチを確認し、正確なリソースをリンクしてください。再作成する前に前回の結果を確認してください。",
+        partial: "一部の接続はまだ保存が必要です",
+        link: "このデータベースをリンク",
+        linked: "データベースをリンクしました",
+        connections: "保存済みの接続",
+        saved: "安全に保存済み",
+        bind: "この接続を変数で使用",
+        bound: "接続を変数に追加しました",
+        result: "プロバイダーの詳細",
+        reviewCreate: "作成オプションを確認",
+        add: "マネージドデータベース",
+        manage: "データベースを管理",
+      },
       restoreStepsTitle: "手順",
       restoreStepSafety: "現在のデータを保存",
       restoreStepStop: "アプリを停止",
@@ -18929,7 +18975,9 @@ settingsSession: {
           approvePromote: ({ version }: { version: string }) => `${version} を昇格`,
           approveRollback: ({ version }: { version: string }) => `${version} にロールバック`,
           replacesNote: ({ revision }: { revision: string }) => `${revision} を置き換え`,
-          secretsNoteOn: ({ machine }: { machine: string }) => `名前のみ。${machine} 用に封印され、リリース開始時にのみ開かれます。`,
+          buildPlatforms: "ビルドプラットフォーム",
+        emulationCost: "エミュレーションによるビルドは遅くなります。ビルド時にマシンが対応状況を確認します。",
+        secretsNoteOn: ({ machine }: { machine: string }) => `名前のみ。${machine} 用に封印され、リリース開始時にのみ開かれます。`,
           secretsNote: "名前のみ。値は封印されたままで、リリース開始時にのみ開かれます。",
           environment: "環境",
           version: "バージョン",
@@ -19545,7 +19593,7 @@ settingsSession: {
           quietTitle: '更新するものはありません',
           offlineTitle: 'オフラインのマシン',
           offlineDescription: '各マシンがオンラインに戻るまで、更新は待機します。',
-          offlineMachines: ({ count }: { count: number }) => `${count}台のマシン`,
+          offlineMachines: ({ count }: { count: number }) => `このHomeのほかのマシン ${count} 台`,
         },
         offline: "オフライン",
         pill: {
@@ -19795,6 +19843,7 @@ settingsSession: {
         integrityFailed: 'Happier はこのプラグインビューを検証できませんでした。プラグイン設定を開き、選択したインストールを修復してください。',
         incompatible: 'このビューには、互換性のある Happier またはプラグインのバージョンが必要です。',
         installationConflict: 'マシンごとにこのプラグインのバージョンが異なります。実行するマシンを選んでください。',
+        localArtifactFailure: "このデバイスでプラグインのビューに問題が発生しました。もう一度読み込んでください。",
         authorFailure: '実行可能な UI が無効なため、このビューを開始できませんでした。プラグインの作者に再ビルドを依頼してください。',
         retired: 'このプラグインビューは現在無効です。プラグイン設定を開いて有効化または再インストールしてください。',
     },

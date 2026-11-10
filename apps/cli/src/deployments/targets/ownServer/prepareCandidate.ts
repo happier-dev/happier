@@ -15,6 +15,7 @@ export const DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE = DEFAULT_DEPLOYMENT_ON_FA
 export async function prepareOwnServerDeploymentCandidate(input: Readonly<{
     environment: DeploymentEnvironmentDetailV1; targetLinkId: string; machineId: string;
     sourceIntent?: DeploymentSourceIntentV1;
+    services?: string[];
     sha?: string;
     onFailure?: DeploymentOwnServerContentV1['onFailure'];
     stageContent(sourceIntent: DeploymentSourceIntentV1): Promise<string>;
@@ -49,15 +50,16 @@ export async function prepareOwnServerDeploymentCandidate(input: Readonly<{
             const compose = intent.kind === 'repository' ? intent.compose : { ...intent, path: 'compose.yaml' };
             const project = createNativeComposeLifecycle({ kind: 'environmentProject', phase: 'build', exec: runtime.exec, envPort, source,
                 ...(runtime.buildExecutionDirectory ? { executionDirectory: runtime.buildExecutionDirectory } : {}),
-                files: [compose.path], profiles: compose.profiles, services: compose.services, sourceKind: intent.kind,
+                files: [compose.path], profiles: compose.profiles, services: input.services ?? compose.services, sourceKind: intent.kind,
                 images: [], imageAcquisition: createOwnServerNativeImageAcquisition({ runtime, source,
                     environment: environment.content, targetLinkId: link.id, operation: 'deploy', signal,
                     assertCurrent: runtime.assertCurrent }), storage: { runtimeMachineCount: link.machines.length },
                 io: runtime.nativeIo, settleNative: runtime.settleNative });
             try {
-                const images = await project.prepareImages({ planOnly: true, signal });
+                const { images } = await project.prepareImages({ planOnly: true, signal });
                 await runtime.assertCurrent();
                 return DeploymentOwnServerContentV1Schema.parse({ sourceIntent: intent, machines: link.machines,
+                    ...(input.services ? { services: input.services } : {}),
                     buildMachineId: environment.environment.buildMachineId,
                     ...(environment.content.ingress ? { ingress: environment.content.ingress } : {}),
                     onFailure: input.onFailure ?? DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE, images, machineResults: input.machineResults ?? [], steps: [] });

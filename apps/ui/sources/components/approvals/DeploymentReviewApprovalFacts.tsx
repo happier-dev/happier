@@ -213,6 +213,7 @@ function describeReviewFields(
   const valueNameOf = (id: string | null) => (id ? names[id] ?? t('approvals.machineNotKnown') : null);
   const multiple = machines.length > 1;
   const soleMachine = soleMachineName(machines, names);
+  const buildPlatforms = [...new Set(machines.flatMap(machine => machine.review.buildSupport?.requestedPlatforms ?? []))];
   const rows = [
     // The page's title already names the environment whenever it names the version (`useDeploymentReviewDecision`).
     ...field('environment', t('projects.deployments.review.environment'), revision ? null : environment?.name),
@@ -228,6 +229,9 @@ function describeReviewFields(
     ...field('secrets', t('projects.deployments.review.secrets'), secretBindingNames?.length ? secretBindingNames.join(', ') : null, {
       names: secretBindingNames,
       note: soleMachine ? t('projects.deployments.review.secretsNoteOn', { machine: soleMachine }) : t('projects.deployments.review.secretsNote'),
+    }),
+    ...field('buildPlatforms', t('projects.deployments.review.buildPlatforms'), buildPlatforms.join(', '), {
+      note: t('projects.deployments.review.emulationCost'),
     }),
     ...machines.flatMap((machine, index) => [
       ...(() => {

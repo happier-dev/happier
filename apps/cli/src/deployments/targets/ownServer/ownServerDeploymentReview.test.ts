@@ -1,9 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { projectOwnServerDeploymentReview } from './ownServerDeploymentReview';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentMachineReviewV1Schema, OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-protocol/v1';
 
 describe('own-server deployment review reference changes', () => {
+    it('reviews requested build platforms without claiming that a different CPU means emulation', () => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        const receipt = createDeploymentReceiptDetailV1();
+        const link = environment.targetLinks[0]!.targetLink;
+        const inputBasis = OwnServerDeploymentInputBasisV1Schema.parse({ v: 1,
+            environmentId: environment.environment.id, environmentRevision: environment.environment.revision,
+            targetLinkId: link.id, targetLinkRevision: link.revision, sourceIntent: receipt.content.sourceIntent,
+            members: link.members.map(({ machineId, installationId }) => ({ machineId, installationId })),
+            bindings: [], images: [], manifestFingerprint: 'review-fixture', configInputDigests: [],
+            physicalProjectName: 'review-fixture', toolVersion: '2.39.4', services: ['app'], profiles: [],
+            buildServices: ['app'], servicePlatforms: [{ service: 'app', platform: 'linux/arm64/v8' }] });
+        const input = { machineId: 'runtime-a', environment, inputBasis, servingReceipt: null,
+            nativeReview: { inspection: 'complete' as const, services: [], risks: [] },
+            target: { engine: 'native' as const, requiresAwakeComputerAndDockerDesktop: false, domains: 'notDetermined' as const } };
+        const reviewed = DeploymentMachineReviewV1Schema.parse(projectOwnServerDeploymentReview(input));
+        expect(reviewed).toHaveProperty('buildSupport', { status: 'notObserved', requestedPlatforms: ['linux/arm64'] });
+        expect(projectOwnServerDeploymentReview({ ...input, inputBasis: { ...inputBasis, buildServices: [] } }))
+            .not.toHaveProperty('buildSupport');
+    });
     it('compares the rendered reference with the exact serving launch and leaves absent evidence unknown', () => {
         const environment = createDeploymentEnvironmentDetailV1();
         const receipt = createDeploymentReceiptDetailV1();

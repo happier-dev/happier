@@ -181,7 +181,7 @@ export async function withNativeDependencyBuildReceipt(run: (content: Deployment
         const root = await mkdtemp(join(tmpdir(), 'happier-build-dependency-receipt-'));
         try {
             await withNativeComposeBuildAdmission(project, async context => {
-                const images = await project.prepareImages({ context, platforms: ['linux/amd64'], ...selection,
+                const { images } = await project.prepareImages({ context, platforms: ['linux/amd64'], ...selection,
                     build: { noCacheServices: ['base'], secretVariableNames: ['BUILD_SECRET'] } });
                 const archives = await project.exportImages({ images, context });
                 const imageArchives = options?.publication ? [] : await adoptOwnServerImageArchives({ archives, serverId: 'home',

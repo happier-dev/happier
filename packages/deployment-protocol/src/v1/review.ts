@@ -1,9 +1,8 @@
 import { z } from 'zod/mini';
-import { DeploymentIngressV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
 import { ScmCommitOidSchema } from '@happier-dev/protocol/scm/commitPublication';
 import { DeploymentReviewServiceV1Schema } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
-import { DeploymentOnFailureV1Schema, EnvironmentVariableBindingV1Schema, type DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentIngressV1Schema, DeploymentOnFailureV1Schema, EnvironmentVariableBindingV1Schema, type DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import { EnvVarRequirementSchema } from '@happier-dev/protocol/profiles/environmentVariables';
 import { DeploymentReferenceAddressV1Schema } from '@happier-dev/protocol/deployments/deploymentReadsV1';
@@ -19,6 +18,15 @@ export const DeploymentMissingRequiredSecretsV1Schema = z.strictObject({
   missingRequiredSecretNames: z.array(EnvVarRequirementSchema.shape.name),
 });
 export type DeploymentMissingRequiredSecretsV1 = z.infer<typeof DeploymentMissingRequiredSecretsV1Schema>;
+
+/** Build requirements and observed engine failures; neither a CPU nor an advertised platform proves emulation. */
+export const DeploymentBuildSupportV1Schema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('notObserved'), requestedPlatforms: z.array(z.string()) }),
+  z.strictObject({ status: z.literal('built'), requestedPlatforms: z.array(z.string()), builtPlatforms: z.array(z.string()) }),
+  z.strictObject({ status: z.literal('failed'), requestedPlatforms: z.array(z.string()), builtPlatforms: z.array(z.string()),
+    cause: z.enum(['runtime_platform_unsupported', 'execution_format_error', 'build_failed']), exitCode: z.number() }),
+]);
+export type DeploymentBuildSupportV1 = z.infer<typeof DeploymentBuildSupportV1Schema>;
 
 /** Display identity only; stored Compose documents and private binding sources never enter review. */
 export const DeploymentReviewRevisionV1Schema = z.discriminatedUnion('kind', [
@@ -70,6 +78,7 @@ const machineReview = {
   /** Null means the selected link has no serving receipt; absent means an older review did not report it. */
   replaces: z.optional(z.nullable(z.strictObject({ deploymentId: id, revision: DeploymentReviewRevisionV1Schema }))),
   secretBindingNames: z.optional(z.array(z.string())),
+  buildSupport: z.optional(DeploymentBuildSupportV1Schema),
   /** Resolved review inputs that differ from exact serving launch evidence. Values stay host-private. */
   /** `route` is the resolver's observed Happier network path for the reviewed address, when it has one. */
   referenceChanges: z.optional(z.array(z.strictObject({ name: z.string(), phase: EnvironmentVariableBindingV1Schema.shape.phase,

@@ -41,12 +41,14 @@ import { useProjectSaveAsSource } from '../ProjectSaveAsSourceSheet';
 import { useProjectsSourcesComposition } from '../useProjectsSourcesComposition';
 import { DeploymentEnvironmentCollection, environmentAfterDelete } from './DeploymentEnvironmentCollection';
 import { ProjectDeploymentDefaultsSettings } from './ProjectDeploymentDefaultsSettings';
+import { DeploymentPreparationEntry } from './DeploymentPreparation';
 import { DeploymentEnvironmentDetail, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { DeploymentEnvironmentDraft } from './DeploymentEnvironmentDraft';
 import { DeploymentReceiptDetail } from './DeploymentReceiptDetail';
 import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { projectSourceRoute } from '@/components/projects/sources/ProjectSourcesScreen';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { PLUGINS_APP_ROUTE } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { DeploymentDatabasePage } from './DeploymentDatabasePage';
 import { buildDeploymentEnvironmentHref } from './deploymentNavigation';
@@ -171,6 +173,10 @@ const ProjectDeploymentsPage = React.memo(
       scopeKind: 'spawn', serverId: props.serverId,
     })?.state === 'enabled';
     const { theme } = useUnistyles();
+    const preparation = newWorkEnabled && props.lifetime ? <>
+      <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="prepare" />
+      <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="import" />
+    </> : null;
     const router = useRouter();
     const { fontScale } = useWindowDimensions();
     const phone = useDeviceType() === 'phone';
@@ -265,7 +271,7 @@ const ProjectDeploymentsPage = React.memo(
     }, [setSelection]);
     // A failed receipt's recovery opens the place its typed destination names: an Environment page in place, or
     // the Source, Machines, Connected services or Store page. Logs and review live on the Environment's Overview.
-    const openRecoveryDestination = React.useCallback((destination: DeploymentFailureRecoveryDestinationV1) => {
+    const openRecoveryDestination = React.useCallback((destination: DeploymentFailureRecoveryDestinationV1, machineId?: string) => {
       switch (destination) {
         case 'history': case 'variables': case 'domains': case 'permissions': case 'settings':
           openEnvironmentTab({ tab: destination, section: null }); return;
@@ -273,10 +279,12 @@ const ProjectDeploymentsPage = React.memo(
           openEnvironmentTab({ tab: 'overview', section: null }); return;
         case 'source': router.push(projectSourceRoute(props.sourceId)); return;
         case 'machines': router.push(SETTINGS_ROUTES.machines); return;
+        case 'buildMachineSetup': router.push(machineId ? machinePageHref({ door: 'rail',
+          target: { machineId, serverId: props.serverId }, tab: { id: 'setup' } }) : SETTINGS_ROUTES.machines); return;
         case 'connectedAccounts': router.push(SETTINGS_ROUTES.connectedServices); return;
         case 'store': router.push(PLUGINS_APP_ROUTE); return;
       }
-    }, [openEnvironmentTab, props.sourceId, router]);
+    }, [openEnvironmentTab, props.sourceId, props.serverId, router]);
     const hostedBack = useProjectPageBack(phone && (environmentId !== null || selection.drafting === true || selection.defaults === true), back);
     // Without a Project bar to host it (the standalone deployments route), the open Environment draws the
     // receipt's same page Back so a phone can return to the list.
@@ -381,6 +389,7 @@ const ProjectDeploymentsPage = React.memo(
           <ItemGroup><Item testID="project-deployments.empty.settings" title={t('projects.deployments.defaultsEditor.projectTitle')}
             icon={<Icon name="sliders-horizontal" size={18} color={theme.colors.text.secondary} />}
             onPress={openDefaults} /></ItemGroup>
+          {preparation ? <ItemGroup header="none">{preparation}</ItemGroup> : null}
           <EmptyState
             layout="page"
             scene="shipped"
@@ -535,6 +544,7 @@ const ProjectDeploymentsPage = React.memo(
               />
               <DeploymentEnvironmentCollection
                 items={items}
+                preparation={preparation}
                 selectedId={environmentId}
                 stale={stale}
                 drafting={selection.drafting === true}
