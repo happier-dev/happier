@@ -441,6 +441,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     <>
       {publication}
       <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} history={history}
+        homeUnavailable={homeUnavailable}
         layouts={layoutsFact} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
       {/* The page's reads wait on the Home: it says why once, here, and the views and bodies keep their room. */}
       <HomeReachabilityGate variant="line">{null}</HomeReachabilityGate>
@@ -567,6 +568,8 @@ function UsagePageHeader(
   props: Readonly<{
     facts: ReturnType<typeof readUsagePageFacts>['facts'];
     retry: (() => void) | null;
+    /** The shared Home line owns this failure and its Retry. */
+    homeUnavailable?: boolean;
     /** Sessions a wide window has not read yet, with Read now (or a running read with Cancel). */
     history?: UsagePageHistoryFact | null;
     /** The saved views could not be read: the bar shows the built-in views and this header says so once. */
@@ -580,6 +583,7 @@ function UsagePageHeader(
   const { observedAtMs, machines, agents } = props.facts;
   // Unchanged page facts keep the same notice element, so the header does not redraw for a body-only change.
   const notice = React.useMemo(() => {
+    if (props.homeUnavailable) return null;
     const resolved = resolveUsagePageNotice(props.facts, retry, history, layouts);
     // A plain line under the purpose, on the title's edge: the page header is not a surface to band. It is drawn as
     // tall as the facts line it replaces, its Retry right after the sentence, so no view's header is taller (R139).
@@ -598,7 +602,7 @@ function UsagePageHeader(
         </View>
       </SurfaceFreshnessOnSheetProvider>
     ) : null;
-  }, [props.facts, retry, history, layouts]);
+  }, [props.facts, props.homeUnavailable, retry, history, layouts]);
   const facts = React.useMemo((): PageHeaderMetaFact[] => [
     ...(observedAtMs !== null
       ? [{ key: 'asOf', icon: 'clock' as const, text: t('usage.board.page.asOf', { time: formatUsageObservedAt(observedAtMs) }) }]

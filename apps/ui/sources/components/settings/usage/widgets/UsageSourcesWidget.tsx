@@ -23,6 +23,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import {
     useActiveServerAccountScope,
     useActiveMachineFacts,
+    useMachineListStatusForServer,
 } from '@/sync/domains/state/storage';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
@@ -128,6 +129,7 @@ export function UsageSourcesMachines(
   }>,
 ): React.ReactElement {
   // Source membership comes from metadata discovery, never an Agent or capture-path guess.
+  const inventoryStatus = useMachineListStatusForServer(props.serverId);
   const machines = [...new Map(props.machines
     .filter(machine => !props.input.machines.length || props.input.machines.includes(machine.id))
     .map(machine => [machine.id, machine])).values()];
@@ -166,6 +168,12 @@ export function UsageSourcesMachines(
   const commands = useCurrentUiContextLocalCommands(!props.compact && unreadable.length ? [{ key: 'retry',
     title: `${t('usage.board.sources.machinesUnreadable')}: ${t('common.retry')}`,
     invoke: (_input, context) => { for (const machine of unreadable) retries.current.get(machine.id)?.(context); } }] : []);
+  if (machines.length === 0 && props.machines.length === 0 && inventoryStatus !== 'idle') {
+    return inventoryStatus === 'loading'
+      ? <ItemLoadStateRows state={{ kind: 'loading' }} testID={`${props.testID}.loading`} />
+      : <SurfaceStateCard testID={`${props.testID}.unavailable`} kind="unavailable" layout="inline" size="line"
+          title={t('sidebarFooter.availableWhenHomeAnswers')} />;
+  }
   if (machines.length === 0)
     return (
       <SurfaceStateCard

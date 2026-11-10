@@ -337,6 +337,29 @@ describe('Work and Coach widget bodies', () => {
       await hook.unmount();
     } finally { storage.setState(previous, true); }
   });
+  it('keeps the Session-published Machine name in Work and Session meta when the Home inventory is unavailable', async () => {
+    const previous = storage.getState();
+    const serverId = actionHome!.homes.work!.id;
+    const session = createSessionListRenderableSessionFixture({ id: 's1', metadata: {
+      name: 'Retained session', path: '/work', host: 'NLDW3-5-36-33', machineId: 'machine',
+    } });
+    storage.setState({ machines: {}, machineDisplayById: {}, machineListByServerId: { [serverId]: null },
+      machineListStatusByServerId: { [serverId]: 'error' }, sessionListRowsByServerId: { [serverId]: { s1: session } } });
+    try {
+      const ledger = await renderScreen(<UsageProjectLedgerWidget {...props} serverId={serverId} id="usage_project_ledger" testID="retained-ledger" />);
+      expect(ledger.getTextContent()).toContain('NLDW3-5-36-33');
+      const meta = await renderScreen(<UsageSessionValueWidget {...props} serverId={serverId}
+        query={normalizeUsageQuery({ ...query, session: 's1' })} id="usage_session_value" testID="retained-meta" />);
+      expect(meta.getTextContent()).toContain('NLDW3-5-36-33');
+      const machine = createMachineFixture({ id: 'machine' });
+      await act(async () => storage.getState().applyMachines([{ ...machine,
+        metadata: { ...machine.metadata!, displayName: 'Renamed computer' } }]));
+      expect(ledger.getTextContent()).toContain('Renamed computer');
+      expect(meta.getTextContent()).toContain('Renamed computer');
+      await ledger.unmount();
+      await meta.unmount();
+    } finally { storage.setState(previous, true); }
+  });
   it('keeps Project names whole and includes where each ran', async () => {
     const rows: UsageWorkContribution[] = [
       { ...contribution('t1', 'twin-1', 't1'), projectKey: 'tmp-a', machineId: 'machine-a' },

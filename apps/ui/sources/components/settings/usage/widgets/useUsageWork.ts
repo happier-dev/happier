@@ -5,9 +5,8 @@ import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveU
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
-import { useSessionListRowsByServerId } from '@/sync/store/hooks';
-import { useAllMachines } from '@/sync/domains/state/storage';
-import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { useMachineDisplayById, useSessionListRowsByServerId } from '@/sync/store/hooks';
+import { getSessionMachineLabel, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
@@ -86,11 +85,26 @@ export function useUsageWork(
   }, [format, query.metric, summary?.moneyBasis]);
   const basisLabel = React.useCallback((moneyBasis: UsageWorkMoneyBasis | null) => moneyBasis
     ? `${usageCostKindPhrase(moneyBasis.kind)} · ${moneyBasis.currency}` : undefined, []);
-  // Rows consume display names, never daemon runtime/presence: select the names so
-  // live resource publications cannot re-render the Work list.
-  const selectedMachineNames = useAllMachines(React.useCallback(machines => Object.fromEntries(resolveMachineDisplayNames([...machines,
-    ...(summary?.projects ?? []).flatMap(row => row.machineIds).concat((summary?.sessions ?? []).flatMap(row => row.machineIds))
-      .filter(id => !machines.some(machine => machine.id === id)).map(id => ({ id, absence: 'unlisted' as const }))])), [summary]));
+  const sessionHomes = React.useMemo(() => [serverId], [serverId]);
+  const renderablesByHome = useSessionListRowsByServerId(sessionHomes);
+  const renderables = renderablesByHome[serverId];
+  // The display owner retains opened names through an unavailable inventory.
+  // A cold read can still name the exact Machine from its retained Session host.
+  const selectedMachineNames = useMachineDisplayById(React.useCallback(displays => {
+    const referenced = new Set((summary?.projects ?? []).flatMap(row => row.machineIds)
+      .concat((summary?.sessions ?? []).flatMap(row => row.machineIds)));
+    const sessionMachines = new Map((summary?.sessions ?? []).flatMap(row => {
+      const metadata = renderables?.[row.sessionId]?.metadata;
+      return metadata?.machineId && metadata.host?.trim() ? [[metadata.machineId, metadata] as const] : [];
+    }));
+    return Object.fromEntries([...resolveMachineDisplayNames([...Object.values(displays),
+      ...[...referenced].filter(id => !displays[id]).map(id => {
+        const session = sessionMachines.get(id);
+        return session?.host?.trim()
+          ? { id, metadata: { displayName: getSessionMachineLabel({ machineId: id, machine: null, session }) } }
+          : { id, absence: 'unlisted' as const };
+      })])].filter(([id]) => referenced.has(id)));
+  }, [summary, renderables]));
   // Fact lines retain the Machine owner's distinction between same-named registrations.
   const machinePlace = React.useCallback((ids: readonly string[]) =>
     usageMachinePlace(ids, selectedMachineNames), [selectedMachineNames]);
@@ -100,9 +114,6 @@ export function useUsageWork(
   const projectPlaces = React.useMemo(() => new Map((summary?.projects ?? []).map(row =>
     [row.projectKey, row.projectKey === null ? '' : machinePlace(row.machineIds)] as const)), [summary, machinePlace]);
   const projectPlace = React.useCallback((projectKey: string | null) => projectPlaces.get(projectKey) ?? '', [projectPlaces]);
-  const sessionHomes = React.useMemo(() => [serverId], [serverId]);
-  const renderablesByHome = useSessionListRowsByServerId(sessionHomes);
-  const renderables = renderablesByHome[serverId];
   const isSessionVisible = useSessionRecordingVisibility();
   const displaySessionLabels = React.useMemo(() => {
     const base = (sessionId: string) => {
@@ -149,5 +160,6 @@ export function useUsageWork(
   const openSession = React.useCallback((sessionId: string) => {
     void sessionCommands.invoke(sessionId);
   }, [sessionCommands.invoke]);
-  return { summary, format, cell, datum, basisLabel, projectLabel: projectName, projectPlace, sessionLabel, openSession };
+  return { summary, format, cell, datum, basisLabel, projectLabel: projectName, projectPlace, sessionLabel, openSession,
+    machineNames: selectedMachineNames };
 }

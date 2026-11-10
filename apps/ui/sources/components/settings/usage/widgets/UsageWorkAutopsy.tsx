@@ -29,7 +29,7 @@ import {
 import { useUsageWork } from './useUsageWork';
 import { useUsageChartDetails } from './usageMountedControls';
 import { usageCostKindPhrase } from '../usageCostPresentation';
-import { useMachineDisplayNamesById, useSessionMetadata } from '@/sync/store/hooks';
+import { useSessionMetadata } from '@/sync/store/hooks';
 import { findModelOptionForEffectiveModelId, getModelOptionsForSession } from '@/sync/domains/models/modelOptions';
 import { summarizeUsageWorkSession, type UsageWorkTurnRow } from './usageWorkPresentation';
 import {
@@ -71,7 +71,7 @@ export function UsageWorkAutopsy(
   const { theme: appTheme } = useUnistyles();
   const presentation = useWidgetPresentation();
   const rowMetrics = usePageRowMetrics('list');
-  const { format, cell, datum, sessionLabel } = useUsageWork(props.slice, props.query, props.serverId);
+  const { format, cell, datum, sessionLabel, machineNames } = useUsageWork(props.slice, props.query, props.serverId);
   const selected =
     typeof props.query.session === 'string'
       ? props.query.session
@@ -87,9 +87,6 @@ export function UsageWorkAutopsy(
   const metadata = useSessionMetadata(selected ?? '', props.serverId);
   const contributions = React.useMemo(() => new Map((work?.allocations ?? [])
     .filter(row => row.contribution.sessionId === selected).map(row => [row.contribution.id, row.contribution])), [work, selected]);
-  const machineIds = React.useMemo(() => [...new Set([...contributions.values()]
-    .flatMap(row => row.machineId === null ? [] : [row.machineId]))], [contributions]);
-  const machineNames = useMachineDisplayNamesById(machineIds);
   const modelOptions = React.useMemo(() => new Map([...new Set([...contributions.values()]
     .flatMap(row => row.agentId === null ? [] : [row.agentId]))].map(agentId => [agentId,
       getModelOptionsForSession(agentId, metadata)])), [contributions, metadata]);

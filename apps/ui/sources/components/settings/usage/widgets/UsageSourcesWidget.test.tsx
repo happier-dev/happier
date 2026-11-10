@@ -26,6 +26,19 @@ import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced'
 import { createNearViewportTracker } from '@/components/widgets/nearViewport';
 import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { getStorage } from '@/sync/domains/state/storage';
+
+it('does not call a failed Machine census an empty fleet', async () => {
+  getStorage().setState({ machineListStatusByServerId: { home: 'error' } });
+  const screen = await renderScreen(<UsageSourcesMachines lifetime={lifetime} serverId="home"
+    testID="sources" input={{ agents: [], machines: [], sources: [] }} machines={[]} />);
+  expect(screen.getTextContent()).not.toContain('usage.board.sources.noMachinesTitle');
+  expect(screen.findByTestId('sources.unavailable')).toBeTruthy();
+  await act(async () => { getStorage().setState({ machineListStatusByServerId: { home: 'idle' } }); });
+  expect(screen.getTextContent()).toContain('usage.board.sources.noMachinesTitle');
+  expect(screen.findByTestId('sources.unavailable')).toBeFalsy();
+  await screen.unmount();
+});
 it('retains source inventory but withdraws execution from machines with locked content', () => {
   const machines = [
     createMachineFixture({ id: 'locked', activeAt: Date.now(), availability: { kind: 'locked', reason: 'encryption_material_unavailable' } }),

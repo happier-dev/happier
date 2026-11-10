@@ -574,7 +574,7 @@ describe('mounted Usage page scope commands', () => {
             route: request => {
                 if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
                 if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
-                if (request.path === '/v2/usage/query') return new Promise<Response>(() => undefined);
+                if (request.path === '/v2/usage/query') return Response.json({ error: 'unavailable' }, { status: 503 });
                 return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
             } });
         const server = home.homes.a!;
@@ -587,9 +587,12 @@ describe('mounted Usage page scope commands', () => {
                 <UsageWidgetPage initialFilters={{ layoutId: 'costs', period: '7days', metric: 'cost', costMode: 'auto', focus: null }} />
             </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
         </InjectedAuthProvider>);
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('usage-page.header.failed')).not.toBeNull());
         await act(async () => { getStorage().setState({ endpointStatus: 'offline', socketStatus: 'disconnected', endpointReason: null, syncError: null }); });
         await waitForHomeGovernance(() => expect(screen.findAllByTestId('home-unreachable').length).toBeGreaterThan(0));
         expect(screen.findAllByTestId('home-unreachable-retry').length).toBeGreaterThan(0);
+        expect(screen.findAllHostsByTestId('usage-page.header.failed')).toHaveLength(0);
+        expect(screen.findAllHostsByTestId('usage-page.header.retry')).toHaveLength(0);
         // The cause is said once: the views bar and the area defer to the line.
         expect(screen.findAllByTestId('usage-views.readFailed')).toHaveLength(0);
         expect(screen.findAllByTestId('usage-area.unavailable')).toHaveLength(0);
