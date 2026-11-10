@@ -1478,10 +1478,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     },
     prepareRelationshipTarget: async (relationship, signal, preparation, admitted) => {
       const retained = runtime?.handoffAdapter.resolvePrivateExecution?.({ relationshipId: relationship.relationshipId });
-      // Only initial Open stages bytes. Established transfers use the existing
-      // relationship carrier; TARGET rehydrates its preserved root from graph.
-      if (retained && !preparation?.transient) return;
       const target = resolveRelationshipBootstrapTarget(admitted ?? retained?.execution.getSnapshot?.() ?? factories.getProjectSnapshot(), relationship, semanticServerId);
+      // Established local targets lend their retained bootstrap handle back to
+      // the controller. Remote targets keep custody through their carrier.
+      if (retained && !preparation?.transient && target.machineId !== input.localMachineId) return;
       const prepare = {
         v: 1,
         bootstrapOperationId: relationship.relationshipId,

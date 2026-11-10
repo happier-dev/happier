@@ -497,3 +497,23 @@ it.skipIf(process.platform !== 'linux').each(['member-a', 'requester'])(
   expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   if (sourceCustodianAccountId !== 'member-a') expect(setup.custodianRows).toEqual(setup.custodianBefore);
 });
+
+it.skipIf(process.platform !== 'linux').each([false, true])(
+  're-enables Sync after Disable through setEnabled (remoteTarget=%s)', async remoteTarget => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', sourceCustodianAccountId: 'member-a',
+    remoteTarget, socketIo, allowRelationshipAction: true });
+  const created = await setup.executeRelationshipAction();
+  expect(created).toMatchObject({ ok: true, result: { created: true } });
+  if (!created.ok) throw new Error('Sync creation failed');
+  const { relationshipId } = WorkspaceSyncRelationshipCreateResultV1Schema.parse(created.result);
+  await readProjectAccountRows({ credentials: setup.installed.bootstrap.credentials,
+    serverId: setup.installed.serverId, publication: 'installed' });
+  const owner = setup.fixture.parent.workspaceSync.relationshipOwner;
+  await owner.setEnabled(relationshipId, false);
+  await writeFile(join(setup.targetPath, 'payload.txt'), 'edited while disabled');
+  await expect(owner.setEnabled(relationshipId, true)).resolves.toBeUndefined();
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('edited while disabled');
+  await owner.stop(relationshipId);
+  expect(await setup.fixture.parentManagedWorkspaceSync!.list()).toEqual([]);
+});
