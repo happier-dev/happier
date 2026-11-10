@@ -7,6 +7,7 @@ import type { Socket } from 'socket.io-client';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { projectClaudeJsonlLineToDirectMessages } from '../../../../../packages/plugins/claude/src/agent/transcripts/projection';
 import { SessionMessagesPageV1Schema, type SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema, SessionConsumptionReplaceAckV1Schema } from '@happier-dev/protocol/sessions';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -90,6 +91,10 @@ installDisconnectedServerSocketBoundary((socket, serverUrl) => {
         return socket;
     });
     socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, raw: unknown) => {
+        if (event === SESSION_CONSUMPTION_REPLACE_EVENT) {
+            const request = SessionConsumptionReplaceV1Schema.parse(raw);
+            return SessionConsumptionReplaceAckV1Schema.parse({ ...request, ok: true });
+        }
         if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
         if (!raw || typeof raw !== 'object' || !('method' in raw) || typeof raw.method !== 'string' || !('params' in raw)) {
             throw new Error('Expected framed Voice RPC');
