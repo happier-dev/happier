@@ -10,6 +10,7 @@ import { xaiConnectedAccountRuntime } from '../../../../grok/src/connectedAccoun
 import { museAccountRuntimeDefinition } from '../../../../muse/src/connectedAccounts/museAccountRuntime.js';
 import { materializeGithubCredential } from '../../../../scm-github/src/auth/credentialMaterialization.js';
 import { preparePiQualifiedConnectedAccounts } from './qualifiedConnectedAccounts.js';
+import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES } from '../auth/services/qualifiedPurposes.js';
 import { buildPiRpcArgs } from './rpc/args.js';
 import { createPiAgentRuntime } from './engine.js';
 import { hostBoundaries } from './nativeProcess.test-support.js';
@@ -84,6 +85,22 @@ describe('Pi native selected accounts through service materialization and launch
       expect(buildPiRpcArgs({ connectedServiceId: row.service.localId, env: prepared.launchEnvironment.values })).toContain(row.provider);
       const args = buildPiRpcArgs({ env: prepared.launchEnvironment.values });
       expect(args[args.indexOf('--model') + 1]).toBe('selected-model');
+      await prepared.dispose();
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
+  it('admits Muse subscriptions and delivers their inference key with native version headers', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'N-PO-MUSE-PROOF-'));
+    try {
+      const purpose = PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.find(row => row.purpose === 'meta-inference');
+      expect.soft(purpose?.credentialKinds).toContain('oauth');
+      const prepared = await prepare({ ...cases[2], mode: 'device', credentials: {
+        credentialMode: 'native', nativeMechanism: '"oauth"', inferenceKey: 'fake-subscription-key', accountToken: 'fake-identity-token',
+      } }, directory);
+      expect(prepared.launchEnvironment.values.META_API_KEY).toBe('fake-subscription-key');
+      const config = JSON.parse(await readFile(join(directory, 'models.json'), 'utf8'));
+      expect(config.providers.meta.headers).toEqual({ 'x-api-version': '1.0.0' });
+      expect(JSON.stringify(config)).not.toContain('fake-identity-token');
       await prepared.dispose();
     } finally { await rm(directory, { recursive: true, force: true }); }
   });

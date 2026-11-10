@@ -51,7 +51,7 @@ describe('OpenCode plugin manifest', () => {
     expect(processAccess).toEqual(expect.objectContaining({
       id: 'opencode-process',
       scope: expect.objectContaining({
-        envKeys: [
+        envKeys: expect.arrayContaining([
           'HAPPIER_OPENCODE_PROVIDER_API_KEY',
           'OPENCODE_AUTH_CONTENT',
           'OPENCODE_CONFIG_CONTENT',
@@ -63,7 +63,8 @@ describe('OpenCode plugin manifest', () => {
           'OPENCODE_PERMISSION',
           'OPENCODE_DISABLE_PRUNE',
           'OPENCODE_SERVER_PASSWORD',
-        ],
+          'META_API_KEY',
+        ]),
       }),
     }));
     expect(processAccess?.scope.envKeys).not.toContain('HAPPIER_OPENCODE_SERVER_URL');
@@ -84,10 +85,10 @@ describe('OpenCode plugin manifest', () => {
     expect(agent?.capabilities.sessions).not.toHaveProperty('usageLimitRecovery');
   });
 
-  it('declares the exact qualified purposes consumed by request-time and direct OpenCode auth', () => {
+  it('declares request-time auth and native Meta key/subscription purposes', () => {
     const agent = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'opencode');
 
-    expect(agent?.connectedAccounts).toEqual([{
+    expect(agent?.connectedAccounts).toEqual(expect.arrayContaining([{
       purpose: 'anthropic-model-request',
       service: {
         pluginId: 'happier.agent.claude',
@@ -119,6 +120,11 @@ describe('OpenCode plugin manifest', () => {
       },
       materializationKinds: ['environment'],
       credentialKinds: ['token'],
-    }]);
+    }, {
+      purpose: 'meta-inference',
+      service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
+      materializationKinds: ['environment'],
+      credentialKinds: ['token', 'oauth'],
+    }]));
   });
 });

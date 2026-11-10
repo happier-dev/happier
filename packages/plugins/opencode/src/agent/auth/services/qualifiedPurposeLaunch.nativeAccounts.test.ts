@@ -4,6 +4,7 @@ import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-
 import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createKimiConnectedAccountRuntime } from '../../../../../kimi/src/connectedAccounts/runtime.js';
 import { xaiConnectedAccountRuntime } from '../../../../../grok/src/connectedAccounts/runtime.js';
+import { museAccountRuntimeDefinition } from '../../../../../muse/src/connectedAccounts/museAccountRuntime.js';
 import { geminiConnectedAccountRuntime } from '../../../../../gemini/src/connectedAccounts/runtime.js';
 import { materializeGithubCredential } from '../../../../../scm-github/src/auth/credentialMaterialization.js';
 import { prepareOpenCodeQualifiedConnectedAccounts } from './qualifiedPurposeLaunch.js';
@@ -101,6 +102,23 @@ describe('OpenCode selected native accounts', () => {
       expect(f.acquisitions()).toBe('serviceAccountJson' in row ? 2 : 1);
     } finally { await session.dispose(); }
     if (adcFile) await expect(stat(adcFile)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it.each(['manual', 'native'])('delivers Meta %s inference with version headers from its purpose', async mode => {
+    const { OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS } = await import('./purposes.js');
+    expect.soft(OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS.find(row => row.purpose === ('meta-inference' as string))?.credentialKinds).toContain(mode === 'native' ? 'oauth' : 'token');
+    const f = launchFixture({ purpose: 'meta-inference', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
+      materialize: museAccountRuntimeDefinition.materialize,
+      context: producerContext({ credentialMode: mode, inferenceKey: 'fake-meta-selected', accountToken: 'fake-identity-token' }) });
+    const prepared = await prepareOpenCodeQualifiedConnectedAccounts(request('meta', 'muse-spark-1.2-contributor'), f.context);
+    try {
+      const env = prepared.request.launchEnvironment!.values;
+      expect(JSON.parse(env.OPENCODE_AUTH_CONTENT!).meta).toEqual({ type: 'api', key: 'fake-meta-selected' });
+      const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT!);
+      expect(config.provider.meta.options.headers).toEqual({ 'x-api-version': '1.0.0' });
+      expect(config.providers.meta.settings.headers).toEqual({ 'x-api-version': '1.0.0' });
+      expect(JSON.stringify(env)).not.toContain('fake-identity-token');
+      expect(f.acquisitions()).toBe(1);
+    } finally { await prepared.dispose(); }
   });
   it('requires a model for a selected account before acquiring its secrets', async () => {
     const f = launchFixture(cases[1]);

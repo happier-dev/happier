@@ -1,4 +1,5 @@
 import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
+import { MUSE_ACCOUNT_SERVICE, META_API_KEY_ENV_KEY, META_INFERENCE_HEADERS } from '@happier-dev/plugins-muse/connected-account-service';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
 import type { ConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import { CLAUDE_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-claude/connected-account-service';
@@ -82,6 +83,13 @@ export const OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS = Object.freeze([
     declaration: { purpose: 'xai-api-key', service: GROK_CONNECTED_ACCOUNT_SERVICE,
       materializationKinds: ['environment'], credentialKinds: ['token'] },
     provider: 'xai', environmentKeys: ['XAI_API_KEY'], nativeEnvironmentAuth: { key: 'XAI_API_KEY' },
+    requestAuthOrigin: null, requestAuthHeaderNames: [],
+  },
+  {
+    declaration: { purpose: 'meta-inference', service: MUSE_ACCOUNT_SERVICE,
+      materializationKinds: ['environment'], credentialKinds: ['token', 'oauth'] },
+    provider: 'meta', environmentKeys: [META_API_KEY_ENV_KEY],
+    nativeEnvironmentAuth: { key: META_API_KEY_ENV_KEY, headers: META_INFERENCE_HEADERS },
     requestAuthOrigin: null, requestAuthHeaderNames: [],
   },
   {

@@ -347,7 +347,8 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
       const provider = openCodeAccountProviders(row).find(provider => provider === selectedModel?.providerID) ?? row.provider;
       const baseURL = 'baseURLKey' in row.nativeEnvironmentAuth ? result.env[row.nativeEnvironmentAuth.baseURLKey] : undefined;
       if ('baseURLKey' in row.nativeEnvironmentAuth && !baseURL?.trim()) throw new Error(`OpenCode ${purpose} did not materialize its native endpoint`);
-      directAccountCredentials[provider] = { key, service: binding.service, ...(baseURL ? { baseURL } : {}) };
+      directAccountCredentials[provider] = { key, service: binding.service, ...(baseURL ? { baseURL } : {}),
+        ...('headers' in row.nativeEnvironmentAuth ? { headers: row.nativeEnvironmentAuth.headers } : {}) };
     }
 
     let requestAuthEnvironment: Awaited<ReturnType<typeof materializeOpenCodeAuthEnvironment>> | undefined;

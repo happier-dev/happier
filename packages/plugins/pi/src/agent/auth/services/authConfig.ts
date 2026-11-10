@@ -26,7 +26,7 @@ export async function replacePiAuthConfig(input: Readonly<{
 
 export async function replacePiNativeModelsConfig(input: Readonly<{
   agentDir: string;
-  providers: Readonly<Record<string, Readonly<{ baseUrl: string }>>>;
+  providers: Readonly<Record<string, Readonly<{ baseUrl?: string; headers?: Readonly<Record<string, string>> }>>>;
 }>): Promise<void> {
   await writeAtomicJsonFile({ path: join(input.agentDir, 'models.json'), value: { providers: input.providers }, mode: 0o600 });
 }

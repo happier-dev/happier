@@ -257,7 +257,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
     const directAuth: Record<string, Readonly<{ type: 'api_key'; key: string }>
       | Readonly<{ type: 'oauth'; refresh: string; access: string; expires: number }>> = {};
     const nativeProviders = new Set<string>();
-    const nativeModels: Record<string, Readonly<{ baseUrl: string }>> = {};
+    const nativeModels: Record<string, Parameters<typeof replacePiNativeModelsConfig>[0]['providers'][string]> = {};
     let requiresExplicitModel = false;
     const requestAuthPurposes: {
       -readonly [K in keyof PiRequestAuthPurposeMap]?: NonNullable<PiRequestAuthPurposeMap[K]>;
@@ -329,10 +329,11 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
           directAuth[native.providerId] = { type: 'api_key', key: apiKey };
         }
       }
+      if ('headers' in native) nativeModels[native.providerId] = { headers: native.headers };
       if ('baseUrlEnvironmentKey' in native) {
         const baseUrl = readNonBlank(materialized.env[native.baseUrlEnvironmentKey]);
         if (!baseUrl) throw new Error('Pi native provider base URL is unavailable');
-        nativeModels[native.providerId] = { baseUrl };
+        nativeModels[native.providerId] = { ...nativeModels[native.providerId], baseUrl };
       }
     }
     if (requiresExplicitModel && input.request) {

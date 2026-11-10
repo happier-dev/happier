@@ -3889,6 +3889,9 @@ importers:
       '@happier-dev/plugins-kimi':
         specifier: 0.0.0
         version: link:../kimi
+      '@happier-dev/plugins-muse':
+        specifier: 0.0.0
+        version: link:../muse
       '@happier-dev/plugins-openai':
         specifier: 0.0.0
         version: link:../openai

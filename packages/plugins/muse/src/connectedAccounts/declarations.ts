@@ -8,6 +8,7 @@ export const META_UPSTREAM_PURPOSE = 'meta-upstream';
 export const MUSE_NATIVE_AUTH_FILE_ID = 'muse/auth.json';
 export const MUSE_CODE_CREDENTIAL_ENV_KEY = 'MUSE_CODE_CREDENTIAL';
 export const META_API_KEY_ENV_KEY = 'META_API_KEY';
+export const META_INFERENCE_HEADERS = { 'x-api-version': '1.0.0' } as const;
 export const MUSE_NATIVE_HOME = {
   environmentKey: 'XDG_CONFIG_HOME', defaultRelativePath: '.config',
   materializedRootOverlay: { privateEntries: ['muse'] },

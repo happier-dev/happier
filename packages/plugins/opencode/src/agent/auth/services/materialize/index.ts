@@ -192,7 +192,7 @@ function hasExactRequestAuthMarker(
     && candidate.key === buildOpenCodeRequestAuthMarker(provider);
 }
 
-export type OpenCodeNativeAccountCredential = Readonly<{ key?: string; service: PluginContributionRef; baseURL?: string }>;
+export type OpenCodeNativeAccountCredential = Readonly<{ key?: string; service: PluginContributionRef; baseURL?: string; headers?: Readonly<Record<string, string>> }>;
 
 export function buildOpenCodeQualifiedAuthContent(input: Readonly<{
   baseAuthContent?: unknown;

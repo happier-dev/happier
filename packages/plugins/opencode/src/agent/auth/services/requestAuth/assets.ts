@@ -52,13 +52,17 @@ export function resolveOpenCodeRequestAuthV2PluginSourcePath(
 /** Credentials use native auth; selected regional endpoints override both config dialects. */
 export function buildOpenCodeNativeAccountConfigPart(credentials: Readonly<Partial<Record<OpenCodeNativeProvider, Readonly<{
   baseURL?: string;
+  headers?: Readonly<Record<string, string>>;
 }>>>>): OpenCodeConfigPart | undefined {
   const provider: Record<string, unknown> = {};
   const providers: Record<string, unknown> = {};
   for (const id of OPEN_CODE_NATIVE_PROVIDERS) {
     const credential = credentials[id];
-    if (!credential?.baseURL) continue;
-    const options = { baseURL: credential.baseURL };
+    if (!credential || (!credential.baseURL && !credential.headers)) continue;
+    const options = {
+      ...(credential.baseURL ? { baseURL: credential.baseURL } : {}),
+      ...(credential.headers ? { headers: credential.headers } : {}),
+    };
     provider[id] = { options };
     providers[id] = { settings: options };
   }

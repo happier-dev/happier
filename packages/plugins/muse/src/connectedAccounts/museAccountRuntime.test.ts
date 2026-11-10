@@ -34,6 +34,16 @@ function deviceMode() {
 
 describe('Muse account runtime', () => {
   it.each([
+    { kind: 'environment', keys: ['MUSE_CODE_CREDENTIAL'] },
+    { kind: 'files', fileIds: ['muse/auth.json'] },
+  ] as const)('refuses incomplete native OAuth credentials for $kind', async request => {
+    const f = fixture();
+    f.values.set('credentialMode', 'native');
+    f.values.set('nativeMechanism', '"oauth"');
+    f.values.set('inferenceKey', 'synthetic-key');
+    await expect(runtime.materialize(request, f.context)).rejects.toMatchObject({ code: 'plugin_connected_account_credentials_unavailable' });
+  });
+  it.each([
     ['native', '"oauth"', 'subscription'],
     ['native', '"api_key"', 'apiKey'],
     ['manual', '', 'apiKey'],

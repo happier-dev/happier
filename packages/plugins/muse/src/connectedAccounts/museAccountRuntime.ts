@@ -1,12 +1,12 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { requestDeviceGrantStep, type ConnectedAccountAuthCompletionResult, type ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import { META_API_KEY_ENV_KEY, MUSE_CODE_CREDENTIAL_ENV_KEY, MUSE_NATIVE_AUTH_FILE_ID } from './declarations.js';
+import { META_INFERENCE_HEADERS, META_API_KEY_ENV_KEY, MUSE_CODE_CREDENTIAL_ENV_KEY, MUSE_NATIVE_AUTH_FILE_ID } from './declarations.js';
 import { buildMuseNativeAuth, museRecord, type MuseNativeMetaAuth } from './nativeAuth.js';
 import { parseMuseMintCompletionObservation, readMuseQuotaObservation } from './observations.js';
 
 const CLIENT_ID = '1031625952748946';
 const META_API_ORIGIN = 'https://api.meta.ai';
-const META_HEADERS = { Accept: 'application/json', 'x-api-version': '1.0.0' };
+const META_HEADERS = { Accept: 'application/json', ...META_INFERENCE_HEADERS };
 type AuthContext = Parameters<Extract<ConnectedAccountRuntime['authentication']['modes'][string], { kind: 'oauthDeviceCode' }>['poll']>[0];
 type CredentialStore = AuthContext['attemptCredentials'];
 type CredentialReader = Pick<CredentialStore, 'get'>;
@@ -188,13 +188,16 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
         throw new PluginError({ code: 'plugin_connected_account_materialization_unsupported', message: 'Muse does not support this credential destination.' });
       }
       const requested = new Set(request.headerNames.map(name => name.toLowerCase()));
-      return { kind: 'httpHeaders', headers: { ...(requested.has('authorization') ? { Authorization: `Bearer ${key}` } : {}), ...(requested.has('x-api-version') ? { 'x-api-version': '1.0.0' } : {}) } };
+      const headers: Record<string, string> = { ...(requested.has('authorization') ? { Authorization: `Bearer ${key}` } : {}), ...(requested.has('x-api-version') ? { ...META_INFERENCE_HEADERS } : {}) };
+      return { kind: 'httpHeaders', headers };
     }
     const files: Record<string, Uint8Array> = {};
     if (mode !== 'native') return { kind: 'files', files };
     if (expiry && Number(expiry) <= Date.now()) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'The Muse account token has expired; reconnect the account.' });
     if (request.fileIds.includes(MUSE_NATIVE_AUTH_FILE_ID)) {
-      files[MUSE_NATIVE_AUTH_FILE_ID] = new TextEncoder().encode(JSON.stringify(buildMuseNativeAuth(await readNativeMeta(context.credentials, options))));
+      const meta = await readNativeMeta(context.credentials, options);
+      if (!meta.access_token) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'The Muse account token is unavailable; reconnect the account.' });
+      files[MUSE_NATIVE_AUTH_FILE_ID] = new TextEncoder().encode(JSON.stringify(buildMuseNativeAuth(meta)));
     }
     return { kind: 'files', files };
   },
