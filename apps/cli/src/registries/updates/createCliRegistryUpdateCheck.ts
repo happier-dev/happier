@@ -12,6 +12,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 import { runWithServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliRegistryHostV1 } from '../createCliRegistryHost';
 import { createRegistryUpdateCheck } from './registryUpdateTracker';
+import { createPluginRegistryUpdateTracker } from './trackers/pluginUpdateTracker';
 import { createSkillsUpdateTracker } from './trackers/skillsUpdateTracker';
 import type { RegistryAppUpdateEnvironmentV1 } from '@happier-dev/protocol/registries';
 
@@ -39,7 +40,8 @@ export function createCliRegistryUpdateCheck(input: Readonly<{
     const checker = createRegistryUpdateCheck({ trackers: [createSkillsUpdateTracker({ execute: skills, signal: input.signal }),
       createMcpRegistryUpdateTracker({ store: mcpStore }),
       createAgentRegistryUpdateTracker({ store: createCliAcpCatalogStore(input) }),
-      createBrowserExtensionRegistryUpdateTracker({ signal: input.signal })],
+      createBrowserExtensionRegistryUpdateTracker({ signal: input.signal }),
+      createPluginRegistryUpdateTracker({ signal: input.signal })],
       ctx: registry.fetchContext, admitSource: registry.fetchContext.admitSource, readSources: registry.readSources, readEnvironment: input.readEnvironment });
     return {
       checkNow: (filter?: Parameters<typeof checker.checkNow>[0]) => runWithServerHttpBaseUrl(baseUrl, () => checker.checkNow(filter)),

@@ -1,8 +1,8 @@
-import { copyFile, lstat, rm } from 'node:fs/promises';
+import { materializeArchive } from './archiveCandidate';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { PluginSourceSpecV1, MachineDaemonRightsV1 } from '@happier-dev/protocol';
-import { readPluginArchiveIntegrity } from '@/plugins/distribution/integrity';
 
 import {
   cleanupStagedNpmCompatiblePluginArchive,
@@ -10,13 +10,7 @@ import {
   type StagedNpmCompatiblePluginArchive,
 } from '@/plugins/distribution/archive';
 import {
-  downloadRemoteFileWithLimits,
-  resolvePluginRemoteArchiveMaxBytes,
-} from '@/plugins/discovery/remote/fetch';
-import {
   createArchivePluginDistributionIdentity,
-  canonicalizeRemotePluginArchiveUrl,
-  isRemotePluginArchiveLocator,
   createPluginTrustRecord,
   isPluginTrustRecordAuthorized,
   pluginDistributionRollbackLineagesEqual,
@@ -35,7 +29,6 @@ import {
 } from '@/plugins/store/registry/generationStore';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import type { PluginStateRecord } from '@/plugins/store/state';
-import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { createVerifiedPortablePluginInstallationAvailability } from '@/plugins/availability/releaseFacts';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 
@@ -61,57 +54,6 @@ export type DaemonArchivePluginChangePreparationContext = Readonly<{
 
 const PACKAGE_MANIFEST_PATH = '.happier-plugin/plugin.json';
 
-function readRemoteArchiveUrl(locator: string): string | null {
-  if (!isRemotePluginArchiveLocator(locator)) return null;
-  return canonicalizeRemotePluginArchiveUrl(locator);
-}
-
-async function materializeArchive(params: Readonly<{
-  locator: string;
-  destinationPath: string;
-}>): Promise<Readonly<{
-  distributionSource:
-    | Readonly<{ kind: 'localFile'; path: string }>
-    | Readonly<{ kind: 'remoteUrl'; url: string }>;
-  byteLength: number;
-  integrity: string;
-  archiveDigestSha256: `sha256:${string}`;
-}>> {
-  const maximumBytes = resolvePluginRemoteArchiveMaxBytes();
-  const remoteUrl = readRemoteArchiveUrl(params.locator);
-  if (remoteUrl) {
-    await downloadRemoteFileWithLimits({
-      url: remoteUrl,
-      destinationPath: params.destinationPath,
-      maxBytes: maximumBytes,
-      errorLabel: 'Remote plugin archive',
-    });
-    const facts = await readPluginArchiveIntegrity(params.destinationPath);
-    return Object.freeze({
-      distributionSource: Object.freeze({
-        kind: 'remoteUrl',
-        url: remoteUrl,
-      }),
-      ...facts,
-    });
-  }
-
-  const sourcePath = expandHomeDirPath(params.locator.trim());
-  const sourceStat = await lstat(sourcePath);
-  if ((!sourceStat.isFile() && !sourceStat.isSymbolicLink()) || (maximumBytes !== null && sourceStat.size > maximumBytes)) {
-    throw new Error(`Local plugin archive exceeds the configured size limit (${maximumBytes} bytes) or is not a file`);
-  }
-  await copyFile(sourcePath, params.destinationPath);
-  const copiedStat = await lstat(params.destinationPath);
-  if (!copiedStat.isFile() || copiedStat.isSymbolicLink() || (maximumBytes !== null && copiedStat.size > maximumBytes)) {
-    throw new Error('Local plugin archive could not be copied into daemon-owned temporary storage');
-  }
-  const facts = await readPluginArchiveIntegrity(params.destinationPath);
-  return Object.freeze({
-    distributionSource: Object.freeze({ kind: 'localFile', path: sourcePath }),
-    ...facts,
-  });
-}
 
 function archiveLocator(distribution: PluginDistributionIdentity): string {
   if (distribution.kind !== 'archive') throw new Error('Expected archive distribution identity');

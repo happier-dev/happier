@@ -11,7 +11,7 @@ type RegistryTrackedItemV1 = Readonly<{
 }>;
 
 export type RegistryUpdateTrackerV1 = Readonly<{
-  kind: 'skill' | 'mcpServer' | 'agent' | 'browserExtension';
+  kind: 'skill' | 'mcpServer' | 'agent' | 'browserExtension' | 'plugin';
   /** Select at the installed-data owner; undefined alone requests its full inventory. */
   list: (keys?: readonly string[]) => Promise<readonly RegistryTrackedItemV1[]>;
   /** Source-native versions use the same check/record lifecycle without invented catalog provenance. */
