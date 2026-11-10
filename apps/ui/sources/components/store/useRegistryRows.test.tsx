@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, standardCleanup } from '@/dev/testkit';
+import type { RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 
 vi.mock('@react-navigation/native', async () =>
@@ -123,6 +124,30 @@ it('keeps the curated exact version for opening and adding after a newer listing
     expect(open).toHaveBeenLastCalledWith(exact);
 });
 
+it('places native App catalog groups before imported database tools regardless of source arrival order', async () => {
+    const imported: RegistryCatalogItemSummary = { sourceId: 'imported-apps', kind: 'app', itemId: 'admin', title: 'Database administration' };
+    const database: RegistryCatalogItemSummary = { sourceId: 'native-templates', kind: 'app', itemId: 'engine', title: 'Database engine' };
+    const sources = [
+        { id: imported.sourceId, format: 'dokploy-templates' as const, kinds: ['app' as const] },
+        { id: database.sourceId, format: 'happier-catalog' as const, kinds: ['app' as const] },
+    ] satisfies readonly Pick<RegistrySourceDescriptorV1, 'id' | 'format' | 'kinds'>[];
+    const curation = [{ sourceId: 'editorial', discovery: {
+        items: [{ id: 'admin-pick', title: imported.title, reference: { type: 'registryItem' as const,
+            kind: 'app' as const, sourceId: imported.sourceId, itemId: imported.itemId } }],
+        categories: [{ id: 'databases', title: 'Database tools', items: ['admin-pick'] }], jobs: [],
+    } }];
+    const hook = await renderHook((items: readonly RegistryCatalogItemSummary[]) => {
+        const list = { items, curation, sources };
+        return useRegistryRows(list, () => {}, id => id);
+    }, { initialProps: [database, imported] });
+    const groups = () => hook.getCurrent().groups.map(group => group.key);
+    expect(groups()).toEqual(['source:native-templates', 'category:["editorial","databases"]']);
+    const before = new Map(hook.getCurrent().rows.map(row => [row.key, row]));
+    await hook.rerender([imported, database]);
+    expect(groups()).toEqual(['source:native-templates', 'category:["editorial","databases"]']);
+    for (const row of hook.getCurrent().rows) expect(row).toBe(before.get(row.key));
+});
+
 describe('previewSourceSections', () => {
   const row = (group: string, index: number) => ({ key: `${group}:${index}`, title: `${group} ${index}`, description: null, mark: null, group, open: () => {} });
   const many = (group: string, count: number) => Array.from({ length: count }, (_, index) => row(group, index));
@@ -159,9 +184,12 @@ describe('previewSourceSections', () => {
 
   it('leaves a page whose only section is that catalog, and any condition, in full', () => {
     const rows = many('source:a', over);
-    expect(previewSourceSections({ rows, groups: groups('source:a'), pages: pages({ a: null }), onSeeSource: () => {} }))
-      .toMatchObject({ rows, capped: false, groupAction: undefined });
-    expect(previewSourceSections({ rows: [...rows, ...many('source:b', over)], groups: groups('source:a', 'source:b'), pages: pages({}), onSeeSource: null }))
-      .toMatchObject({ capped: false, groupAction: undefined });
+    const single = previewSourceSections({ rows, groups: groups('source:a'), pages: pages({ a: null }), onSeeSource: () => {} });
+    expect(single.rows).toBe(rows);
+    expect(single.capped).toBe(false);
+    expect(single.groupAction).toBeUndefined();
+    const narrowed = previewSourceSections({ rows: [...rows, ...many('source:b', over)], groups: groups('source:a', 'source:b'), pages: pages({}), onSeeSource: null });
+    expect(narrowed.capped).toBe(false);
+    expect(narrowed.groupAction).toBeUndefined();
   });
 });

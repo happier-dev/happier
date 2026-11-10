@@ -11,7 +11,7 @@ import {
   type CollectionGroupAction,
   useHappierCollection,
 } from '@happier-dev/plugin-ui';
-import { HAPPIER_PICKS_SOURCE_ID } from '@happier-dev/protocol/registries';
+import { HAPPIER_PICKS_SOURCE_ID, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import type { AccountProviderDeclarationV1 } from '@happier-dev/protocol/providers/catalog/accountModelProjectionV1';
 
 import { RegistryShelfAddControl } from '@/components/capabilities/add/RegistryShelf';
@@ -58,6 +58,7 @@ import { StoreDirectoryUnavailable } from './StoreDirectoryUnavailable';
 import type { RegistryCuration } from '@/registries/useRegistrySuggestions';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { StoreMachineScopeContext, type useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
 
 export type StoreDirectoryKind = Exclude<StoreKind, 'plugin' | 'software'>;
 /** The catalog row's mark box draws a bare logo at this size inside it (S10 catalogRow). */
@@ -342,9 +343,10 @@ function curatedSummaries(curation: RegistryList['curation'], kind: RegistryCata
   }));
 }
 
-/** Groups a registry kind's rows: Happier picks first, then the curated categories, then each other catalog. */
+/** Native App catalogs lead; within each tier, picks and curated categories precede other catalogs. */
 export function useRegistryRows(
   list: Readonly<{ items: readonly RegistryCatalogItemSummary[]; curation: RegistryList['curation'];
+    sources?: readonly Pick<RegistrySourceDescriptorV1, 'id' | 'format' | 'kinds'>[];
     /** Browsing this kind unfiltered: its curated items lead the page even before their catalog page has loaded. */
     curatedKind?: RegistryCatalogItemSummary['kind'] }>,
   open: (item: RegistryCatalogItemSummary) => void,
@@ -391,6 +393,9 @@ export function useRegistryRows(
         });
       }
     }
+    const nativeAppSources = new Set((list.sources ?? []).filter(source =>
+      source.format === 'happier-catalog' && source.kinds.includes('app')).map(source => source.id));
+    const nativeAppGroups = new Set<string>();
     const groups = new Map<string, DirectoryGroup>();
     const next = new Map<string, Readonly<{
       item: RegistryCatalogItemSummary; group: string; added: boolean; addable: boolean; row: DirectoryRow;
@@ -426,6 +431,7 @@ export function useRegistryRows(
                   source: sourceTitle(item.sourceId),
                 }),
               };
+      if (item.kind === 'app' && nativeAppSources.has(item.sourceId)) nativeAppGroups.add(group.key);
       if (!groups.has(group.key)) groups.set(group.key, group);
       const key = `${item.kind}|${item.sourceId}|${item.itemId}`;
       const added = isAdded?.(item) ?? false;
@@ -456,11 +462,12 @@ export function useRegistryRows(
       return row;
     });
     held.current = next;
-    // Category order comes from curation, independently of catalog pagination or hydration order.
+    // Native App catalogs precede imported tools; editorial order within each tier is independent of arrival order.
     const editorialOrder = new Map(['picks', ...[...categories.keys()].map(key => `category:${key}`)]
       .map((key, index) => [key, index]));
     const orderedGroups = [...groups.values()].sort((left, right) =>
-      (editorialOrder.get(left.key) ?? editorialOrder.size) - (editorialOrder.get(right.key) ?? editorialOrder.size));
+      Number(nativeAppGroups.has(right.key)) - Number(nativeAppGroups.has(left.key))
+      || (editorialOrder.get(left.key) ?? editorialOrder.size) - (editorialOrder.get(right.key) ?? editorialOrder.size));
     const before = published.current;
     const same = before !== null && before.rows.length === rows.length && before.rows.every((row, index) => row === rows[index])
       && before.groups.length === orderedGroups.length
@@ -469,17 +476,23 @@ export function useRegistryRows(
     if (same) return before;
     published.current = { rows, groups: orderedGroups };
     return published.current;
-  }, [list.curation, list.items, curatedItems, open, sourceTitle, isAdded, add]);
+  }, [list.curation, list.items, list.sources, curatedItems, open, sourceTitle, isAdded, add]);
 }
 
-/** A catalog's name, from every catalog the Account holds (a failed source may not serve this page's kind). */
-export function useSourceTitle(): (sourceId: string) => string {
+/** Catalog facts and names share the Account's existing source subscription. */
+export function useSourceCatalog() {
   const registry = useRegistrySources();
-  return React.useCallback(
+  const sourceTitle = React.useCallback(
     (sourceId: string) =>
       registry.sources.find((source) => source.id === sourceId)?.title ?? t('capabilities.store.unnamedCatalog'),
     [registry.sources],
   );
+  return { sources: registry.sources, sourceTitle };
+}
+
+/** A catalog's name, from every catalog the Account holds (a failed source may not serve this page's kind). */
+export function useSourceTitle(): (sourceId: string) => string {
+  return useSourceCatalog().sourceTitle;
 }
 
 function RegistryDirectory(
@@ -496,9 +509,9 @@ function RegistryDirectory(
 ): React.ReactNode {
   const open = useOpenRegistryItem();
   const add = useAddRegistryItem();
-  const sourceTitle = useSourceTitle();
-  const curated = React.useMemo(() => ({ items: props.list.items, curation: props.list.curation,
-    ...(props.browsing ? { curatedKind: props.kind } : {}) }), [props.list.items, props.list.curation, props.browsing, props.kind]);
+  const { sources, sourceTitle } = useSourceCatalog();
+  const curated = React.useMemo(() => ({ items: props.list.items, curation: props.list.curation, sources,
+    ...(props.browsing ? { curatedKind: props.kind } : {}) }), [props.list.items, props.list.curation, sources, props.browsing, props.kind]);
   const { rows, groups } = useRegistryRows(curated, open, sourceTitle, props.isAdded, add);
   const preview = useSourceSectionPreview(rows, groups, props.list, props.browsing ? props.onSeeSource : undefined);
   return (
@@ -531,15 +544,18 @@ export const StoreRegistryItemSelectContext = React.createContext<((item: Regist
  */
 export function StoreRegistryItemPicker(props: Readonly<{
   presented: boolean;
+  machine?: ReturnType<typeof useStoreMachineScope>;
   initialFilters?: SettingsCollectionFilter;
   onSelect: (item: RegistryCatalogItemSummary) => void;
   testID: string;
 }>): React.ReactNode {
   const demand = React.useMemo(() => ({ presented: props.presented }), [props.presented]);
-  return <StoreDiscover demand={demand} project={null}>{({ curation, complete }) =>
+  return <StoreMachineScopeContext.Provider value={props.machine}>
+  <StoreDiscover demand={demand} project={null}>{({ curation, complete }) =>
     <PickerQuery demand={demand} presented={props.presented} curation={curation.curation} curationComplete={complete}
       initialFilters={props.initialFilters} onSelect={props.onSelect} testID={props.testID} />
-  }</StoreDiscover>;
+  }</StoreDiscover>
+  </StoreMachineScopeContext.Provider>;
 }
 
 const PickerQuery = React.memo(function PickerQuery(props: Readonly<{ demand: Readonly<{ presented: boolean }>; presented: boolean;

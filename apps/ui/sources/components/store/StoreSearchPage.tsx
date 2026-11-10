@@ -51,7 +51,7 @@ import {
   useOpenRegistryItem,
   useProviderRows,
   useRegistryRows,
-  useSourceTitle,
+  useSourceCatalog,
   STORE_SECTION_PREVIEW_ROWS,
   type DirectoryGroup,
   type DirectoryList,
@@ -192,7 +192,7 @@ function SearchResults(
   const mcpAdded = useMcpAdded(props.presented);
   const skillAdded = useSkillAdded(props.presented);
   const agentAdded = useAgentAdded(props.presented);
-  const sourceTitle = useSourceTitle();
+  const { sources, sourceTitle } = useSourceCatalog();
   const pick = <Item,>(items: readonly Item[] | undefined): readonly Item[] =>
     (items ?? []).filter((item) => visible.has(item));
   const mcpItems = React.useMemo(
@@ -231,7 +231,7 @@ function SearchResults(
     mcpAdded,
     addRegistry,
   );
-  const app = useRegistryRows({ items: appItems, curation: NO_CURATION }, openRegistry, sourceTitle, undefined, addRegistry);
+  const app = useRegistryRows({ items: appItems, curation: NO_CURATION, sources }, openRegistry, sourceTitle, undefined, addRegistry);
   const browserExtension = useRegistryRows({ items: browserExtensionItems, curation: NO_CURATION }, openRegistry, sourceTitle, undefined, addRegistry);
   const skill = useRegistryRows(
     { items: skillItems, curation: NO_CURATION },
