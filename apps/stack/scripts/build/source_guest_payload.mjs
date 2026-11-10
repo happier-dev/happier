@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { cp, mkdir, rm, symlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveExecutableName } from '../../../../packages/cli-common/src/componentArtifacts/targets.ts';
+import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTarget, resolveExecutableName } from '../../../../packages/cli-common/src/componentArtifacts/targets.ts';
 import { run } from '../utils/proc/proc.mjs';
 
 // Preserve the installer's existing flat or target-directory layout. The tools
@@ -11,7 +11,9 @@ import { run } from '../utils/proc/proc.mjs';
 // executable ABIs or introducing another target setting.
 export function readSourceGuestPayloadTargets(env) {
   const configuredRoot = String(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim();
-  if (!configuredRoot) return null;
+  if (!configuredRoot) {
+    return [{ target: resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS }), relativeDir: '' }];
+  }
   const root = resolve(configuredRoot);
   const targets = CLI_BINARY_TARGETS.filter(target => {
     const path = join(root, `${target.os}-${target.arch}`);

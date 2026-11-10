@@ -11,11 +11,20 @@ import { installSourceAdmissionFixture, installSourcePreparationInputs } from '.
 import { captureBuildInputFiles, mountInstalledNodeModules } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspaceBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readWorkspacePackages, workspaceSourcePackageClosure } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
-import { buildSourceRuntimeBundle, captureSourceRuntimeSharedInputs, setBundleReadOnly } from './build_source_runtime.mjs';
+import { buildSourceRuntimeBundle, setBundleReadOnly } from './build_source_runtime.mjs';
 import { runCapture } from '../utils/proc/proc.mjs';
 import cliDistBuildManifest from '../../../../packages/cli-common/cliDistBuildManifest.cjs';
 import { createCliSourceLoader } from '../../../../packages/cli-common/cliSourceLoader.mjs';
 import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTarget } from '../../../../packages/cli-common/src/componentArtifacts/targets.ts';
+import { readSourceGuestPayloadTargets } from './source_guest_payload.mjs';
+
+test('source guest payload defaults to the current native target without a configured root', () => {
+  const target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS });
+  for (const env of [{}, { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: '' },
+    { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: '   ' }]) {
+    assert.deepEqual(readSourceGuestPayloadTargets(env), [{ target, relativeDir: '' }]);
+  }
+});
 
 test('guest payload and daemon retain the same captured source after live edits and guest-only changes invalidate reuse',
   { skip: process.platform === 'win32' ? 'compiler-process fixture uses POSIX executable scripts' : false }, async t => {
@@ -87,6 +96,11 @@ test('guest payload and daemon retain the same captured source after live edits 
       const fs = require('node:fs'); const path = require('node:path');
       const args = process.argv.slice(2);
       if (args.includes('--version')) { console.log(${JSON.stringify(bunPin)}); process.exit(0); }
+      const liveEdit = ${JSON.stringify(fixture.path('edit-live-source'))};
+      if (fs.existsSync(liveEdit)) {
+        fs.writeFileSync(${JSON.stringify(join(cliDir, 'src/index.ts'))}, 'export const snapshot = "live";');
+        fs.unlinkSync(liveEdit);
+      }
       const flag = args.includes('--outfile') ? '--outfile' : args.includes('-o') ? '-o' : '--output';
       const output = args[args.indexOf(flag) + 1];
       fs.mkdirSync(path.dirname(output), {recursive:true}); fs.writeFileSync(output, 'fixture native executable');
@@ -159,15 +173,20 @@ test('guest payload and daemon retain the same captured source after live edits 
   const options = { repoDir, stackBaseDir: fixture.path('stacks/guest'), component: 'daemon', env,
     waitForSourceChanges: false };
   const ordinary = await build(options);
-  assert.equal(ordinary.guestPayload, undefined);
+  assert.ok(ordinary.guestPayload, 'an unconfigured source runtime produces its native guest payload');
+  assert.equal((await import(pathToFileURL(join(ordinary.guestPayload.root, 'package-dist/index.mjs')))).snapshot, 'captured');
+  assert.equal(ordinary.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT, ordinary.guestPayload.root);
   const configuredPayload = fixture.path('configured-payload');
   await mkdir(join(configuredPayload, 'tools/unpacked'), { recursive: true });
   await writeFile(join(configuredPayload, 'tools/unpacked/.happier-tools-manifest.json'), JSON.stringify({platformDir:resolveCliToolsPlatformDir(target),tools:{}}));
   const optedEnv = { ...env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: configuredPayload };
-  const sharedSourceInputs = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path('shared'), env: optedEnv });
-  await writeFile(join(cliDir, 'src/index.ts'), 'export const snapshot = "live";');
-  const built = await build({ ...options, env: optedEnv, sharedSourceInputs });
-  assert.ok(built.guestPayload, 'explicit guest opt-in must build a retained payload instead of reusing the source-only bundle');
+  // Force a fresh producer capture and edit live source at the compiler process
+  // boundary, after capture. The public producer owns its capture inputs.
+  await writeFile(join(cliDir, 'src/guest-only.ts'), 'export const guest = "during-build";');
+  await writeFile(fixture.path('edit-live-source'), 'armed');
+  const built = await build({ ...options, env: optedEnv });
+  assert.equal(await readFile(join(cliDir, 'src/index.ts'), 'utf8'), 'export const snapshot = "live";');
+  assert.ok(built.guestPayload, 'a configured native root retains a source-built payload');
   assert.equal(built.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT, built.guestPayload.root);
   assert.notEqual(built.guestPayload.root, optedEnv.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT);
   assert.deepEqual(built.guestPayload.sourceCapture, built.sourceCapture);
@@ -210,14 +229,14 @@ test('guest payload and daemon retain the same captured source after live edits 
   }
   const foreign = CLI_BINARY_TARGETS.find(candidate => candidate.os !== target.os);
   await mkdir(join(collection, `${foreign.os}-${foreign.arch}`));
-  await assert.rejects(build({ ...options, env: collectionEnv }), error => error.code === 1,
+  await assert.rejects(build({ ...options, env: collectionEnv }), { code: 'source_runtime_producer_failed', phase: 'source-producer' },
     'a configured foreign target must use the canonical target producer instead of silently publishing host-only output');
   const escaped = fixture.path('outside-installed-owner');
   await writeFile(escaped, 'not an installed dependency input');
   const escapeLink = join(cliDir, 'node_modules/guest-support-fixture/escape');
   await symlink(escaped, escapeLink);
   await writeFile(join(cliDir, 'src/guest-only.ts'), 'export const guest = "escape-check";');
-  await assert.rejects(build({ ...options, env: optedEnv }), error => error.code === 1,
+  await assert.rejects(build({ ...options, env: optedEnv }), { code: 'source_runtime_producer_failed', phase: 'source-producer' },
     'captured dependency mounts must retain the installed owner containment boundary');
   await rm(escapeLink);
   const manualRoot = fixture.path('manual-payload');
@@ -229,6 +248,8 @@ test('guest payload and daemon retain the same captured source after live edits 
   assert.equal(manual.guestPayload, undefined);
   assert.equal({ ...manualEnv, ...manual.env }.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT, manualRoot,
     'manual interpreter payloads retain their override without source attestation');
-  const disabled = await build(options);
-  assert.equal(disabled.guestPayload, undefined, 'source-only reloads must not inherit an earlier guest override');
+  const defaulted = await build(options);
+  assert.ok(defaulted.guestPayload, 'source reloads without an override still produce their native payload');
+  assert.equal(defaulted.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT, defaulted.guestPayload.root);
+  assert.notEqual(defaulted.guestPayload.root, manualRoot, 'a previous manual override is not inherited');
 });

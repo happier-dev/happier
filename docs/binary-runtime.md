@@ -289,17 +289,18 @@ not a release publication. Existing controllers need the input in their daemon
 environment and the shared installer change needs reload.
 The Stack placed-daemon launcher forwards this explicit payload-root input to
 the execution target without translating the path; the directory must exist on
-the creating daemon's host. In 0.3 development, source-runtime preparation rebuilds
-canonical native payloads for the configured targets from the daemon bundle's existing
-captured workspace. The replacement payload lives with that retained bundle;
+the creating daemon's host. In 0.3 development, source-runtime preparation builds
+the current host's canonical native guest payload when no payload root is configured.
+Configured targets are rebuilt from the daemon bundle's existing captured workspace.
+The replacement payload lives with that retained bundle;
 preparation does not overwrite the operator's input directory. The daemon consumes
 the replacement root, and reload READY records its identity and source capture in
 `identities.daemon.guestPayload` alongside the loaded daemon identity. A payload
 build failure leaves the incumbent runtime selected.
 Custom interpreter-script roots without canonical target metadata remain manual
 overrides and do not receive a source-build identity.
-A QA/source controller does not automatically replace
-normal released guest acquisition. Released CLI 0.2.17 predates the dedicated
+Normal released controllers retain verified release acquisition when no payload
+root is supplied. Released CLI 0.2.17 predates the dedicated
 bootstrap interpreter and shared `HAPPIER_FIRST_PARTY_INSTALL_HOME` layout, so it
 cannot serve this current-source dedicated-user bootstrap. Current payload
 promotion passes that install-home input to the newly delivered payload's own

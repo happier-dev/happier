@@ -51,7 +51,13 @@ export async function installSourceAdmissionFixture(root) {
   await mkdir(join(root,'bin'));
   await writeFile(join(root,'bin/awk'),`#!/bin/sh\ncase "$*" in\n  */proc/meminfo*) printf '16777216 16777216\\n' ;;\n  */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;\n  *) exec /usr/bin/awk "$@" ;;\nesac\n`);
   await chmod(join(root,'bin/awk'),0o755);
-  const env = {...buildNativeAdmissionFixtureEnv(),PATH:`${join(root,'bin')}:/usr/bin:/bin`,HAPPIER_DEV_TARGET_EXECUTION:'1'};
+  // Minimal daemon fixtures exercise preparation/adoption, not native CLI
+  // compilation. Use the supported manual override; payload tests clear it.
+  const payloadRoot = join(root, 'manual-guest-payload');
+  await mkdir(payloadRoot);
+  await writeFile(join(payloadRoot, 'happier'), '#!/bin/sh\nexit 0\n');
+  const env = {...buildNativeAdmissionFixtureEnv(),PATH:`${join(root,'bin')}:/usr/bin:/bin`,HAPPIER_DEV_TARGET_EXECUTION:'1',
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: payloadRoot};
   return {...native,runtimePath,build,prepareReload,runSourceCommand,env};
 }
 
