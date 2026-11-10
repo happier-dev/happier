@@ -22,7 +22,8 @@ import type { DeploymentBackupTestResultV1 } from '@happier-dev/protocol/deploym
 import type { DeploymentBackupHistoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupHistoryV1';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { deriveActionInputHints } from '@happier-dev/protocol/actions/schemaInputHints';
@@ -218,23 +219,6 @@ function useBackupTarget(detail: DeploymentEnvironmentReadDetailV1, configuratio
   return target && deploymentId ? { ...target, deploymentId, configRevision: configuration.configRevision } : null;
 }
 
-/** The saved S3 repository's authored bucket and prefix. */
-function destinationTitle(configuration: DeploymentBackupConfigurationV1): string {
-  const text = (key: string) => {
-    const value = configuration.config[key];
-    return typeof value === 'string' && value.length > 0 ? value : null;
-  };
-  return [text('bucket'), text('prefix')].filter((part): part is string => part !== null).join(' · ')
-    || configuration.destinationRef.localId;
-}
-
-function destinationPlace(configuration: DeploymentBackupConfigurationV1): string {
-  const region = configuration.config.region;
-  return typeof region === 'string' && region.length > 0
-    ? t('projects.deployments.settingsSections.destinationS3', { region })
-    : t('projects.deployments.settingsSections.destinationS3NoRegion');
-}
-
 function testOutcome(result: DeploymentBackupTestResultV1): Readonly<{ ok: boolean; line: string }> {
   if (result.kind === 'reachable') return { ok: true, line: t('projects.deployments.settingsSections.destinationReachable') };
   switch (result.reason) {
@@ -261,6 +245,15 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
   const target = useBackupTarget(props.detail, props.configuration);
   const [tested, setTested] = React.useState<Readonly<{ ok: boolean; line: string }> | null>(null);
   const [running, setRunning] = React.useState(false);
+  const projection = usePluginUiProjectionCurrentness({ serverId: props.detail.environment.serverId,
+    machineId: props.detail.environment.controllerMachineId, sections: BACKUP_DESTINATION_SECTIONS });
+  const localize = usePluginLocalizedTextResolver({ projection: projection.pluginUiProjection });
+  const destination = projection.pluginUiProjection?.backupDestinationsById[
+    buildQualifiedPluginContributionKey(props.configuration.destinationRef)];
+  const inputHints = React.useMemo(() => destination
+    ? deriveActionInputHints(destination.definition.configSchema, destination.definition.fieldHints) : null, [destination]);
+  const fields = React.useMemo(() => inputHints
+    ? resolveEffectiveInputFields({ inputHints }, props.configuration.config) : [], [inputHints, props.configuration.config]);
   const { actions } = props;
   const test = async () => {
     if (!actions || !target || running) return;
@@ -275,10 +268,10 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
     finally { setRunning(false); }
   };
   return (
-    <Item
+    <><Item
       testID={`${props.testID}.destination`}
-      title={destinationTitle(props.configuration)}
-      subtitle={tested ? `${destinationPlace(props.configuration)} · ${tested.line}` : destinationPlace(props.configuration)}
+      title={destination ? localize(destination.pluginId, destination.definition.title) : t('common.unavailable')}
+      subtitle={tested?.line}
       subtitleLeading={tested && !tested.ok
         ? <StatusDot size={6} color={theme.colors.state.danger.foreground} /> : undefined}
       mode="info"
@@ -286,7 +279,12 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
         <SectionActionButton testID={`${props.testID}.destination.test`}
           title={t('projects.deployments.settingsSections.destinationTest')} disabled={running} onPress={test} />
       ) : undefined}
+      bottomElement={destination ? <ActionInputFields fields={fields} input={props.configuration.config}
+        editable={false} resolveFieldOptions={destinationFieldOptions} onPatch={noop} /> : undefined}
     />
+    {destination?.definition.locality === 'local' ? <Item testID={`${props.testID}.destination.localWarning`}
+      mode="info" title={t('projects.deployments.settingsSections.setupLocalWarning')}
+      subtitle={t('projects.deployments.settingsSections.setupLocalGrowth')} /> : null}</>
   );
 }
 
@@ -417,6 +415,7 @@ export function DeploymentBackupSetup(props: Readonly<{
   machineName: (machineId: string) => string; onAddDatabase?: (() => void) | null; testID: string;
 }>) {
   const router = useRouter();
+  const route = useLocalSearchParams<{ deploymentEnvironment?: string; deploymentSetup?: string }>();
   const mounted = React.useRef(true);
   React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const currentEnvironment = React.useRef(props.detail.environment.id);
@@ -446,6 +445,18 @@ export function DeploymentBackupSetup(props: Readonly<{
       return { ok: true };
     });
   }, [change.press, destinations, id, projection.interactionEnabled, projection.pluginUiProjection, props]);
+  const openedFromReadiness = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    const environmentId = props.detail.environment.id;
+    if (route.deploymentEnvironment !== environmentId || route.deploymentSetup !== 'backups') {
+      openedFromReadiness.current = null;
+      return;
+    }
+    if (!projection.interactionEnabled || !destinations.length || openedFromReadiness.current === environmentId) return;
+    openedFromReadiness.current = environmentId;
+    open();
+  }, [route.deploymentEnvironment, route.deploymentSetup, props.detail.environment.id,
+    projection.interactionEnabled, destinations.length, open]);
   const finish = (content: React.ReactNode) => <>{content}
     <Item title={t('projects.deployments.backupNotNeededTitle')} mode="info" rightElement={
       <SectionActionButton testID={`${id}.notNeeded`} title={t('projects.deployments.backupNotNeededTitle')}
@@ -627,6 +638,9 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
         selectedId={destinationId} disabled={locked} onSelect={chooseDestination} fill /></FieldItem> : null}
     {destination.definition.locality === 'local' ? <Item mode="info" title={t('projects.deployments.settingsSections.setupLocalWarning')}
       subtitle={t('projects.deployments.settingsSections.setupLocalGrowth')} /> : null}
+    {destination.definition.locality === 'local' && !result?.review?.capacity ? <Item testID={`${id}.capacityReview`}
+      mode="info" title={t('projects.deployments.settingsSections.setupCapacityUnknown')}
+      subtitle={t('projects.deployments.settingsSections.setupCapacityAtBackupMachine')} /> : null}
     {anotherMachine ? <>
       <EnvironmentMachineChoice serverId={serverId} testID={`${id}.receiver`} icon={null}
         title={t('projects.deployments.settingsSections.setupReceiverMachine')}
@@ -775,7 +789,7 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
   testID: string;
 }>) {
   const { actions } = props;
-  const [scheduled, setScheduled] = React.useState<boolean | null>(null);
+  const [sets, setSets] = React.useState<Awaited<ReturnType<ActionsFactory['backupScheduleSets']>> | null>(null);
   const [failure, setFailure] = React.useState<string | null>(null);
   const [adding, setAdding] = React.useState(false);
   const showFailure = (error: unknown) => {
@@ -788,10 +802,10 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
   React.useEffect(() => {
     if (!actions) return;
     let live = true;
-    actions.backupScheduleSets({ environmentId }).then((count) => {
-      if (live) { setScheduled(count > 0); setFailure(null); }
+    actions.backupScheduleSets({ environmentId }).then((next) => {
+      if (live) { setSets(next); setFailure(null); }
     }, (error) => {
-      if (live) { setScheduled(null); showFailure(error); }
+      if (live) { setSets(null); showFailure(error); }
     });
     return () => { live = false; };
   }, [actions, environmentId]);
@@ -801,23 +815,24 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
     try {
       const starter = getWorkflowStarterExamplesV1().find(example => example.key === 'nightly-backups');
       if (starter?.triggerSeed?.kind !== 'schedule') throw new Error('workflow_starter_unavailable');
-      await actions.addBackupSchedule({ environmentId, configuration: props.configuration, schedule: starter.triggerSeed.schedule,
+      const result = await actions.addBackupSchedule({ environmentId, configuration: props.configuration, schedule: starter.triggerSeed.schedule,
         controllerMachineId: props.detail.environment.controllerMachineId });
-      setScheduled(true);
+      setSets(current => [...(current ?? []), result.set]);
       setFailure(null);
     } catch (error) { showFailure(error); }
     finally { setAdding(false); }
   };
-  const status = scheduled === null ? t('common.unavailable') : scheduled
-    ? t('projects.deployments.settingsSections.scheduleOn')
-    : t('projects.deployments.settingsSections.scheduleOff');
+  const schedules = sets?.flatMap(set => set.triggers.flatMap(trigger => trigger.kind === 'schedule' && trigger.enabled
+    ? [formatAutomationScheduleLabel(trigger)] : []));
+  const status = schedules === undefined ? t('common.unavailable') : schedules.length > 0
+    ? schedules.join(' · ') : t('projects.deployments.settingsSections.scheduleOff');
   return (
     <Item
       testID={`${props.testID}.schedule`}
       title={t('projects.deployments.settingsSections.scheduleTitle')}
       subtitle={failure ? `${status} · ${failure}` : status}
       mode="info"
-      rightElement={actions && scheduled === false ? (
+      rightElement={actions && schedules?.length === 0 ? (
         <SectionActionButton testID={`${props.testID}.schedule.on`}
           title={t('projects.deployments.settingsSections.scheduleTurnOn')} disabled={adding} onPress={turnOn} />
       ) : undefined}

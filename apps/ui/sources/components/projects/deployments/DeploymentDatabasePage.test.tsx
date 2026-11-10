@@ -9,7 +9,7 @@ import {
   createDeploymentSecretVariableBindingV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
-import { DeploymentBackupActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+import { DeploymentBackupActionInputSchemasV1, deploymentBackupPolicyV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
   act,
@@ -60,6 +60,10 @@ vi.mock(
     }),
   }),
 );
+// Native recycler layout is a platform boundary; the query sheet's real row renderer runs beneath it.
+vi.mock('@legendapp/list/react-native', async (importOriginal) =>
+  (await import('@/dev/testkit/mocks/legendList')).createCapturingLegendListMock({
+    original: await importOriginal<Record<string, unknown>>() }).module);
 vi.mock(
   '@/modal',
   async () =>
@@ -294,10 +298,6 @@ async function renderDatabase(
   const effects: Array<{ actionId: string; input: Record<string, unknown> }> =
     [];
   if (input.answers?.missedSchedule) {
-    const { deploymentDataTargetOperands } = await import('@happier-dev/deployments');
-    const runtimeTargetLink = detail.targetLinks[0]?.targetLink ?? null;
-    const target = deploymentDataTargetOperands({ environment: detail.environment, runtimeTargetLink });
-    if (!target || !runtimeTargetLink?.activeDeploymentId) throw new Error('Expected deployed backup target');
     const response = AutomationDefinitionDetailsResponseSchema.parse({ automations: [{
       id: 'nightly-backups', name: 'Nightly backups', description: null, enabled: true,
       targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
@@ -309,9 +309,8 @@ async function renderDatabase(
       executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
         workspace: { directory: '~' }, executionTarget: { kind: 'detached_run' },
         inlineDefinition: createNightlyBackupsWorkflowV1(),
-        inputs: { backupTarget: { ...target, serverId: serverIdentityId,
-          deploymentId: runtimeTargetLink.activeDeploymentId, configRevision: 1 },
-          retention: backup.retention, verificationLevel: 'manifestReadBack' },
+        inputs: { backupEnvironment: { environmentId: detail.environment.id, serverId: serverIdentityId },
+          backupPolicy: deploymentBackupPolicyV1(backup), verificationLevel: 'manifestReadBack' },
       } } },
     }], nextCursor: null });
     homes.answer(serverId, 'POST /v3/automations/query', { body: response });
@@ -497,19 +496,20 @@ async function renderDatabase(
   };
 }
 
+/** The cell's rendered string, independent of the Text component's internal wrapper. */
+function renderedText(node: { findAll: (predicate: (node: { type: unknown; props: { children?: unknown } }) => boolean) => { props: { children?: unknown } }[] } | null): string | null {
+  return node ? node.findAll(entry => typeof entry.type === 'string' && typeof entry.props.children === 'string')
+    .map(entry => entry.props.children).join('') || null : null;
+}
+
 describe('Environment → Database → Private console', () => {
-  it('adds a console through the shared catalog picker and leads to Domains for its private route', async () => {
+  it('says private access is unavailable on this server, with no Add, Domains or Open lead', async () => {
     const view = await renderDatabase({ storedDefinition: true });
     try {
-      expect(await view.settle(`${page}.console.domains`)).not.toBeNull();
-      expect(view.screen.findByTestId(`${page}.console.open`)).toBeNull();
-      await view.screen.pressByTestIdAsync(`${page}.console.domains`);
-      expect(view.navigate).toHaveBeenCalledWith({ tab: 'domains' });
-      await view.screen.pressByTestIdAsync(`${page}.console.add`);
-      expect(await view.settle('project-deployments.add.picker')).not.toBeNull();
-      const { StoreRegistryItemPicker } = await import('@/components/store/StoreKindPage');
-      expect(view.screen.root.findAllByType(StoreRegistryItemPicker)[0]?.props.initialFilters)
-        .toEqual({ category: { include: ['administration-tool'], exclude: [] } });
+      expect(await view.settle(`${page}.console.access`)).not.toBeNull();
+      for (const control of ['open', 'add', 'domains']) {
+        expect(view.screen.findByTestId(`${page}.console.${control}`)).toBeNull();
+      }
       expect(view.effects.some(effect => effect.actionId === 'deployments.templates.instantiate')).toBe(false);
     } finally { await view.dispose(); }
   });
@@ -543,7 +543,7 @@ describe('Environment → Database → Read-only query', () => {
     const principal = { kind: 'account' as const, accountId: 'original-owner',
       purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'deploy-manage' },
       target: { kind: 'account' as const, account: { service: { pluginId, localId: 'database' }, accountId: 'original-token' } } };
-    const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId, runtimeTargetLinkId: null }),
+    const detail = createDeploymentEnvironmentDetailV1({ environment: (({ runtimeTargetLinkId: _runtime, ...header }) => header)(createDeploymentEnvironmentHeaderV1({ serverId })),
       targetLinks: [{ targetLink, content: { credentialPrincipal: principal,
         providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
         providerEnvironment: { kind: 'custom', id: 'main' } } }] });
@@ -580,7 +580,7 @@ describe('Environment → Database → Read-only query', () => {
         expect(screen.findByTestId('project-deployments.query.incomplete')).not.toBeNull(); });
       expect(calls).toEqual([expect.objectContaining({ targetLinkId: targetLink.id, expectedTargetLinkRevision: targetLink.revision,
         credentialPrincipal: principal, credentialRef: principal.target.account, sql: 'SELECT $1 AS value', params: { '1': 'private value' } })]);
-      expect(screen.findByTestId('project-deployments.query.cell.0.0')?.props.children).toBe('NULL');
+      expect(renderedText(screen.findByTestId('project-deployments.query.cell.0.0'))).toBe('NULL');
     } finally { await screen.unmount(); controller.retire(); await installed.dispose(); account.dispose(); }
   });
   it('keeps invalid parameter JSON local and shows a complete empty result without inventing rows', async () => {
@@ -623,8 +623,8 @@ describe('Environment → Database → Read-only query', () => {
       await view.screen.pressByTestIdAsync('project-deployments.query.run');
       expect(await view.settle('project-deployments.query.incomplete')).not.toBeNull();
       expect(await view.settle('project-deployments.query.cell.0.0')).not.toBeNull();
-      expect(view.screen.findByTestId('project-deployments.query.cell.0.0')?.props.children).toBe('NULL');
-      expect(view.screen.findByTestId('project-deployments.query.cell.0.1')?.props.children).toBe('""');
+      expect(renderedText(view.screen.findByTestId('project-deployments.query.cell.0.0'))).toBe('NULL');
+      expect(renderedText(view.screen.findByTestId('project-deployments.query.cell.0.1'))).toBe('""');
       expect(view.effects.find(effect => effect.actionId === 'deployments.data.query')?.input).toMatchObject({ service: 'postgres', params: {} });
     } finally { await view.dispose(); }
   });

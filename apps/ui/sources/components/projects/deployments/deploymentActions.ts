@@ -8,7 +8,7 @@ import { type DeploymentDataQueryInputV1 } from '@happier-dev/protocol/deploymen
 import { DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
-import { WorkflowTriggerListResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { DeploymentTemplateInstantiateResultV1Schema, type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { buildDeploymentBackupActionInputV1, deploymentBackupPolicyV1, DeploymentBackupActionResultSchemasV1,
@@ -220,7 +220,7 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
         },
         /** Enabled backup Workflows for this stable Environment, selected by the trigger owner. */
         async backupScheduleSets(input: Readonly<{ environmentId: string }>) {
-            return (await readBackupScheduleSets(input.environmentId)).length;
+            return readBackupScheduleSets(input.environmentId);
         },
         /**
          * Schedules the built-in Nightly backups Workflow for this Environment from the controller Machine: back up,
@@ -232,7 +232,7 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             // The starter owns its Workflow and default schedule; turning it on is the person's choice here.
             const starter = getWorkflowStarterExamplesV1().find((example) => example.key === 'nightly-backups');
             if (!starter || starter.triggerSeed?.kind !== 'schedule') throw new HappyError('workflow_starter_unavailable', false);
-            return execute('workflow.trigger.add', {
+            return WorkflowTriggerWriteResultV1Schema.parse(await execute('workflow.trigger.add', {
                 target: { kind: 'inline', definition: starter.definition },
                 project: { machineId: input.controllerMachineId, directory: '~' },
                 executionTarget: { kind: 'detached_run' },
@@ -240,7 +240,7 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                     backupPolicy: deploymentBackupPolicyV1(input.configuration), verificationLevel: 'manifestReadBack' },
                 trigger: { kind: 'schedule', schedule: input.schedule, enabled: true },
                 actionApproval: 'automatic',
-            });
+            }));
         },
         /** Forgets the snapshots past the saved counts now, instead of after the next backup. */
         async pruneBackups(input: Omit<DeploymentBackupPruneInputV1, 'serverId'>) {
