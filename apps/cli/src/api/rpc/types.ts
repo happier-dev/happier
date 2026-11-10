@@ -74,6 +74,8 @@ export type RpcHandlerContext = Readonly<{
     workspaceSyncPrivateExecution?: import('@/workspaces/sync/workspaceSyncHandoffAdapter').RetainedWorkspaceSyncPrivateExecution;
     /** Content codec admitted for this exact call (its reply uses it); absent when no material was admitted. */
     contentMode?: 'plain' | 'e2ee';
+    /** Exact Session content admitted by authenticated Home ingress, retained by its Browser stream. */
+    sessionBrowserContent?: import('@/api/machine/machineStoredContent').MachineContentCodec;
     reportOperationDiagnostics?: (diagnostics: RpcOperationDiagnostics) => void;
     /** Receiving Action adapter's effect target; activity only, never admission authority. */
     reportSessionEffect?: (effect: Readonly<{ sessionId: string; actionId: string }>) => void;
@@ -202,6 +204,11 @@ type RpcHandlerCommonConfig = {
         content: import('@happier-dev/sync-client').SocketRpcContent;
         isCurrent: () => Promise<boolean>;
     }> | null>;
+    /** Select the existing Session key once for this Home-admitted Browser call. */
+    resolveSessionBrowserContent?: (input: Readonly<{
+        authorization: import('@happier-dev/protocol/socketRpc').SocketRpcSessionBrowserAuthorizationContext;
+        signal: AbortSignal;
+    }>) => Promise<import('@/api/machine/machineStoredContent').MachineContentCodec | null>;
     authorizeRequest?: (request: Readonly<{
         method: string;
         params: unknown;

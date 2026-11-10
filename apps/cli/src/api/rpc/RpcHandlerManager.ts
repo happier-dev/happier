@@ -211,6 +211,7 @@ export class RpcHandlerManager {
     private rpcContent: SocketRpcContent | null;
     private readonly authorizeRequest: RpcHandlerConfig['authorizeRequest'];
     private readonly resolveSessionDecisionContext: RpcHandlerConfig['resolveSessionDecisionContext'];
+    private readonly resolveSessionBrowserContent: RpcHandlerConfig['resolveSessionBrowserContent'];
     private readonly prepareRequesterAccountContext: RpcHandlerConfig['prepareRequesterAccountContext'];
     private readonly resolveExternalActionEncryption: RpcHandlerConfig['resolveExternalActionEncryption'];
     private readonly projectTransportAcknowledgement:
@@ -259,6 +260,7 @@ export class RpcHandlerManager {
             return await (request.signal ? waitForObservation(pending, request.signal) : pending);
         } : undefined;
         this.resolveSessionDecisionContext = config.resolveSessionDecisionContext;
+        this.resolveSessionBrowserContent = config.resolveSessionBrowserContent;
         this.prepareRequesterAccountContext = config.prepareRequesterAccountContext;
         this.resolveExternalActionEncryption = config.resolveExternalActionEncryption;
         this.projectTransportAcknowledgement =
@@ -704,8 +706,7 @@ export class RpcHandlerManager {
             const privateAccountCustody = !!parsedInputAuthorization.data.requesterAccountContext && !!this.prepareRequesterAccountContext;
             const apiRootAdmission = 'grant' in binding && !parsedInputAuthorization.data.requesterAccountContext && !!this.authorizeRequest;
             if (!privateAccountCustody && !apiRootAdmission) return false;
-            const expectedAuthority = 'authentication' in binding && !binding.sessionActionOrigin && !binding.workflowActionOrigin
-                ? 'present_user' : 'account_automation';
+            const expectedAuthority = resolveExternalActionRootInvocationAuthority(parsedInputAuthorization.data);
             return binding.actionId === 'session.agent.transition' && binding.machineId === this.localMachineId
                 && (binding.target.kind === 'machine' && binding.target.machineId === this.localMachineId
                     || binding.target.kind === 'session' && binding.target.sessionId === this.scopePrefix)
@@ -833,6 +834,24 @@ export class RpcHandlerManager {
             phaseStartedAtMs = now;
         };
         try {
+            const sessionDecisionAuthorization = parseSocketRpcAuthorizationContext(request.authorization);
+            let sessionBrowserContent: RpcHandlerContext['sessionBrowserContent'];
+            if (sessionDecisionAuthorization?.kind === 'session.browser') {
+                if (source !== 'authenticated_home_socket' || request.callerAuthority !== 'present_user'
+                    || sessionDecisionAuthorization.machineId !== this.scopePrefix || !this.resolveSessionBrowserContent) {
+                    return await deny('session_authorization');
+                }
+                const content = await this.resolveSessionBrowserContent({ authorization: sessionDecisionAuthorization, signal: controller.signal });
+                if (!content) return await deny('session_authorization', { error: 'Session encryption material is unavailable',
+                    errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
+                sessionBrowserContent = content;
+                rpcContent = content.mode === 'plain' ? { mode: 'plain' } : { mode: 'e2ee', cipher: {
+                    encryptRaw: async value => content.encodeRpc(value), decryptRaw: async value => content.decodeRpc(value),
+                } };
+            }
+            // Home changes the physical route, while the original Session-scoped envelope stays sealed.
+            const contentMethod = sessionDecisionAuthorization?.kind === 'session.browser'
+                ? `${sessionDecisionAuthorization.sessionId}:${this.readUnprefixedMethod(request.method)}` : request.method;
             const pausedAtArrival = this.pausedRequestAdmission.get(this.readUnprefixedMethod(request.method));
             const admissionRevalidation = this.revalidatePausedRequestAdmission(this.readUnprefixedMethod(request.method), controller.signal);
             if (admissionRevalidation) await admissionRevalidation;
@@ -846,7 +865,7 @@ export class RpcHandlerManager {
                 // Bind an encrypted refusal to the actual request before encoding it.
                 // An unbound transport error cannot carry definite no-effect evidence.
                 try {
-                    const decoded = await socketRpcCodec.decodeRequestParams(rpcContent, request.params, request.method);
+                    const decoded = await socketRpcCodec.decodeRequestParams(rpcContent, request.params, contentMethod);
                     callId = decoded.callId;
                 } catch (error) {
                     return await respond(request, { error: 'Unable to open RPC content',
@@ -856,7 +875,6 @@ export class RpcHandlerManager {
                     ...(pausedAdmission.details === undefined ? {} : { details: pausedAdmission.details }) });
             }
             controller.signal.throwIfAborted();
-            const sessionDecisionAuthorization = parseSocketRpcAuthorizationContext(request.authorization);
             const isRequesterDecisionMethod = request.method.endsWith(`:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`);
             const isSessionDecisionRoute = isRequesterDecisionMethod
                 && (request.method !== `${this.scopePrefix}:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`
@@ -894,7 +912,7 @@ export class RpcHandlerManager {
                 const decoded = await socketRpcCodec.decodeRequestParams(
                     isServerOriginRequest || this.isContentFreeManagedActivityRequest(request) ? { mode: 'plain' } : rpcContent,
                     request.params,
-                    request.method,
+                    contentMethod,
                 );
                 decryptedParams = decoded.params;
                 callId = decoded.callId;
@@ -1194,6 +1212,7 @@ export class RpcHandlerManager {
                 // The same codec choice as encodeResponse for this call, fixed at admission.
                 contentMode: this.isServerOriginRequest(request) || this.isContentFreeManagedActivityRequest(request)
                     ? 'plain' : rpcContent.mode,
+                ...(sessionBrowserContent ? { sessionBrowserContent } : {}),
                 signal: controller.signal,
                 reportSessionEffect: (effect: NonNullable<RpcHandlerActiveExecution['sessionEffect']>) => this.reportSessionEffect(handlerExecutionId, effect),
                 reportOperationDiagnostics: (operation: RpcOperationDiagnostics) => this.reportOperationDiagnostics(diagnostic, operation),

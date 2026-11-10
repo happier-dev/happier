@@ -37,7 +37,7 @@ import { randomBytes } from 'node:crypto';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyResponseV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1, signExternalActionMachineRpcRequestV1,
   encodeDeploymentChildExecutionV1, createDeploymentChildExecutionProofV1,
-  readSessionSpawnNativeCredentialChildV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+  readSessionSpawnNativeCredentialChildV1, readExternalActionBindingAuthority } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER, isDeploymentReadActionIdV1,
   type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -616,13 +616,7 @@ export async function readExternalActionInstalledMachine(
 
 /** Schema-checked provenance projection only; Home still verifies the issued root and current principal. */
 export function resolveExternalActionRootInvocationAuthority(authorization: ExternalActionExecutionAuthorizationV1): ActionRequiredAuthority {
-  const binding = authorization.binding;
-  // The original terminal CLI invocation can be present-user. Its signed Home
-  // root keeps the terminal automation floor for admitted continuations.
-  if ('authentication' in binding && binding.authentication.kind === 'terminal') return 'account_automation';
-  const credential = binding.sessionActionOrigin || binding.workflowActionOrigin ? 'agent'
-    : 'authentication' in binding ? binding.authentication.kind : 'api_token';
-  return resolveInvocationAuthority({ credential, surface: 'rpc' });
+  return readExternalActionBindingAuthority(authorization.binding);
 }
 
 /** A terminal bearer cannot claim the UI approval floor; other admitted surfaces are preserved. */

@@ -6,7 +6,7 @@ import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAu
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { dispatchOriginalAccountAction } from './externalActionExecutionAuthorization';
+import { dispatchOriginalAccountAction, resolveExternalActionRootInvocationAuthority } from './externalActionExecutionAuthorization';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionTeamCredentialBindingIntentV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { sealExternalActionRequestV2, openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -89,6 +89,7 @@ it.each(['plain', 'e2ee'] as const)('carries only the exact source-signed %s spa
   let mintBody: unknown;
   let installed = false;
   let installs = 0;
+  const nativeRootAuthorities: ReturnType<typeof resolveExternalActionRootInvocationAuthority>[] = [];
   let releases = 0;
   let releasing = false;
   let unavailable = false;
@@ -132,6 +133,7 @@ it.each(['plain', 'e2ee'] as const)('carries only the exact source-signed %s spa
       const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       const authorization = carrier.executionAuthorization;
       if (!authorization) throw new Error('Expected native install authority');
+      if (!releasing) nativeRootAuthorities.push(resolveExternalActionRootInvocationAuthority(authorization));
       const codec = openManagedControllerActionCodecV1({ authorization,
         machineId: 'controller', installationId: 'controller-installation', serverIdentityId: 'srv_home', installationPrivateKey: keys.secretKey });
       expect(codec).not.toBeNull();
@@ -238,6 +240,7 @@ it.each(['plain', 'e2ee'] as const)('carries only the exact source-signed %s spa
   expect(borrowed.placeholder).toBe(opened.placeholder);
   await borrowed.cleanup();
   expect(installs).toBe(1);
+  expect(new Set(nativeRootAuthorities)).toEqual(new Set(['account_automation']));
   expect(mintBody).toMatchObject({ nativeCredentialSpawnChild: { originalActionEnvelope,
     method: 'controller:machines.managed.credentials.install', requestId: expect.any(String), ...(mode === 'plain' ? { params: input } : {}),
     externalActionExecution: { authorization: root, managedAdmission: { actionId: 'machines.managed.credentials.install', input } } } });

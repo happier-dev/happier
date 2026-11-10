@@ -6,6 +6,8 @@ import {
   type SessionPermissionDecisionActorV1,
 } from '../sessions/permissions/v1.js';
 import type { SessionCapabilityV1 } from '../sessions/access/sessionEffectiveAccessV1.js';
+import { SocketRpcSessionBrowserAuthorizationContextSchema, type SocketRpcSessionBrowserAuthorizationContext } from '../sessions/access/sessionBrowserAccessV1.js';
+export { SocketRpcSessionBrowserAuthorizationContextSchema, isSocketRpcSessionBrowserAuthorizationContext, type SocketRpcSessionBrowserAuthorizationContext } from '../sessions/access/sessionBrowserAccessV1.js';
 import type { ActionId } from '../actions/actionIds.js';
 import type { SessionFollowSourceKeyPrepareAuthorizationV1 } from '../sessions/follow/sessionFollowSourceKeyPreparationV1.js';
 import {
@@ -398,6 +400,7 @@ export type SocketRpcTransportResponseEnvelopeV1 =
 
 export const SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS = {
   SESSION_READ: 'session.read',
+  SESSION_BROWSER: 'session.browser',
   SESSION_WRITE: 'session.write',
   SESSION_ACTION: 'session.action',
   SESSION_PERMISSION_RESPOND: 'session.permission.respond',
@@ -413,6 +416,21 @@ export const SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS = {
 
 export type SocketRpcAuthorizationContextKind =
   (typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS)[keyof typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS];
+
+/** Browser Session operations consume the Session owner's existing capabilities. */
+export function resolveSessionBrowserRpcCapabilityV1(method: string): 'readTranscript' | 'submitAgentInput' | null {
+  switch (method) {
+    case RPC_METHODS.DAEMON_BROWSER_VIEW_LIST:
+    case RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH:
+    case RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT:
+    case RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START:
+      return 'readTranscript';
+    case RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH:
+      return 'submitAgentInput';
+    default:
+      return null;
+  }
+}
 
 export type SocketRpcSessionReadAuthorizationContext = Readonly<{
   kind: typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_READ;
@@ -535,6 +553,7 @@ export const ACTION_API_SERVER_ORIGIN: SocketRpcActionApiServerOriginAuthorizati
  * the broader union but must never be accepted by this parser.
  */
 export type SocketRpcSessionAuthorizationContext =
+  | SocketRpcSessionBrowserAuthorizationContext
   | SocketRpcSessionReadAuthorizationContext
   | SocketRpcSessionWriteAuthorizationContext
   | SocketRpcSessionActionAuthorizationContext
@@ -936,6 +955,10 @@ export function isSocketRpcCurrentSessionPresentationOriginAuthorizationContext(
 export function parseSocketRpcAuthorizationContext(value: unknown): SocketRpcSessionAuthorizationContext | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const candidate = value as { kind?: unknown; sessionId?: unknown; actor?: unknown; authentication?: unknown; authority?: unknown };
+  if (candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_BROWSER) {
+    const parsed = SocketRpcSessionBrowserAuthorizationContextSchema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+  }
   if (candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_ACTION) {
     const parsed = SocketRpcSessionActionAuthorizationContextSchema.safeParse(value);
     return parsed.success ? parsed.data : null;

@@ -730,6 +730,23 @@ it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody throu
       params: mode === 'plain' ? resume : await sealRpcRequest(machineKey, freshMethod, resume) });
     expect(mode === 'plain' ? resumeResponse : await openRpcResponse(machineKey, resumeResponse)).toMatchObject({ type: 'success' });
     expect(freshSpawnEffects).toBe(1);
+    const sessionRpc = new RpcHandlerManager({ ...config, scopePrefix: 'original-session' });
+    const sessionMethod = `original-session:${SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND}`;
+    sessionRpc.registerHandler(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+      (_input, context) => ({ accepted: true, authority: context?.callerAuthority }));
+    for (const kind of ['account', 'terminal'] as const) {
+      const sessionRoot = ExternalActionExecutionAuthorizationV1Schema.parse(sealExternalActionRequesterAccountContextV1({ authorization: {
+        ...transition, binding: { ...transition.binding, authentication: { kind, tokenEpoch: 1 },
+          target: { kind: 'session', sessionId: 'original-session' } },
+      }, credentials: encodedCredentials, invocation,
+        purpose: { kind: 'machine_rpc', method: SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, params: {} },
+        installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes }));
+      const response = await sessionRpc.handleRequest({ method: sessionMethod, requestId: `transition-${kind}`,
+        callerAuthority: kind === 'terminal' ? 'account_automation' : 'present_user', callerInputAuthorization: sessionRoot,
+        params: mode === 'plain' ? {} : await sealRpcRequest(machineKey, sessionMethod, {}) });
+      expect(mode === 'plain' ? response : await openRpcResponse(machineKey, response), kind)
+        .toMatchObject({ accepted: true, authority: 'account_automation' });
+    }
     expect(await run(seal(), { homeId: 'other' })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     expect(await run({ ...seal(), token: 'swapped-root' })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     get.mockClear();
