@@ -3694,6 +3694,37 @@ describe('WorkflowRunScreen', () => {
         }));
     });
 
+    it('retains the applied native Run answer when its offered catalog follow-up fails', async () => {
+        const followUp = { actionId: 'mcp.servers.tools.set', input: { serverId: 'missing-catalog-server', tools: { write: 'allow' } } };
+        const nativeChoices = { requirementId: 'run-offer', source: 'agent', choices: [{
+            id: 'remember', label: 'Remember', decision: 'approved', scope: 'session',
+            response: { approved: true }, followUp,
+        }] };
+        machineRpcSpy.mockImplementation(async ({ method }) => {
+            if (method === RPC_METHODS.CAPABILITIES_DESCRIBE) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
+            if (method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) return { run: {
+                runId: 'exec-1', callId: 'call-1', sidechainId: 'sidechain-1', intent: 'task',
+                backendTarget: { kind: 'builtInAgent', agentId: 'fixture-agent' }, permissionMode: 'default',
+                retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response',
+                status: 'running', startedAtMs: 1,
+                attention: { kind: 'permission_required', requestIds: ['permission-1'],
+                    requests: [{ requestId: 'permission-1', createdAt: 1, nativeChoices }] },
+            } };
+            return { ok: true };
+        });
+        await renderSelectedPermissionRequests();
+
+        let failure: unknown;
+        await act(async () => { await respondToRequest({ requestId: 'permission-1',
+            nativeChoice: { requirementId: 'run-offer', choiceId: 'remember' },
+        })?.catch(error => { failure = error; }); });
+
+        expect(failure, JSON.stringify(machineRpcSpy.mock.calls)).toMatchObject({ details: { answered: true, followUp } });
+        expect(machineRpcSpy.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND))
+            .toEqual([[expect.objectContaining({ payload: { runId: 'exec-1', requestId: 'permission-1',
+                nativeChoice: { requirementId: 'run-offer', choiceId: 'remember' } } })]]);
+    });
+
     it.each([false, true])('honors native confirmation=%s for a person\'s permission decision with Account Ask', async (confirmed) => {
         const screen = await renderSelectedPermissionRequests();
         approvalRequired = true;

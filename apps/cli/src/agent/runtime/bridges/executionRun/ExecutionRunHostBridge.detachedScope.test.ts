@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reloadConfiguration } from '@/configuration';
 import { listExecutionRunMarkers, readRetainedExecutionRunRecord } from '@/daemon/executionRunRegistry';
-import { ExecutionRunFollowFrontierResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunFollowFrontierResponseSchema, ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { deriveSessionFollowOriginalOccurrenceKeyV1, resolveExecutionRunFollowOccurrenceV1, SessionFollowInputV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
@@ -41,6 +41,9 @@ import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, readBackendTarg
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import type { ExecutionRunPermissionRequestStore, ExecutionRunPermissionRequestStoreProvider } from './executionRunPermissionResponseTarget';
 import { buildExecutionRunPermissionRequestEnvelope } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
+import { createMcpServerActionExecuteV1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
+import { applyMcpServerCatalogMutationV1, loadMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
+import type { McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 
 const runtimeFactoryMock = vi.hoisted(() => ({
   createExecutionRunBridgeRuntime: vi.fn(),
@@ -178,6 +181,7 @@ describe('ExecutionRunHostBridge detached task scope', () => {
       getStore = options.getPermissionRequestStore;
       occurrence = options.controllerOccurrenceId;
       return createTestExecutionRunHostRuntime({ onSendPrompt: async () => {},
+        onRespondToPermission: async () => ({ delivered: true }),
         onWaitForTurnCompletion: async () => await new Promise<void>((resolve) => { finishTurn = resolve; }) });
     });
     const manager = new ExecutionRunHostBridge({ parentProvider: TEST_BACKEND_ID, cwd: process.cwd(), sendAcp: async () => {},
@@ -205,7 +209,13 @@ describe('ExecutionRunHostBridge detached task scope', () => {
         providerPayload: {}, toolName: 'bash', reason: 'bash' }).responseTarget;
       const requestId = buildRunScopedExecutionPermissionRequestId({ runId: started.runId,
         controllerOccurrenceId: occurrence, providerRequestId: 'permission-native' });
-      await getStore?.()?.publishRequestAndWait?.({ requestId, toolName: 'bash', toolInput: {}, createdAt: 1, responseTarget });
+      const nativeChoices = { requirementId: 'native-occurrence', source: 'test-agent', choices: [{ id: 'remember', label: 'Remember',
+        decision: 'approved' as const, scope: 'session' as const, response: { approved: true },
+        followUp: { actionId: 'mcp.servers.tools.set', input: { serverId: 'docs', tools: { write: 'allow' } } } },
+        { id: 'deny', label: 'Deny', decision: 'denied' as const, scope: 'once' as const, response: { approved: false } }] };
+      await getStore?.()?.publishRequestAndWait?.({ requestId, toolName: 'bash', toolInput: {}, createdAt: 1, responseTarget, nativeChoices });
+      expect(ExecutionRunGetResponseSchema.parse({ run: manager.getPublic(started.runId) }).run.attention?.requests)
+        .toMatchObject([{ requestId, nativeChoices }]);
       await expect(observer).resolves.toMatchObject({ disposition: 'needs_attention', result: { run: {
         attention: { kind: 'permission_required', requestIds: [requestId] },
       } } });
@@ -221,7 +231,9 @@ describe('ExecutionRunHostBridge detached task scope', () => {
       });
       expect(terminalSettled).toBe(false);
       const change = manager.waitForRunStateChange(started.runId);
-      await getStore?.()?.completeRequest?.({ requestId, status: 'denied' });
+      expect(await getStore?.()?.completeRequest?.({ requestId, status: 'denied', decision: 'denied', extraCompletedFields: {
+        nativeChoice: { requirementId: 'native-occurrence', choiceId: 'deny' },
+      } })).toBe(true);
       await change;
       expect(manager.getPublic(started.runId)?.attention).toBeUndefined();
       await vi.waitFor(async () => expect((await readRetainedExecutionRunRecord(started.runId))?.state.attention).toBeUndefined());
@@ -313,6 +325,54 @@ describe('ExecutionRunHostBridge detached task scope', () => {
     } finally {
       await manager.dispose();
     }
+  });
+
+  it('applies a stored detached native choice before its offered catalog Action', async () => {
+    let state: AgentState = {};
+    const store = new AgentStateRequestStore({ logPrefix: '[test]', target: { scopeId: 'native-follow-up', readState: () => state,
+      updateState: async update => { state = update(state); } } });
+    let requestId = ''; let finishTurn: (() => void) | undefined;
+    const trace: string[] = [];
+    const followUp = { actionId: 'mcp.servers.tools.set', input: { serverId: 'docs', tools: { write: 'allow' } } };
+    runtimeFactoryMock.createExecutionRunBridgeRuntime.mockImplementation((options: { getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider;
+      controllerOccurrenceId: string; runId: string; callId: string; sidechainId: string; backendId: string }) => {
+      return createTestExecutionRunHostRuntime({ onSendPrompt: async () => {
+        const currentStore = options.getPermissionRequestStore?.();
+        if (!currentStore?.publishRequestAndWait) throw new Error('Missing exact Run input store');
+        const envelope = buildExecutionRunPermissionRequestEnvelope({ sessionId: null, runId: options.runId, callId: options.callId,
+          sidechainId: options.sidechainId, backendId: options.backendId, runtimeKind: 'native_agent_session', controllerOccurrenceId: options.controllerOccurrenceId,
+          providerRequestId: 'native-request', permissionMode: 'default', providerPayload: {}, toolName: 'McpTool', reason: 'Write document' });
+        requestId = buildRunScopedExecutionPermissionRequestId({ runId: options.runId, controllerOccurrenceId: options.controllerOccurrenceId, providerRequestId: 'native-request' });
+        await currentStore.publishRequestAndWait({ requestId, toolName: 'McpTool', toolInput: {}, createdAt: 1, responseTarget: envelope.responseTarget,
+          nativeChoices: { requirementId: 'occurrence', source: 'test-agent', choices: [{ id: 'remember', label: 'Remember',
+            decision: 'approved', scope: 'session', response: { approved: true }, followUp }] } });
+      }, onRespondToPermission: async () => {
+        trace.push('native'); return { delivered: true }; },
+        onWaitForTurnCompletion: async () => await new Promise<void>(resolve => { finishTurn = resolve; }) });
+    });
+    const manager = new ExecutionRunHostBridge({ parentProvider: TEST_BACKEND_ID, cwd: process.cwd(), sendAcp: async () => {} });
+    try {
+      const started = await manager.start({ sessionId: null, intent: 'agent', backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID },
+        instructions: 'Wait for native consent', localInputId: 'native-input', permissionMode: 'default',
+        retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response', getPermissionRequestStore: () => store });
+      await vi.waitFor(() => expect(finishTurn).toBeTypeOf('function'));
+      let catalog: McpServerCatalogV1 = { v: 1, bindings: [], servers: [{ id: 'docs', name: 'docs', transport: 'stdio',
+        stdio: { command: 'docs-mcp', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }] };
+      const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+        executionRunCheckProtocolV2: async () => ({ ok: true }), executionRunGet: async (_session, input) => ({ run: manager.getPublic(input.runId) }),
+        executionRunPermissionRespond: input => manager.completePermissionRequest(input.runId, input),
+        mcpServerAction: createMcpServerActionExecuteV1({ readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
+          readRow: async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: catalog } }) }),
+          mutate: async mutation => { trace.push('save'); catalog = applyMcpServerCatalogMutationV1(catalog, mutation);
+            return { status: 'updated', revision: 2, cursor: 2 }; }, machine: async () => { throw new Error('No process'); } }),
+      });
+      const answered = await executor.execute('execution.run.permission.respond', { runId: started.runId, requestId,
+        nativeChoice: { requirementId: 'occurrence', choiceId: 'remember' } }, { surface: 'ui', authority: 'present_user',
+        serverId: 'home', runtimeAccountId: 'account', executionRunTargetMachineId: 'machine' });
+      expect(answered, JSON.stringify(answered)).toMatchObject({ ok: true });
+      expect(trace).toEqual(['native', 'save']);
+      expect(catalog.servers[0]).toMatchObject({ tools: { overrides: { write: 'allow' } } });
+    } finally { finishTurn?.(); await manager.dispose(); }
   });
 
   it('rebinds a reconstructed detached run permission target to the exact active continuation turn', async () => {

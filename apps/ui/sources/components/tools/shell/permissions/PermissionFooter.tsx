@@ -417,6 +417,11 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         const choice = choices.find(candidate => candidate.id === choiceId);
         if (!choice) return;
         const nativeChoice = choice.response.nativeChoice;
+        if (executionRun !== undefined && nativeChoice) {
+            await executionRun.respond?.({ requestId: permission.id,
+                nativeChoice: feedback === undefined ? nativeChoice : { ...nativeChoice, feedback } });
+            return;
+        }
         await actions?.respondToPermission({
             id: permission.id,
             ...(projectedTurnId !== undefined ? { turnId: projectedTurnId } : {}),
@@ -805,10 +810,9 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         );
     }
 
-    // An Execution Run settles a permission with one Boolean decision; the
-    // Session-only grants, exec-policy amendments and stop have no equivalent
-    // there, so only the neutral pair is offered.
-    if (executionRun !== undefined) {
+    // Historical Run requests keep their Boolean response; native offers use
+    // the same offered-choice presenter and their exact Run response target.
+    if (executionRun !== undefined && nativeChoices === undefined) {
         const actionsDisabled = !isPending || answerUnconfirmed || loadingButton !== null || executionRunAnswerPending;
         const decisions = [
             { key: 'allow', onPress: handleApprove, label: t('common.yes'), pendingStyle: styles.buttonTextAllow, spinnerColor: styles.loadingIndicatorAllow.color },

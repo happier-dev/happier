@@ -9,6 +9,7 @@ import { AgentSessionCompactionAvailabilityV1Schema } from '../../sessions/contr
 import { ActionSessionAddressV1Schema } from '../../actions/sessionTargetV1.js';
 import { SessionIdSchema } from '../../sessions/idsV1.js';
 import { NativePermissionChoicesV1Schema, NativePermissionChoiceAnswerV1Schema, NativePermissionChoiceAvailabilityV1Schema } from '../../sessions/permissions/respondRpcParamsV1.js';
+import { NativePermissionChoiceV1Schema } from '../../sessions/permissions/nativeChoicesV1.js';
 import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
 import { SessionDirectoryIntentV1Schema } from '../../sessions/creation/sessionDirectoryIntentV1.js';
 
@@ -385,7 +386,10 @@ export type PluginUiRespondToSessionPermissionRequestV1 =
   z.infer<typeof PluginUiRespondToSessionPermissionRequestV1Schema>;
 
 export const PluginUiRespondToSessionPermissionResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
-  z.strictObject({ status: z.literal('answered') }),
+  z.strictObject({ status: z.literal('answered'),
+    followUp: NativePermissionChoiceV1Schema.shape.followUp,
+    errorCode: z.optional(z.string()),
+  }),
   z.strictObject({
     status: z.literal('refused'),
     reason: z.enum(['sessionUnavailable', 'requestNotPending', 'answerUnavailable']),

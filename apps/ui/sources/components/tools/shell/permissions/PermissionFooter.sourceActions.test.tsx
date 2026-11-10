@@ -236,6 +236,25 @@ describe('PermissionFooter source authority', () => {
         expect(respondToPermission).not.toHaveBeenCalled();
     });
 
+    it('keeps an offered native execution-run response with its owning Run', async () => {
+        const respondToPermission = vi.fn(async () => {});
+        const respond = vi.fn(async () => {});
+        const source = createTestSessionTranscriptSource({
+            interaction: { canApprovePermissions: true, canSendMessages: true },
+            actions: { respondToPermission, answerUserAction: vi.fn(), abort: vi.fn(), submitMessage: vi.fn() },
+        });
+        const screen = await renderWithSessionTranscriptSource(
+            <PermissionFooter executionRun={{ executionRunId: 'run1', respond, pendingRequestIds: new Set() }}
+                permission={{ id: 'run-native', status: 'pending', nativeChoices: { requirementId: 'run-offer', source: 'agent', choices: [
+                    { id: 'allow-native', label: 'Allow native tool', decision: 'approved', scope: 'once', response: { approved: true } },
+                ] } }} toolName="Read" canApprovePermissions />,
+            source,
+        );
+        await screen.pressByTestIdAsync('permission-footer.choice.allow-native');
+        expect(respond).toHaveBeenCalledWith({ requestId: 'run-native', nativeChoice: { requirementId: 'run-offer', choiceId: 'allow-native' } });
+        expect(respondToPermission).not.toHaveBeenCalled();
+    });
+
     it('withdraws session answers when the interaction forbids approval despite an action carrier', async () => {
         const respondToPermission = vi.fn(async () => {});
         const screen = await renderWithSessionTranscriptSource(

@@ -1,6 +1,6 @@
 import { isSessionStateFieldActionId, resolveSessionStateFieldActionWrite } from '../../sessionStateFieldActions.js';
 import { resolveSessionIdFromInput, resolveServerIdForSession } from '../sessionScope.js';
-import { completeActionResult } from '../resultProjection.js';
+import { completeActionResult, isDeferredApprovalResult, normalizeActionExecutorThrownError } from '../resultProjection.js';
 import { normalizeId, readNullableString } from '../inputReading.js';
 import { readNonBlankOpaqueIdentifier } from '../../../strings/opaqueIdentifier.js';
 import type { AdmittedActionInputById } from '../../actionSpecs.js';
@@ -18,6 +18,31 @@ import type { SessionConnectedServiceAuthSwitchRpcParams } from '../../../connec
 import type { ActionExecutorContext } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorDeps } from '../types.js';
+import { ActionIdSchema, type ActionId } from '../../actionIds.js';
+import { SessionStatusResultSchema } from '../../../sessions/control/contract.js';
+import type { NativePermissionChoiceAnswerV1, NativePermissionChoicesV1 } from '../../../sessions/permissions/nativeChoicesV1.js';
+
+export function readOfferedPermissionFollowUp(offer: NativePermissionChoicesV1 | undefined, answer: NativePermissionChoiceAnswerV1 | undefined) {
+  return offer?.requirementId === answer?.requirementId ? offer?.choices.find(choice => choice.id === answer?.choiceId)?.followUp : undefined;
+}
+
+/** Every native response transport shares the same ordinary Action completion and retry operand. */
+export async function completeOfferedPermissionChoice(
+  answered: ActionExecuteResult,
+  followUp: NativePermissionChoicesV1['choices'][number]['followUp'],
+  execute: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>,
+): Promise<ActionExecuteResult> {
+  if (!answered.ok || !followUp) return answered;
+  const id = ActionIdSchema.safeParse(followUp.actionId);
+  let saved: ActionExecuteResult;
+  try { saved = id.success ? await execute(id.data, followUp.input)
+    : { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' }; }
+  catch (error) { saved = { ok: false, ...normalizeActionExecutorThrownError(error) }; }
+  if (!saved.ok) return { ...saved, details: { ...readRecord(saved.details), answered: true, followUp } };
+  if (isDeferredApprovalResult(saved)) return { ok: false, errorCode: 'approval_request_created', error: 'approval_request_created',
+    details: { ...readRecord(saved.result), answered: true, followUp } };
+  return answered;
+}
 
 function readPermissionResponseDecision(raw: unknown) {
   const parsed = SessionPermissionRespondActionDecisionV1Schema.safeParse(raw);
@@ -233,6 +258,7 @@ export async function dispatchSessionControls1(inv: Pick<CoreInvocation, 'action
 
 export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'actionId' | 'parsed' | 'ctx' | 'deps' | 'data'> & Readonly<{
   isSameHome: (targetServerId: unknown, currentServerId: string | null | undefined, ctx: ActionExecutorContext) => boolean;
+  executeFollowUp: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }>): Promise<ActionExecuteResult | null> {
   const { actionId, parsed, ctx, deps, data, isSameHome } = inv;
 
@@ -245,11 +271,20 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const decision = readPermissionResponseDecision(data.decision);
           if (!decision && !data.nativeChoice) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const nativeChoice = data.nativeChoice === undefined ? undefined : NativePermissionChoiceAnswerV1Schema.parse(data.nativeChoice);
+          // Capture the producer's effect before the native answer retires its pending occurrence.
+          // The native ingress remains the sole offered-answer authority.
+          const status = nativeChoice && deps.sessionStatusGet ? readRecord(await deps.sessionStatusGet({ sessionId,
+            context: ctx, ...(serverId ? { serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) })) : null;
+          const pending = status ? SessionStatusResultSchema.shape.pendingRequests.parse(status.pendingRequests) : undefined;
+          const occurrence = pending?.find(request => request.requestId === data.requestId
+            && (data.turnId === undefined || data.turnId === null || request.turnId === data.turnId));
+          const followUp = readOfferedPermissionFollowUp(occurrence?.nativeChoices, nativeChoice);
           const res = await deps.sessionPermissionRespond({
             sessionId,
             context: ctx,
             ...(decision ? { decision } : {}),
-            ...(data.nativeChoice === undefined ? {} : { nativeChoice: NativePermissionChoiceAnswerV1Schema.parse(data.nativeChoice) }),
+            ...(nativeChoice === undefined ? {} : { nativeChoice }),
             requestId: hasOwn(data, 'requestId') ? readNullableString(data.requestId) : null,
             turnId: hasOwn(data, 'turnId') ? readNullableString(data.turnId) : null,
             ...(data.mode === undefined ? {} : { mode: SessionPermissionRespondPayloadV1Schema.shape.mode.parse(data.mode) }),
@@ -262,7 +297,8 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
             ...(serverId ? { serverId } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
-          return completeActionResult(res);
+          return completeOfferedPermissionChoice(completeActionResult(res), followUp,
+            (id, input) => inv.executeFollowUp(id, input, ctx));
         }
 
         if (actionId === 'session.needs_you.raise') {

@@ -5,11 +5,12 @@ import { canPersistSessionMcpPermission } from '@/sync/ops/sessionPermissionChoi
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createRequestOwnedActionExecution } from '@/components/approvals/requestOwnedActionExecution';
 import { createRequestOwnedControllerStore } from '@/components/approvals/requestOwnedControllerStore';
-import { createMcpAlwaysAllowController, type McpAlwaysAllowSnapshot } from './mcpAlwaysAllow';
+import { createMcpAlwaysAllowController, type McpAlwaysAllowSnapshot, type McpAlwaysAllowInput as ControllerInput } from './mcpAlwaysAllow';
 
 type McpAlwaysAllowController = ReturnType<typeof createMcpAlwaysAllowController>;
-type McpAlwaysAllowInput = Readonly<{
+export type McpAlwaysAllowInput = Readonly<{
     requestId: string; turnId?: string; source?: string; identity: ResolvedMcpToolIdentityV1;
+    choiceId?: string; followUp?: ControllerInput['followUp'];
     scope: ServerAccountScope | null; canWriteCatalog: boolean; answerForSession(): Promise<void>;
 }>;
 type MountedView = React.RefObject<{ input: McpAlwaysAllowInput; key: string; execution: ReturnType<typeof useMountedActionExecution> }>;
@@ -30,6 +31,7 @@ const sharedControllers = createRequestOwnedControllerStore<McpAlwaysAllowContro
                 return view?.key === key ? view.input.answerForSession() : Promise.reject(new Error('scope-retired'));
             },
             execute: createRequestOwnedActionExecution(current.input.scope),
+            ...(current.input.followUp ? { followUp: current.input.followUp } : {}),
         }, receipt ?? undefined);
     },
     subscribe: (controller, listener) => controller.subscribe(listener),
@@ -39,15 +41,16 @@ const sharedControllers = createRequestOwnedControllerStore<McpAlwaysAllowContro
 /** Mounted by the existing permission footer; its answer callback is answerThroughSession('allowForSession'). */
 export function useMcpAlwaysAllow(input: McpAlwaysAllowInput) {
     const execution = useMountedActionExecution(input.scope);
-    const key = JSON.stringify([input.scope?.serverId, input.scope?.accountId, execution.binding?.revision, input.requestId, input.turnId, input.source, input.identity.item.serverId, input.identity.tool]);
+    const key = JSON.stringify([input.scope?.serverId, input.scope?.accountId, execution.binding?.revision, input.requestId, input.turnId, input.source, input.identity.item.serverId, input.identity.tool, input.choiceId]);
     const latest = React.useRef({ input, execution, key }); latest.current = { input, execution, key };
     const subscribe = React.useCallback((listener: () => void) => sharedControllers.subscribe(key, latest, listener), [key]);
     const read = React.useCallback(() => sharedControllers.get(key)?.getSnapshot() ?? sharedControllers.getReceipt(key) ?? idle, [key]);
     const state = React.useSyncExternalStore(subscribe, read, read);
-    const available = canPersistSessionMcpPermission({ ...input, canWriteCatalog: input.canWriteCatalog && execution.ready });
+    const permitted = (value: McpAlwaysAllowInput) => value.followUp ? value.canWriteCatalog : canPersistSessionMcpPermission(value);
+    const available = execution.ready && permitted(input);
     const allow = React.useCallback(async () => {
         if (latest.current.key !== key || !latest.current.execution.isCurrent()
-            || !canPersistSessionMcpPermission(latest.current.input)) return;
+            || !permitted(latest.current.input)) return;
         return await sharedControllers.run(key, async controller => {
             await controller.allow();
             return controller.getSnapshot();

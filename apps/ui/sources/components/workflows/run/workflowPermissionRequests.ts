@@ -1,5 +1,8 @@
 import { resolveAgentRequestKind, type AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { NativePermissionChoicesV1Schema } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
+import { ResolvedMcpToolIdentityV1Schema } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
+import type { SessionPendingRequest } from '@happier-dev/session-core/pending';
 
 /**
  * One request recorded in an invocation's private interaction state.
@@ -15,7 +18,7 @@ export type WorkflowInvocationRequest = Readonly<{
     kind: AgentRequestKind;
     tool: string;
     arguments: unknown;
-}>;
+}> & Pick<SessionPendingRequest, 'nativeChoices' | 'mcpTool'>;
 
 export type WorkflowPermissionRequest = Readonly<{
     requestId: string;
@@ -47,8 +50,13 @@ export function projectWorkflowInvocationRequests(
         const request = value as Record<string, unknown>;
         const tool = typeof request.tool === 'string' && request.tool.trim() ? request.tool.trim() : null;
         if (tool === null) return [];
+        const nativeChoices = request.nativeChoices === undefined ? undefined : NativePermissionChoicesV1Schema.safeParse(request.nativeChoices);
+        if (nativeChoices && !nativeChoices.success) return [];
+        const mcpTool = ResolvedMcpToolIdentityV1Schema.safeParse(request.mcpTool);
         const kind = resolveAgentRequestKind({ toolName: tool, requestKind: request.kind });
-        return [{ requestId, kind, tool, arguments: request.arguments }];
+        return [{ requestId, kind, tool, arguments: request.arguments,
+            ...(nativeChoices?.success ? { nativeChoices: nativeChoices.data } : {}),
+            ...(mcpTool.success ? { mcpTool: mcpTool.data } : {}) }];
     });
 }
 

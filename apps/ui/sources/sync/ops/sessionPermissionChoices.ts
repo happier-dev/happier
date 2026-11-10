@@ -17,6 +17,7 @@ export type SessionPermissionChoice = Readonly<{
     rulePreview?: string;
     allowsFeedback?: boolean;
     availability?: NativePermissionChoiceAvailabilityV1;
+    followUp?: NonNullable<NativePermissionChoicesV1['choices'][number]['followUp']>;
     response: Omit<SessionPermissionRespondRpcParamsV1, 'id' | 'turnId' | 'answers'>;
     catalog?: Readonly<{ identity: ResolvedMcpToolIdentityV1; source?: string }>;
 }>;
@@ -86,6 +87,8 @@ export function resolveSessionPermissionChoices(input: SessionPermissionChoicesI
             id: choice.id, label: choice.label, decision: choice.decision, scope: choice.scope,
             ...(choice.rulePreview !== undefined ? { rulePreview: choice.rulePreview } : {}),
             ...(choice.allowsFeedback !== undefined ? { allowsFeedback: choice.allowsFeedback } : {}),
+            ...(choice.followUp !== undefined ? { followUp: choice.followUp } : {}),
+            ...(choice.followUp && input.mcpTool ? { catalog: { identity: input.mcpTool, source: input.source } } : {}),
             ...(availability.has(choice.id) ? { availability: availability.get(choice.id)! } : {}),
             response: { nativeChoice: { requirementId, choiceId: choice.id } },
         }));

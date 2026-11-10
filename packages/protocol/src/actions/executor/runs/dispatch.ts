@@ -17,12 +17,15 @@ import { ExecutionRunCancelTurnRequestSchema } from '../../../execution/runs/can
 import { ExecutionRunWaitConditionSchema } from '../../../execution/runs/waitForTerminal.js';
 import type { DispatchFacts } from '../coreInvocation.js';
 import type { CoreInvocation, PreparedCoreAdmission } from '../coreInvocation.js';
+import type { ActionId } from '../../actionIds.js';
+import { readOfferedPermissionFollowUp, completeOfferedPermissionChoice } from '../session/controls.js';
 
 
 
 export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId' | 'parsed' | 'ctx' | 'deps' | 'data'> & Readonly<{
   dispatchFacts: DispatchFacts;
   startExecutionRunWithSelection: (sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[0], input: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[1], opts: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2], context: ActionExecutorContext) => ReturnType<NonNullable<ActionExecutorDeps['executionRunStart']>>;
+  executeFollowUp: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }>): Promise<ActionExecuteResult | null> {
   const { actionId, parsed, ctx, deps, data, dispatchFacts, startExecutionRunWithSelection } = inv;
 
@@ -552,7 +555,19 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.permission.respond' };
           }
           const request = parsed.data as AdmittedActionInputById[typeof actionId];
-          return completeActionResult(await deps.executionRunPermissionRespond(request, ctx));
+          let followUp: Parameters<typeof completeOfferedPermissionChoice>[1];
+          if ('nativeChoice' in request) {
+            const current = await inv.executeFollowUp('execution.run.get', { sessionId: null, runId: request.runId }, ctx);
+            if (!current.ok) return current;
+            const run = ExecutionRunGetResponseSchema.safeParse(current.result);
+            if (!run.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+            const occurrence = run.data.run.attention?.requests?.find(candidate => candidate.requestId === request.requestId);
+            followUp = readOfferedPermissionFollowUp(occurrence?.nativeChoices ?? undefined, request.nativeChoice);
+          }
+          return await completeOfferedPermissionChoice(
+            completeActionResult(await deps.executionRunPermissionRespond(request, ctx)), followUp,
+            (id, input) => inv.executeFollowUp(id, input, ctx),
+          );
         }
 
         if (actionId === 'execution.run.action') {

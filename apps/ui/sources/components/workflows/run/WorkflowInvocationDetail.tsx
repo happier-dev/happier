@@ -38,6 +38,7 @@ import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureIt
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { WorkflowReviewValue } from './WorkflowReviewCard';
 import { useAnsweredByLabel } from './workflowAnsweredBy';
+import { WorkflowRunFailureAgentActions, type WorkflowRunInvestigationSubject } from './WorkflowRunFailureAgentActions';
 
 import { workflowRunStyles as styles } from './workflowRunStyles';
 import type {
@@ -80,6 +81,8 @@ export type WorkflowInvocationDetailProps = Readonly<{
     finalResult?: Readonly<{ value: JsonValue }> | null;
     /** Status is the exact index fact, including stopped attempts without execution content. */
     lifecycle?: WorkflowInvocationLifecycleV1 | null;
+    /** The exact owning Run on its Home, supplied by the Run page. */
+    investigationSubject?: WorkflowRunInvestigationSubject | null;
     recovery: WorkflowInvocationRecoveryPresentation;
     /**
      * The workspace's source block label, already resolved against the frozen
@@ -336,7 +339,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     // appear is the sheet's content, so the card never draws an empty tinted sheet under its title.
     const recoveryDescription = recovery.repairGuidance ?? (choiceOffered ? t('workflows.recovery.keptBody') : undefined);
     // With no choice of its own, a step the Run can replay puts Run again right under its failure: the line then
-    // says only why, and the button is the way forward (the shared "Investigate with an agent" joins it later).
+    // says only why, and the button is the way forward.
     const runAgainShown = noChoices && usageLimitWait === null && unavailableMachine === null && props.noChoicesNext === 'run_again'
         && props.onRunAgain !== undefined;
     // A failure only a Machine setting can fix leads to that setting; Run again stays beside it, quieter.
@@ -437,6 +440,8 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                             kind: request.kind,
                             arguments: request.arguments,
                             createdAt: null,
+                            ...(request.nativeChoices !== undefined ? { nativeChoices: request.nativeChoices } : {}),
+                            ...(request.mcpTool ? { mcpTool: request.mcpTool } : {}),
                         };
                         return request.kind === 'user_action' ? (
                             <UserActionPromptCard
@@ -484,6 +489,12 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                 <Text testID={`${testIDPrefix}-runtime-issue-reset`} style={styles.provenance}>
                                     {failureCause.reset}
                                 </Text>
+                            </SectionContentRow>
+                        ) : null}
+                        {props.investigationSubject && (failureCause !== null || props.lifecycle === 'failed'
+                            || props.lifecycle === 'outcome_uncertain') ? (
+                            <SectionContentRow>
+                                <WorkflowRunFailureAgentActions subject={props.investigationSubject} testIDPrefix={testIDPrefix} />
                             </SectionContentRow>
                         ) : null}
                         {recovery.remainingNotStartedSiblingCount === null

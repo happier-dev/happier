@@ -688,6 +688,26 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         } finally { mounted.dispose(); }
     });
 
+    it('reports native application separately from a failed offered catalog follow-up', async () => {
+        const serverId = await homes.addHome({ name: 'Native catalog Home', serverUrl: 'https://native-catalog.test', accountId: 'account-a' });
+        homes.answer(serverId, 'GET /v1/account/entity-rows/mcp', { body: { status: 'absent', revision: 0 } });
+        const followUp = { actionId: 'mcp.servers.tools.set', input: { serverId: 'docs', tools: { write: 'allow' } } };
+        const nativeChoices = { requirementId: 'native-requirement', source: 'native-test', choices: [{
+            id: 'remember', label: 'Remember', decision: 'approved_for_session' as const, scope: 'session' as const,
+            response: { approved: true }, followUp,
+        }] };
+        installSessionActionFixture({ homes, storage, serverId, session: waitingSession({ agentState: { requests: {
+            'req-1': { tool: 'McpTool', arguments: {}, createdAt: NOW, nativeChoices },
+        } } }) });
+        const mounted = mountSurface({ serverId, accountId: 'account-a' });
+        try {
+            await expect(mounted.api.respondToSessionPermission({ sessionId: 'linked-1', requestId: 'req-1',
+                nativeChoice: { requirementId: 'native-requirement', choiceId: 'remember' },
+            })).resolves.toMatchObject({ status: 'answered', followUp, errorCode: expect.any(String) });
+            expect(mockSessionRpcWithPreferredSessionScope.mock.calls.filter(([call]) => call.method === 'session.permission.respond')).toHaveLength(1);
+        } finally { mounted.dispose(); }
+    });
+
     it.each(['claude', 'codex'])('keeps native once-only Bash answers shared with Companion for %s', async flavor => {
         const session = waitingSession();
         storage.getState().applySessions([waitingSession({ metadata: { ...session.metadata!, flavor },

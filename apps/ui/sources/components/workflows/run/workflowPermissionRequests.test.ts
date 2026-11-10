@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 
 import {
     hasWorkflowPermissionRequest,
@@ -28,6 +29,15 @@ function progressWith(requests: Record<string, unknown>): WorkflowProgressEnvelo
 }
 
 describe('projectWorkflowInvocationRequests', () => {
+    it('keeps a Run producer offer and catalog subject on the canonical prompt request', () => {
+        const nativeChoices = { requirementId: 'offer', source: 'agent', choices: [{ id: 'remember', label: 'Remember',
+            decision: 'approved', scope: 'session', response: { approved: true },
+            followUp: { actionId: 'mcp.servers.tools.set', input: { serverId: 'docs', tools: { write: 'allow' } } } }] };
+        const mcpTool = { server: 'docs', serverTitle: 'Docs', tool: 'write', item: { serverId: 'docs' },
+            decision: { exposed: true, approval: 'ask', effectClass: 'write', source: 'server_default' } } satisfies ResolvedMcpToolIdentityV1;
+        expect(projectWorkflowInvocationRequests(progressWith({ native: { tool: 'McpTool', arguments: {}, createdAt: 1,
+            nativeChoices, mcpTool } }))).toMatchObject([{ requestId: 'native', nativeChoices, mcpTool }]);
+    });
     it('keeps a structured question out of the permission projection', () => {
         const progress = progressWith({
             'permission-1': { tool: 'Write', arguments: { path: '/repo/file.txt' }, createdAt: 1 },

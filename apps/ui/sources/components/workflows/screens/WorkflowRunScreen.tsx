@@ -48,7 +48,7 @@ import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { getStorage, useActiveServerAccountScopeLifetime, useArtifact, useServerScopedMachine, useWorkflowRun } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { sessionAbort } from '@/sync/ops/sessions';
 import {
     isWorkflowInvocationFactOlder,
@@ -1569,7 +1569,8 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                 const response = await executeUiAction('execution.run.permission.respond', {
                     runId: selectedExecutionRunId,
                     requestId: request.requestId,
-                    ...('answers' in request ? { answers: request.answers,
+                    ...('nativeChoice' in request ? { nativeChoice: request.nativeChoice }
+                        : 'answers' in request ? { answers: request.answers,
                         ...(request.answerDetails === undefined ? {} : { answerDetails: request.answerDetails }) } : { approved: request.approved }),
                 }, {
                     surface: 'ui',
@@ -1587,7 +1588,10 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                 if (response.ok && !transportIssued) retirePendingPermissionDecision(decision);
                 if (!response.ok) {
                     definitivePreIssuanceFailure = !transportIssued || isDefinitivePermissionDecisionPreIssuanceResponse(response);
-                    responseFailure = new Error(t('errors.operationFailed'));
+                    // The prompt's existing save-failed controller needs the
+                    // native-applied follow-up operand after this request retires.
+                    try { requireActionSuccess(response); }
+                    catch (error) { responseFailure = error instanceof Error ? error : new Error(t('errors.operationFailed')); }
                 }
             } catch (error) {
                 // The daemon may still have recorded the answer; an unreachable

@@ -44,6 +44,8 @@ import {
 } from '@/sync/ops/sessionPermissionAnswers';
 import { listSessionPendingPermissions } from '@/sync/ops/sessionPendingPermissions';
 import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import { NativePermissionChoiceV1Schema } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { createAppSessionTranscriptActions } from '@/components/sessions/transcript/source/appSessionTranscriptActions';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { sessionWorkStatusFactsFromStatus } from '@/components/work/status/sessionWorkStatusFacts';
@@ -438,7 +440,13 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
                 }),
                 respondToPermission: createAppSessionTranscriptActions(sessionId, input.accountScope?.serverId ?? null).respondToPermission,
             });
-        } catch {
+        } catch (error) {
+            const details = error instanceof HappyError ? readRecord(error.details) : {};
+            const followUp = NativePermissionChoiceV1Schema.shape.followUp.safeParse(details.followUp);
+            if (details.answered === true && followUp.success && followUp.data) {
+                return { status: 'answered', followUp: followUp.data,
+                    ...(error instanceof HappyError && error.code ? { errorCode: error.code } : {}) };
+            }
             return createPluginSurfaceHostApiError('unavailable', ['session_permission_delivery_failed']);
         }
         return { status: 'answered' };

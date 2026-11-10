@@ -17,6 +17,7 @@ export function DesktopActivityOverlayMcpPermission(props: Readonly<{
     const execute = React.useMemo(() => createRequestOwnedActionExecution(props.scope), [props.scope]);
     const always = useMcpAlwaysAllow({ requestId: props.requestId, turnId: props.turnId,
         source: props.choice.catalog.source, identity: props.choice.catalog.identity, scope: props.scope,
+        ...(props.choice.followUp ? { followUp: props.choice.followUp, choiceId: props.choice.id } : {}),
         canWriteCatalog: true,
         answerForSession: async () => {
             const { approved: _approved, ...response } = props.choice.response;

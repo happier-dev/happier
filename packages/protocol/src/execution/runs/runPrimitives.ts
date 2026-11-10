@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { NativePermissionChoicesV1Schema } from '../../sessions/permissions/nativeChoicesV1.js';
 
 /** Display-only proof of supported instruction delivery; Home is the portable identity. */
 export const ExecutionRunPreparedInstructionsForSchema = lazyZodSchema(() => z.strictObject({
@@ -9,6 +10,7 @@ export const ExecutionRunPreparedInstructionsForSchema = lazyZodSchema(() => z.s
 
 export const ExecutionRunPermissionRequestIdentitySchema = lazyZodSchema(() => z.strictObject({
   requestId: z.string().check(z.minLength(1)), createdAt: z.number().check(z.int(), z.nonnegative()),
+  nativeChoices: z.optional(z.nullable(NativePermissionChoicesV1Schema)),
 }));
 
 export const ExecutionRunIntentSchema = lazyZodSchema(() => z.enum([

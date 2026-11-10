@@ -1,14 +1,14 @@
 import type { StructuredQuestionAnswerDetailsV1, StructuredQuestionAnswersV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+import type { NativePermissionChoiceAnswerV1 } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
 
 /**
  * One answer to a pending agent request owned by an Execution Run.
  *
- * An Execution Run speaks a smaller contract than a Session: a tool permission
- * is settled by one Boolean decision and a structured question by its answers.
- * Session-only grants (allow for the session, accept all edits, exec-policy
- * amendments, stopping the Session) have no Execution Run equivalent.
+ * Native permissions retain the producer's exact offered choice. Historical
+ * Boolean permissions and structured questions keep their incumbent carriers.
  */
 export type ExecutionRunPromptResponse =
+    | Readonly<{ requestId: string; nativeChoice: NativePermissionChoiceAnswerV1 }>
     | Readonly<{ requestId: string; approved: boolean }>
     | Readonly<{ requestId: string; answers: StructuredQuestionAnswersV1; answerDetails?: StructuredQuestionAnswerDetailsV1 }>;
 

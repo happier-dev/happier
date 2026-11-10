@@ -16,6 +16,9 @@ import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/ses
 import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createMcpServerActionExecuteV1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
+import { applyMcpServerCatalogMutationV1, loadMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
+import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionOwnerCompatibilityViewV1, SessionMetadataOwnerPatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { McpServerCatalogV1Schema, McpServerCatalogRowMutationV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
@@ -60,6 +63,8 @@ const { McpAlwaysAllowDecision } = await import('@/components/tools/shell/permis
 const { PermissionPromptCard } = await import('@/components/tools/shell/permissions/PermissionPromptCard');
 const { ResolvedMcpToolIdentityV1Schema } = await import('@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1');
 const { useMcpAlwaysAllow } = await import('@/components/tools/shell/permissions/useMcpAlwaysAllow');
+const { createReducer, reducer } = await import('@happier-dev/session-core/reducer');
+const { AgentStateSchema } = await import('@happier-dev/session-core/state');
 
 it('retires all full controllers after 128 untouched MCP cards leave', async () => {
     const accountId = 'retirement-owner';
@@ -90,6 +95,75 @@ it('retires all full controllers after 128 untouched MCP cards leave', async () 
 
 beforeEach(async () => { await homes.reset(); installHomeGovernanceBoundaries(httpBoundary); await loadSyncSingletonForTests(); machineTransport.mockReset(); });
 afterEach(async () => { standardCleanup(); await homes.reset(); });
+
+it('keeps the native catalog failure visible after retirement and remounts a catalog-only retry', async () => {
+    const accountId = 'native-mcp-owner';
+    const serverId = await homes.addHome({ name: 'Native MCP Home', serverUrl: 'https://native-mcp.test', accountId });
+    let catalog = McpServerCatalogV1Schema.parse({ v: 1, servers: [{ id: 'docs', name: 'docs', title: 'Docs', transport: 'http',
+        remote: { url: 'https://docs.test/mcp', headers: {} }, env: {}, createdAt: 1, updatedAt: 1 }], bindings: [] });
+    let refuseSave = true; let pending = true; let answers = 0;
+    homes.answer(serverId, 'GET /v1/account/entity-rows/mcp', { select: () => ({ body: { status: 'present', revision: 1, content: { t: 'plain', v: catalog } } }) });
+    homes.answer(serverId, 'POST /v1/account/entity-rows/mcp', { select: input => {
+        const mutation = McpServerCatalogRowMutationV1Schema.parse(input);
+        if (refuseSave) return { body: { status: 'conflict', revision: 1 } };
+        if (mutation.content?.t !== 'plain') throw new Error('Expected Plain catalog');
+        catalog = mutation.content.v;
+        return { body: { status: 'updated', revision: 2, cursor: 2 } };
+    } });
+    const followUp = { actionId: 'mcp.servers.tools.set', input: { serverId: 'docs', tools: { write: 'allow' } } };
+    const nativeChoices = { requirementId: 'occurrence', source: 'test-agent', choices: [{ id: 'remember', label: 'Remember',
+        decision: 'approved' as const, scope: 'session' as const, response: { approved: true }, followUp }] };
+    const mcpTool = ResolvedMcpToolIdentityV1Schema.parse({ server: 'docs', tool: 'write', item: { serverId: 'docs' }, serverTitle: 'Docs',
+        decision: { exposed: true, approval: 'ask', effectClass: 'write', source: 'server_default' } });
+    const storedRequest = { tool: 'McpTool', arguments: {}, createdAt: 1, nativeChoices, mcpTool };
+    const projection = createReducer();
+    reducer(projection, [], AgentStateSchema.parse({ requests: { 'native-mcp': storedRequest } }));
+    const readPermission = () => {
+        const message = projection.messages.get(projection.toolIdToMessageId.get('native-mcp')!);
+        if (!message?.tool?.permission?.mcpTool) throw new Error('Missing canonical MCP permission identity');
+        return message.tool.permission;
+    };
+    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+        sessionStatusGet: async () => ({ pendingRequests: pending ? [{ requestId: 'native-mcp', kind: 'permission', tool: 'McpTool',
+            nativeChoices }] : [] }),
+        sessionPermissionRespond: async () => { answers++; pending = false;
+            reducer(projection, [], AgentStateSchema.parse({ completedRequests: { 'native-mcp': { ...storedRequest,
+                completedAt: 2, status: 'approved', nativeChoice: { requirementId: 'occurrence', choiceId: 'remember' } } } }));
+            return { ok: true }; },
+        mcpServerAction: createMcpServerActionExecuteV1({
+            readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
+                readRow: async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: catalog } }) }),
+            mutate: async mutation => { if (refuseSave) return { status: 'conflict' };
+                catalog = applyMcpServerCatalogMutationV1(catalog, mutation); return { status: 'updated', revision: 2, cursor: 2 }; },
+            machine: async () => { throw new Error('Catalog consent never starts a process'); },
+        }),
+    });
+    const identity = readPermission().mcpTool!;
+    const scope = { serverId, accountId };
+    const answerForSession = async () => { requireActionSuccess(await executor.execute('session.permission.respond', {
+        sessionId: 'session', requestId: 'native-mcp', nativeChoice: { requirementId: 'occurrence', choiceId: 'remember' },
+    }, { surface: 'ui', authority: 'present_user', serverId, runtimeAccountId: accountId })); };
+    let screen = await renderScreen(React.createElement(McpAlwaysAllowDecision, { requestId: 'native-mcp', choiceId: 'remember',
+        identity, scope, canWriteCatalog: true, pending: true, followUp, answerForSession,
+        renderDecision: decision => React.createElement('Button', { testID: 'native-remember', onPress: decision.onPress }) }));
+    await vi.waitFor(() => expect(screen.findByTestId('native-remember')).toBeTruthy());
+    await act(async () => { screen.pressByTestId('native-remember'); });
+    await vi.waitFor(() => expect(screen.findByTestId('permission-footer.always-allow-retry')).toBeTruthy());
+    expect(pending).toBe(false);
+    const settled = readPermission();
+    expect(settled).toMatchObject({ mcpTool, nativeChoices, nativeChoice: { requirementId: 'occurrence', choiceId: 'remember' } });
+    await act(async () => screen.tree.unmount());
+    screen = await renderScreen(React.createElement(McpAlwaysAllowDecision, { requestId: 'native-mcp', choiceId: 'remember',
+        identity: settled.mcpTool!, scope, canWriteCatalog: true, pending: false,
+        followUp: settled.nativeChoices?.choices.find(choice => choice.id === settled.nativeChoice?.choiceId)?.followUp,
+        answerForSession: async () => { throw new Error('Occurrence retired'); }, renderDecision: () => null }));
+    await vi.waitFor(() => expect(screen.findByTestId('permission-footer.always-allow-retry')).toBeTruthy());
+    refuseSave = false;
+    await act(async () => { screen.pressByTestId('permission-footer.always-allow-retry'); });
+    await vi.waitFor(() => expect(catalog.servers[0]?.tools?.overrides.write).toBe('allow'));
+    expect(answers).toBe(1);
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('capabilities.session.toolAsk.savedIn'));
+});
 
 it.each(['success', 'retry', 'sibling'] as const)('loads the MCP server default and saves Always allow after tray unmount (%s)', async mode => {
     const failsFirstSave = mode === 'retry';

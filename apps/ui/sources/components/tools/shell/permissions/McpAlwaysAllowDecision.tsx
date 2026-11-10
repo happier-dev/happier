@@ -10,6 +10,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { t } from '@/text';
 
 import { useMcpAlwaysAllow } from './useMcpAlwaysAllow';
+import type { McpAlwaysAllowInput } from './useMcpAlwaysAllow';
 
 /**
  * The MCP tool card's Always allow (P8 U8.5, lab xa A): before an answer, the footer draws its own ghost
@@ -26,13 +27,26 @@ export function McpAlwaysAllowDecision(
     canWriteCatalog: boolean;
     pending: boolean;
     answerForSession(): Promise<void>;
+    followUp?: McpAlwaysAllowInput['followUp'];
+    choiceId?: string;
     renderDecision(
       decision: Readonly<{ label: string; busy: boolean; onPress: () => void }>,
     ): React.ReactNode;
   }>,
 ) {
-  const { theme } = useUnistyles();
   const always = useMcpAlwaysAllow(props);
+  return <McpAlwaysAllowDecisionView {...props} controller={always} />;
+}
+
+/** Existing settled line can consume the same controller as an offered-choice button. */
+export function McpAlwaysAllowDecisionView(props: Readonly<{
+  identity: ResolvedMcpToolIdentityV1;
+  pending: boolean;
+  controller: ReturnType<typeof useMcpAlwaysAllow>;
+  renderDecision(decision: Readonly<{ label: string; busy: boolean; onPress: () => void }>): React.ReactNode;
+}>) {
+  const { theme } = useUnistyles();
+  const always = props.controller;
   const tool = props.identity.toolTitle ?? props.identity.tool;
   if (
     always.status === 'saved' ||
