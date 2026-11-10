@@ -875,7 +875,11 @@ reuses its native account preparation after the host admits the exact selected-a
 It receives only that operation's Connected Accounts service and sanitized launch environment;
 ordinary catalog callbacks continue to receive environment presence facts. The host removes
 prepared assets before retiring account materialization. Its complete prepared environment also
-retains explicit key removals; the daemon cannot reintroduce a removed native home. OpenCode,
+retains explicit key removals; the daemon cannot reintroduce a removed native home.
+Preparation may append native command arguments containing public configuration or
+environment references, and may return the runtime's model catalog confidence.
+All command-backed catalog paths consume those prepared arguments; unverified
+account models remain withheld before static or fallback catalogs are considered. OpenCode,
 Pi and Oh My Pi use the same qualified-account preparer for this path and Session launch, so
 pre-start discovery sees the selected account's native configuration and request-auth assets.
 Oh My Pi declares its native credential environment destinations from its Connected Account

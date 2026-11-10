@@ -122,7 +122,7 @@ describe('native Agent preflight home directory intent', () => {
                         const materialized = await connectedAccounts.materialize('primary', {
                             kind: 'httpHeaders', origin: 'https://preflight-account.example.test', headerNames: ['authorization'],
                         }, { signal, expectedAccount: binding.account });
-                        return { environment: { ...environment, ACME_TOKEN: materialized.headers.authorization.slice(7) }, dispose() {} };
+                        return { environment: { ...environment, ACME_TOKEN: materialized.headers.authorization.slice(7) }, commandArgsSuffix: ['--selected-upstream', 'https://native.example.test/v1'], catalogConfidence: 'account_unverified', dispose() {} };
                     },
                 }, sessionRunnerFactory:`) },
             });
@@ -135,7 +135,7 @@ describe('native Agent preflight home directory intent', () => {
             if (!entry) throw new Error('Missing admitted preflight Agent');
             if (mode === 'prepared') expect(entry.preparePreflightLaunchEnvironment).toBeTypeOf('function');
             const script = join(root, 'probe.cjs');
-            await writeFile(script, `const fs = require('node:fs'); const home = process.env.ACME_NATIVE_HOME; const auth = home && require('node:path').join(home, 'auth.json'); fs.writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ key: process.env.ACME_TOKEN ?? null, home: home ?? null, cwd: process.cwd(), auth: auth && fs.existsSync(auth) ? [...fs.readFileSync(auth)] : null }));`);
+            await writeFile(script, `const fs = require('node:fs'); const home = process.env.ACME_NATIVE_HOME; const auth = home && require('node:path').join(home, 'auth.json'); fs.writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ key: process.env.ACME_TOKEN ?? null, home: home ?? null, cwd: process.cwd(), args: process.argv.slice(2), auth: auth && fs.existsSync(auth) ? [...fs.readFileSync(auth)] : null }));`);
             const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
             const executable = writeExecutableShimSync({ dir: root,
                 fileName: process.platform === 'win32' ? 'catalog.cmd' : 'catalog',
@@ -164,8 +164,9 @@ describe('native Agent preflight home directory intent', () => {
                 agentRuntimeCacheKey: runtime.registry.readPluginOccurrenceId?.('acme.foreground') ?? undefined,
             }, {}));
             expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
-            const environment = JSON.parse(await readFile(observed, 'utf8')) as { key: string | null; home: string | null; cwd: string; auth: number[] | null };
+            const environment = JSON.parse(await readFile(observed, 'utf8')) as { key: string | null; home: string | null; cwd: string; args: string[]; auth: number[] | null };
             expect(environment.cwd).toBe(root);
+            expect.soft(environment.args).toEqual(mode === 'prepared' ? ['--selected-upstream', 'https://native.example.test/v1'] : []);
             if (mode.startsWith('files_')) {
                 expect(environment.key).toBeNull();
                 expect(environment.home).not.toBe(nativeHome);
@@ -173,6 +174,27 @@ describe('native Agent preflight home directory intent', () => {
             } else {
                 expect(environment.key).toBe(mode === 'environment' || mode === 'prepared' ? 'fake-selected-token' : 'fake-explicit-token');
                 expect(environment.home).toBe(mode === 'prepared' ? null : nativeHome);
+            }
+            if (mode === 'prepared') {
+                const modelProjection = projectAgentPreflightSessionControlsCatalogEntry({ agentId,
+                    systemTools: [{ id: 'native-models', title: 'Native models', executableNames: [executable] }],
+                    preflightSessionControls: { models: { command: { toolId: 'native-models', args: [] },
+                        parseOutput: () => [{ id: 'ambient-native-model', name: 'Ambient native model' }] } },
+                    retirementSignal: new AbortController().signal, isCurrent: () => true,
+                });
+                const models = await runWithServerHttpBaseUrl('https://preflight-account.example.test', () => invokeCliPreflightMethod(agentId, 'probeModels', {
+                    cwd: root, bypassCache: true, connectedServices: { v: 2, bindingsByServiceId: {
+                        'acme.preflight-account/credential': { source: 'connected', selection: 'profile', profileId: 'selected-account' },
+                    } },
+                }, {
+                    agentCatalogEntry: { ...entry, ...modelProjection }, agentRegistrySnapshot: runtime.registry.contributes,
+                    accountContext: { credentials: { token: 'fake-account-token', encryption: null }, accountSettings: null },
+                    createApiClient: async () => ({} as ApiClient), connectedAccountsOwner: account.owner,
+                    activatePurposeBindings: account.owner.activatePurposeBindings, isAgentRegistryCurrent: () => true,
+                    createAgentInvocationServices: runtime.registry.createAgentInvocationServices,
+                    agentRuntimeCacheKey: runtime.registry.readPluginOccurrenceId?.('acme.foreground') ?? undefined,
+                }, {}));
+                expect(models).toMatchObject({ ok: true, result: { availableModels: [], source: 'unavailable' } });
             }
         } finally {
             await runtime?.dispose();

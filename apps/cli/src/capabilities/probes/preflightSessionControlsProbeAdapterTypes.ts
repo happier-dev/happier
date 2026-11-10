@@ -19,6 +19,7 @@ export type PreflightSessionControlsProbeParams = Readonly<{
   pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
   configOptionOverrides?: Readonly<Record<string, ProbedCatalogOptionValue>>;
   env?: NodeJS.ProcessEnv;
+  commandArgsSuffix?: readonly string[];
   signal?: AbortSignal;
   /** The containing preflight operation owns this deadline; direct callers retain the local budget. */
   deadlineSignal?: AbortSignal;

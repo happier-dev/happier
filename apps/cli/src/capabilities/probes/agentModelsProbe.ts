@@ -447,6 +447,7 @@ async function probeAgentModels(params: {
   credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
+  commandArgsSuffix?: readonly string[];
   connectedServiceSelectionCacheKey?: string | null;
   profileCacheKey?: string | null;
   configOptionOverrides?: Readonly<Record<string, ProbedCatalogOptionValue>>;
@@ -587,6 +588,7 @@ async function probeAgentModels(params: {
             accountSettings: params.accountSettings ?? null,
             pluginSettings: params.pluginSettings,
             configOptionOverrides: params.configOptionOverrides,
+            commandArgsSuffix: params.commandArgsSuffix,
             env,
           })).catch(observeFailure);
           const envelope = ProbeModelsObservationSchema.safeParse(modelsRaw);

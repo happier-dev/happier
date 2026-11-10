@@ -821,6 +821,7 @@ async function withPreparedPreflightCommand<T>(
     environment: Readonly<Record<string, string>>,
     run: (args: readonly string[], env: Readonly<Record<string, string>>, preferredPath?: string) => Promise<T>,
     cleanupScope?: PreflightCatalogCleanupScope,
+    commandArgsSuffix: readonly string[] = [],
 ): Promise<T> {
     const selectedToolchain = applyPreflightCommandEnvironment(environment, command);
     const artifacts: string[] = [];
@@ -829,7 +830,7 @@ async function withPreparedPreflightCommand<T>(
     try {
         input.signal?.throwIfAborted();
         const prepared = command.prepareCommand?.(input);
-        if (prepared === undefined) return await run(command.args, selectedToolchain);
+        if (prepared === undefined) return await run([...command.args, ...commandArgsSuffix], selectedToolchain);
         if (!prepared || !Array.isArray(prepared.args) || Object.keys(prepared).some((key) => key !== 'args' && key !== 'preferredPath')) {
             throw new TypeError('Invalid prepared preflight command');
         }
@@ -871,7 +872,7 @@ async function withPreparedPreflightCommand<T>(
             } else { throw new TypeError('Unknown prepared preflight argument'); }
         }
         input.signal?.throwIfAborted();
-        return await run(args, selectedToolchain, prepared.preferredPath);
+        return await run([...args, ...commandArgsSuffix], selectedToolchain, prepared.preferredPath);
     } finally {
         try { await cleanup(); } finally { releaseCleanup?.(); }
     }
@@ -1136,7 +1137,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                             if (!observed.ok) logger.info('[agent-preflight] Command failed', { agentId: params.agentId, toolId: command.toolId });
                             return observed;
                         } finally { releaseCleanup?.(); }
-                    }, probeParams.cleanupScope);
+                    }, probeParams.cleanupScope, probeParams.commandArgsSuffix);
                 } catch {
                     logger.info('[agent-preflight] Command unavailable', { agentId: params.agentId, toolId: command.toolId });
                     return unavailable();
@@ -1193,7 +1194,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                     } finally {
                         try { await handle.dispose(); } finally { releaseCleanup?.(); }
                     }
-                }, probeParams.cleanupScope);
+                }, probeParams.cleanupScope, probeParams.commandArgsSuffix);
             };
         const resolveDeclaredSystemTool: AgentPreflightSessionControlsProbeContextV1['resolveDeclaredSystemTool'] = async (request) => {
             if (!declaredSystemToolIds.has(request.toolId)) throw new Error('Agent preflight system tool is not declared');
@@ -1241,7 +1242,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                 } finally {
                     try { await service.dispose(); } finally { releaseCleanup?.(); }
                 }
-            }, probeParams.cleanupScope);
+            }, probeParams.cleanupScope, probeParams.commandArgsSuffix);
         };
         const resolveRequestedAcpAuthentication = (request: PreflightCommandRequest & Readonly<{ authenticationMethodId?: string }>) => {
             if (request.authenticationMethodId) return { authenticationMethodId: request.authenticationMethodId };

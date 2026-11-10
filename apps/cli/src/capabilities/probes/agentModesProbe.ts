@@ -187,6 +187,7 @@ export async function probeAgentModesBestEffort(params: {
   credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
+  commandArgsSuffix?: readonly string[];
   connectedServiceSelectionCacheKey?: string | null;
   profileCacheKey?: string | null;
 }): Promise<ProbedAgentModesResult> {
@@ -247,6 +248,7 @@ export async function probeAgentModesBestEffort(params: {
           ...(params.signal ? { signal: params.signal } : {}),
           ...(params.deadlineSignal ? { deadlineSignal: params.deadlineSignal } : {}),
           ...(params.cleanupScope ? { cleanupScope: params.cleanupScope } : {}),
+          commandArgsSuffix: params.commandArgsSuffix,
           runtimeDescriptorV1: params.runtimeDescriptorV1,
           runtimeKindOverride: params.runtimeKindOverride,
           probeKind: 'modes',

@@ -10,7 +10,7 @@ import type { PluginJsonRpcClient } from '../services/io.js';
 import type { ManagedServiceHandle, ManagedServiceSpec } from '../managed-services/contract.js';
 import type { AgentConnectedAccountContinuityV1 } from './connectedAccountContinuity.js';
 import type { ConnectedAccountsService } from '../services/connectedAccounts.js';
-import type { AgentSessionModelOption } from './context.js';
+import type { AgentSessionModelOption, AgentSessionModelsSnapshot } from './context.js';
 
 /**
  * Secret-free connected-service selection supplied to an Agent daemon spawn
@@ -724,6 +724,10 @@ export type AgentPreflightSessionControlsContributionV1 = Readonly<{
   }>) => Promise<Readonly<{
     environment: Readonly<Record<string, string>>;
     unset?: readonly string[];
+    /** Native command overrides, containing only public configuration and environment references. */
+    commandArgsSuffix?: readonly string[];
+    /** Reuse the runtime model publisher's account eligibility fact for preflight. */
+    catalogConfidence?: AgentSessionModelsSnapshot['catalogConfidence'];
     dispose(): void | Promise<void>;
   }>>;
   resolveProbeVariant?: (

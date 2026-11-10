@@ -15,6 +15,7 @@ import { ProbedCatalogOptionValueSchema } from '@happier-dev/protocol/capabiliti
 import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { z } from 'zod/mini';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { isProviderSourceModelCatalogConfidenceUsable } from '@happier-dev/protocol/rpc/providers';
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -506,6 +507,7 @@ export async function invokeCliPreflightMethod(
         credentials: probeContext.credentials,
         env: probeProcessEnv,
         materializedEnv,
+        commandArgsSuffix: preparedLaunchEnvironment?.commandArgsSuffix,
         profileCacheKey: profileProbeEnvironment?.cacheKey ?? null,
         connectedServiceSelectionCacheKey:
             connectedServiceProbeEnvironment.connectedServiceSelectionCacheKey,
@@ -535,6 +537,7 @@ export async function invokeCliPreflightMethod(
             timeoutMs,
             accountSettings: probeContext.accountSettings,
             env,
+            commandArgsSuffix: preparedLaunchEnvironment?.commandArgsSuffix,
             ...(requestContext.signal ? { signal: requestContext.signal } : {}),
             ...(requestContext.deadlineSignal ? { deadlineSignal: requestContext.deadlineSignal } : {}),
             ...(requestContext.cleanupScope ? { cleanupScope: requestContext.cleanupScope } : {}),
@@ -548,6 +551,11 @@ export async function invokeCliPreflightMethod(
         return { ok: true, result };
       }
       if (method === 'probeModels') {
+        if (!isProviderSourceModelCatalogConfidenceUsable(preparedLaunchEnvironment?.catalogConfidence)) {
+          return { ok: true, result: { agentId, availableModels: [],
+            supportsFreeform: modelConfig?.supportsSelection === true && modelConfig.supportsFreeform === true,
+            source: 'unavailable', refreshError: true } };
+        }
         const observation = modelConfig?.nativeCatalogObservation;
         const bindings = ConnectedServiceBindingsV2IngressSchema.safeParse(params?.connectedServices);
         const observationRuntime = dependencies.getAgentCatalogObservation?.() ?? null;
