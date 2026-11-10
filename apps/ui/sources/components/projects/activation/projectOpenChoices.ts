@@ -44,6 +44,11 @@ export type ProjectOpenUseOption = Readonly<{
  * A nonexecuting suggestion: `~/src/<name>`, or the first `<name>-N` no known checkout on that
  * machine already uses. Known checkout rows cannot prove filesystem availability.
  */
+/** Where new checkouts land on a Machine (Open's clone, a new app from a starter). */
+export function projectCheckoutParentPath(homeDir: string): string {
+  return `${homeDir.replace(/[\\/]+$/u, '')}/src`;
+}
+
 export function suggestProjectOpenDestination(
   state: Pick<ProjectOpenChoiceState, 'machineId' | 'machineHomeDir' | 'subject' | 'checkouts'>,
 ): string {
@@ -56,7 +61,7 @@ export function suggestProjectOpenDestination(
   if (!name) return '';
   const comparable = (path: string) => path.replace(/\\/gu, '/').replace(/\/+$/u, '');
   const taken = new Set(state.checkouts.filter(ref => ref.machineId === state.machineId).map(ref => comparable(ref.rootPath)));
-  const parent = `${state.machineHomeDir.replace(/[\\/]+$/u, '')}/src`;
+  const parent = projectCheckoutParentPath(state.machineHomeDir);
   let candidate = `${parent}/${name}`;
   for (let suffix = 2; taken.has(comparable(candidate)); suffix += 1) candidate = `${parent}/${name}-${suffix}`;
   return candidate;

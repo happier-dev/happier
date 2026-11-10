@@ -9,6 +9,7 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { t } from '@/text';
 
 import { ProjectsAddMenu } from './ProjectsAddMenu';
+import { useOpenNewApp } from './starters/newAppPresentation';
 import { ProjectOpenResolutionCard, useProjectRowsRetry } from './ProjectOpenResolution';
 import { ProjectsListView } from './ProjectsListView';
 import { useProjectsListModel } from './useProjectsListModel';
@@ -32,6 +33,7 @@ const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
     const model = useProjectsListModel();
     // The same "+" as the column: a folder, a clone, your Sources, each Team's, Manage (plan 10 §2).
     const { addSources, cloneRepository } = model;
+    const openNewApp = useOpenNewApp(cloneRepository);
     // A saved Source leads only while it is all there is; once Projects exist the page says what its
     // copy says ("choose one from the list, or add one") and its one action is the same "+".
     const firstSaved = model.hasAnyProjects ? null : model.saved?.items[0] ?? null;
@@ -62,6 +64,7 @@ const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
                         machines={model.addFirstMachines}
                         onAdd={model.addProjectToMachine}
                         onClone={cloneRepository}
+                        onNewApp={openNewApp}
                         sources={addSources}
                         fromSessions={model.fromSessions}
                         // The page's one primary action, drawn as the empty state draws it.

@@ -14,6 +14,7 @@ import {
 import { t } from '@/text';
 
 import { ProjectsAddMenu } from './ProjectsAddMenu';
+import { useOpenNewApp } from './starters/newAppPresentation';
 import { ProjectsListItemMenu } from './ProjectsListItemMenu';
 import { useProjectsListModel, type ProjectsListModel } from './useProjectsListModel';
 import { useIsWorkspaceRefPinned } from '@/sync/store/hooks';
@@ -134,6 +135,7 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
     const renderRowMenu = React.useCallback((row: ProjectsTreeRow) => <ProjectsColumnRowMenu row={row} inputs={menuInputs} />, []);
     // Saved-not-open Sources after the tree and the "+" composition: one owner for every Projects entrance.
     const { addSources, saved, cloneRepository } = model;
+    const openNewApp = useOpenNewApp(cloneRepository);
     const [hiddenOpen, setHiddenOpen] = React.useState(false);
     const { hiddenItems, showHiddenProject } = model;
     const hidden = React.useMemo(() => ({
@@ -212,6 +214,7 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
                         machines={model.addFirstMachines}
                         onAdd={model.addProjectToMachine}
                         onClone={cloneRepository}
+                        onNewApp={openNewApp}
                         sources={addSources}
                         fromSessions={model.fromSessions}
                     />

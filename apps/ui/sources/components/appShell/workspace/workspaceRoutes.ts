@@ -87,6 +87,7 @@ export const workspaceRouteFiles: Readonly<Record<string, string>> = {
     "projects/sources": "./(app)/projects/sources.tsx",
     "projects/deployments": "./(app)/projects/deployments.tsx",
     "projects/open": "./(app)/projects/open.tsx",
+    "projects/new-app": "./(app)/projects/new-app.tsx",
     "session/[id]/automations/new": "./(app)/session/[id]/automations/new.tsx",
     "session/archived": "./(app)/session/archived.tsx",
     "session/recent": "./(app)/session/recent.tsx",

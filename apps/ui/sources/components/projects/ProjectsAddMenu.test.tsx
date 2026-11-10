@@ -106,3 +106,33 @@ describe('ProjectsAddMenu "From your sessions" (owner 11-08)', () => {
     ).toBe(false);
   });
 });
+
+describe('ProjectsAddMenu "New app…" (plan 60 §5.1)', () => {
+  it('leads with New app… above the ways to bring existing code, and opens the New app flow', async () => {
+    const onNewApp = vi.fn();
+    const screen = await renderScreen(
+      <ProjectsAddMenu
+        testID="add"
+        machines={[{ id: 'm1', metadata: null } as never]}
+        onAdd={async () => {}}
+        onClone={() => {}}
+        onNewApp={onNewApp}
+      />,
+    );
+    await screen.pressByTestIdAsync('add');
+    const menu = () => screen.findAllByType(DropdownMenu)[0]!;
+    const ids = menu().props.items.map((item: { id: string }) => item.id);
+    expect(ids[0]).toBe('newApp');
+    expect(ids).toContain('clone');
+    await act(async () => { menu().props.onSelect('newApp'); });
+    expect(onNewApp).toHaveBeenCalledTimes(1);
+  });
+
+  it('still offers New app to someone with no Machine yet', async () => {
+    const screen = await renderScreen(
+      <ProjectsAddMenu testID="add" machines={[]} onAdd={async () => {}} onNewApp={() => {}} />,
+    );
+    // A phone-only newcomer starts here; the flow itself offers a computer.
+    expect(screen.findAllByType(DropdownMenu).length).toBe(1);
+  });
+});

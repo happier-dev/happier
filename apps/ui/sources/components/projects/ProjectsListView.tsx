@@ -27,6 +27,7 @@ import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
 import { ProjectsTree, openProjectsTreeRow, useProjectsTreeKeyboard } from './ProjectsTree';
 import { ProjectHideUndoNotice } from './ProjectHideUndoNotice';
 import { ProjectsAddMenu } from './ProjectsAddMenu';
+import { useOpenNewApp } from './starters/newAppPresentation';
 import { ProjectOpenResolutionCard, ProjectRowsStaleLine, openProjectCandidate, useProjectRowsRetry } from './ProjectOpenResolution';
 import { ProjectActionApprovalNotice } from './ProjectActionApprovalNotice';
 import { useProjectRowCreationActions } from './ProjectSaveAsSourceSheet';
@@ -44,6 +45,7 @@ const PHONE_DISCLOSURE_HIT_REACH = Object.freeze({ top: 12, bottom: 12, left: 5,
 export const ProjectsListView = React.memo(() => {
     const { theme } = useUnistyles();
     const model = useProjectsListModel();
+    const openNewApp = useOpenNewApp(model.cloneRepository);
     const rowCreation = useProjectRowCreationActions(model);
     const rowsRetry = useProjectRowsRetry();
     const { groups } = model;
@@ -158,6 +160,7 @@ export const ProjectsListView = React.memo(() => {
                     machines={model.addFirstMachines}
                     onAdd={model.addProjectToMachine}
                     onClone={model.cloneRepository}
+                    onNewApp={openNewApp}
                     sources={model.addSources}
                     fromSessions={model.fromSessions}
                     renderTrigger={(open) => (
