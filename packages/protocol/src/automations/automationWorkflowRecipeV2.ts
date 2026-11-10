@@ -87,6 +87,8 @@ export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.
   roleOverrides: zMini.optional(WorkflowRoleOverridesV1Schema),
   inlineDefinition: zMini.optional(WorkflowDefinitionV1Schema),
   deploymentTriggers: z.optional(z.array(AutomationDeploymentTriggerV1Schema)),
+  /** Preview lifecycle source; the claimant reads current saved template intent. */
+  deploymentPreview: z.optional(z.pick(DeploymentEnvironmentRefV1Schema, { serverId: true, environmentId: true })),
   /** Host-produced person consent; never an authored trigger operand. */
   actionApprovals: z.optional(z.array(z.strictObject({
     triggerId: AutomationTriggerIdSchema,
