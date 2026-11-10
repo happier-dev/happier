@@ -741,6 +741,12 @@ lifetime. Matching development Protocol, daemon and UI load together; older stri
 development daemons reject the optional field. No released compatibility adapter,
 persistence, protocol epoch or migration changes.
 
+An observation-only Home still delivers authenticated Machine reconnects to its
+mounted launcher consumers. Reconnect reads the WORKER's current requester
+projection, including an empty result after daemon retirement, without enrolling
+a Session or Machine census. Other Machines and ordinary heartbeats do not renew
+that read.
+
 An authenticated admitted guest's broad inventory read returns the existing
 `RPC_METHOD_NOT_AVAILABLE` result after the credential-custody owner validates the
 Machine admission. Missing or invalid custody retains its refusal; credential-bearing

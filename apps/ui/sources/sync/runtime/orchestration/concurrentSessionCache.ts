@@ -1719,6 +1719,13 @@ async function connectManagedServer(
                         applyUsageSocketUpdate(usage.data, entry.id, ingressAccountId);
                         return;
                     }
+                    // A demanded read can live on this authenticated Home without
+                    // demanding its session/Machine census. Reconnect still renews
+                    // that read's existing qualified recovery subscription.
+                    if (usage.success && usage.data.type === 'machine-activity' && ingressAccountId
+                        && usage.data.active === true && usage.data.reconnected === true) {
+                        clearMachineRequestReachabilityForMachine({ serverId: entry.id, accountId: ingressAccountId }, usage.data.id);
+                    }
                     if (!entry.snapshotDemanded) return;
                     if (usage.success && usage.data.type === 'session-message-reply-pending-v1' && ingressAccountId) {
                         publishSessionMessageReplyInvalidation({ serverId: entry.id, accountId: ingressAccountId }, usage.data);
@@ -1732,9 +1739,6 @@ async function connectManagedServer(
                             { id: update.id, active: update.active, activeAt: update.activeAt },
                         ], { sourceServerId: entry.id });
                         observe([update.id]);
-                        if (update.active === true && update.reconnected === true) {
-                            clearMachineRequestReachabilityForMachine(scope, update.id);
-                        }
                     }
                     statusDemandTransport.observeEphemeral(raw);
                     if (raw && typeof raw === 'object' && 'type' in raw && raw.type === 'scm-diff-summary-result-updated') {

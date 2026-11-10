@@ -22,6 +22,7 @@ import {
 import { readLocalServiceLauncherSnapshotTime, selectLocalServiceLaunchTargets } from './store';
 import { buildLocalServiceRows, groupLocalServiceRowsBySection, selectLocalServiceRunningCount } from '../serviceRow';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { clearMachineRequestReachabilityForMachine } from '@/sync/domains/machines/reachability/machineReachability';
 import { getLocalServiceInventoryState, publishLocalServiceInventoryMachineSummary, resetLocalServiceInventoryStoreForTests,
     subscribeLocalServiceInventoryStore } from '../inventory/sharedStore';
 import { createLocalServicesRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
@@ -56,6 +57,46 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('shared local-service launcher store', () => {
+    it.each(['parked', 'retired'] as const)('replaces a guest last-known Service with the restarted Machine empty projection (%s watch)', async previousWatch => {
+        const watches: Array<(value: unknown) => void> = [];
+        let restarted = false;
+        let reads = 0;
+        rpc.machine.mockImplementation(async (request: { method: string; payload?: { launcherProjection?: unknown } }) => {
+            if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) {
+                reads++;
+                return { protocolVersion: 1, snapshot: restarted ? { ...snapshot, updatedAt: 2_000, targets: [] } : snapshot };
+            }
+            if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH && request.payload?.launcherProjection) {
+                return new Promise(resolve => watches.push(resolve));
+            }
+            throw new Error('Requester recovery must not read broad Machine inventory');
+        });
+        const key = { machineId: 'machine-a', serverId: 'server-a', accountId: 'guest', credentialKey: 'guest-credential' };
+        const release = subscribeLocalServiceLauncherStore(key, () => {});
+        try {
+            await vi.waitFor(() => expect(watches).toHaveLength(1));
+            expect(selectLocalServiceLaunchTargets(getLocalServiceLauncherState(key))).toEqual(snapshot.targets);
+            if (previousWatch === 'retired') {
+                watches[0]!({ invalid: true });
+                await flushMicrotasks();
+            }
+            restarted = true;
+            clearMachineRequestReachabilityForMachine({ serverId: key.serverId, accountId: 'another-account' }, key.machineId);
+            clearMachineRequestReachabilityForMachine(key, 'another-machine');
+            await flushMicrotasks();
+            expect(reads).toBe(1);
+            clearMachineRequestReachabilityForMachine(key, key.machineId);
+            await vi.waitFor(() => expect(getLocalServiceLauncherState(key).targetIds).toEqual([]));
+            expect(getLocalServiceLauncherState(key).refreshStatus).toBe('idle');
+            expect(reads).toBe(2);
+            if (previousWatch === 'parked') {
+                watches[0]!({ protocolVersion: 1, changed: true, snapshot: { ...snapshot, updatedAt: 1_500 } });
+                await flushMicrotasks();
+                expect(getLocalServiceLauncherState(key).targetIds).toEqual([]);
+            }
+        } finally { release(); }
+    });
+
     it('settles requester-owned rows through a scoped watch when broad inventory is refused', async () => {
         const watches: Array<(value: unknown) => void> = [];
         rpc.machine.mockImplementation(async (request: { method: string; payload?: { launcherProjection?: unknown } }) => {

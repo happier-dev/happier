@@ -44,6 +44,48 @@ function observePeriodicClock() {
 }
 
 describe('concurrent session cache supervised sockets', () => {
+    it('refreshes a mounted requester launcher on Machine reconnect in an observation-only Home without a census', async () => {
+        const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
+        const { useLocalServiceLauncherStateController } = await import('@/sync/domains/local/services/launch/useLocalServiceLauncherState');
+        const launcher = await import('@/sync/domains/local/services/launch/sharedStore');
+        const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+        disposers.push(() => launcher.resetLocalServiceLauncherStoreForTests());
+        disposers.push(subscribeHomeAccountChange(() => {}, { serverIds: [h.homeC.id] }));
+        const machineId = 'guest-service-worker';
+        let restarted = false;
+        let reads = 0;
+        h.network.setRpcResponder(async request => {
+            if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(() => {});
+            if (request.method !== RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) throw new Error('Unexpected Machine read');
+            reads++;
+            return { protocolVersion: 1, snapshot: { v: 1, machineId, updatedAt: restarted ? 2 : 1,
+                targets: restarted ? [] : [{ id: 'managed:ended-service', source: 'managed_service',
+                    sourceClass: { kind: 'managed_service', managedServiceId: 'ended-service' }, machineId,
+                    title: 'Requester Service', confidence: 'high', state: 'available', serviceState: 'healthy', actions: ['manage'] }] } };
+        });
+        await h.start(); await h.ready();
+        await vi.waitFor(() => expect(h.network.socketBoundaries.some(socket => socket.serverUrl === h.homeC.serverUrl)).toBe(true));
+        // Capture the managed observer before the Machine RPC client opens its
+        // separate pooled socket; activity arrives on the authenticated observer.
+        const socket = h.socket(h.homeC);
+        const hook = await renderHook(() => useLocalServiceLauncherStateController({ machineId,
+            serverId: h.homeC.id, scope: 'workspace', workspaceRoot: '/requester-project' }));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().state.targetIds).toEqual(['managed:ended-service']));
+            restarted = true;
+            socket.trigger('ephemeral', { type: 'machine-activity', id: 'another-machine', active: true, activeAt: 2, reconnected: true });
+            socket.trigger('ephemeral', { type: 'machine-activity', id: machineId, active: true, activeAt: 2 });
+            await Promise.resolve();
+            expect(reads).toBe(1);
+            socket.trigger('ephemeral', { type: 'machine-activity', id: machineId, active: true, activeAt: 3, reconnected: true });
+            await vi.waitFor(() => expect(hook.getCurrent().state.targetIds).toEqual([]));
+            expect(reads).toBe(2);
+            expect(h.isConcurrentOrdinarySessionListHome(h.homeC.id)).toBe(false);
+            expect(h.httpRequests.filter(({ url }) => url.origin === h.homeC.serverUrl
+                && ['/v2/sessions', '/v1/machines'].includes(url.pathname))).toHaveLength(0);
+        } finally { await hook.unmount(); }
+    });
+
     it('observes a visibly demanded unselected Home without inventory reads and releases its connection with the last observer', async () => {
         const observer = vi.fn();
         const release = subscribeHomeAccountChange(observer, { serverIds: [h.homeC.id] });
