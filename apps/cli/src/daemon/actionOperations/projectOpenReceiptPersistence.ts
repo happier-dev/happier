@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { z } from 'zod/mini';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { isDeploymentBackupEvidenceActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { RequesterWorkAttributionV1Schema } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
@@ -21,7 +22,8 @@ const ReceiptReadSchema = createStoredReadSchema(ReceiptSchema);
 const EnvelopeReadSchema = createStoredReadSchema(z.strictObject({ version: z.literal(1), ciphertext: z.string() }));
 export type RetainedProjectOpenReceipt = Readonly<z.infer<typeof ReceiptSchema>>;
 
-/** Only the operation store decides lifecycle and retention; this is its disk adapter. */
+/** Only the operation store decides lifecycle and retention; this is its disk adapter.
+ * The historical module name and encryption purpose preserve existing Open receipts. */
 export type ProjectOpenReceiptPersistence = Readonly<{
     retained: readonly RetainedProjectOpenReceipt[];
     save(receipt: RetainedProjectOpenReceipt): void;
@@ -30,13 +32,18 @@ export type ProjectOpenReceiptPersistence = Readonly<{
 
 export class ProjectOpenReceiptPersistenceError extends Error {
     constructor(readonly effectAttempted: boolean) {
-        super('Project Open receipt storage is unavailable on this Machine');
+        super('Action operation receipt storage is unavailable on this Machine');
         this.name = 'ProjectOpenReceiptPersistenceError';
     }
 }
 
 function entryName(operationId: string): string {
     return `${createHash('sha256').update(operationId).digest('hex')}.json`;
+}
+
+export function requiresActionOperationReceiptPersistence(actionId: string | undefined): boolean {
+    return isProjectWorkspaceSyncOpenActionV1(actionId)
+        || (actionId !== undefined && isDeploymentBackupEvidenceActionIdV1(actionId));
 }
 
 export async function prepareProjectOpenReceiptPersistence(input: Readonly<{
@@ -50,8 +57,10 @@ export async function prepareProjectOpenReceiptPersistence(input: Readonly<{
     const retained = readdirSync(directory).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).map(name => {
         const envelope = EnvelopeReadSchema.parse(JSON.parse(readProtectedLocalStateFileSync(join(directory, name))));
         const receipt = ReceiptReadSchema.parse(storage.openJson({ purpose: 'project_open_receipt', ciphertext: envelope.ciphertext }));
-        if (!isProjectWorkspaceSyncOpenActionV1(receipt.snapshot.actionId) || entryName(receipt.snapshot.operationId) !== name
-            || receipt.snapshot.scope.accountId !== input.accountId || receipt.snapshot.scope.machineId !== input.machineId) {
+        // The partition belongs to the installed custodian. A shared Machine's
+        // admitted requester can be a different Account; the store scopes reads.
+        if (!requiresActionOperationReceiptPersistence(receipt.snapshot.actionId) || entryName(receipt.snapshot.operationId) !== name
+            || receipt.snapshot.scope.machineId !== input.machineId) {
             throw new ProjectOpenReceiptPersistenceError(false);
         }
         return receipt;
@@ -69,7 +78,7 @@ export async function prepareProjectOpenReceiptPersistence(input: Readonly<{
             catch (error) {
                 // Expiry still applies in the operation owner; a failed deletion
                 // leaves an expired encrypted file for the next startup to prune.
-                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') logger.warn('Could not prune an expired Project Open receipt');
+                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') logger.warn('Could not prune an expired Action operation receipt');
             }
         },
     };

@@ -17,8 +17,8 @@ import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUse
 import { DeploymentBackupActionInputSchemasV1, type DeploymentBackupActionInputV1, type DeploymentBackupTargetV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DeploymentBackupRestoreInputV1Schema, type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { ProjectOpenReceiptPersistenceError, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
-import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { ProjectOpenReceiptPersistenceError, requiresActionOperationReceiptPersistence, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
+import { isDeploymentBackupEvidenceActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { logger } from '@/ui/logger';
 
@@ -132,7 +132,7 @@ export function createActionOperationStore(options?: Readonly<{
   const projectOpenReceiptPersistence = options?.projectOpenReceiptPersistence;
   const assertReceiptHistoryReadable = (): void => {
     if (projectOpenReceiptPersistence === null) {
-      throw new RpcError('Project Open receipt storage is unavailable on this Machine', 'action_operation_unavailable');
+      throw new RpcError('Action operation receipt storage is unavailable on this Machine', 'action_operation_unavailable');
     }
   };
   const invocationMetadata = new Map<string, Readonly<{ inputIdentity: string; deploymentChildIdentity?: string;
@@ -149,7 +149,7 @@ export function createActionOperationStore(options?: Readonly<{
     if (ids?.size === 0) backupOperationIds.delete(key);
   };
   const removeSnapshot = (operationId: string): void => {
-    if (isProjectWorkspaceSyncOpenActionV1(snapshots.get(operationId)?.actionId)) projectOpenReceiptPersistence?.remove(operationId);
+    if (requiresActionOperationReceiptPersistence(snapshots.get(operationId)?.actionId)) projectOpenReceiptPersistence?.remove(operationId);
     unindexBackup(operationId);
     snapshots.delete(operationId);
     invocationMetadata.delete(operationId);
@@ -192,7 +192,9 @@ export function createActionOperationStore(options?: Readonly<{
 
   const notify = (snapshot: ActionOperationSnapshotV1, previous?: ActionOperationSnapshotV1): void => {
     const metadata = invocationMetadata.get(snapshot.operationId);
-    if (isProjectWorkspaceSyncOpenActionV1(snapshot.actionId) && metadata && projectOpenReceiptPersistence !== undefined) {
+    // Recovery needs admission and the terminal fact, not a disk write per log/progress revision.
+    const backupProgressOnly = isDeploymentBackupEvidenceActionIdV1(snapshot.actionId) && previous !== undefined && !isTerminal(snapshot);
+    if (!backupProgressOnly && requiresActionOperationReceiptPersistence(snapshot.actionId) && metadata && projectOpenReceiptPersistence !== undefined) {
       try {
         if (!projectOpenReceiptPersistence) throw new ProjectOpenReceiptPersistenceError(false);
         projectOpenReceiptPersistence.save({ version: 1, snapshot, inputIdentity: metadata.inputIdentity,
@@ -219,10 +221,16 @@ export function createActionOperationStore(options?: Readonly<{
     notifySubscribers(change);
   };
 
+  // Successful recovery evidence is not disposable activity history: the native
+  // snapshot and prepared restore can remain usable after history expiry/restart.
+  const retainsBackupEvidence = (snapshot: ActionOperationSnapshotV1): boolean => snapshot.state === 'succeeded'
+    && isDeploymentBackupEvidenceActionIdV1(snapshot.actionId)
+    && invocationMetadata.get(snapshot.operationId)?.backupInput !== undefined;
+
   const prune = (): void => {
     const cutoff = now() - settledRetentionMs;
     const retainedSettled = [...snapshots.values()]
-      .filter(isTerminal)
+      .filter(snapshot => isTerminal(snapshot) && !retainsBackupEvidence(snapshot))
       .sort((left, right) => (right.settledAt ?? 0) - (left.settledAt ?? 0));
     const retainedIds = new Set(
       retainedSettled
@@ -270,7 +278,7 @@ export function createActionOperationStore(options?: Readonly<{
     return next;
   };
 
-  // An Open coordinator cannot resume after host loss. Keep the exact settled
+  // A coordinator cannot resume after host loss. Keep the exact settled
   // result, or settle its lost coordinator as typed uncertainty, never replay it.
   for (const receipt of projectOpenReceiptPersistence?.retained ?? []) {
     const prior = receipt.snapshot;
@@ -279,7 +287,7 @@ export function createActionOperationStore(options?: Readonly<{
     const snapshot = isTerminal(prior) ? freezeSnapshot(prior) : freezeSnapshot(ActionOperationSnapshotV1Schema.parse({
       ...remaining, revision: prior.revision + 1, state: 'failed', cancellation: 'unsupported',
       startedAt: prior.startedAt ?? settledAt, settledAt,
-      error: { errorCode: 'action_outcome_unknown', error: 'The Machine restarted before Project Open settled',
+      error: { errorCode: 'action_outcome_unknown', error: 'The Machine restarted before the Action operation settled',
         effectAttempted: true, ...(prior.error?.failureCause ? { failureCause: prior.error.failureCause } : {}) },
     }));
     snapshots.set(snapshot.operationId, snapshot);
@@ -288,7 +296,7 @@ export function createActionOperationStore(options?: Readonly<{
       ...(receipt.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: receipt.requesterWorkAttributionV1 } : {}) });
     if (!isTerminal(prior)) {
       try { projectOpenReceiptPersistence?.save({ ...receipt, snapshot }); }
-      catch { logger.warn('Could not retain the restarted Project Open outcome; new Open requests require a successful receipt write'); }
+      catch { logger.warn('Could not retain the restarted Action outcome; new recovery operations require a successful receipt write'); }
     }
   }
   prune();
@@ -575,6 +583,7 @@ export function createActionOperationStore(options?: Readonly<{
      * retained invocations, never the Machine's whole operation inventory. */
     readDeploymentBackupOperations(scope: ActionOperationQueryScope,
       target: DeploymentBackupOperationTarget): readonly DeploymentBackupOperation[] {
+      assertReceiptHistoryReadable();
       const ids = backupOperationIds.get(backupTargetKey(scope, target));
       if (!ids) return [];
       const cutoff = now() - settledRetentionMs;
@@ -583,7 +592,7 @@ export function createActionOperationStore(options?: Readonly<{
       for (const operationId of ids) {
         const snapshot = snapshots.get(operationId);
         if (!snapshot) continue;
-        if (isTerminal(snapshot) && (snapshot.settledAt ?? 0) < cutoff) {
+        if (isTerminal(snapshot) && !retainsBackupEvidence(snapshot) && (snapshot.settledAt ?? 0) < cutoff) {
           removeSnapshot(operationId);
           removed = true;
           continue;

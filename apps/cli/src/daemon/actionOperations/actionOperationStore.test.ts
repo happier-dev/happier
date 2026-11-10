@@ -6,10 +6,52 @@ import { ActionOperationSnapshotV1Schema as PredecessorActionOperationSnapshotV1
 import { buildDeploymentBackupActionInputV1, DeploymentBackupRunResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DEPLOYMENT_BACKUP_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionOperationScope } from './actionOperationTypes';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { prepareProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
 
 const ACCOUNT_SCOPE = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation store', () => {
+  it('retains a shared Machine requester capture in the custodian partition without disclosing it to another Account', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'backup-receipt-scope-'));
+    try {
+      const open = () => prepareProjectOpenReceiptPersistence({ directory: join(directory, 'receipts'),
+        keyPath: join(directory, 'key.json'), accountId: 'machine-custodian', machineId: ACCOUNT_SCOPE.machineId });
+      const input = buildDeploymentBackupActionInputV1('deployments.backups.run', {
+        serverId: 'home', environmentId: 'environment', machineId: ACCOUNT_SCOPE.machineId,
+        installationId: 'installation', targetLinkId: 'target', deploymentId: 'deployment', expectedRevision: 1, configRevision: 1,
+      });
+      const persistence = await open();
+      const writes = vi.spyOn(persistence, 'save'); // Real filesystem adapter; observe disk work without replacing it.
+      const first = createActionOperationStore({ projectOpenReceiptPersistence: persistence });
+      first.create({ operationId: 'shared-capture', scope: ACCOUNT_SCOPE, actionId: 'deployments.backups.run',
+        title: 'Backup', cancellation: 'unsupported', inputIdentity: JSON.stringify(input) });
+      first.succeed('shared-capture', DeploymentBackupRunResultV1Schema.parse({ kind: 'verified', operationId: 'shared-capture', manifests: [{
+        schemaVersion: 1, environmentId: input.environmentId, sourceId: 'database', kind: 'dump', configRevision: 1,
+        repositoryId: 'a'.repeat(64), producerChecksumSha256: 'b'.repeat(64),
+        snapshot: { snapshotId: 'c'.repeat(64), treeId: 'd'.repeat(64), hostname: 'host',
+          time: '2026-11-09T23:39:30Z', paths: ['database.dump'], tags: [] }, totalBytesProcessed: 10, totalFilesProcessed: 1,
+      }] }));
+      first.create({ operationId: 'lost-backup', scope: ACCOUNT_SCOPE, actionId: 'deployments.backups.run',
+        title: 'Backup', cancellation: 'unsupported', inputIdentity: JSON.stringify(input) });
+      first.markRunning('lost-backup');
+      for (let index = 0; index < 100; index++) {
+        first.updateProgress('lost-backup', { kind: 'phase', phase: 'backup', label: `Backing up ${index}` });
+      }
+      expect(writes).toHaveBeenCalledTimes(3); // Two admissions + one terminal fact; progress adds no disk writes.
+      const restarted = createActionOperationStore({ projectOpenReceiptPersistence: await open() });
+      expect(restarted.readDeploymentBackupOperations(ACCOUNT_SCOPE, input)).toContainEqual(
+        { snapshot: first.get(ACCOUNT_SCOPE, 'shared-capture'), input });
+      expect(restarted.get(ACCOUNT_SCOPE, 'lost-backup')).toMatchObject({ state: 'failed',
+        error: { errorCode: 'action_outcome_unknown', effectAttempted: true } });
+      expect(createActionOperationStore({ projectOpenReceiptPersistence: await open() }).get(ACCOUNT_SCOPE, 'lost-backup'))
+        .toEqual(restarted.get(ACCOUNT_SCOPE, 'lost-backup'));
+      expect(restarted.readDeploymentBackupOperations({ ...ACCOUNT_SCOPE, accountId: 'machine-custodian' }, input)).toEqual([]);
+      expect(restarted.get({ ...ACCOUNT_SCOPE, accountId: 'other' }, 'shared-capture')).toBeNull();
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
   it('settles and reads failed worker operations even when their optional cause is unknown', () => {
     const store = createActionOperationStore();
     store.create({ operationId: 'worker-failed', actionId: 'projects.script.run', title: 'Script',
@@ -102,7 +144,10 @@ describe('action operation store', () => {
     store.removeOwnerProjections(['deployments.backups.restore'], ACCOUNT_SCOPE);
     expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, target).map(item => item.snapshot.operationId)).toEqual(['capture']);
     now = 1_101;
-    expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, target)).toEqual([]);
+    // A repository snapshot outlives ordinary operation history (QA #111 → #112).
+    expect(store.get(ACCOUNT_SCOPE, 'capture')).toMatchObject({ state: 'succeeded', result });
+    expect(store.list(ACCOUNT_SCOPE).items).toContainEqual(expect.objectContaining({ operationId: 'capture' }));
+    expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, target).map(item => item.snapshot.operationId)).toEqual(['capture']);
     create('reconciled');
     store.reconcileOwner(ACCOUNT_SCOPE, DEPLOYMENT_BACKUP_ACTION_IDS_V1, []);
     expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, target)).toEqual([]);
@@ -123,7 +168,7 @@ describe('action operation store', () => {
     create('newest');
     store.succeed('newest', result);
     expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, target).map(item => item.snapshot.operationId))
-      .toEqual(['new', 'newest']);
+      .toEqual(['old', 'new', 'newest']);
   });
   it('retains an exact typed refusal receipt without treating its successful transport envelope as operation success', () => {
     const store = createActionOperationStore();

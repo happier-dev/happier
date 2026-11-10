@@ -11,6 +11,7 @@ import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
 import { DeploymentDeployAdmissionInputV1Schema, DeploymentBackupRestoreResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { configuration } from '@/configuration';
+import { prepareProjectOpenReceiptPersistence } from '@/daemon/actionOperations/projectOpenReceiptPersistence';
 import { projectDeploymentTransitionOutcomeUnknownForHost } from '@/deployments/deploymentTransitionResult';
 import * as installationStore from '@/daemon/identity/store';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -955,8 +956,13 @@ describe('own-server target at the Action host boundary', () => {
                     await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
                     const boundary = await installRestoreBoundary(root, 'success',
                         { toolDirectory: join(root, 'docker'), environmentId: environment.environment.id });
-                    const operations = createHostActionOperationRuntime({ machineId: 'machine-a', serverId: 'home',
-                        custodyBinding: { serverId: 'home', installationId: 'installation-a' }, resolveAccountId: async () => accountId });
+                    const startOperations = async () => createHostActionOperationRuntime({ machineId: 'machine-a', serverId: 'home',
+                        custodyBinding: { serverId: 'home', installationId: 'installation-a' }, resolveAccountId: async () => accountId,
+                        projectOpenReceiptPersistence: await prepareProjectOpenReceiptPersistence({
+                            directory: join(root, 'action-operations'), keyPath: join(root, 'device-local-key.json'),
+                            accountId, machineId: 'machine-a',
+                        }) });
+                    let operations = await startOperations();
                     const deploymentBackupAction = createDeploymentBackupActionForHost({ serverId: 'home', machineId: 'machine-a',
                         async assertCurrent() { caller.signal.throwIfAborted(); }, backup: target.backup,
                         readBackupOperations: (target, context) => operations.readDeploymentBackupOperations({ target, context }) });
@@ -1101,6 +1107,8 @@ describe('own-server target at the Action host boundary', () => {
                         expect(recovered, JSON.stringify(recovered)).toMatchObject({ ok: true });
                         return;
                     }
+                    // #111 → #112: the repository survives a cold operation owner.
+                    if (scenario === 'public_backup_restore') operations = await startOperations();
                     const inventory = await executor.execute('deployments.backups.inventory',
                         buildDeploymentBackupActionInputV1('deployments.backups.inventory', targetInput),
                         { ...actionContext, actionRequestId: 'public-backup-inventory' });
@@ -1182,6 +1190,7 @@ describe('own-server target at the Action host boundary', () => {
                         if (!preparation.ok) throw new Error('Expected standalone backup preparation');
                         const prepared = DeploymentBackupRestoreResultV1Schema.parse(preparation.result);
                         if (prepared.kind !== 'prepared') throw new Error('Expected standalone backup preparation evidence');
+                        operations = await startOperations();
                         expect(await executor.execute('deployments.backups.restore', { ...prepareInput, mode: 'confirm',
                             prepareOperationId: prepared.operationId }, { ...actionContext, actionRequestId: 'standalone-backup-restore' }))
                             .toMatchObject({ ok: true, result: { kind: 'restored', verified: true, nextAction: 'none' } });

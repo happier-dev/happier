@@ -32,6 +32,12 @@ export function isDeploymentBackupReadActionIdV1(value: string): value is 'deplo
   return isDeploymentBackupInventoryActionIdV1(value) || value === DEPLOYMENT_BACKUP_HISTORY_ACTION_ID_V1;
 }
 
+/** Authored recovery evidence, rather than a refreshable backup read or probe. */
+export function isDeploymentBackupEvidenceActionIdV1(value: string): boolean {
+  return value === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 || value === DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1
+    || value === DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1 || value === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1;
+}
+
 export const DEPLOYMENT_CANCEL_ACTION_ID_V1 = 'deployments.cancel';
 export const DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 = 'deployments.publish.prepare';
 export const DEPLOYMENT_DEPLOY_ACTION_ID_V1 = 'deployments.deploy';

@@ -13,6 +13,12 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { writeCredentialsTokenOnly } from '@/persistence';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
+import { buildDeploymentBackupActionInputV1, DeploymentBackupRunResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+
+const backupInput = () => buildDeploymentBackupActionInputV1('deployments.backups.run', {
+    serverId: 'home', environmentId: 'environment', machineId: 'worker', installationId: 'installation',
+    targetLinkId: 'target', deploymentId: 'deployment', expectedRevision: 1, configRevision: 1,
+});
 
 describe('installed Machine Project Open receipt restart', () => {
     let directory: string;
@@ -60,7 +66,10 @@ describe('installed Machine Project Open receipt restart', () => {
             await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId })) };
     }
 
-    it.each(['key', 'receipt_write'] as const)('keeps the Machine available but refuses Open before an effect when %s storage fails', async failure => {
+    it.each([
+        { failure: 'key', actionId: 'projects.open' }, { failure: 'receipt_write', actionId: 'projects.open' },
+        { failure: 'key', actionId: 'deployments.backups.run' }, { failure: 'receipt_write', actionId: 'deployments.backups.run' },
+    ])('keeps the Machine available but refuses $actionId before an effect when $failure storage fails', async ({ failure, actionId }) => {
         if (failure === 'key') await writeFile(configuration.deviceLocalSecretKeyFile, '{"version":1,"key":"invalid"}', { mode: 0o600 });
         const machine = await start();
         if (failure === 'receipt_write') {
@@ -71,10 +80,11 @@ describe('installed Machine Project Open receipt restart', () => {
             await writeFile(join(root, partition), 'unavailable');
         }
         let effects = 0;
-        const result = await machine.client.observeActionExecution({ actionId: 'projects.open', input: {},
+        const input = actionId === 'projects.open' ? {} : backupInput();
+        const result = await machine.client.observeActionExecution({ actionId, input,
             actionRequestId: 'unavailable-open', execute: async () => { effects++; return { ok: true, result: {} }; } });
         expect(result).toMatchObject({ ok: false, errorCode: 'action_not_admitted', effectAttempted: false });
-        expect(await machine.client.observeActionExecution({ actionId: 'projects.open', input: {},
+        expect(await machine.client.observeActionExecution({ actionId, input,
             actionRequestId: 'unavailable-open', execute: async () => { effects++; return { ok: true, result: {} }; } }))
             .toMatchObject({ ok: false, errorCode: 'action_not_admitted', effectAttempted: false });
         expect(effects).toBe(0);
@@ -97,10 +107,44 @@ describe('installed Machine Project Open receipt restart', () => {
             .rejects.toMatchObject({ rpcErrorCode: 'action_operation_unavailable' });
         await expect(second.rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.list, {}))
             .rejects.toMatchObject({ rpcErrorCode: 'action_operation_unavailable' });
+        await expect(second.client.readDeploymentBackupOperations({ target: backupInput(), context: {} }))
+            .rejects.toMatchObject({ rpcErrorCode: 'action_operation_unavailable' });
         let genericId = '';
         await second.client.observeActionExecution({ actionId: 'machines.setup.apply', input: {},
             onOperation: operation => { genericId = operation.operationId; }, execute: async () => ({ ok: true, result: {} }) });
         expect(await second.get(genericId)).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+    });
+
+    it('retains the original verified backup capture and authored target after two installed Machine restarts', async () => {
+        const input = backupInput();
+        const first = await start();
+        let operationId = '';
+        let effects = 0;
+        await first.client.observeActionExecution({ actionId: 'deployments.backups.run', input,
+            onOperation: operation => { operationId = operation.operationId; }, execute: async () => {
+                effects++;
+                return { ok: true, result: DeploymentBackupRunResultV1Schema.parse({ kind: 'verified', operationId,
+                    manifests: [{ schemaVersion: 1, environmentId: input.environmentId, sourceId: 'database', kind: 'dump',
+                        configRevision: 1, repositoryId: 'a'.repeat(64), producerChecksumSha256: 'b'.repeat(64),
+                        snapshot: { snapshotId: 'c2868814575631750862ab5582d10af5e4b76e3cb7ce5f43e15b788956c68ebe',
+                            treeId: 'd'.repeat(64), hostname: 'host', time: '2026-11-09T23:39:30Z',
+                            paths: ['database.dump'], tags: [] }, totalBytesProcessed: 10, totalFilesProcessed: 1 }],
+                }) };
+            } });
+        const settled = await first.get(operationId);
+        expect(settled).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+        await first.client.shutdown();
+        clients.splice(clients.indexOf(first.client), 1);
+        for (let restart = 0; restart < 2; restart++) {
+            const next = await start();
+            expect(await next.get(operationId)).toEqual(settled);
+            const retained = await next.client.readDeploymentBackupOperations({ target: { ...input, deploymentId: 'next-generation' }, context: {} });
+            expect(retained).toEqual([{ snapshot: settled.kind === 'found' ? settled.operation : null, input }]);
+            expect(await next.client.readDeploymentBackupOperations({ target: { ...input, environmentId: 'other' }, context: {} })).toEqual([]);
+            await next.client.shutdown();
+            clients.splice(clients.indexOf(next.client), 1);
+        }
+        expect(effects).toBe(1);
     });
 
     it('settles a lost Open as typed unknown once and retains both unknown and success through two restarts', async () => {

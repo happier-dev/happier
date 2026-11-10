@@ -1627,7 +1627,7 @@ export class ApiClient {
       directory: join(configuration.activeServerDir, 'action-operations'), keyPath: configuration.deviceLocalSecretKeyFile,
       accountId, machineId: machine.id,
     }).catch(() => {
-      logger.warn('Project Open receipt storage is unavailable; new Open requests will be refused before execution');
+      logger.warn('Action operation receipt storage is unavailable; new Open and recovery operations will be refused before execution');
       return null;
     }) : null;
     return new ApiMachineClient(
