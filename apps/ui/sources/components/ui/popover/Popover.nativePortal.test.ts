@@ -264,9 +264,9 @@ describe('Popover (native portal)', () => {
         await flushHookEffects({ frames: 1 });
 
         // The motion frame owns content hit testing while the Popover remains
-        // present. This preserves native responder behavior during the web-only
-        // pointer-events style migration.
-        expect(findPopoverContentView(tree)?.props.pointerEvents).toBe('auto');
+        // present; the container around it only holds the transparent shadow
+        // outset, so it passes touches through (box-none) instead of eating them.
+        expect(findPopoverContentView(tree)?.props.pointerEvents).toBe('box-none');
         expect(findNativePortalBackdropPressable(tree)?.props.pointerEvents).toBe('auto');
 
         await act(async () => {

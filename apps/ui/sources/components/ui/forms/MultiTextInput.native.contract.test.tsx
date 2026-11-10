@@ -274,6 +274,36 @@ describe('MultiTextInput native composer boundary', () => {
         expect(onSelectionChange).toHaveBeenLastCalledWith({ start: 7, end: 9 });
     });
 
+    // PHONE-POPOVERS-1109 (iOS, closing the docked composer): a selection call queued as the editor left rejected with
+    // "Unable to find the 'HappierComposerInputView' view", unhandled. Nothing is left to update once it unmounted.
+    it('settles a native call that the editor can no longer take once it has unmounted', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const ref = React.createRef<MultiTextInputHandle>();
+        const rejections: Array<(error: Error) => void> = [];
+        const pending = () => new Promise<void>((_resolve, reject) => { rejections.push(reject); });
+        // Plain functions: a spy would attach its own settle handlers and hide an unhandled rejection.
+        const native = { setSelection: pending, setTextAndSelection: pending, focus: pending, blur: pending };
+        const screen = await renderScreen(<MultiTextInput ref={ref} value="abc" onChangeText={() => {}} />, {
+            createNodeMock: element => element.type === 'HappierComposerInput' ? native : null,
+        });
+        const handle = ref.current!;
+        act(() => {
+            handle.setSelection({ start: 1, end: 1 });
+            handle.setTextAndSelection('abcd', { start: 4, end: 4 });
+            handle.focus();
+            handle.blur();
+        });
+        await screen.unmount();
+        const unhandled = vi.fn();
+        process.on('unhandledRejection', unhandled);
+        try {
+            for (const reject of rejections) reject(new Error("Unable to find the 'HappierComposerInputView' view with tag '22162'"));
+            await new Promise(resolve => setTimeout(resolve, 0));
+        } finally { process.off('unhandledRejection', unhandled); }
+        expect(rejections).toHaveLength(4);
+        expect(unhandled).not.toHaveBeenCalled();
+    });
+
     it('does not dispatch an idle drop-caret clear while mounting or retiring a native editor', async () => {
         const { MultiTextInput } = await import('./MultiTextInput');
         const ref = React.createRef<MultiTextInputHandle>();

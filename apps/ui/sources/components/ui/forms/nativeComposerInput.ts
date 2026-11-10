@@ -29,13 +29,14 @@ type Selection = Readonly<{ start: number; end: number }>;
 type NativeInputGeometry = Readonly<{ nativeInputTag?: number; caretRect?: CaretRect | null }>;
 type NativeBoundReference = Readonly<{ ref: string; token: string; start: number; end: number }>;
 
+/** The module's `AsyncFunction` commands settle as promises; a view gone by the time one runs rejects it. */
 export type NativeComposerInputHandle = Readonly<{
-    focus: () => void;
-    blur: () => void;
-    setTextAndSelection: (text: string, selection: Selection, references: readonly ComposerInputReference[]) => void;
-    setSelection: (selection: Selection) => void;
+    focus: () => Promise<void> | void;
+    blur: () => Promise<void> | void;
+    setTextAndSelection: (text: string, selection: Selection, references: readonly ComposerInputReference[]) => Promise<void> | void;
+    setSelection: (selection: Selection) => Promise<void> | void;
     offsetAtPoint: (x: number, y: number) => Promise<number | null>;
-    setDropCaret: (offset: number | null) => void;
+    setDropCaret: (offset: number | null) => Promise<void> | void;
     measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => void;
 }>;
 

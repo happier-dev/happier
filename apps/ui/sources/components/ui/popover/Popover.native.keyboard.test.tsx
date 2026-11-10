@@ -322,6 +322,38 @@ describe('Popover (native keyboard)', () => {
         vi.useRealTimers();
     });
 
+    // Native QA 2026-11-10 (Session ⋯ on the Companion tab): a panel opened just under the header swallowed taps
+    // on the header's ⋯ and Back. Its content container carries the transparent shadow outset around the visible
+    // surface; that outset must let touches through to what lies under it, while the surface keeps them.
+    it('lets touches through the transparent shadow outset around a placed native popover', async () => {
+        vi.useFakeTimers();
+        const { Popover } = await import('./Popover');
+        const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+        const portalRootNode = { measureInWindow: (cb: any) => cb(0, 0, 1000, 800) } as any;
+        const anchorNode = {
+            measureInWindow: (cb: any) => cb(800, 40, 40, 40),
+            measureLayout: (_relativeTo: any, onSuccess: any) => onSuccess(800, 40, 40, 40),
+        } as any;
+        const portalTarget = { rootRef: { current: portalRootNode }, layout: { width: 1000, height: 800 } } as const;
+        const screen = await renderScreen(
+            <PopoverPortalTargetContextProvider value={portalTarget}>
+                <OverlayPortalProvider>
+                    <Popover open anchorRef={{ current: anchorNode } as any} boundaryRef={null} portal={{ native: true }}
+                        placement="bottom" maxHeightCap={320} onRequestClose={() => {}}>
+                        {() => React.createElement('PopoverChild')}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+        await flushHookEffects({ cycles: 4, turns: 10, frames: 6, advanceTimersMs: 120 });
+        expect(screen.findByType('PopoverChild' as never)).toBeTruthy();
+        // The surface's own motion frame keeps taking touches; only the padded container around it passes them.
+        expect(findPopoverContentView(screen.tree)?.props.pointerEvents).toBe('box-none');
+        vi.useRealTimers();
+    });
+
     // NATIVE-SWEEP-1110 L12: View options ran down over the floating tab bar. The shell's bottom chrome floats
     // over the page and reserves nothing, so the popover bounds itself above it as it does above the keyboard.
     it.each([[0, 'bottom', 320], [300, 'top', 200]] as const)(

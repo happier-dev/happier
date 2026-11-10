@@ -6,6 +6,10 @@ import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/prov
 import { createNavigationPropMock } from '@/dev/testkit/mocks/reactNavigation';
 
 const keyboard = vi.hoisted(() => ({
+  /** The keyboard controller's frame worklets, as the device runs them. */
+  handlers: [] as Array<Record<string, ((event: { height: number; progress: number; duration: number; target: number }) => void) | undefined>>,
+  /** React Native's own settled-keyboard notifications. */
+  rnListeners: new Map<string, Set<() => void>>(),
   module: null as null | Awaited<
     ReturnType<
       (typeof import('@/dev/testkit/mocks/keyboardController'))['createKeyboardControllerModuleMock']
@@ -24,13 +28,27 @@ vi.mock('react-native', async () => {
         scale: 1,
         fontScale: 1,
       }),
+      Keyboard: {
+        dismiss: () => {},
+        isVisible: () => false,
+        addListener: (name: string, listener: () => void) => {
+          const set = keyboard.rnListeners.get(name) ?? new Set<() => void>();
+          set.add(listener);
+          keyboard.rnListeners.set(name, set);
+          return { remove: () => { set.delete(listener); } };
+        },
+      },
     },
   );
 });
 vi.mock('react-native-keyboard-controller', async () => {
   keyboard.module = await (
     await import('@/dev/testkit/mocks/keyboardController')
-  ).createKeyboardControllerModuleMock();
+  ).createKeyboardControllerModuleMock({
+    useKeyboardHandler: ((handler: (typeof keyboard.handlers)[number]) => {
+      keyboard.handlers.push(handler);
+    }) as never,
+  });
   return keyboard.module;
 });
 vi.mock('react-native-unistyles', async () =>
@@ -156,6 +174,63 @@ describe('native Docked composer keyboard seat', () => {
     // Read the actual paint footprint: the band ends at the visible bar, or at the keyboard
     // covering it. A card that clears the bar is insufficient if its frost paints across it.
     expect(cardBottom + bandBottom).toBe(Math.max(TAB_BAR, keyboardHeight));
+    await act(async () => screen.unmount());
+  });
+
+  // PHONE-POPOVERS-1109 regression (iOS sim, 11-10 23:10): the docked composer opened from the bar's + stayed at the
+  // bottom under the keyboard its own field raised. Driven the way the device does: the controller's frame worklets,
+  // and React Native's settled hide between two focuses.
+  it('lifts the card above the keyboard its own field raises, again after the keyboard went away', async () => {
+    // The keyboard starts down: an earlier case left the controller's last frame up.
+    act(() => keyboard.module!.emitKeyboardEvent('keyboardDidHide', { height: 0, duration: 0, timestamp: 0, target: 0, type: 'default', appearance: 'dark' }));
+    keyboard.handlers.length = 0;
+    await account.restore({ settings: { newSessionPresentationModeV1: 'docked', glassPreset: 'solid' } });
+    const navigation = createNavigationPropMock();
+    const tree = () => (
+      <NavigationContext.Provider value={navigation}>
+        <HeaderHeightContext.Provider value={0}>
+          <SessionCockpitBottomChromeHeightContext.Provider value={TAB_BAR}>
+            <NewSessionShellHostProvider>
+              <Entry />
+              <NewSessionDockedHost>{null}</NewSessionDockedHost>
+            </NewSessionShellHostProvider>
+          </SessionCockpitBottomChromeHeightContext.Provider>
+        </HeaderHeightContext.Provider>
+      </NavigationContext.Provider>
+    );
+    const screen = await renderScreen(tree(), { createNodeMock: () => ({ blur() {}, focus() {}, measureLayout() {}, measureInWindow() {} }) });
+    await screen.pressByTestIdAsync('open-dock');
+    const input = () => screen.tree.root.findAllByProps({ testID: 'new-session-composer-input' })
+      .find(node => typeof node.props.onFocus === 'function' && typeof node.props.value === 'string');
+    await vi.waitFor(async () => { await act(async () => {}); expect(input()).toBeDefined(); });
+    const frame = (height: number) => act(() => {
+      for (const handler of keyboard.handlers) {
+        const event = { height, progress: height > 0 ? 1 : 0, duration: 0, target: 0 };
+        handler.onStart?.(event);
+        handler.onMove?.(event);
+        handler.onEnd?.(event);
+      }
+    });
+    const cardBottom = async () => {
+      await screen.update(tree());
+      const host = screen.findAllHostsByTestId('new-session-docked-host')[0]!;
+      const seatBottom = (host.props.style as unknown[]).flat(Infinity).reduce<number>((bottom, entry) =>
+        typeof (entry as { marginBottom?: unknown })?.marginBottom === 'number' ? (entry as { marginBottom: number }).marginBottom : bottom, 0);
+      let lift: number | undefined;
+      for (let node = host.parent; node && lift === undefined; node = node.parent) lift = readTranslateY(node.props.style);
+      return { seatBottom, bottom: seatBottom - (lift ?? 0) };
+    };
+    const rest = await cardBottom();
+    const gap = rest.seatBottom - TAB_BAR;
+    for (let round = 0; round < 2; round += 1) {
+      await act(async () => input()!.props.onFocus());
+      frame(KEYBOARD);
+      expect((await cardBottom()).bottom).toBe(KEYBOARD + gap);
+      await act(async () => input()!.props.onBlur());
+      frame(0);
+      act(() => { for (const listener of keyboard.rnListeners.get('keyboardDidHide') ?? []) listener(); });
+      expect((await cardBottom()).bottom).toBe(rest.bottom);
+    }
     await act(async () => screen.unmount());
   });
 });

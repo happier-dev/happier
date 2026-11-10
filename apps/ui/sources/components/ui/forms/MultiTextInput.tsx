@@ -152,6 +152,22 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     });
     const [contentHeight, setContentHeight] = React.useState<number | null>(null);
     const inputRef = React.useRef<NativeComposerInputHandle | null>(null);
+    // A command queued as the editor leaves (the docked composer closing) runs against a view that is gone and
+    // rejects ("Unable to find the 'HappierComposerInputView' view"). Once unmounted there is nothing to update, so
+    // that rejection is settled here, the one place the editor's commands are sent; a live editor's failure stays loud.
+    const mountedRef = React.useRef(false);
+    React.useEffect(() => {
+        mountedRef.current = true;
+        return () => { mountedRef.current = false; };
+    }, []);
+    const sendCommand = React.useCallback((command: (input: NativeComposerInputHandle) => Promise<unknown> | void) => {
+        const input = inputRef.current;
+        if (!input) return;
+        const pending = command(input);
+        if (pending && typeof pending.then === 'function') {
+            pending.then(undefined, (error: unknown) => { if (mountedRef.current) throw error; });
+        }
+    }, []);
     const dropCaretRef = React.useRef<number | null>(null);
     const textRef = React.useRef(props.value);
     const controlledValueRef = React.useRef(props.value);
@@ -285,7 +301,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             textRef.current = text;
             selectionRef.current = nextSelection;
             liveReferencesRef.current = references;
-            inputRef.current?.setTextAndSelection(text, nextSelection, serializeReferences(references));
+            sendCommand(input => input.setTextAndSelection(text, nextSelection, serializeReferences(references)));
             // Match native edits: the host must process new text before receiving its rebased bindings.
             props.onChangeText(text);
             publishSelection(nextSelection);
@@ -294,13 +310,13 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         setSelection(selection) {
             if (textRef.current !== props.value) return;
             const nextSelection = clampSelection(selection, textRef.current.length, boundReferences);
-            inputRef.current?.setSelection(nextSelection);
+            sendCommand(input => input.setSelection(nextSelection));
             publishSelection(nextSelection);
         },
         getText: () => textRef.current,
         flushPendingTextChange: () => textRef.current,
-        focus: () => { inputRef.current?.focus(); },
-        blur: () => { inputRef.current?.blur(); },
+        focus: () => { sendCommand(input => input.focus()); },
+        blur: () => { sendCommand(input => input.blur()); },
         measureInWindow: callback => { inputRef.current?.measureInWindow(callback); },
         getReactNodeTag: () => inputTagRef.current ?? findNodeHandle(inputRef.current as unknown as React.Component | null),
         getCaretRect: () => caretRectRef.current,
@@ -313,9 +329,9 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             // Idle drop targets clear on mount and cleanup; there is no native feedback to retire yet.
             if (offset === null && dropCaretRef.current === null) return;
             dropCaretRef.current = offset;
-            inputRef.current?.setDropCaret(offset);
+            sendCommand(input => input.setDropCaret(offset));
         },
-    }), [props.value, props.onChangeText, props.onReferencesChange, publishSelection, boundReferences]);
+    }), [props.value, props.onChangeText, props.onReferencesChange, publishSelection, boundReferences, sendCommand]);
 
     return <View style={{ width: '100%' }} onLayout={props.onLayout}>
         <NativeComposerInput
