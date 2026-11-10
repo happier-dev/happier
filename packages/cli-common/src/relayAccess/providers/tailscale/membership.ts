@@ -50,7 +50,7 @@ export function createTailscaleJoinSteps(binding: Readonly<{
     ];
 }
 
-export const tailscaleMembershipPrograms = {
+export const tailscaleMembershipPrograms: Readonly<{ join: MachineRecipeV1; leave: MachineRecipeV1 }> = {
     join: {
         id: 'tailscale-join', revision: '1', title: 'Join Tailscale', inputSchema,
         steps: createTailscaleJoinSteps(),
@@ -62,4 +62,4 @@ export const tailscaleMembershipPrograms = {
             check: { executable: 'tailscale', args: ['status', '--json'], unsatisfiedExitCodes: [],
                 stdoutJson: { op: 'eq', path: 'BackendState', value: 'Stopped' } } }],
     },
-} satisfies Readonly<{ join: MachineRecipeV1; leave: MachineRecipeV1 }>;
+};

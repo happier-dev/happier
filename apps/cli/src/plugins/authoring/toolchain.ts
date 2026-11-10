@@ -38,12 +38,12 @@ import {
   resolveInstalledRuntimePackage,
 } from '@happier-dev/cli-common/workspaceRuntimeDependencies';
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import { createDiagnostic, childToolFailureMessage, processFailureDiagnostic } from './toolchainDiagnostics';
 
 import { readPluginManifest } from '@/plugins/manifest/read';
 import type { ParsedPluginManifestV2 } from '@happier-dev/protocol';
 import { serializeCanonicalPluginManifest } from '@/plugins/manifest/serialize';
 import {
-  findPluginDiagnosticSourceLocation,
   type PluginDiagnosticSourceLocation,
 } from '@/plugins/validation/diagnostics/sourceLocation';
 import { PLUGIN_MANIFEST_RELATIVE_PATH } from '@/plugins/store/paths';
@@ -140,14 +140,6 @@ export type PluginAuthorToolchainDeps = Readonly<{
   spawn: (input: PluginAuthorToolchainSpawnInput) => Promise<PluginAuthorToolchainSpawnResult>;
   processEnv: NodeJS.ProcessEnv;
 }>;
-
-function createDiagnostic(
-  code: PluginAuthorToolchainDiagnostic['code'],
-  message: string,
-  source?: PluginDiagnosticSourceLocation,
-): PluginAuthorToolchainDiagnostic {
-  return { code, message, ...(source ? { source } : {}) };
-}
 
 export function normalizePluginSdkRegistryOrigin(value: string | null | undefined): string | null {
   const raw = String(value ?? '').trim();
@@ -253,7 +245,11 @@ export async function materializePrepublicationAuthorWorkspacePackages(params: R
           args: [compilerPath, '-p', projectPath],
           cwd: workingDirectory, env: process.env });
         if (result.exitCode !== 0 || result.signal !== null) {
-          throw new Error(`Source Plugin SDK declaration compilation failed (exit ${result.exitCode}, signal ${result.signal})\n${result.stderr || result.stdout}`);
+          throw Object.assign(new Error('Source Plugin SDK declaration compilation failed'), {
+            code: result.signal ?? result.exitCode,
+            stderr: result.stderr,
+            stdout: result.stdout,
+          });
         }
       });
     }
@@ -807,7 +803,7 @@ export async function preparePluginAuthorDependencies(
       projectRoot,
       diagnostic: createDiagnostic(
         'plugin_author_tool_failed',
-        error instanceof Error ? error.message : 'Plugin author dependency preparation failed',
+        childToolFailureMessage(error, 'Plugin author dependency preparation failed'),
       ),
     };
   }
@@ -830,37 +826,6 @@ function failedResult(params: Readonly<{
     projectRoot: params.projectRoot,
     diagnostics: [params.diagnostic],
   };
-}
-
-function processFailureMessage(operation: PluginAuthorToolchainOperation, result: PluginAuthorToolchainSpawnResult): string {
-  const detail = `${result.stderr}\n${result.stdout}`.trim();
-  const suffix = detail ? `: ${detail}` : '';
-  return `Plugin development ${operation} failed with ${result.signal ?? result.exitCode ?? 'unknown status'}${suffix}`;
-}
-
-/**
- * The one author-facing projection of a failed toolchain process. The compiler,
- * the test runner, and the Plugin UI builder all report `file(line,column)` or
- * `file:line:column` relative to the project root they were spawned in, so the
- * first contained location in their output is the line the author must fix.
- * `stderr` is read before `stdout` because a tool that separates them puts the
- * failure there.
- */
-function processFailureDiagnostic(params: Readonly<{
-  operation: PluginAuthorToolchainOperation;
-  projectRoot: string;
-  code: PluginAuthorToolchainDiagnostic['code'];
-  result: PluginAuthorToolchainSpawnResult;
-}>): PluginAuthorToolchainDiagnostic {
-  const source = findPluginDiagnosticSourceLocation({
-    texts: [params.result.stderr, params.result.stdout],
-    sourceRoot: params.projectRoot,
-  });
-  return createDiagnostic(
-    params.code,
-    processFailureMessage(params.operation, params.result),
-    source ?? undefined,
-  );
 }
 
 function isApprovedManagedPnpmCommand(
