@@ -8,6 +8,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { LocalServiceLauncherFeed } from './feed';
+import { createLocalServiceLauncherSnapshotReader } from './snapshotReader';
 import type { LocalServicePreviewRoutes } from '../preview/routes';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
@@ -71,6 +72,7 @@ export type LocalServiceLauncherLeafRoutes = Readonly<{
     ): Promise<DaemonLocalServiceLauncherRegisterPreviewResponseV1>;
     clearHistory(
         request: DaemonLocalServiceLauncherLeafRequestV1,
+        context?: RpcHandlerContext,
     ): Promise<DaemonLocalServiceLauncherHistoryClearResponseV1>;
 }>;
 
@@ -83,32 +85,36 @@ function findTarget(
 
 export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
     machineId: string;
+    accountId?: string;
+    serverId?: string;
     feed: Pick<LocalServiceLauncherFeed, 'getSnapshot'>;
-    previewRoutes: Pick<LocalServicePreviewRoutes, 'openOrCreate'> & Partial<Pick<LocalServicePreviewRoutes, 'getSnapshot'>>;
+    previewRoutes: Pick<LocalServicePreviewRoutes, 'openOrCreate'>;
     history: LocalServiceLauncherHistoryStore;
 }>): LocalServiceLauncherLeafRoutes {
     async function resolveTarget(
         request: DaemonLocalServiceLauncherLeafRequestV1,
+        context?: RpcHandlerContext,
     ): Promise<Readonly<
         | { ok: true; target: LocalServiceLaunchTargetV1 }
         | { ok: false; reasonCode: string }
     >> {
         if (!request.targetId) return { ok: false, reasonCode: 'launcher_target_required' };
         if (request.machineId !== input.machineId) return { ok: false, reasonCode: 'wrong_machine' };
-        const snapshot = await input.feed.getSnapshot(request);
+        const feed = await requesterFeed(context);
+        const snapshot = await feed.getSnapshot(request);
         const target = findTarget(snapshot, request.targetId);
         if (!target) return { ok: false, reasonCode: 'launcher_target_unknown' };
         if (target.machineId !== input.machineId) return { ok: false, reasonCode: 'wrong_machine' };
         return { ok: true, target };
     }
 
+    const requesterFeed = (ingress?: RpcHandlerContext) => createLocalServiceLauncherSnapshotReader({
+        ...input, ingress, readScope: 'requester_managed_services',
+    });
+
     return {
         async openPreview(request, context) {
-            if (context?.machineAdmission || context?.authorization || context?.transportRequestId) {
-                if (!input.previewRoutes.getSnapshot) throw new Error('requester_credentials_unavailable');
-                await input.previewRoutes.getSnapshot(context);
-            }
-            const resolved = await resolveTarget(request);
+            const resolved = await resolveTarget(request, context);
             if (!resolved.ok) {
                 return {
                     protocolVersion: 1,
@@ -154,12 +160,8 @@ export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
         },
 
         async registerPreview(request, signal, context) {
-            if (context?.machineAdmission || context?.authorization || context?.transportRequestId) {
-                if (!input.previewRoutes.getSnapshot) throw new Error('requester_credentials_unavailable');
-                await input.previewRoutes.getSnapshot(context);
-            }
             signal?.throwIfAborted();
-            const resolved = await resolveTarget(request);
+            const resolved = await resolveTarget(request, context);
             if (!resolved.ok) {
                 return {
                     protocolVersion: 1,
@@ -172,16 +174,17 @@ export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
             return registerTargetPreview(target, request, signal, context);
         },
 
-        async clearHistory(request) {
+        async clearHistory(request, context) {
+            const feed = await requesterFeed(context);
             let cleared = 0;
             if (request.machineId === input.machineId && (request.scope !== 'workspace' || request.workspaceRoot || request.sessionId)) {
                 const scoped = request.scope !== 'machine' && Boolean(request.workspaceRoot || request.sessionId);
-                const before = scoped || request.targetId ? await input.feed.getSnapshot({ ...request,
+                const before = feed.requesterOnly || scoped || request.targetId ? await feed.getSnapshot({ ...request,
                     ...(scoped ? { requireWorkspaceScope: true as const } : {}),
                 }) : undefined;
                 cleared = input.history.clear(before?.targets.filter(target => !request.targetId || target.id === request.targetId).map(target => target.id));
             }
-            const snapshot = await input.feed.getSnapshot(request);
+            const snapshot = await feed.getSnapshot(request);
             return { protocolVersion: 1, cleared, snapshot };
         },
     };

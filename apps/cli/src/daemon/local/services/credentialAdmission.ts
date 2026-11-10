@@ -1,6 +1,25 @@
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import type { StoredCredentials } from '@/persistence';
+import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+
+/** Credential selection for the receiving Services Action factory. */
+export async function resolveLocalServiceActionCredentials(input: Readonly<{
+    credentials: StoredCredentials;
+    readCredentials: () => Promise<StoredCredentials | null>;
+    actorAccountId: string;
+    requester: Pick<RequesterAccountActionContext, 'credentials'> | null;
+}>): Promise<StoredCredentials | null> {
+    if (input.requester) {
+        return readAccountIdFromToken(input.requester.credentials.token) === input.actorAccountId
+            ? input.requester.credentials : null;
+    }
+    const credentials = await input.readCredentials().catch(() => null);
+    return credentials && credentials.token === input.credentials.token
+        && readAccountIdFromToken(credentials.token) === input.actorAccountId ? credentials : null;
+}
 
 type LocalServiceCredentialScope = Readonly<{
     accountId?: string;

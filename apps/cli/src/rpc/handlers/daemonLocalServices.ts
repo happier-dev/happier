@@ -22,6 +22,7 @@ import { registerActionSpecRpcHandlers, type RegisterActionSpecRpcHandlersParams
 import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '@happier-dev/protocol';
 import { assertLocalServiceReadCustody } from '@/daemon/local/services/credentialAdmission';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
+import { createLocalServiceLauncherSnapshotReader } from '@/daemon/local/services/launch/snapshotReader';
 
 export type DaemonLocalServicesMachineRpcRoutes = Pick<DaemonLocalServicePreviewSnapshotHandlerOptions,
     'projectManagedServices' | 'machineId' | 'serverId'> & Readonly<{
@@ -82,13 +83,10 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
     const assertRequesterRead = (context?: RpcHandlerContext) => assertLocalServiceReadCustody({
         accountId: options.accountId, machineId: options.machineId ?? '', context,
     }, 'machine_inventory');
-    const readLauncherCustody = async (context?: RpcHandlerContext, requesterOnly?: true) => {
-        const accountId = await assertLocalServiceReadCustody({
-            accountId: options.accountId, machineId: options.machineId ?? '', context,
-        }, requesterOnly ? 'requester_managed_services' : undefined);
-        if (accountId && !options.serverId) throw new Error('requester_credentials_unavailable');
-        return accountId && options.serverId ? { accountId, serverId: options.serverId } : undefined;
-    };
+    const readLauncher = (ingress?: RpcHandlerContext, requesterOnly?: true) => createLocalServiceLauncherSnapshotReader({
+        feed: requireLauncherRoutes(options), accountId: options.accountId, machineId: options.machineId ?? '',
+        serverId: options.serverId, ingress, ...(requesterOnly ? { readScope: 'requester_managed_services' as const } : {}),
+    });
     if (options.projectManagedServices && options.machineId && options.serverId && options.resolveLauncherActionExecutor) {
         registerActionSpecRpcHandlers({
             rpcHandlerManager: rpc, actionIds: [...MACHINE_SERVICE_FRONTDOOR_ACTION_IDS, 'machines.services.logs.read', 'machines.services.control', 'machines.services.exec'],
@@ -140,19 +138,17 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                 async (raw: unknown, context): Promise<DaemonLocalServiceInventoryWatchResponseV1 | DaemonLocalServiceInventoryLauncherWatchResponseV1> => {
                     const request = DaemonLocalServiceInventoryWatchRequestV1Schema.parse(raw);
                     if (request.launcherProjection) {
-                        const requesterManagedServices = await readLauncherCustody(context, true);
+                        const reader = await readLauncher(context, true);
                         if (request.machineId !== options.machineId) throw new Error('Local service inventory Machine target does not match');
                         const watchLauncherSnapshot = requireInventoryRoutes(options).watchLauncherSnapshot;
                         if (!watchLauncherSnapshot) throw new Error('Local service inventory watch runtime is unavailable');
                         const projection = request.launcherProjection;
-                        const routes = requireLauncherRoutes(options);
                         const result = await watchLauncherSnapshot({ targets: projection.targets,
-                            readSnapshot: () => routes.getSnapshot({ ...projection.request, discovery: 'cached',
-                                ...(requesterManagedServices ? { requesterManagedServices } : {}),
+                            readSnapshot: () => reader.getSnapshot({ ...projection.request, discovery: 'cached',
                                 ...(context ? { signal: context.signal } : {}) }),
                             // Guest projections contain only their installed managed bindings;
                             // they cannot enroll the custodian's declaration discovery roots.
-                            ...(!requesterManagedServices && projection.request.projection !== 'managed_bindings'
+                            ...(!reader.requesterOnly && projection.request.projection !== 'managed_bindings'
                                 && projection.request.scope !== 'machine'
                                 && (projection.request.sessionId || projection.request.workspaceRoot)
                                 ? { launcherScopes: [{ ...(projection.request.sessionId ? { sessionId: projection.request.sessionId } : {}),
@@ -188,7 +184,7 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
             RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
             async (raw: unknown, context): Promise<DaemonLocalServiceLauncherSnapshotResponseV1> => {
                 const request = DaemonLocalServiceLauncherSnapshotRequestV1Schema.parse(raw);
-                const requesterManagedServices = await readLauncherCustody(context, request.startReview ? undefined : true);
+                const reader = await readLauncher(context, request.startReview ? undefined : true);
                 const review = request.startReview;
                 const prepare = options.localServicesLauncher?.prepareStartApproval;
                 let startReview: DaemonLocalServiceLauncherSnapshotResponseV1['startReview'];
@@ -209,20 +205,18 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                         context.signal.throwIfAborted();
                     }
                 }
-                const routes = requireLauncherRoutes(options);
                 // Forward sessionId + explicit scope/workspaceRoot so the feed scopes to the
                 // session's workspace PATH (D1), the requested machine view, or a session-less
                 // project root. Dropping these here was the precise plumbing break that made
                 // per-request scope structurally impossible.
                 const feedRequest = {
-                    ...(requesterManagedServices ? { requesterManagedServices } : {}),
                     ...(context?.signal ? { signal: context.signal } : {}),
                     ...(request.projection ? { projection: request.projection } : {}),
                     ...(request.sessionId ? { sessionId: request.sessionId } : {}),
                     ...(request.scope ? { scope: request.scope } : {}),
                     ...(request.workspaceRoot ? { workspaceRoot: request.workspaceRoot } : {}),
                 };
-                const snapshot = await routes.getSnapshot(
+                const snapshot = await reader.getSnapshot(
                     Object.keys(feedRequest).length > 0 ? feedRequest : undefined,
                 );
                 context?.signal.throwIfAborted();
@@ -272,11 +266,11 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
 
             rpc.registerHandler(
                 RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_HISTORY_CLEAR,
-                async (raw: unknown): Promise<DaemonLocalServiceLauncherHistoryClearResponseV1> => {
+                async (raw: unknown, context): Promise<DaemonLocalServiceLauncherHistoryClearResponseV1> => {
                     const request = DaemonLocalServiceLauncherLeafRequestV1Schema.parse(raw);
                     const leaves = requireLauncherLeafRoutes(options);
                     return DaemonLocalServiceLauncherHistoryClearResponseV1Schema.parse(
-                        await leaves.clearHistory(request),
+                        await leaves.clearHistory(request, context),
                     );
                 },
             );

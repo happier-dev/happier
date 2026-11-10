@@ -1,3 +1,4 @@
+import { createLocalServiceLauncherSnapshotReader } from '../launch/snapshotReader';
 import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { requiresAgentEgressRedaction } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { parseLocalServiceDomainActionRpcRequest, resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
@@ -234,8 +235,10 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             if (!routes) return disabledResult('local_services_launcher_routes_unavailable');
             const lowered = parseLocalServiceDomainActionRpcRequest(args.actionId, parsed.input);
             if (!lowered?.success) return invalidParametersResult;
-            const { machineId: _machineId, ...scope } = DaemonLocalServiceLauncherSnapshotRequestV1Schema.parse(lowered.data);
-            return await routes.getSnapshot(scope);
+            const { machineId, ...scope } = DaemonLocalServiceLauncherSnapshotRequestV1Schema.parse(lowered.data);
+            const reader = await createLocalServiceLauncherSnapshotReader({ feed: routes, machineId, ingress: input.ingress,
+                serverId: args.context.serverId, readScope: 'requester_managed_services' });
+            return await reader.getSnapshot(scope);
         }
 
         if (args.actionId === 'localServices.launcher.start') {
@@ -271,7 +274,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             if (args.actionId === 'localServices.launcher.registerPreview') {
                 return await leaves.registerPreview(request.data, args.context.signal, input.ingress);
             }
-            return await leaves.clearHistory(request.data);
+            return await leaves.clearHistory(request.data, input.ingress);
         }
 
         if (args.actionId === 'localServices.preview.status') {

@@ -1,6 +1,7 @@
 import { buildProviderAccountUsageIdentityFromQualifiedAccount, buildProviderAccountUsagePersistenceTargetFromQualifiedCredential } from '../connectedServices/accountUsage/qualifiedAccountIdentity';
 import { resolveProviderAccountUsageAuthoritativeSource } from '../connectedServices/accountUsage/runtimeSource';
 import { createRequesterPluginSettingsSource } from '@/daemon/sessionEncryption/requesterPluginSettings';
+import { resolveLocalServiceActionCredentials } from '@/daemon/local/services/credentialAdmission';
 import { createDaemonSessionAccountActionAuthorizationPreparer } from './createDaemonSessionAccountActionAuthorizationPreparer';
 import { resolveGroupRequiredModelIds } from '../connectedServices/runtimeRegistry/resolveGroupRequiredModelIds';
 import { refreshTrackedSessionsRuntimeSnapshot, resolveRespawnSessionOptionsWithRuntimeSnapshot } from '@/daemon/sessions/runtimeSnapshot/respawn';
@@ -4045,6 +4046,12 @@ export async function startDaemonSessionControlRuntime(
   ): Promise<SpawnSessionResult> => {
     let acquiredRequesterRuntime: RequesterSessionRuntimeContext | null = null;
     const launchAccountSettingsLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+    const requesterRuntimeUnavailable = {
+      type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+      errorMessage: 'Requester Account runtime unavailable',
+      errorDetail: { kind: 'launch_error', code: 'requester_session_custody_unavailable',
+        message: 'Requester Session access could not be restored' },
+    } satisfies Extract<SpawnSessionResult, { type: 'error' }>;
     try {
       const existingSessionId = normalizeOptionalString(options.existingSessionId);
       let ordinaryAgentIsolationAccountSource: SessionAgentIsolationAccountSource | undefined;
@@ -4058,11 +4065,7 @@ export async function startDaemonSessionControlRuntime(
               options.existingSessionId) ||
           !(await suppliedRequesterRuntime.isCurrent()))
       )
-        return {
-          type: 'error',
-          errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-          errorMessage: 'Requester Account runtime unavailable',
-        };
+        return requesterRuntimeUnavailable;
       const requesterRuntime = options.requesterSessionBootstrap
         ? (suppliedRequesterRuntime ??
           (await params.createRequesterSessionRuntimeContext?.(
@@ -4075,17 +4078,12 @@ export async function startDaemonSessionControlRuntime(
           : null;
       acquiredRequesterRuntime = requesterRuntime;
       if (options.requesterSessionBootstrap && !requesterRuntime)
-        return {
-          type: 'error',
-          errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-          errorMessage: 'Requester Account runtime unavailable',
-        };
+        return requesterRuntimeUnavailable;
       if (!options.requesterSessionBootstrap && existingSessionId && requesterRuntimeAccess) {
         if (requesterRuntime) {
           if (requesterRuntime.bootstrap.getBoundSessionId() !== existingSessionId
             || !await requesterRuntime.isCurrent(shutdownCancellationDomains.daemonWorkSignal)) {
-            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-              errorMessage: 'Requester Account runtime unavailable' };
+            return requesterRuntimeUnavailable;
           }
           // Recover birth before Account/Provider preparation and child birth,
           // not later when the runner first requests a native service.
@@ -4109,8 +4107,7 @@ export async function startDaemonSessionControlRuntime(
             attribution: options.requesterWorkAttributionV1, isCurrent, signal,
           });
           if (!custody) {
-            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-              errorMessage: 'Requester Account runtime unavailable' };
+            return requesterRuntimeUnavailable;
           }
           if (origin) ordinaryAgentIsolationAccountSource = { kind: 'ordinarySession', custody, origin };
         }
@@ -4143,10 +4140,7 @@ export async function startDaemonSessionControlRuntime(
           token: spawnParams.credentials.token, credentials: spawnParams.credentials, sessionId: existingSessionId,
         }).catch(() => null);
         const signal = shutdownCancellationDomains.daemonWorkSignal;
-        if (requesterRuntime && !await requesterRuntime.isCurrent(signal)) return {
-          type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-          errorMessage: 'Requester Account runtime unavailable',
-        };
+        if (requesterRuntime && !await requesterRuntime.isCurrent(signal)) return requesterRuntimeUnavailable;
         const admission = state ? resolveSessionAutoResumeAdmissionV1({ metadata: state.metadata,
           archivedAt: state.archivedAt, machineAvailable: true, authorityAvailable: state.metadata != null }) : null;
         const refusal = projectSessionRunnerLaunchAdmissionFailure(admission === 'eligible' ? true
@@ -4157,8 +4151,7 @@ export async function startDaemonSessionControlRuntime(
         const beforeSessionRunnerLaunch = options.beforeSessionRunnerLaunch;
         options = { ...options, beforeSessionRunnerLaunch: async () => {
           if (!behavior.isLaunchAdmissionCurrent()) return false;
-          const unavailable = { kind: 'launch_error' as const, code: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-            message: 'Requester Account runtime unavailable' };
+          const unavailable = requesterRuntimeUnavailable.errorDetail;
           const signal = shutdownCancellationDomains.daemonWorkSignal;
           if (requesterRuntime && !await requesterRuntime.isCurrent(signal)) return unavailable;
           const admission = beforeSessionRunnerLaunch ? await beforeSessionRunnerLaunch() : true;
@@ -9256,15 +9249,14 @@ export async function startDaemonSessionControlRuntime(
             errorCode: 'machine_admission_required',
             error: 'machine_admission_required',
           };
-        const credentials = await readStoredCredentialsForServerId(
-          params.serverId,
-        ).catch(() => null);
-        if (
-          !credentials ||
-          credentials.token !== params.credentials.token ||
-          readPreviewAccountIdFromToken(credentials.token) !==
-            ingress.machineAdmission.actorAccountId
-        )
+        const requester = readRequesterAccountActionContext(ingress.callerInputAuthorization);
+        const credentials = await resolveLocalServiceActionCredentials({
+          credentials: params.credentials,
+          readCredentials: () => readStoredCredentialsForServerId(params.serverId),
+          actorAccountId: ingress.machineAdmission.actorAccountId,
+          requester,
+        });
+        if (!credentials)
           return {
             ok: false,
             errorCode: 'requester_credentials_unavailable',
@@ -9278,9 +9270,12 @@ export async function startDaemonSessionControlRuntime(
           credentials,
           machineId: params.machineId,
           serverId: params.serverId,
-          serverApiUrl: params.serverBaseUrl,
-          readCredentials: async () =>
-            await readStoredCredentialsForServerId(params.serverId),
+          serverApiUrl: requester?.serverHttpBaseUrl ?? params.serverBaseUrl,
+          ...(requester ? { admittedAccountEncryptionMode: requester.accountEncryptionCurrentness.mode,
+            savedSecretOperationContext: requester.savedSecretOperationContext } : {}),
+          ...(ingress.requesterSessionBootstrap ? { requesterSessionBootstrap: ingress.requesterSessionBootstrap } : {}),
+          readCredentials: async () => requester ? requester.credentials
+            : await readStoredCredentialsForServerId(params.serverId),
           ...(apiMachineForSessions ? { runActionOperation: request => {
             const context: import('@/rpc/handlers/_actionDispatchAdapter').RpcActionExecutorContext = { ...request.context,
               machineAdmission: ingress.machineAdmission,

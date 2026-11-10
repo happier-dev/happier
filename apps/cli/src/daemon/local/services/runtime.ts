@@ -718,7 +718,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     // Launcher leaf actions (LSV-1): openPreview/registerPreview reuse the canonical launcher
     // feed + private-preview owner; history.clear empties the daemon-owned launcher history.
     const launcherLeafRoutes = createLocalServiceLauncherLeafRoutes({
-        machineId: params.machineId,
+        machineId: params.machineId, accountId: params.accountId, serverId: params.serverId,
         feed: launcherFeed,
         previewRoutes,
         history: launcherHistory,

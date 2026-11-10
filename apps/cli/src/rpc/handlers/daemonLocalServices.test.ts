@@ -26,6 +26,7 @@ import { createLocalServicePreviewRoutes } from '@/daemon/local/services/preview
 import { createLocalServicePublicPreviewServerRoutes } from '@/daemon/local/services/public/routes';
 import { createLocalServiceLauncherFeed } from '@/daemon/local/services/launch/feed';
 import { createLocalServiceLauncherRoutes } from '@/daemon/local/services/launch/routes';
+import { createLocalServiceLauncherHistoryStore, createLocalServiceLauncherLeafRoutes } from '@/daemon/local/services/launch/leaves';
 import { createLocalServiceActionRoutes } from '@/daemon/local/services/actions/routes';
 import { registerDaemonLocalServicesMachineRpcHandlers } from './daemonLocalServices';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
@@ -436,10 +437,18 @@ describe('daemon local services machine rpc handlers', () => {
                         verifyMachineAdmission: async () => { verificationRequests++; return current; },
                     }) });
                 const boundCredential = { accountId: 'custodian' };
+                const history = createLocalServiceLauncherHistoryStore();
+                history.record(handle.serviceId);
+                history.record(requesterHandle.serviceId);
+                const leaves = createLocalServiceLauncherLeafRoutes({ machineId: workspace.machineId,
+                    accountId: 'custodian', serverId: workspace.serverId, feed, history,
+                    previewRoutes: createLocalServicePreviewRoutes({ machineId: workspace.machineId, serverId: workspace.serverId,
+                        accountId: 'custodian', inventoryRegistry, registry: previewRegistry }),
+                });
                 registerDaemonLocalServicesMachineRpcHandlers(rpc, { ...boundCredential,
                     machineId: workspace.machineId, serverId: workspace.serverId,
                     localServicesInventory: inventoryRoutes,
-                    localServicesLauncher: createLocalServiceLauncherRoutes({ feed }),
+                    localServicesLauncher: createLocalServiceLauncherRoutes({ feed, leaves }),
                 });
                 const params = { machineId: workspace.machineId, scope: 'workspace', workspaceRoot: root,
                     ...(projection ? { projection } : {}) };
@@ -490,6 +499,42 @@ describe('daemon local services machine rpc handlers', () => {
                 expect(DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(await rpc.handleRequest({
                     ...request, machineAdmission: { ...machineAdmission, actorAccountId: 'unrelated-account', role: 'use' },
                 })).snapshot.targets).toEqual([]);
+                if (!projection) {
+                    const guestRequest = { ...request, machineAdmission: { ...machineAdmission,
+                        actorAccountId: 'foreign-account', role: 'use' as const } };
+                    for (const method of [RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_OPEN_PREVIEW,
+                        RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_REGISTER_PREVIEW]) {
+                        expect.soft(await rpc.handleRequest({ ...guestRequest, method: `${workspace.machineId}:${method}`,
+                            params: { machineId: workspace.machineId, targetId: handle.serviceId, scope: 'machine' },
+                        })).toMatchObject({ status: 'unavailable', reasonCode: 'launcher_target_unknown' });
+                    }
+                    expect.soft(await rpc.handleRequest({ ...guestRequest,
+                        method: `${workspace.machineId}:${RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_HISTORY_CLEAR}`,
+                        params: { machineId: workspace.machineId, scope: 'machine' },
+                    })).toMatchObject({ cleared: 1, snapshot: { targets: [expect.objectContaining({ id: requesterHandle.serviceId })] } });
+                    expect.soft(history.list()).toEqual([handle.serviceId]);
+                    const gate = createLocalServicesDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => ({
+                        status: 'ready', features: FeaturesResponseSchema.parse({ features: {
+                            localServices: { enabled: true, inventory: { enabled: true }, launcher: { enabled: true } },
+                            browser: { enabled: true, viewTargets: { enabled: true } },
+                        }, capabilities: {} }),
+                    }) });
+                    await gate.refresh();
+                    const execute = createLocalServicesDaemonRuntimeActionExecutor({ featureGate: gate,
+                        routes: { launcherRoutes: createLocalServiceLauncherRoutes({ feed, leaves }) },
+                        ingress: { signal: new AbortController().signal, machineAdmission: guestRequest.machineAdmission,
+                            verifyMachineAdmissionCurrent: async () => true },
+                    });
+                    expect.soft(await execute({ actionId: 'localServices.launcher.snapshot',
+                        input: { machineId: workspace.machineId, scope: 'machine' }, context: { serverId: workspace.serverId },
+                    })).toMatchObject({ targets: [expect.objectContaining({ id: requesterHandle.serviceId })] });
+                    history.record(handle.serviceId);
+                    history.record(requesterHandle.serviceId);
+                    expect.soft(await execute({ actionId: 'localServices.launcher.history.clear',
+                        input: { machineId: workspace.machineId, scope: 'machine' }, context: { serverId: workspace.serverId },
+                    })).toMatchObject({ cleared: 1, snapshot: { targets: [expect.objectContaining({ id: requesterHandle.serviceId })] } });
+                    expect.soft(history.list()).toEqual([handle.serviceId]);
+                }
                 if (projection === 'managed_bindings') {
                     const guest = { ...machineAdmission, actorAccountId: 'foreign-account', role: 'use' as const };
                     const watch = (targets: LocalServiceLauncherSnapshotV1['targets']) => rpc.handleRequest({
@@ -795,7 +840,7 @@ describe('daemon local services machine rpc handlers', () => {
         await expect(
             handlers.get(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_HISTORY_CLEAR)?.(historyClearRequest),
         ).resolves.toEqual(historyClearResponse);
-        expect(leaves.clearHistory).toHaveBeenCalledWith(historyClearRequest);
+        expect(leaves.clearHistory).toHaveBeenCalledWith(historyClearRequest, undefined);
     });
 
     it('omits the LSV-1 launcher leaf routes when no leaf routes are wired', async () => {

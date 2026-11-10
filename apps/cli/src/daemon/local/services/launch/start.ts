@@ -9,7 +9,7 @@ import type { LocalServiceNativePrerequisiteV1, LocalServiceEstablishmentFailure
 import type { LocalServiceLauncherFeed } from './feed';
 import type { LocalServiceLauncherHistoryStore } from './leaves';
 import { logger } from '@/ui/logger';
-import { assertLocalServiceReadCustody } from '../credentialAdmission';
+import { createLocalServiceLauncherSnapshotReader } from './snapshotReader';
 
 export type LocalServiceLauncherStartTarget = (
     request: DaemonLocalServiceLauncherStartRequestV1,
@@ -126,30 +126,6 @@ export function completeLocalServiceLauncherStartRequest(
     };
 }
 
-type LocalServiceLauncherStartSnapshotInput = Readonly<{
-    feed: Pick<LocalServiceLauncherFeed, 'getSnapshot'>;
-    machineId: string;
-    ingress?: RpcHandlerContext;
-    actionContext?: RuntimeActionExecuteArgs['context'];
-}>;
-
-/** Start completion and responses consume the same admitted requester projection. */
-export async function createLocalServiceLauncherStartSnapshotReader(
-    input: LocalServiceLauncherStartSnapshotInput,
-): Promise<Pick<LocalServiceLauncherFeed, 'getSnapshot'>> {
-    const accountId = await assertLocalServiceReadCustody({
-        accountId: input.ingress?.machineAdmission?.custodianAccountId,
-        machineId: input.machineId,
-        context: input.ingress,
-    }, 'requester_managed_services');
-    const serverId = input.actionContext?.serverId;
-    if (accountId && !serverId) throw new Error('requester_credentials_unavailable');
-    return {
-        getSnapshot: request => input.feed.getSnapshot({ ...request,
-            ...(accountId && serverId ? { requesterManagedServices: { accountId, serverId } } : {}),
-        }),
-    };
-}
 
 async function readSnapshot(
     input: Readonly<{ feed: Promise<Pick<LocalServiceLauncherFeed, 'getSnapshot'>> }>
@@ -201,8 +177,8 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
 ): LocalServiceLauncherStartTarget {
     const now = input.now ?? (() => Date.now());
     return async (request, ingress, actionContext, executeCanonicalAction) => {
-        const snapshotInput = { feed: createLocalServiceLauncherStartSnapshotReader({
-            feed: input.feed, machineId: request.machineId, ingress, actionContext,
+        const snapshotInput = { feed: createLocalServiceLauncherSnapshotReader({
+            feed: input.feed, machineId: request.machineId, ingress, serverId: actionContext?.serverId, readScope: 'requester_managed_services',
         }), now };
         const phase = async <T>(name: string, read: () => T | Promise<T>): Promise<T> => {
             const startedAt = performance.now();
