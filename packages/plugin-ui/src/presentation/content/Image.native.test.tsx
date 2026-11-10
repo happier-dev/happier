@@ -51,6 +51,7 @@ afterEach(() => {
     renderer?.unmount();
   });
   renderer = null;
+  vi.unstubAllGlobals();
 });
 
 describe('HappierImage byte source derivation', () => {
@@ -86,6 +87,21 @@ describe('HappierImage byte source derivation', () => {
     expect(resolveHappierBrandFallback('ßeta')).toBe('S');
     expect(resolveHappierBrandFallback('👩🏽‍💻 tools')).toBe('👩🏽‍💻');
   });
+
+  it('draws an Agent initial without splitting Unicode when the native runtime has no grapheme segmenter', async () => {
+    // Hermes on the reproduced iOS runtime has Intl but no Segmenter.
+    vi.stubGlobal('Intl', Object.create(Intl, { Segmenter: { value: undefined } }));
+    const context = createSurfaceContext({ colorScheme: 'dark', contrast: 'normal' });
+
+    await act(async () => {
+      renderer = create(<HappierBrandMark displayName="Unknown Backend" theme={context.theme} />);
+    });
+
+    expect(renderer!.root.findByType('Text').props.children).toBe('U');
+    expect(resolveHappierBrandFallback('e\u0301lan')).toBe('?');
+    expect(resolveHappierBrandFallback('👩🏽‍💻 tools')).toBe('?');
+  });
+
   it('exposes the decoder-failure callback on the public brand-mark contract', async () => {
     const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
     const onDecodeError = vi.fn();

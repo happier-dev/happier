@@ -51,6 +51,9 @@ function takeLeadingGraphemes(value: string, maximum: number): string {
     }
     return segments.join('');
   }
+  // Printable ASCII has one code unit per grapheme, including on native runtimes
+  // without Segmenter. Keep those initials instead of replacing known names.
+  if (/^[\x20-\x7e]+$/.test(value)) return value.slice(0, maximum);
   // Without a Unicode grapheme segmenter there is no small, correct
   // approximation of UAX #29 (Indic conjuncts, Hangul, emoji tags and CRLF all
   // have distinct rules). A bounded neutral marker preserves the compact image
