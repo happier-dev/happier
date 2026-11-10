@@ -46,6 +46,19 @@ export function readMuseQuotaObservation(): never {
     details: { reason: 'safe_source_unavailable' } });
 }
 
+/** Both native notifications and connection completion expose the same allowance meters. */
+export function mapMuseUsageObservationMeters(observation: MuseQuotaObservation,
+  resetSource: 'body' | 'provider_event'): ConnectedAccountCompletionObservation['meters'] {
+  return observation.limits.map(limit => ({ meterId: limit.id, label: limit.label ?? limit.id,
+    used: limit.used ?? null, limit: limit.limit ?? null, unit: 'unknown',
+    utilizationPct: limit.utilizationPct == null ? null : Math.min(100, limit.utilizationPct),
+    remainingPct: limit.remainingPct, isExhausted: limit.isExhausted,
+    resetsAt: limit.resetsAtMs ?? null, ...(limit.resetsAtMs == null ? {} : { resetAtMs: limit.resetsAtMs, resetSource }),
+    ...(limit.windowDurationMs === undefined ? {} : { windowDurationMs: limit.windowDurationMs }),
+    status: 'ok', details: {},
+  }));
+}
+
 /** Pinned Muse key-response schema; acquisition time is the fallback observation time. */
 export function parseMuseMintCompletionObservation(value: unknown, fetchedAtMs: number): ConnectedAccountCompletionObservation | undefined {
   const root = museRecord(value);
@@ -71,13 +84,6 @@ export function parseMuseMintCompletionObservation(value: unknown, fetchedAtMs: 
   return { v: 1, providerId: 'meta', observedAtMs: parsed.observation.observedAtMs, fetchedAtMs,
     source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
     ...(parsed.observation.planLabel ? { planLabel: parsed.observation.planLabel } : {}),
-    meters: parsed.observation.limits.map(limit => ({ meterId: limit.id, label: limit.label ?? limit.id,
-      used: limit.used ?? null, limit: limit.limit ?? null, unit: 'unknown',
-      utilizationPct: limit.utilizationPct == null ? null : Math.min(100, limit.utilizationPct),
-      remainingPct: limit.remainingPct, isExhausted: limit.isExhausted,
-      resetsAt: limit.resetsAtMs ?? null, ...(limit.resetsAtMs == null ? {} : { resetAtMs: limit.resetsAtMs, resetSource: 'body' }),
-      ...(limit.windowDurationMs === undefined ? {} : { windowDurationMs: limit.windowDurationMs }),
-      status: 'ok', details: {},
-    })),
+    meters: mapMuseUsageObservationMeters(parsed.observation, 'body'),
   };
 }

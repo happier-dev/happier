@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { requestDeviceGrantStep, type ConnectedAccountAuthCompletionResult, type ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import { MUSE_NATIVE_AUTH_FILE_ID } from './declarations.js';
+import { META_API_KEY_ENV_KEY, MUSE_CODE_CREDENTIAL_ENV_KEY, MUSE_NATIVE_AUTH_FILE_ID } from './declarations.js';
 import { buildMuseNativeAuth, museRecord, type MuseNativeMetaAuth } from './nativeAuth.js';
 import { parseMuseMintCompletionObservation, readMuseQuotaObservation } from './observations.js';
 
@@ -171,7 +171,16 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
     const [mode, key, expiry] = await Promise.all(['credentialMode', 'inferenceKey', 'expiresAtMs'].map(name => read(context.credentials, name, options)));
     if (!mode || !key) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'Muse credentials are unavailable; reconnect the account.' });
     if (request.kind === 'environment') {
-      const env: Record<string, string> = mode === 'manual' && request.keys.includes('META_API_KEY') ? { META_API_KEY: key } : {};
+      const env: Record<string, string> = request.keys.includes(META_API_KEY_ENV_KEY) ? { [META_API_KEY_ENV_KEY]: key } : {};
+      if (request.keys.includes(MUSE_CODE_CREDENTIAL_ENV_KEY)) {
+        const mechanism = await read(context.credentials, 'nativeMechanism', options);
+        if (mode !== 'native' || mechanism !== '"oauth"') throw new PluginError({ code: 'plugin_connected_account_materialization_unsupported', message: 'Muse subscription credentials require an OAuth account.' });
+        const accessToken = await read(context.credentials, 'accountToken', options);
+        if (!accessToken || (expiry && Number(expiry) <= Date.now())) {
+          throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'The Muse account token is unavailable or expired; reconnect the account.' });
+        }
+        env[MUSE_CODE_CREDENTIAL_ENV_KEY] = JSON.stringify({ oauthAccessToken: accessToken, apiKey: key });
+      }
       return { kind: 'environment', env };
     }
     if (request.kind === 'httpHeaders') {

@@ -43,11 +43,11 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
       reason: 'Launch the user-installed Antigravity CLI through host-mediated execution.',
       scope: { executables: [{ kind: 'systemTool', id: ANTIGRAVITY_CLI_SYSTEM_TOOL_ID }] },
     }, {
-      id: 'antigravity-quota', capability: 'network', reason: 'Read quota for the selected Antigravity Connected Account.',
+      id: 'antigravity-quota', capability: 'network', reason: 'Set up the selected Antigravity project and read its quota.',
       scope: { targets: [
         { kind: 'fixedOrigin', origin: 'https://cloudcode-pa.googleapis.com' },
         { kind: 'fixedOrigin', origin: 'https://daily-cloudcode-pa.googleapis.com' },
-      ], methods: ['POST'] },
+      ], methods: ['GET', 'POST'] },
     }],
     optional: [],
   },

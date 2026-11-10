@@ -2,6 +2,10 @@ import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/protocol/agents/antigrav
 import { parseConnectedAccountTokenEndpointFailure, type ConnectedAccountAuthenticationContext, type ConnectedAccountAuthenticationModeRuntime, type ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readAntigravityQuota } from './quota.js';
 import type { readAgyNativeCredential } from './nativeCredentials.js';
+import { discoverAntigravityProject } from './projectDiscovery.js';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+
+export const ANTIGRAVITY_CREDENTIAL_ENV_KEY = 'GOOGLE_ANTIGRAVITY_CREDENTIAL';
 
 type CredentialReader = Parameters<ConnectedAccountRuntime['status']>[0]['credentials'];
 type CredentialStore = ConnectedAccountAuthenticationContext['attemptCredentials'];
@@ -170,7 +174,10 @@ export function createAntigravityConnectedAccountRuntime(readNativeCredential?: 
       const tokens = { ...result.tokens, providerAccountId: account.providerAccountId, providerEmail: account.providerEmail };
       const outcome = connected(tokens, context.attempt);
       if (outcome.status !== 'connected') return outcome;
+      const project = await discoverAntigravityProject(tokens.accessToken, context, options?.signal ?? context.signal);
+      if (project.status !== 'success') return project;
       await writeTokens(context.attemptCredentials, tokens, options);
+      await context.attemptCredentials.set('projectId', project.projectId, options);
       return outcome;
     },
     async cancel() {},
@@ -216,8 +223,14 @@ export function createAntigravityConnectedAccountRuntime(readNativeCredential?: 
         facts: projectId ? { projectId } : {}, ...(Number.isSafeInteger(expiry) && expiry > 0 ? { expiresAt: expiry } : {}) };
     }
     if (request.kind === 'environment') {
-      if (request.keys.some((key) => key !== 'AGY_ACP_FORCE_FILE_STORAGE')) throw new Error('Antigravity personal OAuth cannot materialize an unrelated environment key.');
+      if (request.keys.some((key) => key !== 'AGY_ACP_FORCE_FILE_STORAGE' && key !== ANTIGRAVITY_CREDENTIAL_ENV_KEY)) throw new Error('Antigravity personal OAuth cannot materialize an unrelated environment key.');
       const env: Record<string, string> = request.keys.includes('AGY_ACP_FORCE_FILE_STORAGE') ? { AGY_ACP_FORCE_FILE_STORAGE: '1' } : {};
+      if (request.keys.includes(ANTIGRAVITY_CREDENTIAL_ENV_KEY)) {
+        const access = await read(context.credentials, 'accessToken', options), projectId = await read(context.credentials, 'projectId', options);
+        if (!access || !projectId) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'Antigravity access and project credentials are unavailable; reconnect the account.' });
+        const expiry = Number(await read(context.credentials, 'expiresAtMs', options));
+        env[ANTIGRAVITY_CREDENTIAL_ENV_KEY] = JSON.stringify({ access, projectId, ...(Number.isSafeInteger(expiry) && expiry > 0 ? { expires: expiry } : {}) });
+      }
       return { kind: 'environment', env };
     }
     if (request.kind !== 'files') throw new Error('Antigravity personal OAuth requires native file materialization.');

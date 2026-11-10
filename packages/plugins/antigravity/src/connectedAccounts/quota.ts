@@ -1,8 +1,5 @@
 import { QuotaFetchError, type ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import { ANTIGRAVITY_ACP_SERVER_VERSION } from '../agent/install/cliRuntime.js';
-
-// ACP's product identity is required for entitlement and quota reads.
-const userAgent = `antigravity/acp/${ANTIGRAVITY_ACP_SERVER_VERSION} (aidev_client; host_path=happier; proxy_client=antigravity/sdk)`;
+import { ANTIGRAVITY_CONTROL_PLANE_USER_AGENT, readAntigravityProjectId } from './client.js';
 
 type Context = Parameters<NonNullable<ConnectedAccountRuntime['quota']>>[0];
 type Limit = Awaited<ReturnType<NonNullable<ConnectedAccountRuntime['quota']>>>['limits'][number];
@@ -20,7 +17,7 @@ async function request(context: Context, accessToken: string, endpoint: string, 
   let response: Awaited<ReturnType<Context['services']['http']['request']>>;
   try {
     response = await context.services.http.request({ url: `${endpoint}/v1internal:${method}`, method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'User-Agent': userAgent },
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'User-Agent': ANTIGRAVITY_CONTROL_PLANE_USER_AGENT },
       body: new TextEncoder().encode(JSON.stringify(body)), redirect: 'error' }, { signal: context.signal });
   } catch (error) {
     if (context.signal.aborted) throw error;
@@ -73,7 +70,7 @@ export const readAntigravityQuota: NonNullable<ConnectedAccountRuntime['quota']>
   const explicitProject = text(await context.credentials.get('projectId'));
   const load = object(await request(context, accessToken, 'https://cloudcode-pa.googleapis.com', 'loadCodeAssist',
     { metadata: { ideType: 'ANTIGRAVITY' }, ...(explicitProject ? { cloudaicompanionProject: explicitProject } : {}) }));
-  const project = explicitProject ?? text(load?.cloudaicompanionProject) ?? text(object(load?.cloudaicompanionProject)?.id);
+  const project = explicitProject ?? readAntigravityProjectId(load?.cloudaicompanionProject);
   if (!project || !object(load?.currentTier)) return malformed();
   // Entitlement reads never invoke onboarding or change the user's billing choice.
   const endpoint = object(load?.paidTier)?.usesGcpTos === true ? 'https://cloudcode-pa.googleapis.com' : 'https://daily-cloudcode-pa.googleapis.com';
