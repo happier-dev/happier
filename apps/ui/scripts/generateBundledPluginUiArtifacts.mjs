@@ -702,13 +702,14 @@ async function collectBundledPluginBrandMarks(repoRoot, pluginManifests, exclude
 
 function renderBundledPluginBrandMarks(marks) {
   return [
+    ...(marks.length > 0 ? ["import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';", ''] : []),
     '/** Manifest-declared packaged identity bytes, admitted by the shared image owner before rendering. */',
     "/** @type {ReadonlyArray<import('./bundledPluginUiArtifactInventory').BundledPluginBrandMark>} */",
     'export const BUNDLED_PLUGIN_BRAND_MARKS = Object.freeze([',
     ...marks.flatMap((mark) => [
       '  Object.freeze({',
       ...Object.entries(mark).filter(([key]) => key !== 'bytes').map(([key, value]) => `    ${key}: ${JSON.stringify(value)},`),
-      `    bytes: Uint8Array.from(${JSON.stringify([...mark.bytes])}),`,
+      `    bytes: decodeBase64(${JSON.stringify(Buffer.from(mark.bytes).toString('base64'))}),`,
       '  }),',
     ]),
     ']);', '',

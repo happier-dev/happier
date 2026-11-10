@@ -18,6 +18,8 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { withPatchedProcessEnv } from '../../stack/scripts/testkit/core/env_scope.mjs';
 import { readBundledPluginUiDeclarationSource } from './bundledPluginUiDeclarationSource.mjs';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { pluginPackageNameToPackageId, readBundledPluginPackageNames } from '../../cli/scripts/build-owned/bundledPluginMembership.ts';
 
 import {
   computePluginUiArtifactFileSetSha256DigestV1,
@@ -335,10 +337,12 @@ function readEmittedPluginUiInventory(output, requireAsset = () => 1) {
     declarationAssetReader = module.exports.readBundledPluginUiDeclarationAsset;
   }
   // Native assets are the external boundary; the generated data stays real.
-  const source = output.replace(/^import \{ readBundledPluginUiDeclarationAsset \} from .+;$/m, '');
-  return runInNewContext(`${source.replaceAll('export const ', 'const ').replaceAll('import(', 'loadDeclarationModule(')}\n({ BUNDLED_PLUGIN_UI_APP_DECLARATIONS, BUNDLED_PLUGIN_UI_APP_ARTIFACTS, BUNDLED_PLUGIN_PACKAGED_RESOURCES: typeof BUNDLED_PLUGIN_PACKAGED_RESOURCES === 'undefined' ? [] : BUNDLED_PLUGIN_PACKAGED_RESOURCES });`, {
+  const source = output.replace(/^import \{ readBundledPluginUiDeclarationAsset \} from .+;$/m, '')
+    .replace(/^import \{ decodeBase64 \} from .+;$/m, '');
+  return runInNewContext(`${source.replaceAll('export const ', 'const ').replaceAll('import(', 'loadDeclarationModule(')}\n({ BUNDLED_PLUGIN_UI_APP_DECLARATIONS, BUNDLED_PLUGIN_UI_APP_ARTIFACTS, BUNDLED_PLUGIN_BRAND_MARKS, BUNDLED_PLUGIN_PACKAGED_RESOURCES: typeof BUNDLED_PLUGIN_PACKAGED_RESOURCES === 'undefined' ? [] : BUNDLED_PLUGIN_PACKAGED_RESOURCES });`, {
     require: asset => asset.endsWith('/declaration.json.bundle') ? asset : requireAsset(asset),
     readBundledPluginUiDeclarationAsset: declarationAssetReader,
+    decodeBase64,
     Uint8Array, loadDeclarationModule: specifier => import(pathToFileURL(specifier).href),
   });
 }
@@ -939,10 +943,11 @@ test('the UI byte publisher projects declared packaged brand marks, including pa
     assert.match(output, /export const BUNDLED_PLUGIN_BRAND_MARKS/);
     assert.match(output, /resourceId: "brand-icon"/);
     assert.match(output, /monochrome: true/);
-    assert.ok(output.includes(`bytes: Uint8Array.from(${JSON.stringify([...bytes])})`));
+    assert.ok(!/bytes: Uint8Array\.from\(\[/.test(output), 'brand bytes must avoid numeric-array expansion');
     assert.ok(output.includes(`digest: ${JSON.stringify(computePluginUiArtifactSha256DigestV1(bytes))}`));
     assert.doesNotMatch(output, /require\([^)]*brand\.png/);
     const emitted = readEmittedPluginUiInventory(output);
+    assert.deepEqual(emitted.BUNDLED_PLUGIN_BRAND_MARKS[0].bytes, new Uint8Array(bytes));
     assert.equal(emitted.BUNDLED_PLUGIN_UI_APP_ARTIFACTS.length, 0);
     assert.equal(emitted.BUNDLED_PLUGIN_UI_APP_DECLARATIONS.length, 1);
     assert.equal(emitted.BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0].declaredExecution.daemonActions, true);
@@ -956,6 +961,50 @@ test('the UI byte publisher projects declared packaged brand marks, including pa
   } finally {
     await rm(fixture.repoRoot, { recursive: true, force: true });
   }
+});
+
+test('all packaged brand marks retain exact runtime bytes without numeric-array payload expansion', async () => {
+  const fixture = await createFixture();
+  try {
+    await rm(join(fixture.repoRoot, 'packages/plugins/fixture'), { recursive: true });
+    await writeFile(join(fixture.repoRoot, 'apps/ui/package.json'), JSON.stringify({ dependencies: {} }));
+    const repoRoot = resolve(packageRoot, '../..');
+    const expected = new Map();
+    for (const name of readBundledPluginPackageNames(repoRoot, { requireManifestSource: true })) {
+      const directory = pluginPackageNameToPackageId(name);
+      const sourceRoot = join(repoRoot, 'packages/plugins', directory);
+      const manifest = JSON.parse(await readFile(join(sourceRoot, '.happier-plugin/plugin.json'), 'utf8'));
+      if (!manifest.brand) continue;
+      const resource = manifest.contributes.resources.find(row => row.id === manifest.brand.iconResourceId);
+      const bytes = await readFile(join(sourceRoot, resource.path));
+      expected.set(manifest.id, new Uint8Array(bytes));
+      const targetRoot = join(fixture.repoRoot, 'packages/plugins', directory);
+      // Preserve canonical brand inputs; UI execution is outside this byte-encoding contract.
+      await mkdir(join(targetRoot, '.happier-plugin'), { recursive: true });
+      await mkdir(dirname(join(targetRoot, resource.path)), { recursive: true });
+      await mkdir(join(targetRoot, 'dist/happier-plugin-ui'), { recursive: true });
+      await writeFile(join(targetRoot, resource.path), bytes);
+      await writeFile(join(targetRoot, 'package.json'), await readFile(join(sourceRoot, 'package.json')));
+      await writeFile(join(targetRoot, '.happier-plugin/plugin.json'), JSON.stringify({
+        ...manifest, contributes: { resources: [resource] },
+      }));
+      await writeFile(join(targetRoot, 'dist/happier-plugin-ui/ui-artifacts.json'), JSON.stringify({ version: 2, entries: [] }));
+    }
+    assert.ok(expected.size > 0);
+    const result = await generateBundledPluginUiArtifacts({ repoRoot: fixture.repoRoot, publicationMode: 'artifact' });
+    const output = await readFile(result.outputPath, 'utf8');
+    assert.ok(!/bytes: Uint8Array\.from\(\[/.test(output), 'brand bytes must avoid numeric-array expansion');
+    const marks = readEmittedPluginUiInventory(output).BUNDLED_PLUGIN_BRAND_MARKS;
+    assert.equal(marks.length, expected.size);
+    for (const mark of marks) {
+      assert.deepEqual(mark.bytes, expected.get(mark.pluginId), mark.pluginId);
+      assert.equal(mark.digest, computePluginUiArtifactSha256DigestV1(mark.bytes));
+    }
+    const numericArrayBytes = [...expected.values()].reduce((total, bytes) => total + Buffer.byteLength(JSON.stringify([...bytes])), 0);
+    const emittedBrandBytes = Buffer.byteLength(output.slice(output.indexOf('export const BUNDLED_PLUGIN_BRAND_MARKS')));
+    assert.ok(emittedBrandBytes < numericArrayBytes,
+      `brand payload ${emittedBrandBytes} bytes must be smaller than numeric arrays alone (${numericArrayBytes})`);
+  } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
 });
 
 test('source preparation projects private artifacts without touching package dist or the live inventory', async () => {
