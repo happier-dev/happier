@@ -41,10 +41,10 @@ export function prepareClaudeConnectedAccountKeyRequest<T extends Pick<AgentSess
   return { ...request, launchEnvironment: prepareEnvironment(request.launchEnvironment ?? { values: {}, unset: [] }, model) };
 }
 
-export const prepareClaudeConnectedAccountKeyPreflight: NonNullable<AgentPreflightSessionControlsContributionV1['prepareLaunchEnvironment']> = async ({ environment, connectedAccounts, signal }) => {
+export const prepareClaudeConnectedAccountKeyPreflight: NonNullable<AgentPreflightSessionControlsContributionV1['prepareLaunchEnvironment']> = async ({ environment, modelId, connectedAccounts, signal }) => {
   const bindings = await Promise.all(MODEL_SOURCE_PURPOSES.map(async purpose =>
     await connectedAccounts.getBinding(purpose, { signal }) ? purpose : null));
   if (!hasSelectedKey(bindings.filter((purpose): purpose is typeof MODEL_SOURCE_PURPOSES[number] => purpose !== null))) return { environment, dispose() {} };
-  const prepared = prepareEnvironment({ values: environment, unset: [] });
+  const prepared = prepareEnvironment({ values: environment, unset: [] }, modelId && modelId !== 'default' ? modelId : undefined);
   return { environment: prepared.values, unset: prepared.unset, catalogConfidence: 'account_unverified', dispose() {} };
 };

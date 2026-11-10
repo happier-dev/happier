@@ -33,6 +33,7 @@ import { isRuntimeConfigUpdateOutcomeApplied, isRuntimeConfigUpdateOutcomeDeferr
 import { readClaudeProviderIdentityValue } from '../../protocol/providerIdentity.js';
 import { createClaudeNativePermissionEngine } from '../permissions/nativePermissionEngine.js';
 import { CLAUDE_STATIC_MODELS } from '../models.js';
+import { CLAUDE_KIMI_PURPOSE } from './connectedAccountKeys.js';
 import { AGENT_DEFINITION } from '../definition.js';
 import type {
   ClaudeEffectiveModelEvidence,
@@ -529,6 +530,8 @@ export function createClaudeNativeSessionRuntimeFromOperations(
         ...(model.capabilities ? { capabilities: model.capabilities } : {}),
       }));
   const modelListeners = new Set<(snapshot: ReturnType<typeof readModels>) => void>();
+  const selectedKeyCatalogConfidence = request.connectedAccounts?.some(row => row.purpose === CLAUDE_KIMI_PURPOSE)
+    ? 'account_unverified' as const : undefined;
   function readModels() {
     const effort = observedEffort;
     return {
@@ -540,6 +543,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
         : model) : models,
       observedAt: 0,
       currentModelId,
+      ...(selectedKeyCatalogConfidence ? { catalogConfidence: selectedKeyCatalogConfidence } : {}),
     };
   }
   const publishModels = (): void => {

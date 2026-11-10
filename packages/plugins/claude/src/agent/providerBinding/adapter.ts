@@ -148,7 +148,7 @@ function resolveCredential(input: AgentProviderBindingMaterializeInput): Readonl
   return { apiKey, authToken, headers, redactionValues };
 }
 
-function buildOwnedEnvironment(input: Readonly<{
+export function buildClaudeNativeUpstreamEnvironment(input: Readonly<{
   baseUrl: string;
   customHeaders: string | null;
   apiKey: string | null;
@@ -207,7 +207,7 @@ async function materializeClaudeProviderBindingV1(
   return {
     v: 1,
     kind: 'spawnEnv',
-    env: buildOwnedEnvironment({
+    env: buildClaudeNativeUpstreamEnvironment({
       baseUrl: input.binding.endpoint.normalizedUrl,
       customHeaders: renderCustomHeaders(credential.headers),
       apiKey: credential.apiKey,

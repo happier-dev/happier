@@ -1573,6 +1573,22 @@ describe('createClaudeNativeRuntime', () => {
     expect(connectedServiceApplicationSettled).toHaveBeenCalledOnce();
   });
 
+  it('marks the native Claude catalog unverified for an admitted alternate key, including later model evidence', async () => {
+    const operations = createNativeOperations('selected-key-models');
+    const bindModels = vi.fn((_source: AgentSessionModelsSource) => ({ dispose() {} }));
+    const session = createClaudeNativeSessionRuntimeFromOperations(operations.runtime, {
+      kind: 'create', sessionId: 'selected-key-models', cwd: '/workspace',
+      connectedAccounts: [{ purpose: 'kimi-code-api-key', account: {
+        service: { pluginId: 'happier.agent.kimi', localId: 'kimi-code' }, accountId: 'selected' } }],
+    }, { ...context, session: { services: { ...context.session.services, models: { bind: bindModels } } } } as unknown as AgentSessionRuntimeContext);
+    try {
+      const source = bindModels.mock.calls[0]![0];
+      expect(source.read().catalogConfidence).toBe('account_unverified');
+      operations.publishEffectiveModel({ modelId: 'kimi-for-coding' });
+      expect(source.read()).toMatchObject({ currentModelId: 'kimi-for-coding', catalogConfidence: 'account_unverified' });
+    } finally { await session.dispose(); }
+  });
+
   it('publishes observed native models separately from next-prompt configuration', async () => {
     const exec = createSdkExecFixture();
     const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
