@@ -19,6 +19,8 @@ import {
 } from '@/components/plugins/actions/pluginContributedActionController';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { presentActionInputForm } from '@/components/plugins/actions/presentActionInputForm';
+import { NOTIFICATION_NOTIFY_ME_ACTION_ID } from '@happier-dev/protocol/actions/notificationConfigurationActionIds';
+import { presentNotificationDestinationSelection } from '@/components/plugins/actions/presentNotificationDestinationSelection';
 import {
     composeSessionServerStartDraft,
     type SessionServerStartDraftTarget,
@@ -26,6 +28,7 @@ import {
 } from '@/components/sessions/new/serverStartDraftComposer';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { t } from '@/text';
 
 import {
     createPluginSurfaceHostApiError,
@@ -175,6 +178,15 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
             const result = await (async (): Promise<PluginUiJsonValueV1> => {
                 if (signal?.aborted) return errorPayload('unavailable', 'select_action_input_aborted');
                 if ('hostAction' in parsed.data) {
+                    if (parsed.data.hostAction.action === NOTIFICATION_NOTIFY_ME_ACTION_ID) {
+                        const selected = await presentNotificationDestinationSelection({ host: input.host,
+                            channelId: 'channelId' in parsed.data ? parsed.data.channelId : undefined,
+                            target: 'target' in parsed.data ? parsed.data.target : undefined,
+                            signal, isCurrent: input.isCurrent,
+                            present, anchor: input.anchor });
+                        return selected.kind === 'unavailable'
+                            ? errorPayload('unavailable', selected.reason) : readBoundedSelectionResult(selected);
+                    }
                     if ('candidates' in parsed.data) {
                         if (!input.host.accountLifetime) return errorPayload('unavailable', 'host_unavailable');
                         if (parsed.data.candidates.length === 0) return errorPayload('unavailable', 'saved_project_required');

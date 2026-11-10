@@ -1,5 +1,6 @@
 import { NOTIFICATION_DESTINATION_INPUT_TYPE_V1, NotificationDestinationSelectionV1Schema } from '@happier-dev/channels-protocol/v1';
 import type { PluginContributedActionHostFacts } from './pluginContributedActionController';
+import type { MachineTargetV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { createActionInputForm } from './actionInputForm';
 import { presentActionInputForm } from './presentActionInputForm';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -11,6 +12,7 @@ type NotificationDestinationSelectionV1 = ReturnType<typeof NotificationDestinat
 export async function presentNotificationDestinationSelection(params: Readonly<{
     host: Pick<PluginContributedActionHostFacts, 'serverId' | 'machineId' | 'accountLifetime'>;
     channelId?: string;
+    target?: MachineTargetV1;
     signal?: AbortSignal;
     isCurrent: () => boolean;
     present?: typeof presentActionInputForm;
@@ -18,9 +20,11 @@ export async function presentNotificationDestinationSelection(params: Readonly<{
 }>): Promise<Readonly<{ kind: 'notificationDestination'; channel: NotificationDestinationSelectionV1 }>
     | Readonly<{ kind: 'cancelled' }> | Readonly<{ kind: 'unavailable'; reason: 'host_unavailable' }>> {
     const lifetime = params.host.accountLifetime;
-    const serverId = resolveServerProfileScopeIdForIdentifier(params.host.serverId);
-    const machineId = params.host.machineId?.trim();
+    const mountedServerId = resolveServerProfileScopeIdForIdentifier(params.host.serverId);
+    const serverId = resolveServerProfileScopeIdForIdentifier(params.target?.serverId ?? params.host.serverId);
+    const machineId = (params.target?.machineId ?? params.host.machineId)?.trim();
     if (!lifetime || !machineId || !serverId
+        || mountedServerId !== serverId
         || serverId !== resolveServerProfileScopeIdForIdentifier(lifetime.scope.serverId)) {
         return { kind: 'unavailable', reason: 'host_unavailable' };
     }

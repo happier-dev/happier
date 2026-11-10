@@ -1,6 +1,9 @@
 import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { AutomationEventSourceInstanceIdV1Schema } from '../../automations/automationEventJsonBoundsV1.js';
+import { HealthCheckAlertChannelV1Schema } from '../../deployments/healthCheckSourceV1.js';
+import { MachineTargetV1Schema } from '../../machines/machineAccessV1.js';
+import { NOTIFICATION_NOTIFY_ME_ACTION_ID } from '../../actions/notificationConfigurationActionIds.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { SessionIdentityAdditionsV1Schema } from '../../sessions/identity/sessionBotV1.js';
 import { SessionPromptStackV1Schema } from '../../sessions/context/sessionContextV1.js';
@@ -920,6 +923,11 @@ export type PluginUiPreparedReviewWorkspaceResultV1 = z.infer<
 
 export const PluginUiSelectActionInputHostRequestV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({
+    hostAction: z.strictObject({ action: z.literal(NOTIFICATION_NOTIFY_ME_ACTION_ID), projection: z.literal('notificationDestination') }),
+    channelId: z.optional(HealthCheckAlertChannelV1Schema.shape.channelId),
+    target: z.optional(MachineTargetV1Schema),
+  }),
+  z.strictObject({
     hostAction: PluginUiSelectActionInputSessionAddressHostActionV1Schema,
   }),
   z.strictObject({
@@ -1000,6 +1008,7 @@ const PluginUiSelectActionInputExecutionRunLaunchV1Schema = lazyZodSchema(() => 
 
 /** Exact no-invoke settlements, targeted submission, or cancellation. */
 export const PluginUiSelectActionInputResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('notificationDestination'), channel: HealthCheckAlertChannelV1Schema }),
   z.strictObject({ kind: z.literal('sessionPlacement'), candidate: PluginUiSessionPlacementCandidateV1Schema }),
   z.strictObject({ kind: z.literal('sessionAddress'), session: ActionSessionAddressV1Schema }),
   PluginUiSelectActionInputTargetedSubmittedV1Schema,
