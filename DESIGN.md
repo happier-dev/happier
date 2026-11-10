@@ -416,6 +416,10 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
 - Do not stack multiple light translucent surfaces until hierarchy and contrast collapse.
 - Larger or higher surfaces may use stronger separation than small controls.
 - Pair modal tasks with appropriate focus treatment; do not dim the world for parallel, non-blocking work.
+- **One scrim behind popovers and sheets (0.2's).** Where a popover, sheet or dialog sets the page back, it is a
+  light frost of the page under a very light dim (the theme's scrim ink at 8%), never a flat dark overlay; Reduce
+  Transparency, Blur Off and devices without a native blur keep the light dim alone (owner, 2026-11-10).
+  `FloatingScrim` is its one owner.
 - Material transitions should feel like the surface arrives and departs, not like arbitrary opacity toggles.
 - **One material recipe.** A surface is drawn by its role, not by hand: an ink border, one raised
   edge and a very low elevation (a hair of grounding, about 5% on light for controls) sized by how far

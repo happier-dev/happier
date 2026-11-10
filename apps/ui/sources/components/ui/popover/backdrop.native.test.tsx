@@ -19,7 +19,7 @@ afterEach(() => { platform.OS = 'ios'; });
 
 const backdrop = {
     backdrop: true, backdropBlocksOutsidePointerEvents: false, backdropOutsidePointerEventsMode: 'full',
-    backdropPointerEventsEnabled: true, backdropEffect: 'blur', backdropBlurOnWeb: undefined,
+    backdropPointerEventsEnabled: true, backdropEffect: 'blur',
     backdropSpotlight: false, backdropAnchorOverlay: undefined, backdropStyle: undefined,
     closeOnBackdropPan: false, onRequestClose: undefined, shouldPortal: true, shouldPortalWeb: false,
     portal: { native: true }, portalOpacity: 1, portalPositionOnWeb: 'absolute', fixedPositionOnWeb: 'absolute',

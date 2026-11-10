@@ -2,8 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, View, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { getBlurViewComponent } from '@/components/ui/glass/blurMaterial';
-import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
+import { FloatingScrim } from '@/components/ui/overlays/FloatingScrim';
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import type { PopoverBackdropEffect, PopoverOutsidePointerEventsMode, PopoverPortalOptions, PopoverWindowRect } from './_types';
 
@@ -13,7 +12,6 @@ export function PopoverBackdrop(props: Readonly<{
     backdropOutsidePointerEventsMode: PopoverOutsidePointerEventsMode;
     backdropPointerEventsEnabled: boolean;
     backdropEffect: PopoverBackdropEffect;
-    backdropBlurOnWeb: Readonly<{ px?: number; tintColor?: string }> | undefined;
     backdropSpotlight: boolean | Readonly<{ padding?: number }>;
     backdropAnchorOverlay: React.ReactNode | ((params: Readonly<{ rect: PopoverWindowRect }>) => React.ReactNode) | undefined;
     backdropStyle: any;
@@ -56,7 +54,6 @@ export function PopoverBackdrop(props: Readonly<{
             {props.backdropEffect !== 'none' ? (
                 <PopoverBackdropEffectLayer
                     backdropEffect={props.backdropEffect}
-                    backdropBlurOnWeb={props.backdropBlurOnWeb}
                     backdropSpotlight={props.backdropSpotlight}
                     shouldPortal={props.shouldPortal}
                     shouldPortalWeb={props.shouldPortalWeb}
@@ -183,7 +180,6 @@ function createBackdropPressableFrameStyle(params: Readonly<{
 
 function PopoverBackdropEffectLayer(props: Readonly<{
     backdropEffect: PopoverBackdropEffect;
-    backdropBlurOnWeb: Readonly<{ px?: number; tintColor?: string }> | undefined;
     backdropSpotlight: boolean | Readonly<{ padding?: number }>;
     shouldPortal: boolean;
     shouldPortalWeb: boolean;
@@ -266,67 +262,16 @@ function PopoverBackdropEffectLayer(props: Readonly<{
 
     const effectStyles = spotlightStyles ?? [fullScreenStyle];
 
-    if (props.backdropEffect === 'blur') {
-        const webBlurPx = typeof props.backdropBlurOnWeb?.px === 'number' ? props.backdropBlurOnWeb.px : 2;
-        const webBlurTint = props.backdropBlurOnWeb?.tintColor ?? 'rgba(0,0,0,0.10)';
-        const BlurView = getBlurViewComponent();
-        if (BlurView) {
-            return (
-                <>
-                    {effectStyles.map((style, index) => (
-                        // eslint-disable-next-line react/no-array-index-key
-                        <BlurView
-                            key={index}
-                            testID="popover-backdrop-effect"
-                            intensity={12}
-                            tint="default"
-                            pointerEvents={effectLayerPointerEvents.nativePointerEvents}
-                            style={[style, effectLayerPointerEvents.webStyle]}
-                        />
-                    ))}
-                </>
-            );
-        }
-
-        return (
-            <>
-                {effectStyles.map((style, index) => (
-                    <View
-                        // eslint-disable-next-line react/no-array-index-key
-                        key={index}
-                        testID="popover-backdrop-effect"
-                        pointerEvents={effectLayerPointerEvents.nativePointerEvents}
-                        style={[
-                            style,
-                            Platform.OS === 'web'
-                                ? (createBackdropWebStyle({
-                                    backgroundColor: webBlurTint,
-                                    blurPx: webBlurPx,
-                                }) as unknown as ViewStyle)
-                                : createBackdropNativeStyle({
-                                    backgroundColor: 'rgba(0,0,0,0.08)',
-                                }),
-                            effectLayerPointerEvents.webStyle,
-                        ]}
-                    />
-                ))}
-            </>
-        );
-    }
-
+    // The one popover/sheet scrim (owner, 2026-11-10: follow 0.2): a light frost under a very light dim, or the dim alone.
     return (
         <>
             {effectStyles.map((style, index) => (
-                <View
+                <FloatingScrim
                     // eslint-disable-next-line react/no-array-index-key
                     key={index}
                     testID="popover-backdrop-effect"
-                    pointerEvents={effectLayerPointerEvents.nativePointerEvents}
-                    style={[
-                        style,
-                        { backgroundColor: 'rgba(0,0,0,0.08)' },
-                        effectLayerPointerEvents.webStyle,
-                    ]}
+                    mode={props.backdropEffect === 'blur' ? 'frost' : 'dim'}
+                    style={[style, effectLayerPointerEvents.webStyle]}
                 />
             ))}
         </>

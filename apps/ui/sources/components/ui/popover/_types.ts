@@ -89,11 +89,6 @@ export type PopoverBackdropOptions = Readonly<{
     /** Optional visual effect for the backdrop layer. */
     effect?: PopoverBackdropEffect;
     /**
-     * Web-only options for `effect="blur"` (CSS `backdrop-filter`).
-     * This does not affect native: iOS uses `expo-blur`, while Android uses the dim fallback.
-     */
-    blurOnWeb?: Readonly<{ px?: number; tintColor?: string }>;
-    /**
      * When enabled (and when `effect` is `dim|blur`), keeps the anchor area visually “uncovered”
      * by the effect so the trigger stays crisp/visible.
      *

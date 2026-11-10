@@ -10,9 +10,8 @@ import { requireReactDOM } from '@/utils/web/reactDomCjs';
 import { ModalPortalTargetProvider, useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
-import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
 import { t } from '@/text';
-import { createBackdropNativeStyle, createModalScrimWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
+import { createFloatingScrimWebStyle, FloatingScrim, useFloatingScrimFrost } from '@/components/ui/overlays/FloatingScrim';
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import {
     OverlayMotionFrame,
@@ -130,7 +129,7 @@ export function BaseModal({
             <SheetDismissProvider onDismiss={sheetDismiss}>{children}</SheetDismissProvider>
         </PopoverScrollSourceProvider>
     );
-    const { blurEnabled: materialBlurEnabled } = useGlassBlurSetting();
+    const scrimFrost = useFloatingScrimFrost();
     const insets = useChromeSafeAreaInsets();
     const [nativeViewportSize, setNativeViewportSize] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
     const onNativeViewportLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -160,9 +159,9 @@ export function BaseModal({
         visible,
         modalMotion.exitMs,
     );
-    const backdropOpacity = modalMotion.progress.interpolate({
+    const scrimOpacity = modalMotion.progress.interpolate({
         inputRange: [0, 1],
-        outputRange: [0, motionTokens.overlay.modal.backdropMaxOpacity],
+        outputRange: [0, 1],
     });
     const modalAccessibilityLabel = accessibilityLabel ?? t('common.dialog');
     const modalPointerEvents = resolveOverlayPointerEvents(visible ? 'auto' : 'none');
@@ -255,18 +254,15 @@ export function BaseModal({
             zIndex: baseZ,
             transition: motion === 'none' ? undefined : [
                 `background-color ${scrimTiming}`,
-                ...(materialBlurEnabled
+                ...(scrimFrost
                     ? [
                         `backdrop-filter ${scrimTiming}`,
                         `-webkit-backdrop-filter ${scrimTiming}`,
                     ]
                     : []),
             ].join(', '),
-            ...createModalScrimWebStyle({
-                overlay: theme.colors.overlay as unknown as { scrim: string; scrimWizard?: string; scrimStrong?: string },
-                enableBlur: materialBlurEnabled,
-                visible,
-            }),
+            // The one popover/sheet scrim (0.2): a light frost under a very light dim.
+            ...createFloatingScrimWebStyle({ scrim: theme.colors.overlay.scrim, frost: scrimFrost, visible }),
         };
 
         const contentStyle: React.CSSProperties = {
@@ -467,17 +463,10 @@ export function BaseModal({
                 >
                     {showBackdrop ? (
                         <TouchableWithoutFeedback onPress={handleBackdropPress}>
-                            <Animated.View
-                                style={[
-                                    styles.backdrop,
-                                    {
-                                        ...createBackdropNativeStyle({
-                                            backgroundColor: theme.colors.overlay.scrimWizard,
-                                        }),
-                                        opacity: backdropOpacity,
-                                    }
-                                ]}
-                            />
+                            {/* The one popover/sheet scrim (0.2): a light frost under a very light dim; only its wrapper fades. */}
+                            <Animated.View style={[styles.backdrop, { opacity: scrimOpacity }]}>
+                                <FloatingScrim testID="modal-scrim" style={StyleSheet.absoluteFillObject} />
+                            </Animated.View>
                         </TouchableWithoutFeedback>
                     ) : null}
 

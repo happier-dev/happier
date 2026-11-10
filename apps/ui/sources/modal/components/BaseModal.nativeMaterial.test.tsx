@@ -1,8 +1,9 @@
 import React from 'react';
 import { StyleSheet as ReactNativeStyleSheet } from 'react-native';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { installExpoBlurRequireStub } from '@/dev/testkit/mocks/expoBlur';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -34,6 +35,9 @@ vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
   return createUnistylesMock();
 });
+
+const restoreExpoBlur = installExpoBlurRequireStub();
+afterAll(restoreExpoBlur);
 
 const { BaseModal } = await import('./BaseModal');
 
@@ -69,4 +73,25 @@ describe('BaseModal material on iOS', () => {
       expect(fadedAncestors(screen)).toEqual([]);
     },
   );
+});
+
+// Owner 2026-11-10 (follow 0.2): the scrim behind a sheet or dialog is a light frost of the page under a very light
+// dim, the popovers' scrim, never the flat dark veil (dark scrimWizard at 0.78 × 0.5).
+describe('BaseModal scrim on iOS', () => {
+  it('frosts the page under a very light dim', async () => {
+    const screen = await renderScreen(
+      <BaseModal visible placement="bottom">
+        {React.createElement('CardChild')}
+      </BaseModal>,
+    );
+    const scrim = screen.findByTestId('modal-scrim');
+    expect(scrim).toBeTruthy();
+    expect(scrim!.findAllByType('BlurView' as never)).toHaveLength(1);
+    const alphas = scrim!.findAll((node) => typeof node.type === 'string')
+      .map((node) => (ReactNativeStyleSheet.flatten(node.props?.style as never) as { backgroundColor?: unknown } | undefined)?.backgroundColor)
+      .filter((fill): fill is string => typeof fill === 'string' && fill !== 'transparent')
+      .map((fill) => Number(/rgba?\([^)]*?,\s*([\d.]+)\)$/.exec(fill)?.[1] ?? 1));
+    expect(alphas.length).toBeGreaterThan(0);
+    expect(Math.max(...alphas)).toBeLessThanOrEqual(0.1);
+  });
 });

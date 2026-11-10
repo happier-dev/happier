@@ -391,7 +391,7 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
                         portal={overflowPortal}
                         boundaryRef={props.popoverBoundaryRef}
                         onRequestClose={onRequestClose}
-                        backdrop={{ effect: 'none', closeOnPan: true }}
+                        backdrop={{ effect: 'blur', closeOnPan: true }}
                         {...(props.overflowPhoneSheet ? { phonePresentation: 'sheet' as const, accessibilityLabel: props.title,
                             ...(props.overflowPhoneSheet.subtitle ? { sheetSubtitle: props.overflowPhoneSheet.subtitle } : {}) } : {})}
                     >

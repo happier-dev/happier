@@ -39,7 +39,6 @@ describe('PopoverBackdrop', () => {
                 backdropOutsidePointerEventsMode="above-anchor"
                 backdropPointerEventsEnabled
                 backdropEffect="none"
-                backdropBlurOnWeb={undefined}
                 backdropSpotlight={false}
                 backdropAnchorOverlay={undefined}
                 backdropStyle={undefined}

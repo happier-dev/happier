@@ -21,7 +21,6 @@ import {
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import { useNativeBackLayerDescendant } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
 import { useLayoutPresentationActive, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type {
@@ -666,7 +665,6 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
             }
         }
     }, []);
-    const { blurEnabled: materialBlurEnabled } = useGlassBlurSetting();
     const overlayPresence = props.overlayPresence;
 
     const getDomElementFromNode = React.useCallback((candidate: any): HTMLElement | null => {
@@ -1984,11 +1982,6 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
         typeof backdrop === 'object' && backdrop
             ? (backdrop.effect ?? 'none')
             : 'none';
-    const resolvedBackdropEffect: PopoverBackdropEffect =
-        backdropEffect === 'blur' && !materialBlurEnabled
-            ? 'dim'
-            : backdropEffect;
-    const backdropBlurOnWeb = typeof backdrop === 'object' && backdrop ? backdrop.blurOnWeb : undefined;
     const backdropSpotlight = typeof backdrop === 'object' && backdrop ? (backdrop.spotlight ?? false) : false;
     const backdropAnchorOverlay = typeof backdrop === 'object' && backdrop ? backdrop.anchorOverlay : undefined;
     const backdropStyle = typeof backdrop === 'object' && backdrop ? backdrop.style : undefined;
@@ -2108,8 +2101,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                 backdropBlocksOutsidePointerEvents={backdropBlocksOutsidePointerEvents}
                 backdropOutsidePointerEventsMode={backdropOutsidePointerEventsMode}
                 backdropPointerEventsEnabled={backdropPointerEventsEnabled}
-                backdropEffect={resolvedBackdropEffect}
-                backdropBlurOnWeb={backdropBlurOnWeb}
+                backdropEffect={backdropEffect}
                 backdropSpotlight={backdropSpotlight}
                 backdropAnchorOverlay={backdropAnchorOverlay}
                 backdropStyle={backdropStyle}

@@ -1433,7 +1433,6 @@ describe('Popover (web)', () => {
             portal: { web: true },
             backdrop: {
                 effect: 'blur',
-                blurOnWeb: { px: 3, tintColor: 'rgba(255, 255, 255, 0.18)' },
             },
             onRequestClose: () => {},
             children: () => React.createElement('PopoverChild'),
@@ -1448,7 +1447,8 @@ describe('Popover (web)', () => {
 
         const style = flattenStyle(hostEffects[0]?.props?.style);
         expect(style.backdropFilter).toBe('blur(min(var(--happier-glass-floating-blur, 3px), 3px))');
-        expect(style.backgroundColor).toBe('rgba(255, 255, 255, 0.18)');
+        // The one popover/sheet scrim (0.2): a light frost under a very light dim of the theme's scrim ink.
+        expect(style.backgroundColor).toBe('rgba(0, 0, 0, 0.08)');
     });
 
     it('can spotlight the anchor so it stays crisp above the blur', async () => {

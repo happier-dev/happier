@@ -151,19 +151,20 @@ describe('BaseModal (web)', () => {
         expect(screen.findAllByType('DialogOverlay' as any).length).toBe(0);
     });
 
-    it('uses a full-opacity themed blurred modal backdrop on web', async () => {
+    // Owner 2026-11-10 (follow 0.2): one scrim for popovers and sheets, a light frost under a very light dim.
+    it('uses the light frost and very light dim of the popover scrim on web', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal);
 
         const overlay = screen.findAll((node) => {
             const style = flattenStyleProp((node.props as any)?.style);
-            return style.backdropFilter === 'blur(min(var(--happier-glass-floating-blur, 2px), 2px))';
+            return style.backdropFilter === 'blur(min(var(--happier-glass-floating-blur, 3px), 3px))';
         })?.[0];
         const style = flattenStyleProp((overlay?.props as any)?.style);
 
-        expect(style.WebkitBackdropFilter).toBe('blur(min(var(--happier-glass-floating-blur, 2px), 2px))');
-        expect(style.backdropFilter).toBe('blur(min(var(--happier-glass-floating-blur, 2px), 2px))');
-        expect(style.backgroundColor).toBe('rgba(255, 255, 255, 0.52)');
+        expect(style.WebkitBackdropFilter).toBe('blur(min(var(--happier-glass-floating-blur, 3px), 3px))');
+        expect(style.backdropFilter).toBe('blur(min(var(--happier-glass-floating-blur, 3px), 3px))');
+        expect(style.backgroundColor).toBe('rgba(0, 0, 0, 0.08)');
         expect(style.opacity).toBeUndefined();
         expect(String(style.transition)).not.toContain('opacity');
     });
