@@ -2794,9 +2794,17 @@ describe('ordinary Account managed Action origination', () => {
                     expectedAdminAccess: { version: 1 as const, mode: 'none' as const }, adminAccess: policy, comparison: 'field' as const }
                     : { enabled: true, memberProvisioning: 'linuxUsersV1' as const, ...(policyKind === 'isolationSet' ? { expectedMetadataVersion: 0,
                         expectedPolicy: { enabled: false }, expectedPlanDigest: 'reviewed-current-effects' } : {}) }) };
+            let recipient: ReturnType<typeof ManagedControllerContextOutputV1Schema.parse>['enrollmentInstallation'];
+            let childEnvelope: ReturnType<typeof ExternalActionRequestEnvelopeSchema.parse> | undefined;
             const mint = (value = input) => {
-                const body = { v: 1, machineId: value.machineId, envelope: seal(actionId, value.machineId, value, root.binding.requestId),
-                    managedContinuation: { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 } };
+                const continuation = { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 };
+                const baseEnvelope = seal(actionId, value.machineId, value, root.binding.requestId);
+                const envelope = recipient && value.machineId === recipient.machineId
+                    ? sealManagedCreationActionCodecV1({ authorization: root, actionId, continuation, envelope: baseEnvelope,
+                        recipient, randomBytes: tweetnacl.randomBytes,
+                        invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' } }) : baseEnvelope;
+                childEnvelope = envelope;
+                const body = { v: 1, machineId: value.machineId, envelope, managedContinuation: continuation };
                 return instance.inject({ method: 'POST', url: path, payload: body, headers: {
                     [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
                     [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: root.binding.actionId,
@@ -2912,12 +2920,37 @@ describe('ordinary Account managed Action origination', () => {
                             { homeId, managedId: row.id }, `${selected.requestId}-inspect`) } });
                 expect(inspected.statusCode, inspected.body).toBe(200);
                 root = ExternalActionExecutionAuthorizationV1Schema.parse(inspected.json());
+                const contextPath = '/v1/machines/managed/controller/context';
+                const readRecipient = (expectedIntentRevision = 0) => {
+                    const body = { homeId, managedId: row.id, expectedIntentRevision, controller: selected.controller,
+                        includeEnrollmentInstallation: true };
+                    return instance.inject({ method: 'POST', url: contextPath, payload: body, headers: {
+                        [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+                        [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: root.binding.actionId,
+                        [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
+                        [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                            effectActionId: root.binding.actionId, target: root.binding.target, installationId: root.binding.installationId,
+                            requestId: root.binding.requestId, method: 'POST', path: contextPath, body, privateKey: selected.keys.secretKey }) } });
+                };
+                expect((await readRecipient(1)).statusCode).not.toBe(200);
+                const context = await readRecipient();
+                expect(context.statusCode, context.body).toBe(200);
+                const retained = ManagedControllerContextOutputV1Schema.parse(context.json());
+                expect(retained.requestId).toBe(selected.requestId);
+                recipient = retained.enrollmentInstallation;
+                expect(recipient).toEqual({ machineId: guest.id, installationId: guest.installationId,
+                    installationPublicKey: Buffer.from(guestKeys.publicKey).toString('base64url') });
                 const completed = await mint();
                 expect(completed.statusCode, completed.body).toBe(200);
                 const completedChild = ExternalActionExecutionAuthorizationV1Schema.parse(completed.json());
                 expect(completedChild.binding).toMatchObject({ requestId: `${selected.requestId}-inspect`,
                     managedContinuation: { creationRequestId: selected.requestId, managedId: row.id } });
                 expect(await verifyCurrentExternalActionPrincipal(completedChild.binding)).not.toBeNull();
+                if (!childEnvelope) throw new Error('Missing admitted isolation child');
+                const opened = openManagedCreationActionCodecV1({ authorization: completedChild, envelope: childEnvelope,
+                    machineId: guest.id, installationId: guest.installationId!, serverIdentityId: homeId,
+                    installationPrivateKey: guestKeys.secretKey, includeInvocation: true });
+                expect(opened?.invocation).toMatchObject({ caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' });
                 expect((await mint({ ...input, machineId: selected.controller.machineId })).statusCode).not.toBe(200);
                 if (mode === 'plain') expect((await mint({ ...input, enabled: false })).statusCode).not.toBe(200);
                 await db.managedMachine.update({ where: { id: row.id }, data: { admittedInput: {

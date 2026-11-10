@@ -182,25 +182,32 @@ describe('requester bootstrap installation confidentiality', () => {
       payload: { t: 'encrypted', c: 'sealed' }, managedCreationCodec: { kind: 'installation_sealed_v1',
         installationId: 'guest-installation', ciphertext: encodeBase64(new Uint8Array(100), 'base64url') } }).success).toBe(true);
   });
-  it.each(['plain', 'e2ee'] as const)('retains signed source creation custody for an own-Account %s guest without inventing Account material', mode => {
+  it.each((['plain', 'e2ee'] as const).flatMap(mode =>
+    (['machines.managed.acquire', 'machines.managed.bootstrap.retry', 'machines.managed.inspect'] as const)
+      .map(actionId => ({ mode, actionId }))))('retains signed source custody for an own-Account $mode guest during $actionId', ({ mode, actionId }) => {
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
     const target = { kind: 'machine' as const, machineId: 'guest' };
+    const requestId = actionId === 'machines.managed.acquire' ? 'create' : 'recovery';
     const parent = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'own-source-proof', binding: {
       accountId: 'requester', custodianAccountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 },
       serverIdentityId: 'srv_home', machineId: 'controller', installationId: 'controller-installation', accountEncryptionMode: mode,
-      actionId: 'machines.managed.acquire', requestId: 'create', requestEnvelopeDigest: 'a'.repeat(43),
+      actionId, requestId, requestEnvelopeDigest: 'a'.repeat(43),
       target: { kind: 'machine', machineId: 'controller' },
     } });
     const binding = { serverIdentityId: 'srv_home', accountId: 'requester', authentication: { kind: 'account' as const, tokenEpoch: 1 },
-      actionId: 'machines.agentIsolation.preview', requestId: 'create', target };
+      actionId: 'machines.agentIsolation.preview', requestId, target };
     const requestInput = { serverId: 'srv_home', machineId: 'guest', enabled: true };
     const material = mode === 'e2ee' ? { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) } : undefined;
     const base = material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: requestInput, material, randomBytes: tweetnacl.randomBytes })
-      : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'create', target, input: requestInput });
+      : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId, target, input: requestInput });
     const continuation = { managedId: 'managed', creationRequestId: 'create', expectedIntentRevision: 3 };
     const reviewedParent = WorkflowApprovedOperationParentV1Schema.parse({ actionId: parent.binding.actionId,
       input: { selection: { kind: 'preset', homeId: 'srv_home', id: 'preset', revision: 1 } } });
     const invocation = { caller: { kind: 'host' as const }, surface: 'ui' as const, authority: 'present_user' as const };
+    if (actionId === 'machines.managed.inspect') for (const denied of ['machines.setup.adminAccess.set', 'machines.setup.plan', 'session.spawn_new'] as const)
+      expect(() => bootstrap.sealManagedCreationActionCodecV1({ authorization: parent, actionId: denied, continuation,
+        envelope: base, recipient: { machineId: 'guest', installationId: 'guest-installation',
+          installationPublicKey: encodeBase64(installation.publicKey, 'base64url') }, randomBytes: tweetnacl.randomBytes })).toThrow();
     const envelope = bootstrap.sealManagedCreationActionCodecV1({ authorization: parent, actionId: 'machines.agentIsolation.preview',
       continuation, invocation, reviewedParent, envelope: base,
       recipient: { machineId: 'guest', installationId: 'guest-installation', installationPublicKey: encodeBase64(installation.publicKey, 'base64url') },

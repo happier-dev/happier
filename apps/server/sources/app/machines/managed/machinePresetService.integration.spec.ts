@@ -117,17 +117,25 @@ describe("Machine preset relational owner", () => {
             expect(visible.json().enrollmentInstallation).toEqual({ machineId: guest.id, installationId: guest.installationId,
                 installationPublicKey: encodeBase64(publicKey, 'base64url') });
             expect((await read(false)).json()).not.toHaveProperty('enrollmentInstallation');
-            expect((await read(true, true)).statusCode).toBe(403);
+            const inspected = await read(true, true);
+            expect(inspected.statusCode, inspected.body).toBe(200);
+            expect(inspected.json()).toMatchObject({ requestId: row.admittedActionRequestId,
+                enrollmentInstallation: visible.json().enrollmentInstallation });
             for (const data of [{ accountId: owner }, { revokedAt: new Date() }, { installationPublicKey: null }]) {
                 await db.machine.update({ where: { id: guest.id }, data });
-                const denied = await read();
-                expect(denied.statusCode, denied.body).toBe(403);
-                expect(denied.json()).not.toHaveProperty('enrollmentInstallation');
+                for (const inspect of [false, true]) {
+                    const denied = await read(true, inspect);
+                    expect(denied.statusCode, denied.body).toBe(403);
+                    expect(denied.json()).not.toHaveProperty('enrollmentInstallation');
+                }
                 await db.machine.update({ where: { id: guest.id }, data: { accountId: member, revokedAt: null,
                     installationPublicKey: new Uint8Array(publicKey) } });
             }
             await db.managedMachine.update({ where: { id: row.id }, data: { intentRevision: 1 } });
             expect((await read()).statusCode).toBe(409);
+            expect((await read(true, true)).statusCode).toBe(409);
+            await db.managedMachine.update({ where: { id: row.id }, data: { intentRevision: 0, creationState: 'canceled' } });
+            expect((await read(true, true)).statusCode).toBe(409);
         } finally { await app.close(); }
     });
 

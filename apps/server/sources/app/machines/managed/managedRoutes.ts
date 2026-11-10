@@ -1,4 +1,5 @@
 import { readManagedCreationBirthInTx } from './managedCreationBirth';
+import { isManagedEnrollmentRecoveryChildV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { z } from 'zod/mini';
 import type { Fastify } from "@/app/api/types";
@@ -343,7 +344,11 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             : await requireManagedOperationRequest(request, request.body, [...effects, 'machines.managed.credentials.install'], { retainedContext: true });
         return await inTx(async (tx) => {
             const row = await readManagedMachineInTx(tx, request.body);
-            const requestAuthority = 'requestAuthority' in proof ? proof.requestAuthority : managedRequestAuthority(request);
+            // Enrollment recovery seals its child against the retained creation,
+            // even when Inspect carries a fresh intent request of its own.
+            const requestAuthority = request.body.includeEnrollmentInstallation
+                && isManagedEnrollmentRecoveryChildV1(request.externalActionEffectActionId ?? '', 'machines.agentIsolation.preview')
+                ? 'creation' : 'requestAuthority' in proof ? proof.requestAuthority : managedRequestAuthority(request);
             if (request.body.includeEnrollmentInstallation && requestAuthority !== 'creation') throw new ManagedMachineError('permission_denied');
             const nativeRoot = request.externalActionExecutionAuthorizationBinding?.managedAdmission;
             if (request.body.includeNativeCredentialBindings && (request.externalActionEffectActionId !== 'machines.managed.credentials.install'
