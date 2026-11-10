@@ -18,7 +18,7 @@ export type ResticAccessV1 = Readonly<{
     environmentVariableNames: readonly ('AWS_ACCESS_KEY_ID' | 'AWS_SECRET_ACCESS_KEY' | 'AWS_SESSION_TOKEN')[];
     s3?: Readonly<{ region?: string; addressing?: 'auto' | 'dns' | 'path' }>;
     sftp?: Readonly<{ configFilePath: '/run/happier/backup/ssh-config' }>;
-    local?: Readonly<{ path: string }>;
+    local?: Readonly<{ path: string; mountPath?: string }>;
 }>;
 export type ResticCommandV1 =
     | Readonly<{ kind: 'init' | 'config' | 'prune' | 'check' }>
@@ -39,7 +39,7 @@ export type ResticRequestV1 = Readonly<{
     passwordFilePath: string;
     environmentVariableNames: ResticAccessV1['environmentVariableNames'];
     credentialFiles: ResticAccessV1['credentialFiles'];
-    repositoryMount?: Readonly<{ hostPath: string; containerPath: '/run/happier/backup/repository' }>;
+    repositoryMount?: Readonly<{ hostPath: string; containerPath: '/run/happier/backup/repository'; repositoryHostPath?: string }>;
 }>;
 
 function ownershipId(value: string): string {
@@ -62,8 +62,10 @@ export function buildResticRequestV1(input: Readonly<{
     const environmentTag = `env:${environmentId}`;
     const selector = ['--host', host, '--tag', `happier,${environmentTag}`];
     const repositoryMount = access.local
-        ? { hostPath: access.local.path, containerPath: '/run/happier/backup/repository' as const } : undefined;
-    const argv = ['--repo', repositoryMount?.containerPath ?? access.repository, ...(command.kind === 'dump' ? [] : ['--json'])];
+        ? { hostPath: access.local.mountPath ?? access.local.path, containerPath: '/run/happier/backup/repository' as const,
+            ...(access.local.mountPath !== undefined ? { repositoryHostPath: access.local.path } : {}) } : undefined;
+    const repository = access.local?.mountPath !== undefined ? access.repository : repositoryMount?.containerPath ?? access.repository;
+    const argv = ['--repo', repository, ...(command.kind === 'dump' ? [] : ['--json'])];
     if (access.s3?.region !== undefined) argv.push('-o', `s3.region=${access.s3.region}`);
     if (access.s3?.addressing !== undefined) argv.push('-o', `s3.bucket-lookup=${access.s3.addressing}`);
     if (access.sftp) argv.push('-o', `sftp.command=ssh -F ${access.sftp.configFilePath} -s backup sftp`);

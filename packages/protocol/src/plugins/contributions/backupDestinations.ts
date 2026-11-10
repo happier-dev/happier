@@ -1,12 +1,17 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 import { normalizePluginJsonSchema } from '../actions/protocolComposableSchema.js';
-import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema, type PluginContributionIdentityV1 } from '../contributionIdentity.js';
 import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
 import { isRecursivelyClosedPluginJsonSchemaV2 } from './jsonSchema.js';
 import { DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 import { InputHintsSchema } from '../../inputs/inputFields.js';
+
+/** The bundled receiver setup composes this exact destination configuration. */
+export const SFTP_BACKUP_DESTINATION_REF_V1 = Object.freeze({
+  pluginId: 'happier.backup.destinations', localId: 'sftp',
+} as const) satisfies PluginContributionIdentityV1;
 
 /** Storage declarations only. Probe/open execution remains with ordinary qualified Actions. */
 export const BackupDestinationContributionV1Schema = lazyZodSchema(() => z.strictObject({

@@ -101,11 +101,15 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
                 || mounted.some(row => row.status !== 'exited' && row.status !== 'dead' && row.mounts.some(
                     value => record(value) && value.Type === 'volume' && value.Name === volume.name && value.RW !== false))) return refuse();
             if (repositoryPath) {
+                // The bind may expose an existing base so restic init can create
+                // the repository. Recursion concerns the final repository only.
+                const repositoryHostPath = request.repositoryMount?.repositoryHostPath;
+                const repositorySourcePath = repositoryHostPath !== undefined ? await realpath(repositoryHostPath) : repositoryPath;
                 for (const row of mounted) for (const value of row.mounts) {
                     if (!record(value) || value.Type !== 'volume' || value.Name !== volume.name) continue;
-                    if (typeof value.Source !== 'string' || canonicalAbsolutePathsEqual(repositoryPath, value.Source)
-                        || isCanonicalAbsolutePathInsideRoot(value.Source, repositoryPath)
-                        || isCanonicalAbsolutePathInsideRoot(repositoryPath, value.Source)) return refuse();
+                    if (typeof value.Source !== 'string' || canonicalAbsolutePathsEqual(repositorySourcePath, value.Source)
+                        || isCanonicalAbsolutePathInsideRoot(value.Source, repositorySourcePath)
+                        || isCanonicalAbsolutePathInsideRoot(repositorySourcePath, value.Source)) return refuse();
                 }
             }
             mounts.push('--mount', ['type=volume', `source=${volume.name}`, `target=${RESTIC_VOLUME_SOURCE_PATH_V1}`, 'readonly', 'volume-nocopy'].map(csv).join(','));

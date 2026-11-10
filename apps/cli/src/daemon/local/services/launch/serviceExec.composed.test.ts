@@ -27,7 +27,8 @@ import { withFiniteComposeFixture } from './serviceExec.testkit';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { spawnAuthorizedHostExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import type { MachineNativeEffectOperation } from './machineNativeEffectAdmission';
-import { access } from 'node:fs/promises';
+import { access, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { RESTIC_RUNTIME_V1, RESTIC_VOLUME_SOURCE_PATH_V1, buildResticRequestV1, type ResticRequestV1 } from '@happier-dev/deployments';
 import type { EnvironmentSecretBindingV1, DeploymentImageV1 } from '@happier-dev/deployment-protocol';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -247,7 +248,7 @@ describe('admitted finite Compose command', () => {
             }
         });
     });
-    it.each(['complete', 'numericHostname', 'loopback', 'loopbackIpv6', 'loopbackLocalhost', 'loopbackSftp', 'loopbackDesktop', 'loopbackUnknown', 'cancelBeforeCreate', 'metadataSequence', 'rawReadback', 'localRepository', 'localSourceOverlap'] as const)('admits P45 restic on the selected named volume through real source, image proof, P42 custody and the existing command owner: %s', async outcome => {
+    it.each(['complete', 'numericHostname', 'loopback', 'loopbackIpv6', 'loopbackLocalhost', 'loopbackSftp', 'loopbackDesktop', 'loopbackUnknown', 'cancelBeforeCreate', 'metadataSequence', 'rawReadback', 'localRepository', 'localSourceOverlap', 'localScopedRepository'] as const)('admits P45 restic on the selected named volume through real source, image proof, P42 custody and the existing command owner: %s', async outcome => {
         const hostNetwork = outcome === 'loopback' || outcome === 'loopbackIpv6' || outcome === 'loopbackLocalhost' || outcome === 'loopbackSftp';
         await withFiniteComposeFixture(async ({ project, docker, source, root, exec }) => {
             await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
@@ -314,9 +315,18 @@ describe('admitted finite Compose command', () => {
                         expect((await docker.readInvocations()).filter(row => row.args[0] === 'create')).toEqual([]);
                         return;
                     }
-                    if (outcome === 'localRepository' || outcome === 'localSourceOverlap') {
+                    if (outcome === 'localRepository' || outcome === 'localSourceOverlap' || outcome === 'localScopedRepository') {
+                        const scoped = outcome === 'localScopedRepository';
+                        const local = scoped ? { path: join(root, 'backups', 'env'), mountPath: root } : { path: root };
+                        if (scoped) {
+                            await mkdir(local.path, { recursive: true });
+                            const dataPath = join(root, 'data');
+                            await mkdir(dataPath);
+                            await docker.setVolumeMountSource('fixture-physical-data', dataPath);
+                        }
+                        const repository = scoped ? '/run/happier/backup/repository/backups/env' : '/run/happier/backup/repository';
                         const localRequest = buildResticRequestV1({ environmentId: source.environmentId,
-                            access: { ...resticAccess, repository: '/run/happier/backup/repository', local: { path: root } },
+                            access: { ...resticAccess, repository, local },
                             command: { kind: 'config' } });
                         await docker.stopCurrentContainers();
                         const selector = { kind: 'volume' as const, sourceId: 'worker-data', service: 'worker',
@@ -333,6 +343,7 @@ describe('admitted finite Compose command', () => {
                         expect(result).toMatchObject({ kind: 'completed', exitCode: 0 });
                         const create = (await docker.readInvocations()).find(row => row.args[0] === 'create');
                         expect(create?.args).toContain(`type=bind,source=${root},target=/run/happier/backup/repository`);
+                        expect(create?.args.slice(create.args.indexOf('--repo'), create.args.indexOf('--repo') + 2)).toEqual(['--repo', repository]);
                         expect(create?.args).toContain(`type=volume,source=fixture-physical-data,target=${RESTIC_VOLUME_SOURCE_PATH_V1},readonly,volume-nocopy`);
                         return;
                     }

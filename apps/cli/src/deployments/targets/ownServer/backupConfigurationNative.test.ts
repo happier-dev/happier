@@ -1,9 +1,10 @@
 import { expect, it } from 'vitest';
-import { access, readFile } from 'node:fs/promises';
+import { access, mkdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import nacl from 'tweetnacl';
 import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { RESTIC_RUNTIME_V1, buildResticRequestV1 } from '@happier-dev/deployments';
+import { RESTIC_RUNTIME_V1, buildResticRequestV1, testDeploymentBackupDestinationV1 } from '@happier-dev/deployments';
 import { withFiniteComposeFixture } from '@/daemon/local/services/launch/serviceExec.testkit';
 import { nativeRestic0191 } from '@/daemon/local/services/launch/nativeResticRegistry.testkit';
 import { createDeploymentBackupEnvironmentForHost } from '@/deployments/secrets/deploymentExecEnvPort';
@@ -48,5 +49,46 @@ it('runs a repository operation with native custody before any Compose render or
         const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
         expect(events.filter(event => event.kind === 'restic')).toHaveLength(1);
         expect(events.some(event => event.kind === 'service')).toBe(false);
+    });
+});
+
+it.each([false, true])('tests a missing local namespace and initializes only when requested (%s)', async initializeIfMissing => {
+    await withFiniteComposeFixture(async ({ docker, source, root, exec, io, project }) => {
+        await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
+        const boundary = await installRestoreBoundary(root, 'repositoryOnly');
+        const repository = '/run/happier/backup/repository/previews/environment-staging';
+        await boundary.setRepositoryMissing(repository);
+        const mountPath = join(root, 'recovery');
+        await mkdir(mountPath);
+        const local = { path: join(mountPath, 'previews', 'environment-staging'), mountPath };
+        const seed = new Uint8Array(32).fill(48);
+        const binding: Extract<EnvironmentSecretBindingV1, { purpose: 'backupDestination' }> = {
+            purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword',
+            source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('password'), resourceRevision: 1 },
+        };
+        const grants = [sealMachineSecretGrant({ subject: { v: 1, kind: 'secret',
+            environmentId: source.environmentId, machineId: source.machineId, installationId: source.installationId,
+            resourceId: 'password', resourceRevision: 1 }, installationPublicKey: nacl.sign.keyPair.fromSeed(seed).publicKey,
+            content: { kind: 'secret', value: 'private-repository-password' } })];
+        const signal = new AbortController().signal;
+        const destination = createDeploymentBackupEnvironmentForHost({ repository, local,
+            signal, isCurrent: () => true, preparation: { environmentId: source.environmentId,
+                machineId: source.machineId, installationId: source.installationId, installationPrivateSeed: seed,
+                bindings: [binding], backupDestinationUses: [binding], grants, backupConfigBaseDir: root,
+                async assertCurrent() {} } });
+        const result = await withNativeBackupRepositoryForHost({ cwd: source.rootPath, directory: root,
+            environmentInstanceId: source.environmentInstanceId, projectName: 'configuration-only',
+            operation: { operationId: 'configure-local', kind: 'deployments.backups.configure', signal },
+            runtime: { exec, nativeIo: io, settleNative: project.settleNative },
+            async prepareDestination() { return destination; } },
+        native => testDeploymentBackupDestinationV1({ environmentId: source.environmentId,
+            operationId: 'configure-local', access: native.access, signal, execute: native.execute, initializeIfMissing }));
+        expect(result).toMatchObject(initializeIfMissing ? { kind: 'reachable', repositoryId: 'c'.repeat(64) }
+            : { kind: 'failed', reason: 'repository_missing', nativeExitCode: 10 });
+        const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+        const restic = events.filter(event => event.kind === 'restic');
+        expect(restic.every(event => event.argv[1] === repository)).toBe(true);
+        expect(restic.some(event => event.argv.includes('init'))).toBe(initializeIfMissing);
+        if (!initializeIfMissing) await expect(access(local.path)).rejects.toThrow();
     });
 });

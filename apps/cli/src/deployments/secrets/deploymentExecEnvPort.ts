@@ -52,10 +52,13 @@ function backupAccess(input: Pick<BackupDestinationOpenV1, 'repository' | 's3' |
     const password = material.credentialFiles.find(file => file.hostPath === material.env.RESTIC_PASSWORD_FILE);
     if (!password) return refuse();
     const localPath = input.local ? expandHomeDirPath(input.local.path) : undefined;
+    const localMountPath = input.local?.mountPath !== undefined ? expandHomeDirPath(input.local.mountPath) : undefined;
     if (localPath && !isAbsolute(localPath)) return refuse();
+    if (localMountPath !== undefined && !isAbsolute(localMountPath)) return refuse();
     return { repository: input.repository, ...(input.s3 ? { s3: input.s3 } : {}),
         ...(input.sftp ? { sftp: { configFilePath: '/run/happier/backup/ssh-config' as const } } : {}),
-        ...(localPath ? { local: { path: localPath } } : {}), passwordFilePath: password.containerPath,
+        ...(localPath ? { local: { path: localPath, ...(localMountPath !== undefined ? { mountPath: localMountPath } : {}) } } : {}),
+        passwordFilePath: password.containerPath,
         credentialFiles: material.credentialFiles,
         environmentVariableNames: Object.keys(material.env).filter((name): name is ResticAccessV1['environmentVariableNames'][number] =>
             name === 'AWS_ACCESS_KEY_ID' || name === 'AWS_SECRET_ACCESS_KEY' || name === 'AWS_SESSION_TOKEN') };
