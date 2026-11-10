@@ -360,14 +360,77 @@ Nothing arrives until you add that webhook at the source yourself. In GitHub,
 open the repository or organization settings, select **Webhooks**, then choose
 **Add webhook**. Paste the payload URL, paste the secret into **Secret**, set the content type to
 `application/json`, and choose the events you want. Happier verifies every
-delivery against that secret and drops anything that does not match, so a
-mistyped secret looks like silence rather than an error.
+delivery against that secret. A mistyped secret rejects the delivery; check
+GitHub's delivery response when nothing appears in Happier.
 
 Happier does not create the webhook for you and does not need a GitHub App: a
-plain repository or organization webhook is the whole setup. If you lose the
-secret, rotate the endpoint credential from its webhook settings rather than
-creating a second workflow — a new secret means editing the same GitHub
-webhook again.
+plain repository or organization webhook is the whole setup.
+
+#### Verify delivery, then verify the Run
+
+Save and enable the Workflow trigger before generating an event you expect to
+start a Run. Keep its selected Machine and GitHub plugin available. The steps
+below describe the current 0.3 development path; webhook ingress also requires
+the server's `plugins.webhooks` feature and its `plugins` dependency.
+
+1. In GitHub, open the configured webhook's **Recent deliveries**. Inspect the
+   initial `ping`, or choose a recent delivery's GUID and **Redeliver**. These
+   controls and permissions are described in
+   [GitHub's redelivery instructions](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks).
+   An empty `202 Accepted` response means Happier verified and durably accepted
+   the delivery, not that a Workflow started.
+2. Return to the event setup form and choose **Recheck webhook**. This reads the
+   existing endpoint readiness. You can also open **Settings → Plugins → Plugin
+   webhooks**, in the Plugins developer links, and find the endpoint by its id
+   and source. Its status includes readiness, the exact Machine/plugin target,
+   and queue counts. `providerConfirmationRequired` means no delivery signed
+   with the current secret has been committed yet; `ready` confirms that
+   delivery and a currently available binding. `routeUnavailable` or
+   `targetUnavailable` needs endpoint or target recovery, rather than repeated
+   GitHub setup. Readiness alone does not prove a matching event or a Run.
+3. Generate a fresh event of the kind the saved trigger observes. For example,
+   open an issue in the configured repository for an issue-opened trigger, with
+   **Issues** selected in GitHub's webhook events. GitHub's `ping` checks the
+   delivery path but does not start that Workflow. A delivery for another event
+   kind or repository, or one excluded by the trigger's filter or maximum
+   observation age, also need not start a Run.
+4. Open the Workflow's Run history and the resulting Run. Inspect its cause,
+   trigger identity, source, event reference, and occurrence key. Where private
+   event evidence is readable, compare its source, event time, and payload
+   (for example, the issue number) with the GitHub delivery. The occurrence key
+   is an opaque digest, not GitHub's delivery GUID; keep the
+   `X-GitHub-Delivery` GUID in GitHub's delivery details for provider-side
+   troubleshooting. Follow the
+   linked Workflow Run or Session to inspect execution and results; admission
+   is separate from successful execution.
+
+Where the Run retains readable event evidence, **Test this trigger** checks a
+draft against that observation without starting another Run. It does not send
+a provider test. Redelivering an already admitted occurrence should not create
+a second Run for the same trigger; use a fresh matching event when checking
+first execution.
+
+If GitHub shows a failed response, correct its URL or secret and request
+redelivery there. If delivery was accepted but processing fails, use **Plugin
+webhooks** to inspect queue counts and dead-letter metadata. **Replay delivery**
+retries a retained dead letter after you address its failure; it cannot recover
+a request Happier never committed. Delivery bodies are not shown on that screen.
+
+#### Recover a lost signing secret
+
+The original secret cannot be read again. In **Settings → Plugins → Plugin
+webhooks**, find the same endpoint and choose **Rotate signing credential**.
+Save the new secret from **Save the new signing secret** before closing the
+message, then replace **Secret** on the existing GitHub webhook and save it.
+Keep its payload URL and the Workflow unchanged.
+
+Rotation clears provider confirmation. Send a fresh matching GitHub event or
+request redelivery, then recheck until the endpoint reports `ready` under the
+new secret. **Finish credential rotation** stops accepting the previous secret;
+use it after confirming the provider uses the replacement. If the new one-time
+disclosure is lost too, rotate again rather than creating another Workflow.
+
+#### When missed events matter
 
 Two limits matter before you rely on webhook delivery. Happier holds a
 delivery durably only after it has verified and committed it, so a delivery
@@ -376,6 +439,12 @@ never resends on its own; a redelivery happens only when you request one for
 that specific delivery, to the same URL. And when completeness matters more
 than latency, checkpointed pull is the transport that records a cursor as it
 goes and reports a history gap when a missed range is no longer available.
+Choose **Poll for changes** in the event setup form for checkpointed pull and
+keep its selected watcher Machine available. Its saved checkpoint supports
+catch-up after an outage while GitHub still retains the missed history; a
+history gap needs explicit recovery. Switching transports is not proof that
+earlier missed webhook deliveries have been recovered. Verify the resulting
+Run/event evidence for the occurrences you need.
 
 An event trigger can also carry a **filter**, and a maximum observation age —
 past which an event is considered too old to act on rather than triggering a
