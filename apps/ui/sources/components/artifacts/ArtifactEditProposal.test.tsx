@@ -567,12 +567,15 @@ describe('ArtifactEditProposal', () => {
     let current = accepted;
     const revisions: Array<{ bodyVersion: number; body: string; createdAt: number; sizeBytes: number;
       provenance?: { savedBy: { kind: 'person'; accountId: string }; restoredFromBodyVersion: number } }> = [];
+    const provenance = { savedBy: { kind: 'person' as const, accountId: 'alice' }, restoredFromBodyVersion: 14 };
     const door = frontDoor({
-      'doc.read': () => docRead(current)(),
+      'doc.read': () => {
+        const read = docRead(current)();
+        return { ...read, result: { ...read.result, artifact: { ...read.result.artifact,
+          ...(current.bodyVersion === restored.bodyVersion ? { provenance } : {}) } } };
+      },
       'artifact.revisions.restore': () => {
         current = restored;
-        revisions.push({ bodyVersion: 16, body: proposal.before, createdAt: 6, sizeBytes: 10,
-          provenance: { savedBy: { kind: 'person', accountId: 'alice' }, restoredFromBodyVersion: 14 } });
         return { ok: true, result: { artifactId: 'runbook', revision: restored } };
       },
       'artifact.revisions.list': () => ({ ok: true, result: { artifactId: 'runbook', revisions, retentionCount: 10 } }),
@@ -583,6 +586,15 @@ describe('ArtifactEditProposal', () => {
     expect(first.findByTestId('proposal.undone')).not.toBeNull();
     await first.unmount();
     resetDocEditOperationsForTests();
+    // The server archives superseded bodies only: the restored head is not in history yet.
+    const coldHead = await render(door.client, disposition);
+    expect(coldHead.findByTestId('proposal.undone')).not.toBeNull();
+    expect(coldHead.getTextContent()).toContain(t('artifacts.browser.proposal.undone', { n: 16 }));
+    expect(coldHead.findByTestId('proposal.undoConflict')).toBeNull();
+    expect(door.calls.filter(call => call.actionId === 'artifact.revisions.list')).toHaveLength(0);
+    await coldHead.unmount();
+    resetDocEditOperationsForTests();
+    revisions.push({ bodyVersion: 16, body: proposal.before, createdAt: 6, sizeBytes: 10, provenance });
     current = { headerVersion: 5, bodyVersion: 17 };
     const cold = await render(door.client, disposition);
     expect(cold.findByTestId('proposal.undone')).not.toBeNull();
@@ -597,14 +609,14 @@ describe('ArtifactEditProposal', () => {
     const door = frontDoor({ 'artifact.revisions.list': () => ({ ok: true, result: {
       artifactId: 'runbook', retentionCount: 10, revisions: [
         { bodyVersion: 16, body: 'Different edit', createdAt: 6, sizeBytes: 14 },
-        { bodyVersion: 17, body: proposal.before, createdAt: 7, sizeBytes: 10,
-          provenance: { savedBy: { kind: 'person', accountId: 'alice' }, restoredFromBodyVersion: 14 } },
       ],
     } }) });
     const read = admittedDocRead('runbook', current);
+    const currentRead = { ...read, value: { ...read.value, artifact: { ...read.value.artifact,
+      provenance: { savedBy: { kind: 'person' as const, accountId: 'alice' }, restoredFromBodyVersion: 14 } } } };
     const screen = await renderScreen(<>{Array.from({ length: 40 }, (_, index) =>
       <ArtifactEditProposal key={index} testID={`receipt-${index}`} client={door.client}
-        proposalRef={{ ...proposalRef, messageId: `receipt-${index}` }} proposal={proposal} docRead={read}
+        proposalRef={{ ...proposalRef, messageId: `receipt-${index}` }} proposal={proposal} docRead={currentRead}
         disposition={{ state: 'accepted', acceptedRevision: accepted, decidedBy: { accountId: 'alice', atMs: 5 } }}
         viewerAccountId="alice" resolveAccountLabel={() => 'Ana'} />)}</>);
     await flushHookEffects();

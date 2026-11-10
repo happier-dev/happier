@@ -89,6 +89,9 @@ const workspacePackages = readHostWorkspacePackageSpecs(repoRoot, packageRoot, [
 const workspaceSourcesPlugin = createWorkspacePackageSourcesPlugin(
     workspacePackages,
     'happier-vitest-expo-node-module-stubs',
+    // UI host consumers use the authored host barrel, including host-only
+    // presentation exports, just as the source-driven app does.
+    { exportConditions: ['happier-source'] },
 );
 
 const expoNodeModuleStubsPlugin = {

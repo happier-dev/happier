@@ -246,7 +246,7 @@ function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.React
   const approvalOperation = operation?.approvalId ? operation : null;
   const restoredBodyVersion = useDocEditRestoredVersion(client, artifactId, base.bodyVersion,
     disposition.state === 'accepted' && !(operation && 'restoredRevision' in operation)
-      ? disposition.acceptedRevision.bodyVersion : null, currentRevision?.bodyVersion);
+      ? disposition.acceptedRevision.bodyVersion : null, currentRevision?.bodyVersion, admitted);
 
   const undo: UndoOutcome | null = operation && 'restoredRevision' in operation
     ? { state: 'done', revision: operation.restoredRevision } : undoFailure;

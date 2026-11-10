@@ -4,6 +4,7 @@ import type { ArtifactActionsClient } from './artifactActionsClient';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import type { ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 
 /** What a held operation is: a person's decision on a proposal, or Undo of an accepted one. */
 export type DocEditOperationKind = 'accept' | 'decline' | 'undo';
@@ -70,24 +71,38 @@ export function resetDocEditOperationsForTests(): void {
 
 /** A restore immediately after acceptance is durable evidence that this edit was undone.
  * Later restores of the same source version do not identify this proposal's Undo. */
+function restoredDocEditVersion(base: number, accepted: number | null,
+  bodyVersion: number | undefined, restoredFromBodyVersion: number | undefined): number | null {
+  return accepted !== null && bodyVersion === accepted + 1 && restoredFromBodyVersion === base
+    ? bodyVersion : null;
+}
+
 export function useDocEditRestoredVersion(client: ArtifactActionsClient, artifactId: string,
-  baseBodyVersion: number, acceptedBodyVersion: number | null, currentBodyVersion: number | undefined): number | null {
+  baseBodyVersion: number, acceptedBodyVersion: number | null, currentBodyVersion: number | undefined,
+  currentArtifact: Readonly<{ revision: ArtifactRevisionV1; provenance?: ArtifactRevisionProvenanceV1 }> | null): number | null {
   const [restored, setRestored] = React.useState<Readonly<{
     client: ArtifactActionsClient; artifactId: string; acceptedBodyVersion: number; bodyVersion: number;
   }> | null>(null);
   const known = restored?.client === client && restored.artifactId === artifactId
     && restored.acceptedBodyVersion === acceptedBodyVersion ? restored.bodyVersion : null;
+  // History archives superseded bodies only. Until another edit, the restore fact belongs to the head.
+  const restoredHead = restoredDocEditVersion(baseBodyVersion, acceptedBodyVersion,
+    currentArtifact?.revision.bodyVersion, currentArtifact?.provenance?.restoredFromBodyVersion);
   React.useEffect(() => {
     if (known !== null || acceptedBodyVersion === null || currentBodyVersion === undefined
       || currentBodyVersion <= acceptedBodyVersion) return;
+    if (restoredHead !== null) {
+      setRestored({ client, artifactId, acceptedBodyVersion, bodyVersion: restoredHead });
+      return;
+    }
     let live = true;
     void client.listRevisions(artifactId).then(outcome => {
       if (!live || !outcome.ok) return;
-      const revision = outcome.value.revisions.find(row => row.bodyVersion === acceptedBodyVersion + 1
-        && row.provenance?.restoredFromBodyVersion === baseBodyVersion);
+      const revision = outcome.value.revisions.find(row => restoredDocEditVersion(baseBodyVersion,
+        acceptedBodyVersion, row.bodyVersion, row.provenance?.restoredFromBodyVersion) !== null);
       if (revision) setRestored({ client, artifactId, acceptedBodyVersion, bodyVersion: revision.bodyVersion });
     });
     return () => { live = false; };
-  }, [acceptedBodyVersion, artifactId, baseBodyVersion, client, currentBodyVersion, known]);
-  return known;
+  }, [acceptedBodyVersion, artifactId, baseBodyVersion, client, currentBodyVersion, known, restoredHead]);
+  return restoredHead ?? known;
 }

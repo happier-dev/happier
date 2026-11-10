@@ -5564,6 +5564,24 @@ Session content, not the surface kind as a personal-write exemption. Optional
 input `paths` select exactly which saved choices to set or reset against the
 owner's current bindings; omitting them retains whole-binding replacement/reset.
 
+## Agent backend readiness (0.3 development source)
+
+`agents.backends.list` and the `agents.backends.enabled` / `execution.backends.enabled`
+option sources share one composer, `listAgentBackendsWithReadinessV1`
+(`packages/protocol/src/actions/executor/agents/agentBackendReadiness.ts`). When a Machine
+is named (`machineId`, or the invoking Session's Machine for `subagents.delegate.start` and
+`subagents.plan.start` options), each row carries `readiness`: the Machine Agent inventory
+facts (`machines.agents.list`: installed, platform, dependencies, native sign-in) decided by
+`resolveMachineAgentExecutionStateV1`, with the Account's connected-service default per Agent
+(`agentsConnectedDefaultRoutesRead`, CLI `readAgentConnectedDefaultRoutes`, the same read the
+background-task runner candidates use) satisfying authentication. A connected default that
+cannot be read leaves sign-in unknown; without that dep only executable prerequisites decide.
+Option sources keep `needsSignIn`, `notInstalled` and `unsupported` rows listed but disabled,
+with the reason as the description; unknown never blocks. Rows are matched to inventory by
+`findMachineAgentInventoryItemForTargetV1`, the same matcher the UI picker facts and the
+default-Agent owner use. Run start does not re-probe: an explicit choice that is not ready
+fails at launch with the existing typed `agent_cli_missing` / sign-in refusal.
+
 ## Operations outcome links (0.3 development source)
 
 Operations Investigate uses the configured Triage handoff owner for placement:
@@ -9485,6 +9503,16 @@ the signed facts
 without another Environment lookup per read; ordinary resource access remains
 enforced by the receiving routes. Encrypted Link input exposes only its
 Environment routing id, which the opener verifies against the sealed input.
+
+In unreleased 0.3 source, `projects.readiness.read` binds its exact saved Project,
+controller Machine and selected Environment revisions through the existing finite
+read admission. Home admits Project access and selected Environment content at
+issuance. Signed Project, Environment, Domain and content reads then spend that
+scope through the existing custody readers. The encrypted request opener rejects
+a different Project, controller or Environment selection. An empty Environment
+selection still permits the Project's CI and security source facts; it does not
+require a checkout or create a Session.
+
 Session-authored Discussion publication retains its Session publisher. A client
 effect with no available client port returns unavailable rather than moving to a
 daemon. Private input, show-once results and explicitly retained host closures
@@ -10157,8 +10185,9 @@ contracts are not a released availability claim.
 
 The proposal card and accepted notice share the existing UI Doc edit operation
 owner for in-flight operations and immediate Undo acknowledgements. After a cold
-page load, an accepted receipt reads retained Doc revision history: the revision
-immediately after acceptance must record restoration of the proposal's base body
+page load, an accepted receipt reads the current Doc's provenance or, after a
+later edit, retained revision history: the revision immediately after acceptance
+must record restoration of the proposal's base body
 version. That durable fact restores the card's Undone state and version, even
 when subsequent edits exist. A later unrelated restore does not establish Undo.
 Concurrent history reads for the same Doc share one in-flight request through
