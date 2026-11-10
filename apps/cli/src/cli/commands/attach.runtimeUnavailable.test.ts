@@ -18,6 +18,24 @@ const localSettings: Settings = {
 afterEach(() => vi.restoreAllMocks());
 
 describe('standalone attach without an in-process daemon runtime', () => {
+  it('refuses native attach with the canonical typed cause and terminal recovery', async () => {
+    const rawSession = createSessionRecordFixture({
+      id: 'standalone-native', active: true, encryptionMode: 'plain',
+      metadata: JSON.stringify({ machineId: 'machine-local', path: '/tmp/workspace', flavor: 'claude' }),
+    });
+    await expect(handleAttachCommand([rawSession.id], {
+      readCredentialsFn: async () => ({ token: 'test-token', encryption: null }),
+      readSettingsFn: async () => localSettings,
+      fetchSessionByIdFn: async () => rawSession,
+      getAccountEncryptionCurrentnessFn: async () => ({
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      }),
+      readTerminalAttachmentInfoFn: async () => null,
+    })).rejects.toMatchObject({
+      code: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE',
+      message: expect.stringContaining('happier resume'),
+    });
+  });
   it.each([
     { mode: 'tmux', active: true },
     { mode: 'zellij', active: true },

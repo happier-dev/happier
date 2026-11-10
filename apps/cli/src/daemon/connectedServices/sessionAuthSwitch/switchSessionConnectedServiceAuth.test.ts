@@ -60,6 +60,7 @@ import { RuntimeAuthRecoveryScheduler, type RuntimeAuthRecoveryIntent } from '..
 import { createRecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
 import { createConnectedServiceContinuationHandler } from '../continuation/switchRecovery';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { resolveSharedStateRequiredSwitchContinuity } from './sharedStateContinuity';
 
 let catalogRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => {
@@ -2690,6 +2691,41 @@ describe('switchSessionConnectedServiceAuth', () => {
       },
     });
 
+    expect(tracked.spawnOptions?.connectedServices).toEqual(bindings('old-profile'));
+  });
+
+  it.each([
+    { identity: null, resumeId: 'native-session', code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing },
+    { identity: { v: 1 as const, id: 'csm_missing_resume' }, resumeId: null, code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.resumeReachabilityInputsMissing },
+  ])('presents the actual missing continuity input ($code) and preserves the current account', async ({ identity, resumeId, code }) => {
+    const tracked = trackedSession();
+    const result = await switchSessionConnectedServiceAuth({
+      core: createCore(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'happier.agent.claude/anthropic',
+          profiles: [{ profileId: 'new-profile', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity: async () => resolveSharedStateRequiredSwitchContinuity({
+        agentId: 'claude',
+        serviceId: 'happier.agent.claude/anthropic',
+        accountSettings: { connectedServicesProviderStateSharingSettingsV1: {
+          v: 1, defaults: { configMode: 'linked', stateMode: 'shared' }, byAgentId: {},
+        } },
+        targetMaterializedRoot: '/tmp/materialized',
+        materializationIdentity: identity,
+        vendorResumeId: resumeId,
+      }),
+      restartSession: async () => { throw new Error('refused switch must not restart'); },
+      hotApply: async () => ({ ok: true }),
+      registerHotApplyTargets: () => {},
+      emitSessionEvent: () => {},
+      request: { sessionId: 'sess_1', agentId: 'claude', bindings: bindings('new-profile') },
+    });
+    expect(result).toMatchObject({ ok: false, diagnostics: { uxDiagnostic: { code } } });
     expect(tracked.spawnOptions?.connectedServices).toEqual(bindings('old-profile'));
   });
 

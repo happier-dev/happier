@@ -78,6 +78,18 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
         mode: 'unsupported',
         errorCode: 'provider_session_state_unavailable_for_resume',
         warnings: mergeWarnings(input.warnings, 'provider_session_state_unavailable_for_resume'),
+        diagnostics: {
+          materializationIdentityId: materializationIdentity?.id ?? null,
+          targetMaterializedRoot,
+          vendorResumeId,
+          cwd,
+          candidatePersistedSessionFile: input.candidatePersistedSessionFile ?? null,
+          requestedStateMode: 'shared',
+          effectiveStateMode: 'shared',
+          reachabilityMissReason: !materializationIdentity
+            ? 'connected_service_materialization_identity_missing'
+            : 'resume_reachability_inputs_missing',
+        },
       };
     }
 

@@ -17,7 +17,7 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
   beforeAll(async () => {
     runtime = await createAdmittedPluginRuntimeFixture({
       controller: pluginReloadController,
-      runtimeOptions: { pluginIds: ['happier.agent.codex', 'happier.agent.pi', 'happier.agent.opencode'] },
+      runtimeOptions: { pluginIds: ['happier.agent.codex', 'happier.agent.claude', 'happier.agent.pi', 'happier.agent.opencode'] },
     });
   });
 
@@ -31,6 +31,30 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
       await rm(dir, { recursive: true, force: true });
     }));
     tempDirs.length = 0;
+  });
+
+  it.each([
+    { agentId: 'codex', serviceId: 'happier.agent.codex/openai-codex' },
+    { agentId: 'claude', serviceId: 'happier.agent.claude/claude-subscription' },
+  ])('retains the missing $agentId resume input cause before provider reachability can run', async ({ agentId, serviceId }) => {
+    await expect(resolveSharedStateRequiredSwitchContinuity({
+      agentId,
+      accountSettings: accountSettingsParse({
+        connectedServicesProviderStateSharingSettingsV1: {
+          v: 1, defaults: { configMode: 'linked', stateMode: 'shared' }, byAgentId: {},
+        },
+      }),
+      serviceId,
+      targetMaterializedRoot: '/tmp/materialized',
+      materializationIdentity: { v: 1, id: 'csm_1' },
+      vendorResumeId: null,
+    })).resolves.toMatchObject({
+      mode: 'unsupported', errorCode: 'provider_session_state_unavailable_for_resume',
+      diagnostics: {
+        vendorResumeId: null,
+        reachabilityMissReason: 'resume_reachability_inputs_missing',
+      },
+    });
   });
 
   it('fails closed for Codex shared-state switches when resume reachability cannot be proven', async () => {

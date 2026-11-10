@@ -6,15 +6,6 @@ import { buildConnectedServiceUxDiagnostic } from './diagnostics/connectedServic
 import type { ConnectedServiceSpawnResumeUnreachableError } from './resolveConnectedServiceAuthForSpawn';
 import { sanitizeConnectedServiceDiagnosticString } from './runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 
-function resolveResumeUnreachableUxDiagnosticCode(
-  error: ConnectedServiceSpawnResumeUnreachableError,
-) {
-  if (error.reason === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.resumeReachabilityInputsMissing) {
-    return CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.resumeReachabilityInputsMissing;
-  }
-  return CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume;
-}
-
 export function resolveSafeResumeUnreachableDiagnosticReason(
   error: ConnectedServiceSpawnResumeUnreachableError,
 ): string {
@@ -63,7 +54,7 @@ export function buildSpawnResumeUnreachableErrorResult(
       agentId: error.agentId,
       reason,
       uxDiagnostic: buildConnectedServiceUxDiagnostic({
-        code: resolveResumeUnreachableUxDiagnosticCode(error),
+        code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
         failurePhase: 'continuity',
         source: 'spawn_resume',
         agentId: error.agentId,

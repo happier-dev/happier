@@ -67,8 +67,16 @@ export function buildConnectedServiceUxDiagnostic(input: Readonly<{
   suggestedActions?: ReadonlyArray<ConnectedServiceUxDiagnosticV1['suggestedActions'][number]>;
   diagnostics?: Readonly<NonNullable<ConnectedServiceUxDiagnosticV1['diagnostics']>>;
 }>): ConnectedServiceUxDiagnosticV1 {
+  let code = input.code;
+  if (code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume) {
+    switch (input.diagnostics?.reason) {
+      case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing:
+      case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.resumeReachabilityInputsMissing:
+        code = input.diagnostics.reason;
+    }
+  }
   return ConnectedServiceUxDiagnosticV1Schema.parse({
-    code: input.code,
+    code,
     failurePhase: input.failurePhase,
     source: input.source,
     ...(input.serviceId ? { serviceId: input.serviceId } : {}),
@@ -76,7 +84,7 @@ export function buildConnectedServiceUxDiagnostic(input: Readonly<{
     ...(input.profileId ? { profileId: input.profileId } : {}),
     ...(input.groupId ? { groupId: input.groupId } : {}),
     retryable: input.retryable,
-    suggestedActions: input.suggestedActions ?? resolveConnectedServiceUxDiagnosticActions(input.code, input.retryable),
+    suggestedActions: input.suggestedActions ?? resolveConnectedServiceUxDiagnosticActions(code, input.retryable),
     ...(input.diagnostics ? { diagnostics: input.diagnostics } : {}),
   });
 }

@@ -58,11 +58,10 @@ export async function acquireAuthoritativePluginRuntimeRegistryLease(
         return lease;
     }
 
-    const error = new Error(
-        'The canonical daemon-applied plugin runtime is unavailable in this process',
-    ) as Error & { code: string };
-    error.code = 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE';
-    throw error;
+    throw Object.assign(new Error(
+        'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE: The canonical daemon-applied plugin runtime is unavailable in this process. '
+        + 'Run this operation through the Machine daemon. For a Session, open its managed terminal or use `happier resume <session-id>` to continue.',
+    ), { code: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE' as const });
 }
 
 export function tryAcquireAuthoritativePluginRuntimeRegistryLease(
