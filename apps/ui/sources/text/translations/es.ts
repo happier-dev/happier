@@ -17336,6 +17336,7 @@ settingsSession: {
             happierLive: "En vivo · se cuentan mientras se ejecutan",
             countedAsOf: ({ time }: { time: string | number }) => `Contada · leída ${time}`,
             machinesUnreadable: "No se pudieron leer sus archivos de uso de agentes",
+            machineReadFailed: 'No se pudieron actualizar estas fuentes. Se muestra la última lista.',
             notFoundAgents: ({ agents }: { agents: string | number }) => `No encontrado en esta máquina: ${agents}`,
             chooseFolders: "Elegir carpetas",
             countedToggle: ({ agent }: { agent: string | number }) => `Contar el uso de ${agent}`,

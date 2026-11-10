@@ -17501,6 +17501,7 @@ settingsSession: {
             happierLive: "Live · laufend gezählt",
             countedAsOf: ({ time }: { time: string | number }) => `Gezählt · gelesen ${time}`,
             machinesUnreadable: "Ihre Nutzungsdateien von Agents konnten nicht gelesen werden",
+            machineReadFailed: 'Diese Quellen konnten nicht aktualisiert werden. Die letzte Liste wird angezeigt.',
             notFoundAgents: ({ agents }: { agents: string | number }) => `Auf diesem Gerät nicht gefunden: ${agents}`,
             chooseFolders: "Ordner wählen",
             countedToggle: ({ agent }: { agent: string | number }) => `${agent}: Nutzung zählen`,

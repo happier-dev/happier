@@ -16363,6 +16363,7 @@ settingsSession: {
       happierLive: "Na żywo · liczone podczas pracy",
       countedAsOf: ({ time }: { time: string | number }) => `Policzone · odczyt ${time}`,
       machinesUnreadable: "Nie udało się odczytać plików użycia ich agentów",
+      machineReadFailed: 'Nie udało się odświeżyć tych źródeł. Wyświetlana jest ostatnia lista.',
       notFoundAgents: ({ agents }: { agents: string | number }) => `Nie znaleziono na tej maszynie: ${agents}`,
       chooseFolders: "Wybierz foldery",
       countedToggle: ({ agent }: { agent: string | number }) => `Licz użycie ${agent}`,

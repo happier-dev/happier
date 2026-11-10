@@ -17210,6 +17210,7 @@ settingsSession: {
             happierLive: "En direct · comptées au fil de l'eau",
             countedAsOf: ({ time }: { time: string | number }) => `Comptée · lue ${time}`,
             machinesUnreadable: "Impossible de lire leurs fichiers d'utilisation d'agent",
+            machineReadFailed: 'Impossible d’actualiser ces sources. Dernière liste affichée.',
             notFoundAgents: ({ agents }: { agents: string | number }) => `Introuvable sur cette machine : ${agents}`,
             chooseFolders: "Choisir les dossiers",
             countedToggle: ({ agent }: { agent: string | number }) => `Compter l’usage de ${agent}`,

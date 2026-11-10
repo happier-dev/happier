@@ -20747,6 +20747,7 @@ const enUsage = {
       happierLive: "Live · counted as they run",
       countedAsOf: ({ time }: { time: string | number }) => `Counted · read ${time}`,
       machinesUnreadable: "Couldn't read their agent usage files",
+      machineReadFailed: "Couldn't refresh these sources. Showing the last list.",
       notFoundAgents: ({ agents }: { agents: string | number }) => `Not found on this machine: ${agents}`,
       chooseFolders: "Choose folders",
       countedToggle: ({ agent }: { agent: string | number }) => `Count ${agent} usage`,

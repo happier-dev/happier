@@ -21,6 +21,8 @@ export type UsageSourcesSnapshot = Readonly<{
     approval: ActionApprovalRequestCreatedResult | null;
     dismissedSourceIds: readonly string[];
     historyDeletion: Readonly<{ sourceId: string; deletedEventCount: number; dateRange?: UsageSourceDateRangeV1 }> | null;
+    /** The last whole-machine read failed: said once for the machine, while every source keeps its own status. */
+    machineReadFailed: boolean;
 }>;
 export type UsageSourcesController = Readonly<{
     disclosure: typeof USAGE_SOURCE_CONSENT_DISCLOSURE;
@@ -74,7 +76,7 @@ export function createUsageSourcesController(options: Readonly<{
     });
     const lastKnown = readUsageSourcesLastKnown(options.lifetime, options.machineId);
     let snapshot: UsageSourcesSnapshot = { sources: lastKnown ?? [], loaded: lastKnown !== null, retired: false, pending: [], error: null,
-        approval: null, dismissedSourceIds: [], historyDeletion: null };
+        approval: null, dismissedSourceIds: [], historyDeletion: null, machineReadFailed: false };
     const listeners = new Set<() => void>();
     const operations = new Map<AbortController, UsageSourcesOperation>();
     let retirement: Readonly<{ dispose(): void }> | undefined;
@@ -97,7 +99,7 @@ export function createUsageSourcesController(options: Readonly<{
         unsubscribeWake?.();
         retirement?.dispose();
         publish({ sources: [], loaded: false, retired: true, pending: [], error: null, approval: null,
-            dismissedSourceIds: [], historyDeletion: null });
+            dismissedSourceIds: [], historyDeletion: null, machineReadFailed: false });
     };
     const current = () => {
         if (!options.lifetime.isCurrent()) dispose();
@@ -132,6 +134,9 @@ export function createUsageSourcesController(options: Readonly<{
     const publishFailure = (actionId: UsageSourceActionId, sourceId: string | undefined, error: ActionExecuteFailure) => {
         if (!isRead(actionId)) { publish({ ...snapshot, error }); return; }
         const retain = canRetainUsageReadFailure(error.errorCode);
+        // A whole-machine read that fails says nothing new about any one source: each keeps its last-known status
+        // until its own read answers, and the failure is the machine's, said once (R140).
+        if (sourceId === undefined && retain) { publish({ ...snapshot, error, machineReadFailed: true }); return; }
         const sources = snapshot.sources.flatMap(source => sourceId !== undefined && source.sourceId !== sourceId ? [source]
             : !retain ? [] : [source.status === 'unavailable' ? source : { ...source, status: 'unavailable' as const }]);
         publish({ ...snapshot, sources: reconcile(sources), loaded: retain ? snapshot.loaded : sources.length > 0, error,
@@ -151,7 +156,7 @@ export function createUsageSourcesController(options: Readonly<{
         const controller = new AbortController();
         const operation = { actionId, ...(sourceId === undefined ? {} : { sourceId }) };
         operations.set(controller, operation);
-        publish({ ...snapshot, pending: [...operations.values()], error: null, approval: null });
+        publish({ ...snapshot, pending: [...operations.values()], error: null, approval: null, machineReadFailed: false });
         try {
             const result = await execute(actionId, input, {
                 ...(callerContext ?? { surface: 'ui' as const }), serverId: target.serverId, expectedAccountId: options.lifetime.scope.accountId,

@@ -17283,6 +17283,7 @@ settingsSession: {
             happierLive: "В реальном времени · учитываются по ходу работы",
             countedAsOf: ({ time }: { time: string | number }) => `Учтено · прочитано ${time}`,
             machinesUnreadable: "Не удалось прочитать их файлы использования агентов",
+            machineReadFailed: 'Не удалось обновить эти источники. Показан последний список.',
             notFoundAgents: ({ agents }: { agents: string | number }) => `Не найдено на этой машине: ${agents}`,
             chooseFolders: "Выбрать папки",
             countedToggle: ({ agent }: { agent: string | number }) => `Учитывать использование ${agent}`,

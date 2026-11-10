@@ -378,6 +378,11 @@ const MachineSources = React.memo(function MachineSources(
         ) : null}
         {discovering ? <ActivitySpinner size={ICON_SIZE.xs} color={theme.colors.text.tertiary} /> : null}
       </View>
+      {/* A failed re-read is the machine's, said once here; each source below keeps its own last-known status (R140). */}
+      {snapshot.machineReadFailed ? (
+        <SurfaceFreshnessLine testID={`${props.testID}.readFailed`} tone="warning" reason={t('usage.board.sources.machineReadFailed')}
+          action={{ label: t('common.retry'), onPress: () => retry(), testID: `${props.testID}.readFailed.retry` }} />
+      ) : null}
       {snapshot.approval || (controller && listed.length + missing.length > 0) ? <View style={styles.machineBody}
         onLayout={event => { if (near) { const height = event.nativeEvent.layout.height; setBodyHeight(previous => previous === height ? previous : height); } }}>
       {!near ? <View style={{ height: bodyHeight }} /> : null}

@@ -9,7 +9,7 @@ export type UsageSourcesHookOptions = Omit<Parameters<typeof createUsageSourcesC
 
 const unavailable: UsageSourcesSnapshot = {
     sources: [], loaded: false, retired: true, pending: [], error: null, approval: null,
-    dismissedSourceIds: [], historyDeletion: null,
+    dismissedSourceIds: [], historyDeletion: null, machineReadFailed: false,
 };
 const readUnavailable = () => unavailable;
 const subscribeUnavailable = () => () => {};

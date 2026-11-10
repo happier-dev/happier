@@ -292,8 +292,12 @@ describe('Usage Sources body', () => {
     await screen.update(<UsageSourcesMachines {...props} machines={[]} />);
     boundary.failDiscovery();
     await screen.update(<UsageSourcesMachines {...props} machines={[machine]} />);
-    // A revisit keeps the sources it read a moment ago while its re-read fails (stale-while-revalidate, R139).
-    await vi.waitFor(() => expect(screen.findByTestId('sources.machine.mac.source.claude-default')).toBeTruthy());
+    // A revisit keeps the sources it read a moment ago while its re-read fails (stale-while-revalidate, R139); the
+    // failure is the machine's, said once beside its name, never "Can't read this source" on every row (R140).
+    await vi.waitFor(() => expect(screen.findByTestId('sources.machine.mac.readFailed')).toBeTruthy());
+    expect(screen.findByTestId('sources.machine.mac.source.claude-default')).toBeTruthy();
+    expect(screen.getTextContent()).not.toContain(t('usage.board.sources.unavailable'));
+    expect(screen.findAllHostsByTestId('sources.machine.mac.readFailed')).toHaveLength(1);
     expect(screen.findByTestId('sources.unreadableMachines')).toBeFalsy();
     // A machine never read before that can't be read says so once, grouped with its Retry, never also "Looking for files".
     await screen.update(<UsageSourcesMachines {...props} machines={[{ ...machine, id: 'fresh' }]} />);

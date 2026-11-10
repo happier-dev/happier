@@ -74,6 +74,20 @@ describe('Usage Sources consent controller', () => {
         const revisit = createUsageSourcesController({ machineId: 'machine', lifetime: first.lifetime, executor: first.executor });
         // Shown at once, before any read: the list it read seconds earlier, never loading rows over it.
         expect(revisit.getSnapshot()).toMatchObject({ loaded: true, sources: [source] });
+        // Its re-read in progress is not a failure, and a failed re-read keeps every row's own status (R140).
+        let fail = true;
+        const held = harness(async () => { if (fail) throw new Error('machine busy'); return { sources: [source] }; });
+        fail = false;
+        await held.controller.discover();
+        held.controller.dispose();
+        fail = true;
+        const reread = createUsageSourcesController({ machineId: 'machine', lifetime: held.lifetime, executor: held.executor });
+        const pending = reread.discover();
+        expect(reread.getSnapshot()).toMatchObject({ loaded: true, sources: [source], error: null });
+        await pending;
+        expect(reread.getSnapshot().sources).toEqual([source]);
+        expect(reread.getSnapshot().error).toMatchObject({ errorCode: 'usage_source_unavailable' });
+        reread.dispose();
         // Another Account scope never sees it.
         const other = lifetimeHarness();
         expect(createUsageSourcesController({ machineId: 'machine', lifetime: other.lifetime, executor: first.executor })
@@ -169,7 +183,8 @@ describe('Usage Sources consent controller', () => {
             status = 503;
             for (let attempt = 0; attempt < 2; attempt++) {
                 await controller.refresh();
-                expect.soft(controller.getSnapshot()).toMatchObject({ sources: [{ ...reading, status: 'unavailable' }],
+                // A failed whole-machine read keeps each source's last-known status; the machine carries the one error (R140).
+                expect.soft(controller.getSnapshot()).toMatchObject({ sources: [reading],
                     pending: [], error: { errorCode: 'usage_source_unavailable' } });
                 expect(controller.getSnapshot().sources[0]?.root).toBe(admitted.root);
             }
@@ -318,7 +333,8 @@ describe('Usage Sources consent controller', () => {
         offline = true;
         await controller.refresh();
         expect(controller.getSnapshot()).toMatchObject({ loaded: true, error: { errorCode: 'usage_source_unavailable' }, pending: [] });
-        expect(controller.getSnapshot().sources).toEqual([{ ...source, status: 'unavailable' }]);
+        // The rows keep their own statuses (and identities); the failure is the machine's, said once (R140).
+        expect(controller.getSnapshot().sources).toBe(rows);
         expect(controller.getSnapshot().sources[0]?.root).toBe(rows[0]?.root);
         offline = false;
         await controller.refresh();

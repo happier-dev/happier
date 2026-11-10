@@ -15412,6 +15412,7 @@ settingsSession: {
           happierLive: "En directe · es compten mentre s’executen",
           countedAsOf: ({ time }: { time: string | number }) => `Comptat · llegit ${time}`,
           machinesUnreadable: "No s’han pogut llegir els seus fitxers d’ús d’agents",
+          machineReadFailed: 'No s’han pogut actualitzar aquestes fonts. Es mostra l’última llista.',
           notFoundAgents: ({ agents }: { agents: string | number }) => `No s’han trobat en aquesta màquina: ${agents}`,
           chooseFolders: "Tria les carpetes",
           countedToggle: ({ agent }: { agent: string | number }) => `Compta l’ús de ${agent}`,

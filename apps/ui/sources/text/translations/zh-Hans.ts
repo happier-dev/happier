@@ -16980,6 +16980,7 @@ settingsSession: {
             happierLive: "实时 · 运行时统计",
             countedAsOf: ({ time }: { time: string | number }) => `已统计 · 读取于 ${time}`,
             machinesUnreadable: "无法读取其代理使用文件",
+            machineReadFailed: '无法刷新这些来源。正在显示上次的列表。',
             notFoundAgents: ({ agents }: { agents: string | number }) => `在此机器上未找到：${agents}`,
             chooseFolders: "选择文件夹",
             countedToggle: ({ agent }: { agent: string | number }) => `统计 ${agent} 的用量`,
