@@ -1,7 +1,6 @@
 import { DaemonPluginUiArtifactByteIdentityV1Schema, PluginDeclaredUiEntriesV1Schema, type PluginDeclaredUiEntriesV1 } from '../../../daemon/contributionRegistryProjection.js';
 import {
   normalizePluginUiDestinationBindingV1,
-  resolvePluginUiDestinationBindingSlotV1,
   normalizePluginUiInlineSurfaceBindingV1,
   isPluginUiAuthoredViewInlineSurfaceRoleV1,
   normalizePluginUiSettingsPageBindingV1,
@@ -939,9 +938,7 @@ export function projectPluginPortableUiDeclarationsV1(
     }));
     const registry = {
         uiRenderersV2: contributions(ui.renderers),
-        uiViewsV2: contributions(hostBundledArtifacts ? ui.views.filter(view => view.target.kind === 'app'
-            || view.container === 'appPage' && resolvePluginUiDestinationBindingSlotV1(view.container, view.target.kind) !== null
-            || view.target.kind === 'project' && view.container === 'widget') : ui.views),
+        uiViewsV2: contributions(ui.views),
         uiSettingsPagesV2: contributions(ui.settingsPages),
         uiSettingsGroupsV2: contributions(ui.settingsGroups),
         uiListExtensionsV1: contributions(ui.listExtensions ?? []),
