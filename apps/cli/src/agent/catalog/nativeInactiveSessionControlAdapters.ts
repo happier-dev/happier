@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
 
 import {
   readProviderSessionIdSessionState,
@@ -33,6 +34,7 @@ import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agen
 import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import type { SessionCatalogControlAdapterParams } from '@/session/catalogControls/sessionCatalogControlTypes';
 import { projectNativeVendorPluginCatalog } from '@/session/catalogControls/nativeVendorPluginCatalog';
+import { projectNativeSkillCatalog } from '@/session/catalogControls/nativeSkillCatalog';
 import type {
   SessionGoalControlAdapter,
   SessionGoalControlAdapterParams,
@@ -278,6 +280,9 @@ async function buildControlContext(params: Readonly<{
       id: params.adapterParams.sessionId,
       cwd,
       activity: 'inactive' as const,
+      ...(params.launchScope.nativeOperation ? { nativeLaunch: issueAgentNativeLaunchQualifierForHost(
+        services.exec, undefined, undefined, params.launchScope.nativeOperation,
+      ) } : {}),
       launchEnvironment: Object.freeze({ values: params.launchScope.environment, unset: [] }),
       ...(providerSessionId ? { providerSessionId } : {}),
       connectedAccounts: params.launchScope.connectedAccounts,
@@ -615,29 +620,7 @@ export function createNativeInactiveCatalogAdapter(params: Readonly<{
         context,
         { signal: context.signal },
       );
-      if (result.status !== 'ok' || result.kind !== 'skills') {
-        return {
-          unsupported: true,
-          skills: [],
-          diagnostic: result.status === 'ok'
-            ? 'native_skill_catalog_kind_mismatch'
-            : result.diagnostic.code,
-        };
-      }
-      return {
-        skills: result.items.map((item) => ({
-          v: 1 as const,
-          id: item.id,
-          origin: 'vendor' as const,
-          backendId: params.agentId,
-          agentId: params.agentId,
-          name: item.name,
-          displayName: item.displayName,
-          ...(item.description ? { description: item.description } : {}),
-          ...(item.path ? { path: item.path } : {}),
-          enabled: item.enabled,
-        })),
-      };
+      return projectNativeSkillCatalog(params.agentId, result);
     },
     unavailable: (code) => operation === 'vendorPlugins'
       ? { unsupported: true as const, vendorPlugins: [], diagnostic: code }

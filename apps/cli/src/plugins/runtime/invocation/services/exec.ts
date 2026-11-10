@@ -134,6 +134,9 @@ type NativeLaunchQualifiers = WeakSet<object>;
 const INTERNAL_NATIVE_LAUNCH_QUALIFIERS = new WeakMap<ExecService, NativeLaunchQualifiers>();
 const INTERNAL_NATIVE_SESSION_CONTEXTS = new WeakMap<object, () => SessionMcpLocalContext | undefined>();
 const INTERNAL_NATIVE_MCP_MATERIAL = new WeakMap<object, () => McpLaunchMaterial>();
+// Finite controls bind their invocation's Exec once, so native probes and the
+// control process share the prepared identity without live Session MCP authority.
+const INTERNAL_NATIVE_OPERATIONS = new WeakMap<ExecService, HostAgentIsolationLaunchContext>();
 type HostResolvedAgentLaunchAuthorizer = (
     launch: ResolvedHostExecLaunch,
     signal?: AbortSignal,
@@ -186,7 +189,8 @@ function assertNativeLaunchQualifier(qualifiers: NativeLaunchQualifiers, nativeL
 /** Only host composition qualifies cold native launch intent; ordinary admission still applies. */
 export function issueAgentNativeLaunchQualifierForHost(service: ExecService,
     readSessionMcpContext?: () => SessionMcpLocalContext | undefined,
-    readMcpLaunchMaterial?: () => McpLaunchMaterial): AgentNativeLaunchQualifier {
+    readMcpLaunchMaterial?: () => McpLaunchMaterial,
+    nativeOperation?: HostAgentIsolationLaunchContext): AgentNativeLaunchQualifier {
     let qualifiers = INTERNAL_NATIVE_LAUNCH_QUALIFIERS.get(service);
     if (!qualifiers) {
         qualifiers = new WeakSet();
@@ -194,6 +198,7 @@ export function issueAgentNativeLaunchQualifierForHost(service: ExecService,
     }
     const qualifier = Object.freeze({});
     qualifiers.add(qualifier);
+    if (nativeOperation) INTERNAL_NATIVE_OPERATIONS.set(service, nativeOperation);
     if (readSessionMcpContext) INTERNAL_NATIVE_SESSION_CONTEXTS.set(qualifier, readSessionMcpContext);
     // Classify ordinary versus held native material once when the qualifier is issued.
     // A held provider stays live so withdrawal cannot become a daemon-UID fallback.
@@ -1546,8 +1551,10 @@ export function createStablePluginExecService(params: Readonly<{
         const resolveManagedExecutable = lifetime?.resolveManagedExecutable ?? params.resolveManagedExecutable;
         assertCurrent();
         const nativeLaunch = options?.nativeLaunch;
-        const agentNativeLaunch = nativeLaunch !== undefined;
         assertNativeLaunchQualifier(nativeLaunchQualifiers, nativeLaunch);
+        const nativeOperation = INTERNAL_NATIVE_OPERATIONS.get(service);
+        hostAgentIsolation = nativeOperation ?? hostAgentIsolation;
+        const agentNativeLaunch = nativeLaunch !== undefined && !nativeOperation;
         const requesterIdentity = await resolveExecRequesterIdentity({ agentIsolation: hostAgentIsolation ?? params.agentIsolation,
             requesterIdentity: params.requesterIdentity, executionKind: params.executionKind,
             signal: options?.signal ? AbortSignal.any([lifetime?.signal ?? params.signal, options.signal]) : lifetime?.signal ?? params.signal });

@@ -222,7 +222,7 @@ it('correlates parallel MCP opens through requester and signed Machine Home veri
       expect(observed).toEqual(expect.arrayContaining([expect.objectContaining({ spanId: sourceSpanId, phase: 'mcp.requester_resolution' })]));
     }
     for (const phase of ['requester.credential_binding',
-      'requester.machine_before', 'requester.machine_after', 'requester.machine_verification',
+      'requester.machine_before', 'requester.machine_verification',
       'requester.machine_profile', 'requester.machine_access', 'requester.machine_signed_verification']) {
       expect(observed, `${requestId}: ${phase}`).toEqual(expect.arrayContaining([expect.objectContaining({
         requestId: sourceRequestId, sessionId: h.sessionId, phase, status: 'completed', elapsedMs: expect.any(Number),

@@ -1,12 +1,16 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmod, copyFile, mkdir, stat, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { userInfo } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { build } from 'esbuild';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createNativeInactiveCatalogAdapter } from '@/agent/catalog/nativeInactiveSessionControlAdapters';
+import { commonRouteParams } from '@/agent/catalog/nativeInactiveSessionControlAdapters.testkit';
+import { createAgentIsolationOperationContext } from './agentIsolationSessionContext';
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -55,6 +59,7 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID
             const members = requesters.map(deriveAgentIsolationMemberIdentity);
             const users: string[] = [];
             const rules: string[] = [];
+            const workspaceRoots: string[] = [];
             const sudo = (args: string[]) => execute('sudo', ['-n', '--', ...args]);
             try {
                 // Do not change permissions/ownership of any existing shared root.
@@ -64,6 +69,9 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID
                         '--shell', '/usr/sbin/nologin', '--comment', member.ownershipMarker, member.username]);
                     users.push(member.username);
                     await sudo(['install', '-d', '-m', '0700', '-o', member.username, '-g', member.primaryGroup, member.home]);
+                    await sudo(['mkdir', '-p', '-m', '0711', dirname(member.workspaceRoot)]);
+                    await sudo(['install', '-d', '-m', '0700', '-o', member.username, '-g', member.primaryGroup, member.workspaceRoot]);
+                    workspaceRoots.push(member.workspaceRoot);
                     await execute('sudo', ['-n', '-u', member.username, '--', '/bin/sh', '-c',
                         'umask 077; printf member-private > "$HOME/private"']);
                     const rule = buildAgentIsolationProvisioningSteps({ daemonUsername: userInfo().username,
@@ -95,6 +103,63 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID
                 }
                 const owner = identities[0]!;
                 const other = identities[1]!;
+                const native = join(directory, 'codex.cjs');
+                const observationsPath = join(directory, 'native-uids');
+                await writeFile(observationsPath, '');
+                await chmod(observationsPath, 0o666);
+                await writeFile(native, `#!/usr/bin/node
+const fs = require('node:fs');
+fs.appendFileSync(process.env.FIXTURE_UID_OBSERVATIONS, JSON.stringify({uid:process.getuid()})+'\\n');
+if (process.argv.includes('--version')) { console.log('codex-cli 0.162.1'); process.exit(0); }
+const denied = p => { try { fs.readFileSync(p); return false; } catch (e) { if(e.code === 'EACCES') return true; throw e; } };
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+ const m=JSON.parse(line); if(m.id === undefined) return;
+ const result = m.method === 'plugin/list' ? [{ id:'plugin://fixture', installed:true, enabled:true,
+ name:JSON.stringify({uid:process.getuid(), own:fs.readFileSync(process.env.OWN_PRIVATE,'utf8'),
+ daemonDenied:denied(process.env.DAEMON_PRIVATE), otherDenied:denied(process.env.OTHER_PRIVATE)}) }] : {};
+ console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result}));
+});`, { mode: 0o755 });
+                vi.stubEnv('HAPPIER_CODEX_PATH', native);
+                vi.stubEnv('HAPPIER_JS_RUNTIME_PATH', '/usr/bin/node');
+                const runtime = await createAdmittedPluginRuntimeFixture();
+                try {
+                    const material = { materializationKey: randomUUID(), environment: {
+                        PATH: '/usr/bin:/bin', OWN_PRIVATE: join(owner.home, 'private'),
+                        HAPPIER_CODEX_PATH: native, HAPPIER_JS_RUNTIME_PATH: '/usr/bin/node',
+                        FIXTURE_UID_OBSERVATIONS: observationsPath,
+                        DAEMON_PRIVATE: daemonPrivate, OTHER_PRIVATE: join(other.home, 'private'),
+                    }, selectedMaterials: [] };
+                    const nativeOperation = createAgentIsolationOperationContext({
+                        machine: { read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1',
+                            status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [directory] }) },
+                        managedHappierBinaryPath: binary, requesterIdentity: requesters[0]!, memberIdentity: owner,
+                        signal: new AbortController().signal, readMaterial: () => material,
+                    });
+                    const adapter = createNativeInactiveCatalogAdapter({ agentId: 'codex',
+                        native: { vendorPlugins: true, skills: false }, dependencies: {
+                            acquireRuntimeRegistryLease: async () => {
+                                const lease = runtime.controller.tryAcquireRuntimeRegistry();
+                                if (!lease) throw new Error('Fixture runtime unavailable');
+                                return lease;
+                            },
+                            resolveLaunchScope: async () => ({ environment: material.environment, connectedAccounts: [],
+                                nativeOperation, async assertCurrent() {}, async dispose() {} }),
+                        } });
+                    const result = await adapter.listVendorPlugins!({ ...commonRouteParams('member-inactive'),
+                        cwd: directory, sessionMachineId: 'machine-local' });
+                    expect(result, JSON.stringify(result))
+                        .toMatchObject({ vendorPlugins: [expect.objectContaining({
+                        name: JSON.stringify({ uid: owner.agentUid, own: 'member-private', daemonDenied: true, otherDenied: true }),
+                    })] });
+                    const uids = (await readFile(observationsPath, 'utf8')).trim().split('\n')
+                        .map(line => (JSON.parse(line) as { uid: number }).uid);
+                    expect(new Set(uids)).toEqual(new Set([owner.agentUid]));
+                    expect(() => createAgentIsolationOperationContext({
+                        machine: { read: () => nativeOperation.read() }, managedHappierBinaryPath: binary,
+                        requesterIdentity: requesters[1]!, memberIdentity: owner,
+                        signal: new AbortController().signal, readMaterial: () => material,
+                    })).toThrowError('Execution material belongs to a different requester');
+                } finally { await runtime.dispose(); vi.unstubAllEnvs(); }
                 // The production transport selects a public parent for a different
                 // UID; the daemon Home must remain private and non-traversable.
                 const transport = await prepareSessionMcpLocalTransport({ agentUid: owner.agentUid });
@@ -143,6 +208,7 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID
                 }
             } finally {
                 for (const rule of rules.reverse()) await sudo(['rm', '-f', '--', rule]);
+                for (const root of workspaceRoots.reverse()) await sudo(['rmdir', '--', root]);
                 for (const username of users.reverse()) await sudo(['userdel', '--remove', username]);
             }
         }, '/tmp');

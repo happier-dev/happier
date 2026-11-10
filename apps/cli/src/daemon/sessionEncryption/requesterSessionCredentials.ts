@@ -506,7 +506,7 @@ export type RequesterSessionMachineAdmissionBoundary = Readonly<{
 
 // Discovery belongs to one binding invocation, including opaque ingress
 // callbacks that reach this same Machine owner. It never retains authority:
-// both Machine checks still sign and ask Home, and every later binding discovers
+// the Machine check signs and asks Home, and every later binding discovers
 // its context anew. Exact identity matching prevents another callback borrowing it.
 type RequesterBindingDiscovery = {
   active: boolean;
@@ -664,12 +664,6 @@ export async function resolveRequesterSessionBootstrap(input: RequesterSessionCr
       if (current === null) refused = true;
       return current;
     };
-    const verify = (credentials: StoredCredentials) => async (signal?: AbortSignal) => {
-      const current = await read(credentials)(signal);
-      // Local Home/installation changes and unreadable responses are not revocation.
-      if (current === undefined) throw new Error('requester_session_machine_admission_unavailable');
-      return current !== null;
-    };
     const reportRefusal = async () => {
       const signal = input.signal && input.machineAdmissionBoundary.signal
         ? AbortSignal.any([input.signal, input.machineAdmissionBoundary.signal]) : input.signal ?? input.machineAdmissionBoundary.signal;
@@ -682,8 +676,12 @@ export async function resolveRequesterSessionBootstrap(input: RequesterSessionCr
     const result = await prepareRequesterSessionBootstrap({ credentials, attribution: input.attribution, machineAdmission,
       ...(stored.homeServerIdentityId ? { homeServerIdentityId: stored.homeServerIdentityId } : {}),
       boundary: { serverId: input.attribution.serverId, serverHttpBaseUrl: input.serverHttpBaseUrl, happyHomeDir: input.happyHomeDir },
-      preparedSessionId: input.sessionId, boundSessionId: input.sessionId, verifyMachineAdmissionCurrent: verify(credentials), signal: input.signal });
+      // Recovery already admitted this exact Machine above. Bootstrap consumes
+      // that decision; later runtime admissions use the ordinary owner below.
+      preparedSessionId: input.sessionId, boundSessionId: input.sessionId,
+      verifyMachineAdmissionCurrent: async signal => { signal?.throwIfAborted(); return machineAdmission !== undefined; }, signal: input.signal });
     if (!result) await reportRefusal();
+    if (result) bindRequesterSessionRuntimeMachineAdmissionCurrentness({ bootstrap: result.admitted, boundary: input.machineAdmissionBoundary });
     return result?.admitted ?? null;
   } catch (error) { rethrowRequesterHomeReadFailure(error); return null; }
 }
@@ -886,7 +884,7 @@ async function readRequesterSessionCredentialBinding(
     caller, operationId: null };
   return await timeWebLatencyPhase('requester.credential_binding', async (): Promise<true | null | undefined> => {
     let sessionReadRefused = false;
-    const observe = async <T>(phase: 'machine_before' | 'profile' | 'encryption' | 'session' | 'machine_after', work: () => Promise<T>): Promise<T> => {
+    const observe = async <T>(phase: 'machine_before' | 'profile' | 'encryption' | 'session', work: () => Promise<T>): Promise<T> => {
       const startedAt = performance.now();
       let status: 'completed' | 'failed' = 'failed';
       let diagnostic: ReturnType<typeof readUnexpectedActionErrorDiagnosticV1> | undefined;
@@ -928,11 +926,9 @@ async function readRequesterSessionCredentialBinding(
           && (input.expectedSessionCreationTag === undefined
             || correspondence?.success === true && correspondence.data.sessionCreationTag === input.expectedSessionCreationTag
               && correspondence.data.recipe.execution.machineId === input.attribution.machineId);
-        const after = bound
-          ? await observe('machine_after', () => readMachineCurrent(input.signal)) : null;
         if (input.signal?.aborted || !isRequesterAccountEncryptionCurrentnessObserved({ accountId: input.attribution.accountId,
           token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl }, currentness)) return undefined;
-        return after == null ? after : true;
+        return bound ? true : null;
       } catch (error) {
         rethrowRequesterHomeReadFailure(error);
         // Preserve the existing Workspace recovery error contract.

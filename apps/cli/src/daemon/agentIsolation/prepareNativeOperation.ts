@@ -21,6 +21,11 @@ export type PreparedRequesterNativeIdentity = Readonly<{
   | { kind: 'sharedAgent'; identity: Pick<AgentIsolationMemberNativeIdentity, 'agentUid' | 'agentGid' | 'home'> }
 )>;
 
+/** A committed member binding is ready independently of the shared agent user. */
+export function projectMemberNativeOperationSnapshot(snapshot: HostAgentIsolationLaunchSnapshot | undefined): HostAgentIsolationLaunchSnapshot | undefined {
+  return snapshot && { ...snapshot, status: { kind: 'effective', platform: 'linux' } };
+}
+
 export type PrepareRequesterNativeOperationInput = Readonly<{
   requesterIdentity: HostRequesterExecutionIdentity;
   /** Exact native fact already prepared by Session admission. */
@@ -82,7 +87,7 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
     });
     // This operation consumes a committed member binding. Global shared-user
     // readiness is independent and is not republished by native operations.
-    const memberSnapshot = snapshot && { ...snapshot, status: { kind: 'effective' as const, platform: 'linux' as const } };
+    const memberSnapshot = projectMemberNativeOperationSnapshot(snapshot);
     if (!input.preparedIdentity) assertHostRequesterExecutionAdmissionForHost({ identity: selected, snapshot: memberSnapshot, agentLaunchKind: 'exec' });
     memberIdentity = native.identity;
     workingDirectory = native.identity.workspaceRoot;

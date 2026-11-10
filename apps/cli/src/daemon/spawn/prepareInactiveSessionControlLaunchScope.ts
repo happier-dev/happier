@@ -27,6 +27,8 @@ import { prepareDaemonProviderLaunch } from './prepareDaemonProviderLaunch';
 import { prepareDaemonSpawnChildEnvironment } from './prepareDaemonSpawnChildEnvironment';
 import { resolveSpawnLaunchProfileDefaults } from './resolveSpawnLaunchProfileDefaults';
 import type { ResolveInactiveSessionControlLaunchScope, InactiveSessionControlLaunchScope } from './inactiveSessionControlLaunchScope';
+import { createAgentIsolationOperationContext } from '../agentIsolation/agentIsolationSessionContext';
+import { projectMemberNativeOperationSnapshot, type PreparedRequesterNativeIdentity } from '../agentIsolation/prepareNativeOperation';
 
 type ConnectedAdmission = Parameters<typeof prepareDaemonConnectedServices>[0];
 type ProviderAdmission = Parameters<typeof prepareDaemonProviderLaunch>[0];
@@ -117,8 +119,13 @@ export async function prepareInactiveSessionControlLaunchScope(
     // owner. Without that final scope, a control cannot borrow native defaults.
     if (provider.attempt && !('materializeAfterHooks' in provider.attempt)) unavailable();
     await assertCurrent();
+    let nativeIdentity: PreparedRequesterNativeIdentity | undefined;
     const connected = await prepareDaemonConnectedServices({
       ...admission, signal, accountSettingsSnapshot: snapshot ?? undefined, options: provider.options,
+      prepareAgentIsolationMember: async request => {
+        nativeIdentity = await admission.prepareAgentIsolationMember?.(request);
+        return nativeIdentity;
+      },
       normalizedExistingSessionId: adapterParams.sessionId, requestedSessionId: '',
       effectiveResume: options.resume ?? '', catalogAgentId: agentId, pluginRuntimeRegistry: registry,
       isAccountRuntimeCurrent: async () => { await assertCurrent(); return true; },
@@ -190,9 +197,28 @@ export async function prepareInactiveSessionControlLaunchScope(
     if (!identity) unavailable();
     const agentCliLaunch = child.spawnEnvironment.agentCliLaunchSpec
       ? bindAgentCliLaunchSpec({ localAgentId: identity.localId, spec: child.spawnEnvironment.agentCliLaunchSpec }) : undefined;
+    let nativeOperation: InactiveSessionControlLaunchScope['nativeOperation'];
+    if (nativeIdentity) {
+      const preparedIdentity = nativeIdentity;
+      const machine = admission.agentIsolation;
+      const target = connected.agentLaunchMaterials;
+      if (!machine?.managedHappierBinaryPath || !target) unavailable();
+      const material = { materializationKey: connected.materializationKey, environment,
+        selectedMaterials: target.selectedMaterials,
+        ...(target.accountSettingsApplication ? { accountSettingsApplication: target.accountSettingsApplication } : {}) };
+      const operation = { machine: { ...machine, read: () => preparedIdentity.kind === 'member'
+          ? projectMemberNativeOperationSnapshot(preparedIdentity.snapshot)
+          : preparedIdentity.snapshot },
+        managedHappierBinaryPath: machine.managedHappierBinaryPath,
+        requesterIdentity: nativeIdentity.requesterIdentity, signal, readMaterial: () => material, readTarget: () => target };
+      nativeOperation = createAgentIsolationOperationContext(nativeIdentity.kind === 'member'
+        ? { ...operation, memberIdentity: nativeIdentity.identity, daemonObservation: nativeIdentity.daemonObservation }
+        : { ...operation, nativeIdentity: nativeIdentity.identity });
+    }
     resources.register(provider.attempt?.takeCleanupOnExit());
     const dispose = resources.transfer();
     return { environment, connectedAccounts, ...(exactPurposeBindingSubjectId ? { exactPurposeBindingSubjectId } : {}),
+      ...(nativeOperation ? { nativeOperation } : {}),
       ...(agentCliLaunch ? { agentCliLaunch } : {}), providerBindingActive: provider.attempt !== null,
       ...(admission.connectedAccountsOwner ? { connectedAccountsOwner: admission.connectedAccountsOwner } : {}),
       assertCurrent,

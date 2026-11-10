@@ -687,12 +687,15 @@ describe('requester Session lifecycle custody', () => {
     });
     const running = await recover();
     expect(running?.getBoundSessionId()).toBe(binding.sessionId);
+    expect(host.requests.filter(request => request.path.endsWith('/admission/verify'))).toHaveLength(1);
     await running?.dispose();
     host.setSignedAdmissionAvailable(false);
     expect(await recover()).toBeNull();
+    expect(host.requests.filter(request => request.path.endsWith('/admission/verify'))).toHaveLength(2);
     expect(await readFile(custody.path, 'utf8')).toBe(original);
     host.setSignedAdmissionAvailable(true);
     const resumed = await recover();
+    expect(host.requests.filter(request => request.path.endsWith('/admission/verify'))).toHaveLength(3);
     expect(resumed?.getBoundSessionId()).toBe(binding.sessionId);
     expect(resumed?.attribution).toEqual(attribution);
     expect(resumed?.credentials.token).toBe(requesterCredentials.token);
@@ -843,7 +846,7 @@ describe('requester Session lifecycle custody', () => {
       expect(paths.filter(path => path === '/v1/account/profile')).toHaveLength(1);
       expect(host.requests.filter(request => request.path.startsWith('/v2/sessions/session')).map(request => request.purpose))
         .toEqual(['session-detail:requester-binding']);
-      expect(paths.filter(path => path.endsWith('/admission/verify'))).toHaveLength(2);
+      expect(paths.filter(path => path.endsWith('/admission/verify'))).toHaveLength(1);
       host.setAccess(false);
       expect(await verify()).toBe(false);
     } finally { phases.mockRestore(); }

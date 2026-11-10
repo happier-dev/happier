@@ -6,6 +6,7 @@ import type { BoundAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/age
 
 export type InactiveSessionControlLaunchScope = Readonly<{
   environment: Readonly<Record<string, string>>;
+  nativeOperation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
   connectedAccounts: AgentSessionControlContext['session']['connectedAccounts'];
   exactPurposeBindingSubjectId?: string;
   agentCliLaunch?: BoundAgentCliLaunchSpec;
