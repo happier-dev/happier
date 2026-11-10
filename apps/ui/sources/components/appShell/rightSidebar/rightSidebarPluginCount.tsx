@@ -68,7 +68,10 @@ export function resolvePluginRightSidebarCountBinding(input: PluginRightSidebarC
     if (!executionPlacement) return null;
     const capability = readSelectedPluginUiResourceCapability(executionPlacement);
     if (!capability.readable || !capability.dynamic) return null;
-    const authority = resolvePluginSurfaceLaunchAuthority({ placement: executionPlacement, accountLifetime,
+    // Counts execute on the selected Resource's Machine. The original placement
+    // keeps its independent Account renderer custody; this private clone does not.
+    const { hostAccountOrigin: _rendererCustody, ...countPlacement } = executionPlacement;
+    const authority = resolvePluginSurfaceLaunchAuthority({ placement: countPlacement, accountLifetime,
         ...(isApp ? {} : { scoped: input.runtime }) });
     if (!authority?.machineId || !authority.serverId || !authority.occurrenceId
         || declaration.occurrenceId !== undefined && declaration.occurrenceId !== authority.occurrenceId) return null;
