@@ -504,7 +504,8 @@ describe('Voice composer through Sync HTTP custody', () => {
         terminalResponse = 'missing_handoff';
         const result = await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'hello', localId: 'handoff-unclaimed',
             getAdapter: getVoiceAdapterRegistry().get });
-        expect(result).toEqual({ ok: true, disposition: 'pending', localId: 'handoff-unclaimed' });
+        expect(result).toEqual({ ok: true, disposition: 'pending', localId: 'handoff-unclaimed', effectAttempted: false,
+            failureCause: { phase: 'voice.pending.enqueue', errorClass: 'Error', errorCode: null, httpStatus: null } });
         expect(providerMessages).toEqual([]);
         expect(pendingRows()).toEqual([expect.objectContaining({ localId: 'handoff-unclaimed', sendState: 'unconfirmed' })]);
     });
@@ -541,7 +542,8 @@ describe('Voice composer through Sync HTTP custody', () => {
             expect(adapter).toBeDefined();
             expect(await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'hello', localId: 'synthetic-unconfirmed',
                 store, getAdapter: getVoiceAdapterRegistry().get,
-            })).toEqual({ ok: true, localId: 'synthetic-unconfirmed', disposition: 'pending' });
+            })).toEqual({ ok: true, localId: 'synthetic-unconfirmed', disposition: 'pending', effectAttempted: false,
+                failureCause: { phase: 'voice.pending.enqueue', errorClass: 'Error', errorCode: null, httpStatus: null } });
             expect(pendingRows()).toEqual([expect.objectContaining({ localId: 'synthetic-unconfirmed', sendState: 'unconfirmed' })]);
             expect(providerMessages).toEqual([]);
         } finally { await assembly.dispose(); registerVoiceAdapters(initialRegisteredAdapters); }

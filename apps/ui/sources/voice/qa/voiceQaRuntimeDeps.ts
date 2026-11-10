@@ -14,6 +14,7 @@ import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSession
 import { localVoiceRuntimeController } from '@/voice/local/localVoiceRuntimeController';
 import { installDaemonSpeechStreamQaRouteRequirement } from '@/voice/runtime/daemonInference/daemonSpeechStreamQaRouteRequirement';
 import {
+    createDurableVoiceTextTurnError,
     submitDurableVoiceTextTurn,
     voiceTextTurnPendingPort,
 } from '@/voice/binding/sendVoiceSessionComposerText';
@@ -148,9 +149,9 @@ export function createDefaultVoiceQaControllerDeps(): VoiceQaControllerDeps {
                     });
                 },
             });
-            if (!result.ok) throw new Error(result.message ?? result.reason);
+            if (!result.ok) throw createDurableVoiceTextTurnError(result);
             if (result.disposition === 'settled' || result.disposition === 'accepted_unsettled') return;
-            throw new Error(result.disposition === 'ambiguous' ? 'voice_turn_dispatch_ambiguous' : 'voice_turn_pending');
+            throw createDurableVoiceTextTurnError(result);
         },
         waitForInterruptedLocalAssistantTurn: async ({ conversationSessionId, timeoutMs, baseline }) => {
             const currentBaseline = baseline ?? captureAssistantTextMessageBaseline(conversationSessionId);

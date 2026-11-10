@@ -20,6 +20,7 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { resolveVoiceBindingBySessionId } from '@/voice/binding/resolveVoiceBindingBySessionId';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import {
+  createDurableVoiceTextTurnError,
   submitDurableVoiceTextTurn,
   type VoiceTextTurnPendingPort,
 } from '@/voice/binding/sendVoiceSessionComposerText';
@@ -135,10 +136,9 @@ export async function sendVoiceTextTurn(params: {
     // Pending owns durable delivery settlement; the original turn failure owns
     // the runtime diagnostic for both rejected and already accepted input.
     if (dispatchOutcome.failure) throw dispatchOutcome.failure.error;
-    if (!result.ok) throw Object.assign(new Error(result.message ?? result.reason), { code: result.errorCode ?? result.reason });
+    if (!result.ok) throw createDurableVoiceTextTurnError(result);
     if (result.disposition === 'settled' || result.disposition === 'accepted_unsettled') return;
-    const code = result.errorCode ?? (result.disposition === 'ambiguous' ? 'voice_turn_dispatch_ambiguous' : 'voice_turn_pending');
-    throw Object.assign(new Error(code), { code });
+    throw createDurableVoiceTextTurnError(result);
   }
 
   const transitionVoiceRuntimeToIdleIfCurrent = (idleParams: Parameters<typeof transitionVoiceRuntimeToIdle>[0]) => {

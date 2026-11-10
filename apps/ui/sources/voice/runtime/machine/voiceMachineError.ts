@@ -2,7 +2,7 @@ import { isMicrophoneUnavailableError, isPermissionDeniedMicrophoneError } from 
 import type { MicSessionFailure } from '@/voice/runtime/mic/MicSession';
 import { readVoiceProviderCredentialRemediationCode } from '@happier-dev/protocol/voice/providerOperations';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS, readConnectedServiceUxDiagnosticFromError, type ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
-import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
+import { readSafeVoiceRuntimeFailureCode, readSafeVoiceRuntimeFailureFacts } from '@/voice/runtime/voiceRuntimeFailureCode';
 import { readSafeVoiceProviderFailureMessage } from './voiceMachineErrorCopy';
 import { createProviderErrorV1, ProviderErrorCodeV1Schema, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { isVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
@@ -123,6 +123,7 @@ export function createVoiceMachineError(params: Readonly<{
     return {
         kind: params.kind,
         reason: providerError?.code ?? uxDiagnostic?.code ?? params.reason,
+        ...readSafeVoiceRuntimeFailureFacts(params.cause),
         ...(providerMessage ? { providerMessage } : {}),
         ...(quota?.success && (quota.data.usageLimitRecovery !== undefined || quota.data.usageLimitResetAtMs !== undefined)
             ? { usageLimit: { usageLimitRecovery: quota.data.usageLimitRecovery,
@@ -204,7 +205,7 @@ export function classifyVoiceMachineError(
     fallback: Readonly<{ kind?: VoiceMachineErrorKind; reason?: string }> = {},
 ): VoiceMachineError {
     const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(error);
-    if (uxDiagnostic) return createVoiceMachineError({ kind: 'provider_error', reason: uxDiagnostic.code, uxDiagnostic });
+    if (uxDiagnostic) return createVoiceMachineError({ kind: 'provider_error', reason: uxDiagnostic.code, uxDiagnostic, cause: error });
     if (isAbortError(error)) {
         return createVoiceMachineError({
             kind: 'turn_aborted',

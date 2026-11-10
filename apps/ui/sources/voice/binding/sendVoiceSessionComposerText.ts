@@ -15,7 +15,8 @@ import { voiceSessionBindingStore } from './voiceConversationBindingStore';
 import { resolveVoiceSessionComposerRouting } from './voiceSessionComposerRouting';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getVoiceSessionPresentedAttemptId, recordVoiceSessionFirstSuccessInput } from '@/voice/session/voiceSessionStore';
-import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
+import { readSafeVoiceRuntimeFailureCode, readSafeVoiceRuntimeFailureFacts } from '@/voice/runtime/voiceRuntimeFailureCode';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { log } from '@/log';
 
 export type VoiceTextTurnPendingPort = Readonly<{
@@ -36,7 +37,12 @@ export type VoiceTextTurnPendingPort = Readonly<{
     }>): Promise<void>;
 }>;
 
-export type DurableVoiceTextTurnResult =
+export type DurableVoiceTextTurnResult = Readonly<{
+    failureCause?: ActionFailureCauseV1;
+    /** Native/provider turn dispatch, not the persistence outcome of the Pending input. */
+    effectAttempted?: boolean;
+    cause?: unknown;
+}> & (
     | Readonly<{
         ok: true;
         localId: string;
@@ -50,7 +56,31 @@ export type DurableVoiceTextTurnResult =
         localId: string;
         message?: string;
         errorCode?: string;
-    }>;
+    }>);
+
+function retainDurableVoiceTextTurnFailure(
+    result: DurableVoiceTextTurnResult,
+    cause: unknown,
+    enqueueFailure = false,
+): DurableVoiceTextTurnResult {
+    const facts = enqueueFailure
+        // Native/provider turn dispatch cannot begin before enqueue acknowledges custody.
+        // Pending persistence may still be indeterminate; its outbox stays owned.
+        ? { failureCause: projectActionFailureCauseV1(cause, 'voice.pending.enqueue'), effectAttempted: false }
+        : readSafeVoiceRuntimeFailureFacts(cause);
+    return Object.defineProperty({ ...result, ...facts }, 'cause', { value: cause });
+}
+
+/** One failure reconstruction for Local Voice and both QA entry points. */
+export function createDurableVoiceTextTurnError(result: DurableVoiceTextTurnResult): Error {
+    const code = result.errorCode ?? (!result.ok ? result.reason
+        : result.disposition === 'ambiguous' ? 'voice_turn_dispatch_ambiguous' : 'voice_turn_pending');
+    return Object.assign(new Error(!result.ok ? result.message ?? result.reason : code, { cause: result.cause }), {
+        code,
+        ...(result.failureCause ? { failureCause: result.failureCause } : {}),
+        ...(result.effectAttempted !== undefined ? { effectAttempted: result.effectAttempted } : {}),
+    });
+}
 
 export const voiceTextTurnPendingPort: VoiceTextTurnPendingPort = {
     enqueuePendingMessage: async ({ conversationSessionId, text, localId, source }) =>
@@ -110,13 +140,13 @@ export async function submitDurableVoiceTextTurn(params: Readonly<{
         });
     } catch (error) {
         const errorCode = readSafeVoiceRuntimeFailureCode(error);
-        return {
+        return retainDurableVoiceTextTurnFailure({
             ok: false,
             reason: 'send_failed',
             localId,
             ...(errorCode ? { errorCode } : {}),
             ...(error instanceof Error && error.message.trim() ? { message: error.message } : {}),
-        };
+        }, error, true);
     }
     if (enqueueResult.localId !== localId) {
         return { ok: false, reason: 'send_failed', localId, message: 'voice_pending_local_id_mismatch' };
@@ -128,7 +158,12 @@ export async function submitDurableVoiceTextTurn(params: Readonly<{
             : { ok: false, reason: 'terminal_rejected', localId };
     }
     if (enqueueResult.settled === true) return { ok: true, localId, disposition: 'settled' };
-    if (enqueueResult.accepted === false) return { ok: true, localId, disposition: 'pending' };
+    if (enqueueResult.accepted === false) {
+        const result = { ok: true, localId, disposition: 'pending' } as const;
+        return 'failure' in enqueueResult
+            ? retainDurableVoiceTextTurnFailure(result, enqueueResult.failure, true)
+            : result;
+    }
     if (enqueueResult.externalHandoffClaimed !== true) {
         return {
             ok: false,
@@ -207,21 +242,21 @@ export async function submitDurableVoiceTextTurn(params: Readonly<{
         }
         const message = combineVoiceTextTurnSettlementError(error, settlementError);
         if (definiteRejection) {
-            return {
+            return retainDurableVoiceTextTurnFailure({
                 ok: false,
                 reason: 'terminal_rejected',
                 localId,
                 ...(errorCode ? { errorCode } : {}),
                 ...(message ? { message } : {}),
-            };
+            }, error);
         }
-        return {
+        return retainDurableVoiceTextTurnFailure({
             ok: true,
             localId,
             disposition: 'ambiguous',
             ...(errorCode ? { errorCode } : {}),
             ...(message ? { message } : {}),
-        };
+        }, error);
     }
     if (!acceptanceSettled) {
         const message = combineVoiceTextTurnSettlementError(undefined, acceptanceSettlementError);

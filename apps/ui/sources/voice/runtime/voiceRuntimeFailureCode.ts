@@ -2,6 +2,7 @@ import { log } from '@/log';
 import { normalizeVoiceFailureCode } from '@happier-dev/protocol/voice/providerOperations';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { isVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
+import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type {
   VoiceConversationSessionMetadataCommitReason,
 } from '@/voice/persistence/voiceConversationSession';
@@ -75,12 +76,14 @@ export function recordVoiceRuntimeFailure(
   kind: string,
   reason: string,
   diagnosticReason?: unknown,
+  providerCode?: string,
 ): void {
   log.log(`[voiceRuntimeFailure] ${JSON.stringify({
     providerId,
     outcome,
     kind,
     reason,
+    ...(providerCode === undefined ? {} : { providerCode }),
     ...(diagnosticReason === undefined
       ? {}
       : {
@@ -130,4 +133,18 @@ export function readSafeVoiceRuntimeFailureCode(error: unknown): string | null {
 
 export function normalizeVoiceRuntimeFailureCode(code: unknown): string {
   return normalizeVoiceFailureCode(code) ?? 'voice_connection_failed';
+}
+
+/** Keep only the producer's closed, content-free operation facts. */
+export function readSafeVoiceRuntimeFailureFacts(error: unknown): Readonly<{
+  failureCause?: ActionFailureCauseV1;
+  effectAttempted?: boolean;
+}> {
+  const cause = isVoiceTextTurnRejectedBeforeEffectError(error) ? error.cause : error;
+  if (!cause || typeof cause !== 'object') return {};
+  const failureCause = 'failureCause' in cause ? ActionFailureCauseV1Schema.safeParse(cause.failureCause) : null;
+  return {
+    ...(failureCause?.success ? { failureCause: failureCause.data } : {}),
+    ...('effectAttempted' in cause && typeof cause.effectAttempted === 'boolean' ? { effectAttempted: cause.effectAttempted } : {}),
+  };
 }

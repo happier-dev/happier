@@ -4,6 +4,19 @@ import { voiceConversationRuntimeMachine } from './VoiceConversationRuntimeMachi
 import { createVoiceMachineError } from './voiceMachineError';
 
 describe('voiceConversationRuntimeHelpers', () => {
+    it.each([undefined, false, true])('preserves only producer-authored dispatch effect facts (%s)', async (effectAttempted) => {
+        const { transitionVoiceRuntimeToIdle } = await import('./voiceConversationRuntimeHelpers');
+        const { deriveLocalVoiceSessionSnapshot } = await import('./deriveLocalVoiceSessionSnapshot');
+        const failureCause = { phase: 'rpc.relay', errorClass: 'TypeError' as const, errorCode: 'ECONNRESET', httpStatus: null };
+        const cause = Object.assign(new Error('PRIVATE_DISPATCH_BODY'), { failureCause,
+            ...(effectAttempted !== undefined ? { effectAttempted } : {}) });
+        transitionVoiceRuntimeToIdle({ controlSessionId: 's1', reason: 'voice_turn_dispatch_ambiguous', cause });
+        const snapshot = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot());
+        expect(snapshot).toMatchObject({ errorFailureCause: failureCause });
+        if (effectAttempted === undefined) expect(snapshot).not.toHaveProperty('errorEffectAttempted');
+        else expect(snapshot).toHaveProperty('errorEffectAttempted', effectAttempted);
+        expect(JSON.stringify(snapshot)).not.toContain('PRIVATE_DISPATCH_BODY');
+    });
     it.each([false, true])('presents the connected account owner reason and retryability (%s) at terminal Voice', async (retryable) => {
         const { ConnectedServiceUxDiagnosticV1Schema } = await import('@happier-dev/protocol/connect/connectedServiceUxDiagnostics');
         const { transitionVoiceRuntimeToIdle } = await import('./voiceConversationRuntimeHelpers');

@@ -32,6 +32,11 @@ function areVoiceMachineErrorsEqual(
     }
     return a.kind === b.kind
         && a.reason === b.reason
+        && a.failureCause?.phase === b.failureCause?.phase
+        && a.failureCause?.errorClass === b.failureCause?.errorClass
+        && a.failureCause?.errorCode === b.failureCause?.errorCode
+        && a.failureCause?.httpStatus === b.failureCause?.httpStatus
+        && a.effectAttempted === b.effectAttempted
         && a.phase === b.phase
         && a.retryPolicy === b.retryPolicy
         && a.recoveryAction === b.recoveryAction

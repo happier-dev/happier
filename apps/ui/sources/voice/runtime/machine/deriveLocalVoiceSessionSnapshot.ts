@@ -196,6 +196,8 @@ export function deriveLocalVoiceSessionSnapshot(
             ? {
                 errorCode: snapshot.error.kind,
                 errorMessage: snapshot.error.reason,
+                ...(snapshot.error.failureCause ? { errorFailureCause: snapshot.error.failureCause } : {}),
+                ...(snapshot.error.effectAttempted !== undefined ? { errorEffectAttempted: snapshot.error.effectAttempted } : {}),
                 ...(snapshot.error.providerMessage ? { errorProviderMessage: snapshot.error.providerMessage } : {}),
                 ...(snapshot.error.providerError ? { errorProviderError: snapshot.error.providerError } : {}),
                 ...(snapshot.error.usageLimit ? { errorUsageLimit: snapshot.error.usageLimit } : {}),

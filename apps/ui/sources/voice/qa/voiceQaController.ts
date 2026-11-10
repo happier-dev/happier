@@ -10,6 +10,7 @@ import { getVoiceConversationRuntimeSnapshot } from '@/voice/runtime/machine/voi
 import { deriveLocalVoiceSessionSnapshot } from '@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot';
 import { getVoiceAdapterRegistry } from '@/voice/session/voiceAdapterRegistry';
 import {
+  createDurableVoiceTextTurnError,
   submitDurableVoiceTextTurn,
   type VoiceTextTurnPendingPort,
 } from '@/voice/binding/sendVoiceSessionComposerText';
@@ -430,7 +431,7 @@ export function createVoiceQaController(
           });
           if (!durableResult.ok) {
             deps.qaStore.getState().setStatus('error');
-            throw new Error(durableResult.message ?? durableResult.reason);
+            throw createDurableVoiceTextTurnError(durableResult);
           }
           if (interruptedFollowUpText) {
             return { assistantText: interruptedFollowUpText, actions: [] };
@@ -440,11 +441,7 @@ export function createVoiceQaController(
             if (durableResult.disposition === 'settled') {
               return { assistantText: '', actions: [] };
             }
-            throw new Error(
-              durableResult.disposition === 'ambiguous'
-                ? 'voice_turn_dispatch_ambiguous'
-                : 'voice_turn_pending',
-            );
+            throw createDurableVoiceTextTurnError(durableResult);
           }
           if (appendedAssistantTurn && shouldWatchAsyncTargetFollowUp) {
             void appendFollowUpAssistantTurn(15_000);

@@ -1,6 +1,35 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createVoiceMachineError } from './voiceMachineError';
 
 describe('voiceConversationRuntimeStore', () => {
+    it('publishes changed operation failure facts and coalesces equivalent parsed diagnostics', async () => {
+        const { DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT, setVoiceConversationRuntimeSnapshot,
+            useVoiceConversationRuntimeStore } = await import('./voiceConversationRuntimeStore');
+        const publish = (httpStatus: number, effectAttempted: boolean) => setVoiceConversationRuntimeSnapshot({
+            ...DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT, controlSessionId: 's1', error: createVoiceMachineError({
+                kind: 'provider_error', reason: 'voice_turn_pending', cause: {
+                    failureCause: { phase: 'voice.pending.enqueue', errorClass: 'Error', errorCode: null, httpStatus },
+                    effectAttempted,
+                },
+            }),
+        });
+        setVoiceConversationRuntimeSnapshot(DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT);
+        const listener = vi.fn();
+        const unsubscribe = useVoiceConversationRuntimeStore.subscribe(listener);
+        try {
+            publish(503, false);
+            expect(listener).toHaveBeenCalledTimes(1);
+            publish(503, false);
+            expect(listener).toHaveBeenCalledTimes(1);
+            publish(504, false);
+            expect(listener).toHaveBeenCalledTimes(2);
+            publish(504, true);
+            expect(listener).toHaveBeenCalledTimes(3);
+        } finally {
+            unsubscribe();
+            setVoiceConversationRuntimeSnapshot(DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT);
+        }
+    });
     it('does not notify subscribers when a snapshot update leaves runtime state unchanged', async () => {
         vi.resetModules();
 

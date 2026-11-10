@@ -2357,6 +2357,8 @@ export type PendingMessageEnqueueResultV2 = Readonly<{
     terminal?: true;
     settled?: true;
     externalHandoffClaimed?: true;
+    /** Original enqueue failure; internal only, never a persistence verdict. */
+    failure?: unknown;
 }>;
 
 async function enqueuePendingMessageV2Owned(params: {
@@ -2784,12 +2786,12 @@ async function enqueuePendingMessageV2Owned(params: {
         if (isTransientConnectivityError(e)) {
             (await setPendingMessageSendState(sessionId, localId, 'unconfirmed', outboxScope));
             if (!recipient && isActiveScope() && params.hostAdmissionOrigin !== 'file_review_note') storage.getState().clearSessionOptimisticThinking(sessionId);
-            return { localId, accepted: false };
+            return Object.defineProperty({ localId, accepted: false }, 'failure', { value: e });
         }
         if (serverCommitMayExist) {
             (await setPendingMessageSendState(sessionId, localId, 'unconfirmed', outboxScope));
             if (!recipient && isActiveScope() && params.hostAdmissionOrigin !== 'file_review_note') storage.getState().clearSessionOptimisticThinking(sessionId);
-            return { localId, accepted: false };
+            return Object.defineProperty({ localId, accepted: false }, 'failure', { value: e });
         }
         if (existingOutboxRow !== null) {
             (await setPendingMessageSendState(sessionId, localId, 'unconfirmed', outboxScope));

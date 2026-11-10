@@ -86,6 +86,9 @@ export type VoiceSessionSnapshot = Readonly<{
   errorProviderMessage?: string;
   errorProviderError?: import('@happier-dev/protocol/providers/errors').ProviderErrorV1;
   errorUsageLimit?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineError['usageLimit'];
+  errorFailureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1;
+  /** Native/provider turn dispatch only; Pending persistence can remain indeterminate. */
+  errorEffectAttempted?: boolean;
   errorConnectedServiceDiagnostic?: ConnectedServiceUxDiagnosticV1;
   errorRecoveryAction?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineRecoveryAction;
   errorPresentation?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineErrorPresentation;
