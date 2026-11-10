@@ -696,6 +696,24 @@ describe('provisioner picker demand', () => {
     expect(second.getCurrent().controller?.machineId).toBe('a');
     await second.unmount();
   });
+  it('reopens the chooser with each controller\u2019s current presence after one went offline while it was closed', async () => {
+    await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { useManagedControllerScope } = await import('./useManagedControllerScope');
+    const machine = (id: string, online: boolean) => createControllerMachineFixture({ id, installationId: `${id}-installation`,
+      active: online, activeAt: online ? Date.now() : 0, metadata: null });
+    await act(async () => storage.setState({ machineListByServerId: { srv_build: [machine('a', true), machine('b', true)] }, machineListStatusByServerId: { srv_build: 'idle' } }));
+    const scope = await renderHook(() => useManagedControllerScope({ serverId: 'srv_build', testIDPrefix: 'scope-probe' }));
+    expect(scope.getCurrent().controller?.machineId).toBe('a');
+    // 'b' goes away while the chooser is closed; opening it must show that, not the presence it had when it closed.
+    await act(async () => storage.setState({ machineListByServerId: { srv_build: [machine('a', true), machine('b', false)] } }));
+    const availability = () => scope.getCurrent().selection?.pickerRows
+      .find(row => row.candidate.target.machineId === 'b')?.candidate.availability;
+    const chip = scope.getCurrent().chip as React.ReactElement<{ onChipOpenChange(open: boolean): void }>;
+    await act(async () => chip.props.onChipOpenChange(true));
+    expect(availability()).not.toBe('online');
+    await scope.unmount();
+  });
   it('retains a resolved controller after a failed request proves it unreachable', async () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');
