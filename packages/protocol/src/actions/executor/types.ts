@@ -639,6 +639,9 @@ export type AdmittedClientActionContext = ActionExecutorContext & Readonly<{
 }>;
 
 export type ActionExecutorContext = Readonly<{
+  /** Mounted recipient-catalog facts, scoped to their Home. Host-only presentation; never Action/RPC input. */
+  teamCredentialPresentation?: Readonly<{ serverId: string;
+    sources: readonly import('../specs/teamCredentialApproval.js').TeamCredentialApprovalSource[] }>;
   /** Host-local ordinary child ingress retained by a mounted command. Never Action/RPC input or an admission bypass. */
   executeOrdinaryChildAction?: (actionId: ActionId, input: unknown,
     options?: Pick<ActionExecutorContext, 'signal' | 'externalActionTarget' | 'serverId' | 'expectedAccountId'> & Readonly<{
@@ -731,6 +734,9 @@ export type ActionExecutorContext = Readonly<{
 
   /** Caller cancellation for execution and interception. */
   signal?: AbortSignal;
+
+  /** Original receiving Machine custody, retained in-process through approval; never accepted from Action input. */
+  machineAdmission?: import('../../rpc/socket.js').SocketRpcMachineAdmissionContextV1;
 
   /** Host-private current admission of the deciding human; never accepted from Action input. */
   verifyMachineAdmissionCurrent?: () => Promise<boolean>;
