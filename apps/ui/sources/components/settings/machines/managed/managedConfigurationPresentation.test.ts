@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildManagedConfigurationReceipt, describeManagedConfigurationSummary } from './managedConfigurationPresentation';
+import { buildManagedConfigurationReceipt, describeManagedConfigurationSummary, formatManagedSizeBytes, describeLocalHeadroom } from './managedConfigurationPresentation';
 import { ValidatedLaunchSnapshotV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { t } from '@/text';
@@ -196,6 +196,42 @@ describe('one managed configuration receipt projection', () => {
     const localFacts = { ...reviewedFacts, prices: [], billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const },
         nativeFacts: { size: { id: 'medium', title: 'Medium', cpuCores: 6, memoryBytes: 16 * 2 ** 30, diskBytes: 128 * 2 ** 30 },
             image: { id: 'tahoe', title: 'macOS Tahoe' } } };
+    it.each([0, 4])('shows total and %i allocated cores without claiming free CPU', allocated => {
+        const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Lume', controllerName: 'MacBook Pro', reviewedFacts: { ...localFacts,
+            localResources: { observedAt: 5, totalCpuCores: 16, allocatedCpuCores: allocated, availableMemoryBytes: 36 * 2 ** 30 } } });
+        expect(receipt.cost).toMatchObject({ kind: 'local', meters: [
+            { id: 'cpu', fraction: allocated / 16, value: t('managedMachines.receipt.coresAllocated', { allocated: String(allocated), total: '16' }) },
+            { id: 'memory', fraction: 16 / 36 },
+        ], note: t('managedMachines.receipt.leavesOne', { amount: '20 GiB', computer: 'MacBook Pro' }) });
+    });
+    it('includes disk in local size comparison headroom, including insufficient space', () => {
+        expect(describeLocalHeadroom({ id: 'custom', title: 'Custom', diskBytes: 64 * 2 ** 30 },
+            { observedAt: 5, availableDiskBytes: 90 * 2 ** 30 })).toBe('26 GiB');
+        expect(describeLocalHeadroom({ id: 'custom', title: 'Custom', diskBytes: 150 * 2 ** 30 },
+            { observedAt: 5, availableDiskBytes: 90 * 2 ** 30 })).toBe(t('managedMachines.config.notEnoughFree'));
+    });
+    // LUME-LIVE3 attempt 4: one native home location (~/.lume), selected storage=home,
+    // 2 cores / 4 GiB / 150 GiB requested; native filesystem had roughly 90 GB free.
+    it.each([90_000_000_000, 0, undefined])('carries measured home disk space (%s) into the shared receipt', availableDiskBytes => {
+        const selected = { ...launch, choices: { storage: 'home', cpu: 2, memoryBytes: 4 * 2 ** 30, diskBytes: 150 * 2 ** 30 } };
+        const facts = { ...localFacts, launch: selected, nativeFacts: {
+            size: { id: 'custom', title: 'Custom', cpuCores: 2, memoryBytes: 4 * 2 ** 30, diskBytes: 150 * 2 ** 30 },
+            location: { id: 'home', title: 'home' },
+        }, localResources: { observedAt: 5, availableMemoryBytes: 50_574_917_222,
+            ...(availableDiskBytes === undefined ? {} : { availableDiskBytes }) } };
+        const receipt = buildManagedConfigurationReceipt({ launch: selected, reviewedFacts: facts,
+            providerTitle: 'Lume', controllerName: 'MacBook Pro' });
+        expect(receipt.facts).toContainEqual(expect.objectContaining({ id: 'location', value: 'home' }));
+        expect(receipt.cost?.kind).toBe('local');
+        if (receipt.cost?.kind !== 'local') throw new Error('Expected local receipt');
+        expect(receipt.cost.meters.map(meter => meter.id)).toEqual(availableDiskBytes === undefined ? ['memory'] : ['memory', 'disk']);
+        if (availableDiskBytes !== undefined) {
+            expect(receipt.cost.meters.find(meter => meter.id === 'disk')).toMatchObject({ fraction: 1,
+                label: t('managedMachines.config.columns.disk'),
+                value: t('managedMachines.receipt.amountOfFree', { amount: '150 GiB', free: formatManagedSizeBytes(availableDiskBytes) }) });
+            expect(receipt.cost.note).toBe(t('managedMachines.receipt.exceedsFree', { computer: 'MacBook Pro' }));
+        }
+    });
     it('meters a local size against what its computer reported free, and says what it leaves (RV-C F13)', () => {
         const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Lume', controllerName: 'MacBook Pro', reviewedFacts: { ...localFacts,
             localResources: { observedAt: 5, availableCpuCores: 12, availableMemoryBytes: 36 * 2 ** 30 } } });

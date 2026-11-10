@@ -213,9 +213,9 @@ export function describeManagedSize(title: string, size: NativeSizeFact): string
 }
 
 /**
- * A local VM's share of the computer it runs on: its declared cores and memory against what the host
- * reported free when the choices were read. Only measured facts become meters; a missing measurement
- * says it is unknown rather than drawing an invented share.
+ * Local resource disclosure: running guest CPU allocations against host topology when reported,
+ * otherwise the selected size against measured free resources. Allocations never imply idle CPU.
+ * Missing measurements remain unknown rather than drawing an invented share.
  */
 function describeLocalCost(input: Readonly<{ computer: string | null; size?: NativeSizeFact; resources?: ManagedLocalResourceFactsV1;
     omitHeadroom: boolean }>): ManagedReceiptCost {
@@ -225,20 +225,30 @@ function describeLocalCost(input: Readonly<{ computer: string | null; size?: Nat
         ? { used: size.cpuCores, free: resources.availableCpuCores } : null;
     const memory = size?.memoryBytes !== undefined && resources?.availableMemoryBytes !== undefined && resources.availableMemoryBytes > 0
         ? { used: size.memoryBytes, free: resources.availableMemoryBytes } : null;
-    if (cores) meters.push({ id: 'cpu', label: t('managedMachines.config.columns.cpu'), fraction: Math.min(1, cores.used / cores.free),
+    const disk = size?.diskBytes !== undefined && resources?.availableDiskBytes !== undefined
+        ? { used: size.diskBytes, free: resources.availableDiskBytes } : null;
+    if (resources?.totalCpuCores !== undefined && resources.totalCpuCores > 0 && resources.allocatedCpuCores !== undefined) {
+        meters.push({ id: 'cpu', label: t('managedMachines.config.columns.cpu'),
+            fraction: Math.min(1, resources.allocatedCpuCores / resources.totalCpuCores),
+            value: t('managedMachines.receipt.coresAllocated', { allocated: String(resources.allocatedCpuCores), total: String(resources.totalCpuCores) }) });
+    } else if (cores) meters.push({ id: 'cpu', label: t('managedMachines.config.columns.cpu'), fraction: Math.min(1, cores.used / cores.free),
         value: t('managedMachines.receipt.coresOfFree', { count: cores.used, free: String(cores.free) }) });
     if (memory) meters.push({ id: 'memory', label: t('managedMachines.config.columns.memory'), fraction: Math.min(1, memory.used / memory.free),
         value: t('managedMachines.receipt.amountOfFree', { amount: formatManagedSizeBytes(memory.used), free: formatManagedSizeBytes(memory.free) }) });
+    if (disk) meters.push({ id: 'disk', label: t('managedMachines.config.columns.disk'),
+        fraction: disk.free === 0 ? 1 : Math.min(1, disk.used / disk.free),
+        value: t('managedMachines.receipt.amountOfFree', { amount: formatManagedSizeBytes(disk.used), free: formatManagedSizeBytes(disk.free) }) });
     if (input.omitHeadroom || computer === null) return { kind: 'local', computer, meters: input.omitHeadroom ? [] : meters };
-    if (!cores && !memory) return { kind: 'local', computer, meters, note: t('managedMachines.receipt.headroomUnknown', { computer }) };
-    if (cores && cores.used > cores.free || memory && memory.used > memory.free) {
+    if (!cores && !memory && !disk) return { kind: 'local', computer, meters, note: t('managedMachines.receipt.headroomUnknown', { computer }) };
+    if (cores && cores.used > cores.free || memory && memory.used > memory.free || disk && disk.used > disk.free) {
         return { kind: 'local', computer, meters, note: t('managedMachines.receipt.exceedsFree', { computer }) };
     }
     const leftCores = cores ? t('managedMachines.receipt.cores', { count: cores.free - cores.used }) : null;
     const leftMemory = memory ? formatManagedSizeBytes(memory.free - memory.used) : null;
+    const leftDisk = disk ? formatManagedSizeBytes(disk.free - disk.used) : null;
     return { kind: 'local', computer, meters, note: leftCores && leftMemory
         ? t('managedMachines.receipt.leavesBoth', { cores: leftCores, memory: leftMemory, computer })
-        : t('managedMachines.receipt.leavesOne', { amount: leftCores ?? leftMemory ?? '', computer }) };
+        : t('managedMachines.receipt.leavesOne', { amount: leftCores ?? leftMemory ?? leftDisk ?? '', computer }) };
 }
 
 /**
@@ -250,8 +260,10 @@ export function describeLocalHeadroom(size: NativeSizeFact, resources: ManagedLo
     if (!resources) return undefined;
     const cores = size.cpuCores !== undefined && resources.availableCpuCores !== undefined ? resources.availableCpuCores - size.cpuCores : null;
     const memory = size.memoryBytes !== undefined && resources.availableMemoryBytes !== undefined ? resources.availableMemoryBytes - size.memoryBytes : null;
-    if (cores === null && memory === null) return undefined;
-    if ((cores ?? 0) < 0 || (memory ?? 0) < 0) return t('managedMachines.config.notEnoughFree');
+    const disk = size.diskBytes !== undefined && resources.availableDiskBytes !== undefined ? resources.availableDiskBytes - size.diskBytes : null;
+    if (cores === null && memory === null && disk === null) return undefined;
+    if ((cores ?? 0) < 0 || (memory ?? 0) < 0 || (disk ?? 0) < 0) return t('managedMachines.config.notEnoughFree');
     return [cores === null ? null : t('managedMachines.receipt.cores', { count: cores }),
-        memory === null ? null : formatManagedSizeBytes(memory)].filter((part): part is string => part !== null).join(' · ');
+        memory === null ? null : formatManagedSizeBytes(memory),
+        disk === null ? null : formatManagedSizeBytes(disk)].filter((part): part is string => part !== null).join(' · ');
 }
