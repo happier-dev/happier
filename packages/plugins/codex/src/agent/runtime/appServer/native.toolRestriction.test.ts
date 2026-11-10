@@ -38,7 +38,8 @@ describe('Codex tool restriction launch boundaries', () => {
           backendMode: 'appServer', providerSessionId: 'thread-1', appServerTransport: 'daemonProxy',
         },
       },
-    }, unavailableContext)).rejects.toMatchObject({ code: 'codex_tool_restriction_unsupported_transport' });
+    }, unavailableContext)).rejects.toMatchObject({ code: 'codex_tool_restriction_unsupported_transport',
+      diagnostic: { code: 'codex_tool_restriction_unsupported_transport', severity: 'error' } });
   });
 
 });

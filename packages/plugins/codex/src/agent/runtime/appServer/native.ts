@@ -385,11 +385,14 @@ function createSanitizedNativeStartupError(error: unknown, phase: 'client_start'
     // carry native messages, config, process output or arbitrary error details.
     const message = toolRestrictionCode === 'codex_tool_restriction_unsupported_runtime'
       ? CODEX_TOOL_RESTRICTION_RUNTIME_REMEDY
+      : toolRestrictionCode === 'codex_tool_restriction_unsupported_transport'
+      ? 'Codex daemon proxy cannot apply tool confinement to its already-running server. Open a new Session.'
       : 'Codex cannot enforce the requested native tool policy for this configuration.';
-    return new PluginError({ code: toolRestrictionCode, message: `${toolRestrictionCode}: ${message}`,
+    const sanitized = new PluginError({ code: toolRestrictionCode, message: `${toolRestrictionCode}: ${message}`,
       details: { v: 1, agentId: 'codex', source: readCodexAppServerRuntimeIssueSource(failure),
         failureCause: readCodexAppServerFailureCause(failure) },
     });
+    return Object.assign(sanitized, { diagnostic: diagnostic(toolRestrictionCode, message, sanitized.details) });
   }
   const startupFailure = readCodexAppServerStartupFailure(failure);
   const code = readCodexAppServerFailureCode(failure) ?? 'agent_startup_failed';
@@ -1041,10 +1044,9 @@ export async function openCodexNativeAppServerSession(
       message: 'The already-running Codex server cannot apply the selected Connected Account. Open a new Session for this model source.' });
   }
   if (appServerTransport === 'daemonProxy' && request.configuration?.unlistedTools === 'deny') {
-    throw new PluginError({
+    throw createSanitizedNativeStartupError(new PluginError({
       code: 'codex_tool_restriction_unsupported_transport',
-      message: 'Codex daemon proxy cannot apply tool confinement to its already-running server.',
-    });
+    }), 'client_start');
   }
   let providerSessionId = request.kind === 'resume' ? request.providerSessionId : null;
   const continuationProviderSessionId = request.kind === 'resume'
@@ -1079,6 +1081,8 @@ export async function openCodexNativeAppServerSession(
       // This Session action owns cancellation. Let a slow-but-live Codex initialize instead of
       // converting the generic startup budget into a false native-fork failure.
       initializeRequestOptions: { signal: context.signal, timeoutMs: null },
+    }).catch(error => {
+      throw logCodexNativeStartupFailure(error, context.services.logger, 'client_start');
     });
     try {
       const forked = await forkCodexNativeAppServerConversation({
@@ -1257,6 +1261,8 @@ export async function openCodexNativeAppServerExecutionRunConversation(
       initializeRequestOptions: { signal: context.signal, timeoutMs: null },
       toolRestrictionRequired: request.configuration?.unlistedTools === 'deny',
       toolRestrictionAllowedMcpServerKeys: [...assignInjectedServerKeys(listCodexAppServerMcpServerNames(request.mcpServers ?? {}, request.configuration)).values()],
+    }).catch(error => {
+      throw logCodexNativeStartupFailure(error, context.services.logger, 'client_start');
     });
     try {
       const forked = await forkCodexNativeAppServerConversation({

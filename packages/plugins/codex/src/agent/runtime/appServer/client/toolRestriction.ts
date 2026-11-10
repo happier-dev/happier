@@ -7,6 +7,13 @@ import { CODEX_SUPPORTED_RUNTIME_VERSION, CODEX_TOOL_RESTRICTION_RUNTIME_REMEDY 
 import type { DisposableCodexAppServerClient } from '../client.js';
 import { codexProcessExitedSuccessfully } from '../connection.js';
 
+export function assertCodexToolRestrictionRuntimeSupported(version: string | undefined): void {
+    if (version !== CODEX_SUPPORTED_RUNTIME_VERSION) {
+        throw new PluginError({ code: 'codex_tool_restriction_unsupported_runtime',
+            message: CODEX_TOOL_RESTRICTION_RUNTIME_REMEDY, retryable: false });
+    }
+}
+
 /** Verification consumes an initialized client; it never owns native admission. */
 export async function readCodexToolRestrictionEvidence(params: Readonly<{
     client: DisposableCodexAppServerClient;
@@ -20,9 +27,7 @@ export async function readCodexToolRestrictionEvidence(params: Readonly<{
     nativeHome?: AgentSessionNativeHomeService;
     signal?: AbortSignal;
 }>): Promise<Pick<DisposableCodexAppServerClient['launchFeatures'], 'toolRestrictionSupportedModelIds' | 'toolRestrictionAccountId'>> {
-    if (params.client.launchFeatures.nativeVersion !== CODEX_SUPPORTED_RUNTIME_VERSION) {
-        throw new PluginError({ code: 'codex_tool_restriction_unsupported_runtime', message: CODEX_TOOL_RESTRICTION_RUNTIME_REMEDY });
-    }
+    assertCodexToolRestrictionRuntimeSupported(params.client.launchFeatures.nativeVersion);
     const effective = await params.client.request('config/read', { includeLayers: false, ...(params.cwd ? { cwd: params.cwd } : {}) });
     const config = effective && typeof effective === 'object' ? (effective as { config?: unknown }).config : null;
     const features = config && typeof config === 'object' ? (config as { features?: unknown }).features : null;

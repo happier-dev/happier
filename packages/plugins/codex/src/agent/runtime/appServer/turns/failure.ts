@@ -74,6 +74,7 @@ const STARTUP_AUTHENTICATION_FAILURES = {
   live_hot_auth_failed: { source: 'auth_error', preview: 'The Agent could not sign in with the selected account. Sign in again or reconnect the account.' },
 } as const satisfies Record<AgentStartupFailureDetails['reason'], { source: SessionRuntimeIssueV1['source']; preview: string }>;
 const CODEX_APP_SERVER_TOOL_RESTRICTION_FAILURE_CODES = [
+  'codex_tool_restriction_unsupported_transport',
   'codex_tool_restriction_unsupported_runtime',
   'codex_tool_restriction_unsupported_model',
   'codex_tool_restriction_unsupported_auth',

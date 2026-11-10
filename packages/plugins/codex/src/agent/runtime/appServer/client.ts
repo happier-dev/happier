@@ -24,7 +24,8 @@ import {
 } from './connection.js';
 import { withCodexNativeStartupLock } from './nativeStartupLock.js';
 import { readCodexMcpServerKeysFromConfigToml } from '../../mcp/configServers.js';
-import { readCodexToolRestrictionEvidence } from './client/toolRestriction.js';
+import { assertCodexToolRestrictionRuntimeSupported, readCodexToolRestrictionEvidence } from './client/toolRestriction.js';
+import { parseCodexCliStableVersion } from '../../cli/detect.js';
 import { createCodexRealtimeEnabledAppServerLaunchUnavailableError, readCodexAppServerProbeFailureCode } from './startupFailure.js';
 export { isCodexRealtimeEnabledAppServerLaunchUnavailableError } from './startupFailure.js';
 export { resolveCodexHome } from '../../mcp/configServers.js';
@@ -450,6 +451,12 @@ export async function createCodexNativeAppServerClient(params: CodexNativeAppSer
         if (params.signal?.aborted || readCodexAppServerProbeFailureCode(error)) throw error;
         return '';
     });
+    // Refuse unsupported confinement before the native process sees overrides
+    // it may not understand. Initialization still proves the connected version.
+    const versionOutput = params.toolRestrictionRequired ? await readVersion() : undefined;
+    if (params.toolRestrictionRequired) {
+        assertCodexToolRestrictionRuntimeSupported(parseCodexCliStableVersion(versionOutput ?? '')?.value);
+    }
     // Feature discovery does not initialize native SQLite. A pending probe
     // must not occupy admission for another app-server's initialization.
     const realtimeConversationAdvertised = await probeCodexRealtimeConversationFeature({
@@ -465,7 +472,7 @@ export async function createCodexNativeAppServerClient(params: CodexNativeAppSer
             })) }),
         params.initializeRequestOptions?.signal ?? params.signal,
         params.logger,
-        { processEnv: env, readVersion, configOverrides: params.configOverrides, cwd: params.cwd, deferUntilSpawn: true },
+        { processEnv: env, readVersion, versionOutput, configOverrides: params.configOverrides, cwd: params.cwd, deferUntilSpawn: true },
         params.onStartupWaiting,
     );
     return await verifyCodexNativeAppServerClient({ ...params, configOverrides: ready.configOverrides }, ready.client, resolvedSystemTool.executable);

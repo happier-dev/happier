@@ -14,6 +14,8 @@ import { createPluginInteractionsService } from '@/plugins/runtime/invocation/se
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { McpToolPolicyContext } from '@/mcp/runtime/resolveMcpToolIdentity';
 import { NativePermissionChoicesV1Schema } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
+import { SessionPermissionMediationRecordStoredSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import type { SessionPermissionMediationRecordStored } from '@happier-dev/protocol';
 import type {
     HostSessionApprovalRequest,
     HostSessionConfirmationRequest,
@@ -33,7 +35,8 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({ callSessionRpc }));
 
 function createFixture(
     overrides: Partial<Omit<NativeAgentSessionInteractionParams, 'permissionHandler' | 'sessionId'>> = {},
-    options: Readonly<{ mode?: 'default' | 'yolo'; presentationAvailable?: boolean; mcpToolContext?: McpToolPolicyContext }> = {},
+    options: Readonly<{ mode?: 'default' | 'yolo'; presentationAvailable?: boolean; mcpToolContext?: McpToolPolicyContext;
+        sessionOverrides?: Partial<ApiSessionClient> }> = {},
 ) {
     // Only Session state and the authenticated server RPC transport are replaced.
     // The existing transport testkit stamps the account actor required by permission replies.
@@ -41,6 +44,7 @@ function createFixture(
     const session = createMutableApiSessionClientFixture({
         sessionId: 'session-1',
         overrides: {
+            ...options.sessionOverrides,
             // The transport testkit intentionally implements only registration/delivery.
             rpcHandlerManager: rpc as unknown as ApiSessionClient['rpcHandlerManager'],
         },
@@ -122,6 +126,67 @@ const questionsRequest: HostSessionQuestionsRequest = {
 };
 
 describe('native Agent current-session interactions', () => {
+    it('projects and remotely settles native tool IDs across a completed turn and its follow-up', async () => {
+        const sourceAuthority = { kind: 'mediatedExternal', mediatorPluginId: 'happier.channels',
+            sourceRef: 'channels:binding:router-child', sourceRevisionOrEpoch: '1:1',
+            admittedPermissionCeiling: 'default', remoteApprovalMaxScope: 'request' } as const;
+        type Witness = ReturnType<NonNullable<NativeAgentSessionInteractionParams['readActiveTurnAdmissionWitness']>>;
+        let witness: Witness = null;
+        const records = new Map<string, SessionPermissionMediationRecordStored>();
+        const key = (identity: Readonly<{ turnId: string; requestId: string }>) => JSON.stringify([identity.turnId, identity.requestId]);
+        const fixture = createFixture({ interactionDeadlineMs: undefined, readActiveTurnAdmissionWitness: () => witness }, {
+            // Replace only the durable Session transport. The public interaction,
+            // causal carrier, permission coordinator, and mediation codec stay real.
+            sessionOverrides: {
+                getStoredContentEncryptionContext: () => ({ mode: 'plain', ctx: null }),
+                readPermissionMediationRecord: async ({ identity }) => records.get(key(identity)) ?? null,
+                writePermissionMediationRecord: async ({ identity, request }) => {
+                    const previous = records.get(key(identity));
+                    if ((previous?.revision ?? null) !== request.expectedRevision) {
+                        throw Object.assign(new Error('conflict'), { code: 'permission_mediation_record_conflict' });
+                    }
+                    const stored = SessionPermissionMediationRecordStoredSchema.parse({ ...identity, kind: request.kind,
+                        content: request.content, revision: 'ssr1.AAAACnJlY29yZC1vbmUAAAAB' });
+                    records.set(key(identity), stored);
+                    return stored;
+                },
+                listPermissionMediationRecords: async () => ({ records: [...records.values()], nextCursor: null, hasNext: false }),
+                prunePermissionMediationRecord: async ({ identity }) => { records.delete(key(identity)); },
+            },
+        });
+        const source = { mediatorPluginId: sourceAuthority.mediatorPluginId, sourceRef: sourceAuthority.sourceRef,
+            sourceRevisionOrEpoch: sourceAuthority.sourceRevisionOrEpoch };
+        for (const [ordinal, decision, status] of [[1, 'allow', 'approved'], [2, 'deny', 'declined']] as const) {
+            const turnId = `native-turn-${ordinal}`;
+            const toolCallId = `provider-item-${ordinal}`;
+            // Install the admitted input before publishing the provider request;
+            // the preceding turn has already settled when the follow-up arrives.
+            witness = { inputId: `input-${ordinal}`, turnId, userMessageSeq: ordinal, userMessageSeqs: [ordinal],
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default', sourceAuthority } };
+            const pending = fixture.public.requestApproval({ ...approvalRequest,
+                subject: { ...approvalRequest.subject, toolCallId } });
+            const published = await fixture.publishedRequest();
+            expect(published.id).toBe(toolCallId);
+            const projection = fixture.handler.listMediatedPendingRequests(source);
+            expect(projection).toMatchObject({ truncated: false, requests: [{ requestId: toolCallId, turnId }] });
+            expect(projection.requests).toHaveLength(1);
+            await expect(fixture.handler.respondToMediatedPendingPermission({ sessionId: fixture.session.sessionId,
+                turnId, requestId: projection.requests[0]!.requestId, sourceRef: source.sourceRef,
+                sourceRevisionOrEpoch: source.sourceRevisionOrEpoch, idempotencyKey: `chat-control-${ordinal}`,
+                actor: { namespace: 'discord', principalId: 'owner' }, decision, scope: 'request',
+                mediator: { pluginId: 'happier.channels', contributionLocalId: 'provider/observation-ingest-v1' },
+            })).resolves.toMatchObject({ status: 'applied' });
+            const result = await pending;
+            expect(result).toMatchObject({ kind: 'approval', status });
+            expect(result.requestId).not.toBe(toolCallId);
+            witness = null;
+            expect(fixture.handler.listMediatedPendingRequests(source).requests).toEqual([]);
+            expect(fixture.session.__getAgentState().completedRequests?.[toolCallId]).toMatchObject({
+                decision: decision === 'allow' ? 'approved' : 'denied', turnId,
+            });
+        }
+    });
+
     it.each([
         ['option_1', 'approved', false, undefined, 'tool'],
         ['option_4', 'denied', false, undefined, 'tool'],

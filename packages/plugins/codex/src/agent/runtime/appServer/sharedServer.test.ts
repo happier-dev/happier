@@ -18,6 +18,7 @@ import { createCodexNativeAppServerClient } from './client';
 import { connectManagedJsonRpcTestClient } from '../../../../../../../apps/cli/src/testkit/process/managedJsonRpc';
 import { prepareTestNativeSocketDirectory, admitTestExecSpawn, createCodexControlSocketFixture } from './client.test-support';
 import { createCodexAppServerTurnFailure, formatCodexAppServerErrorForUi } from './turns/failure';
+import { buildCodexAppServerConfigOverrides } from './config/overrides';
 
 type AgentNativeLaunchQualifier = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
 
@@ -48,6 +49,34 @@ describe('createCodexSharedAppServer', () => {
 
   beforeEach(async () => { osBoundary.home = await mkdtemp(join(tmpdir(), 'codex-startup-home-')); });
   afterEach(async () => { await rm(osBoundary.home, { recursive: true, force: true }); });
+  it('refuses an exclusive tool list before spawning an unqualified shared runtime', async () => {
+    // Exec is the native process boundary. An unsupported binary must never
+    // receive the confinement configuration before eligibility is decided.
+    const spawn = vi.fn(async () => { throw new Error('Native launch cannot accept this configuration'); });
+    const exec = {
+      withSpawnAdmission: admitTestExecSpawn,
+      systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
+      run: async (request: Parameters<ExecService['run']>[0]): Promise<PluginProcessResult> => ({
+        termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+        stdout: new TextEncoder().encode(request.args.includes('--version') ? 'codex-cli 0.167.0' : ''),
+        stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
+      }),
+      spawn,
+    } as unknown as ExecService;
+    const server = await createCodexSharedAppServer({ exec, processEnv: {}, platform: 'linux', dependencies: {
+      createRuntimeDirectory: async () => await mkdtemp(join(osBoundary.home, 'runtime-')),
+      removeRuntimeDirectory: async directory => { await rm(directory, { recursive: true, force: true }); },
+    } });
+    if (!server) throw new Error('Expected shared server');
+    try {
+      await expect(server.createClient({ cwd: osBoundary.home, processEnv: {},
+        configOverrides: buildCodexAppServerConfigOverrides({}, { unlistedTools: 'deny', allowedTools: ['mcp__context7__*'] }),
+        disableUserMcpServers: true, toolRestrictionRequired: true,
+      })).rejects.toMatchObject({ code: 'codex_tool_restriction_unsupported_runtime',
+        message: expect.stringContaining('machines.agents.install') });
+      expect(spawn).not.toHaveBeenCalled();
+    } finally { await server.dispose(); }
+  });
   it.skipIf(process.platform === 'win32').each(['spawn', 'verification'] as const)(
     'retains %s startup failure when runtime-directory cleanup also fails', async stage => {
       const refusal = new PluginError({ code: 'agent_isolation_unavailable', message: 'PRIVATE_MEMBER' });

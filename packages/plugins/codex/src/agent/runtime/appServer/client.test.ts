@@ -18,7 +18,7 @@ import type {
 import { createCodexNativeAppServerClient } from './client';
 import { openCodexNativeAppServerSession } from './native';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
-import { admitTestExecSpawn } from './client.test-support';
+import { admitTestExecSpawn, prepareTestNativeSocketDirectory } from './client.test-support';
 import { buildCodexAppServerConfigOverrides } from './config/overrides';
 import { createCodexAppServerRealtimeConversation } from './realtime';
 import { PLUGIN_MANIFEST } from '../../../manifest.js';
@@ -121,6 +121,7 @@ function createCapturingExec(
             withSpawnAdmission: admitTestExecSpawn,
             run: vi.fn(async (request: Parameters<ExecService['run']>[0]) => {
                 if (featureListResult instanceof Error) throw featureListResult;
+                if (request.args.includes('--version')) return processResult('codex-cli 0.162.1');
                 return featureListResult;
             }),
             systemTools: {
@@ -169,8 +170,9 @@ describe('createCodexAppServerClient', () => {
         const exec = createStableRunnerPluginExecService({
             signal: new AbortController().signal, isOccurrenceCurrent: () => true,
             agentCli: { async checkReadiness(request) { return { launchable: request.candidates.map(agentId => ({ agentId })) }; } },
+            resolveExecutable: async () => { throw new Error('No host executable resolution expected'); },
             async resolveSystemTool(request) {
-                return { resolutionId: 'codex-fixture', result: { executable: { kind: 'systemTool', id: request.toolId },
+                return { resolutionId: 'codex-fixture', launch: { command: process.execPath, args: [], env: {} }, result: { executable: { kind: 'systemTool', id: request.toolId },
                     executablePath: process.execPath } };
             },
             async authorizeLaunch(request, options, resolutionId) {
@@ -238,6 +240,32 @@ describe('createCodexAppServerClient', () => {
         expect(capture.specs).toEqual([]);
     });
 
+    it.each(['create', 'fork'] as const)('preserves the confinement refusal through native Session %s startup sanitization before spawn', async kind => {
+        const capture = createCapturingExec();
+        capture.exec.prepareNativeSocketDirectory = prepareTestNativeSocketDirectory;
+        vi.spyOn(capture.exec, 'run').mockImplementation(async request => processResult(request.args.includes('--version')
+            ? 'codex-cli 0.167.0' : 'realtime_conversation under development false'));
+        // Exec substitutes native OS/process services; the native Session,
+        // runtime initialization and error sanitization remain real.
+        const context = { signal: new AbortController().signal, services: { exec: capture.exec,
+            logger: { debug() {}, warn() {} }, sessions: { current: null } },
+            session: { id: 'restricted-startup', services: {} } } as unknown as AgentSessionRuntimeContext;
+        await expect(openCodexNativeAppServerSession({
+            ...(kind === 'create' ? { kind: 'create' as const } : { kind: 'fork' as const,
+                source: { sessionId: 'source-session', providerSessionId: '11111111-1111-4111-8111-111111111111' } }),
+            sessionId: 'restricted-startup', cwd: osBoundary.home,
+            launchEnvironment: { values: { CODEX_HOME: osBoundary.home, CODEX_SQLITE_HOME: osBoundary.home }, unset: [] },
+            configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
+                permissionIntent: { value: 'default', updatedAtMs: 0 }, options: {}, allowedTools: [], unlistedTools: 'deny' },
+        }, context)).rejects.toMatchObject({ code: 'codex_tool_restriction_unsupported_runtime',
+            message: expect.stringContaining('machines.agents.install'), diagnostic: {
+                code: 'codex_tool_restriction_unsupported_runtime', severity: 'error',
+                message: expect.stringContaining('machines.agents.install'),
+            } });
+        expect(capture.specs).toEqual([]);
+        expect(capture.connections).toEqual([]);
+    });
+
     it.each(['config/read', 'auth', 'models'] as const)('releases native admission before pending %s without a first turn', async stage => {
         let release!: () => void;
         let enter!: () => void;
@@ -255,6 +283,7 @@ describe('createCodexAppServerClient', () => {
         }, processResult(''));
         capture.exec.run = async request => {
             if (request.args.includes('models')) { await pause('models'); return processResult('{"models":[]}'); }
+            if (request.args.includes('--version')) return processResult('codex-cli 0.162.1');
             return processResult('');
         };
         const opening = createCodexNativeAppServerClient({ exec: capture.exec, processEnv: {}, toolRestrictionRequired: true,
@@ -437,13 +466,15 @@ describe('createCodexAppServerClient', () => {
             toolRestrictionAllowedMcpServerKeys: [],
         })).rejects.toMatchObject({ code: 'codex_tool_restriction_unsupported_runtime' });
     });
-    it.each(['0.159.2', '0.163.0'])('refuses empty-deny confinement on unverified runtime %s instead of trusting echoed config', async (version) => {
+    it.each(['0.159.2', '0.167.0'])('refuses empty-deny confinement before launching unverified runtime %s', async (version) => {
         const capture = createCapturingExec({
             async request(method): Promise<JsonValue> {
                 if (method === 'initialize') return { userAgent: `happier_cli/${version} (fixture)` };
                 return { config: { features: { code_mode: { excluded_tool_namespaces: ['functions'] } } } };
             },
         });
+        vi.spyOn(capture.exec, 'run').mockImplementation(async request => processResult(request.args.includes('--version')
+            ? `codex-cli ${version}` : 'realtime_conversation under development false'));
         await expect(createCodexNativeAppServerClient({
             exec: capture.exec, processEnv: {},
             toolRestrictionRequired: true,
@@ -452,6 +483,8 @@ describe('createCodexAppServerClient', () => {
             code: 'codex_tool_restriction_unsupported_runtime',
             message: expect.stringContaining('machines.agents.install'),
         });
+        expect(capture.specs).toEqual([]);
+        expect(capture.connections).toEqual([]);
     });
     it('serializes the native spawn through initialization without locking ongoing clients', async () => {
         // Exec is the host-owned process/protocol boundary. Simulate the native

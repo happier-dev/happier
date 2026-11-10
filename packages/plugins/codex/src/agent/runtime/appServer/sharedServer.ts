@@ -10,6 +10,7 @@ import type { AgentSessionNativeHomeService } from '@happier-dev/plugin-sdk/agen
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 
 import { parseCodexCliStableVersion } from '../../cli/detect.js';
+import { assertCodexToolRestrictionRuntimeSupported } from './client/toolRestriction.js';
 import {
   buildCodexAppServerArgs,
   buildCodexAppServerEnv,
@@ -365,6 +366,9 @@ export async function createCodexSharedAppServer(params: Readonly<{
     toolRestrictionAllowedMcpServerKeys?: readonly string[];
     nativeHome?: AgentSessionNativeHomeService;
   }>): Promise<ManagedExecutableRef> => {
+    if (request.toolRestrictionRequired) {
+      assertCodexToolRestrictionRuntimeSupported(parseCodexCliStableVersion(versionOutput)?.value);
+    }
     startPromise ??= (async () => {
       const toolStartedAt = Date.now();
       const tool = await params.exec.systemTools.resolve({
