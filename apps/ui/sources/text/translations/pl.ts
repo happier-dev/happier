@@ -11685,7 +11685,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         denied: 'Odmowa',
       },
       management: {
-      profileExists: "Profil o tej tożsamości już istnieje. Wybierz inną nazwę.",
+      profileExists: "Profil o tej tożsamości już istnieje. Spróbuj ponownie.",
       profileNotFound: "Ten profil został usunięty. Otwórz ponownie Prywatność, aby odświeżyć listę.",
       profileUnavailable: "Ten profil jest niedostępny. Wybierz inny profil.",
       profilePurgeFailed: "Nie udało się usunąć profilu. Zamknij jego karty i spróbuj ponownie.",

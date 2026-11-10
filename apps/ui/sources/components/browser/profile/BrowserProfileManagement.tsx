@@ -14,7 +14,9 @@ import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
+import { HappyError } from '@/utils/errors/errors';
 
 export type BrowserProfileManagementModel = Readonly<{
     source: Readonly<{
@@ -34,6 +36,12 @@ const stylesheet = StyleSheet.create(theme => ({
 }));
 const profileKey = (profile: BrowserProfileV1) => profile.profileId;
 
+function profileFailureMessage(error: unknown): string {
+    const fallback = error instanceof HappyError && error.code
+        ? `${t('common.requestFailed')} (${error.code})` : t('common.requestFailed');
+    return resolveActionExecutionErrorMessage(error, fallback);
+}
+
 /** Mounted only in the open privacy panel; the Machine's existing store owns saved profiles. */
 export function BrowserProfileManagement(props: Readonly<{ model: BrowserProfileManagementModel; testID: string }>) {
     const { source } = props.model;
@@ -42,15 +50,15 @@ export function BrowserProfileManagement(props: Readonly<{ model: BrowserProfile
         retainEffectResult: true as const }), [source.machineId]);
     const [profiles, setProfiles] = React.useState<readonly BrowserProfileV1[]>([]);
     const [busy, setBusy] = React.useState(false);
-    const [failed, setFailed] = React.useState(false);
+    const [failed, setFailed] = React.useState<string | null>(null);
     const refresh = useEventCallback(async () => {
         try {
             const result = PUBLIC_ACTION_OUTPUT_SCHEMAS['browser.profile.list'].parse(
                 await executeValue('browser.profile.list', { machineId: source.machineId }, operation));
-            if (result.status !== 'ready') throw new Error(result.code);
+            if (result.status !== 'ready') throw new HappyError(result.code, false, { code: result.code });
             setProfiles(result.profiles);
-            setFailed(false);
-        } catch { setFailed(true); }
+            setFailed(null);
+        } catch (error) { setFailed(profileFailureMessage(error)); }
     });
     React.useEffect(() => { if (ready) void refresh(); }, [ready, refresh, source.machineId]);
 
@@ -62,9 +70,9 @@ export function BrowserProfileManagement(props: Readonly<{ model: BrowserProfile
             const result = PUBLIC_ACTION_OUTPUT_SCHEMAS['browser.profile.create'].parse(await executeValue('browser.profile.create', {
                 machineId: source.machineId, profileId: randomUUID(), displayName: displayName.trim(),
             }, operation));
-            if (result.status !== 'created') throw new Error(result.code);
+            if (result.status !== 'created') throw new HappyError(result.code, false, { code: result.code });
             setProfiles(previous => [...previous, result.profile]);
-        } catch { Modal.alert(t('common.error'), t('errors.operationFailed')); }
+        } catch (error) { Modal.alert(t('common.error'), profileFailureMessage(error)); }
         finally { setBusy(false); }
     });
     const select = useEventCallback(async (profile: BrowserProfileV1) => {
@@ -76,9 +84,10 @@ export function BrowserProfileManagement(props: Readonly<{ model: BrowserProfile
             const result = PUBLIC_ACTION_OUTPUT_SCHEMAS['browser.profile.select'].parse(await executeValue('browser.profile.select', {
                 ...selection.command, commandId: randomUUID(), machineId: source.machineId, profileId: profile.profileId,
             }, operation));
-            if (result.status !== 'dispatched') throw new Error(result.status);
+            if (result.status === 'unavailable') throw new HappyError(result.code, false, { code: result.code });
+            if (result.status === 'failed') throw new HappyError(result.error.message, false, { code: result.error.code });
             selection.onSelected(profile, result.events);
-        } catch { Modal.alert(t('common.error'), t('errors.operationFailed')); }
+        } catch (error) { Modal.alert(t('common.error'), profileFailureMessage(error)); }
         finally { setBusy(false); }
     });
     const remove = useEventCallback(async (profile: BrowserProfileV1) => {
@@ -89,9 +98,9 @@ export function BrowserProfileManagement(props: Readonly<{ model: BrowserProfile
             const result = PUBLIC_ACTION_OUTPUT_SCHEMAS['browser.profile.delete'].parse(await executeValue('browser.profile.delete', {
                 machineId: source.machineId, profileId: profile.profileId,
             }, operation));
-            if (result.status !== 'deleted') throw new Error(result.code);
+            if (result.status !== 'deleted') throw new HappyError(result.code, false, { code: result.code });
             setProfiles(previous => previous.filter(candidate => candidate.profileId !== result.profileId));
-        } catch { Modal.alert(t('common.error'), t('errors.operationFailed')); }
+        } catch (error) { Modal.alert(t('common.error'), profileFailureMessage(error)); }
         finally { setBusy(false); }
     });
     const renderProfile = React.useCallback(({ item: profile }: Readonly<{ item: BrowserProfileV1 }>) => (
@@ -108,7 +117,7 @@ export function BrowserProfileManagement(props: Readonly<{ model: BrowserProfile
         <RoundButton size="small" display="secondary" title={t('browserShell.profile.management.createProfile')}
             testID={`${props.testID}-profile-create`} disabled={busy || !ready} onPress={() => { void create(); }} />
         {failed ? <View style={stylesheet.row}>
-            <Text>{t('errors.operationFailed')}</Text>
+            <Text>{failed}</Text>
             <RoundButton size="small" display="secondary" title={t('common.retry')}
                 testID={`${props.testID}-profiles-retry`} disabled={!ready} onPress={() => { void refresh(); }} />
         </View> : null}

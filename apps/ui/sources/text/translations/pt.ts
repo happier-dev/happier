@@ -11973,7 +11973,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
         denied: 'Negado',
       },
       management: {
-      profileExists: "Já existe um perfil com esta identidade. Escolha outro nome.",
+      profileExists: "Já existe um perfil com esta identidade. Tente novamente.",
       profileNotFound: "Este perfil foi removido. Reabra Privacidade para atualizar a lista.",
       profileUnavailable: "Este perfil está indisponível. Escolha outro perfil.",
       profilePurgeFailed: "Não foi possível excluir o perfil. Feche suas abas e tente novamente.",

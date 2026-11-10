@@ -11490,7 +11490,7 @@ export const zhHans: TranslationStructure = {
         denied: '已拒绝',
       },
       management: {
-      profileExists: "此标识的配置文件已存在。请选择其他名称。",
+      profileExists: "此标识的配置文件已存在。请重试。",
       profileNotFound: "此配置文件已删除。请重新打开隐私面板以刷新列表。",
       profileUnavailable: "此配置文件不可用。请选择其他配置文件。",
       profilePurgeFailed: "无法删除配置文件。请关闭其浏览器标签页后重试。",

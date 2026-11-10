@@ -11694,7 +11694,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
         denied: 'Refusées',
       },
       management: {
-      profileExists: "Un profil avec cette identité existe déjà. Choisissez un autre nom.",
+      profileExists: "Un profil avec cette identité existe déjà. Réessayez.",
       profileNotFound: "Ce profil a été supprimé. Rouvrez Confidentialité pour actualiser la liste.",
       profileUnavailable: "Ce profil est indisponible. Choisissez un autre profil.",
       profilePurgeFailed: "Impossible de supprimer le profil. Fermez ses onglets et réessayez.",

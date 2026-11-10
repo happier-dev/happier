@@ -31,7 +31,7 @@ const harness = createWebListDomHarness({ rowSelector: '[data-testid^="profiles-
 afterEach(async () => { await standardCleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); await homes.reset(); });
 afterAll(async () => { await network.dispose(); });
 
-it.each(['none', 'select', 'delete'] as const)('delivers saved-profile mutations after controls retire during %s', async (retireDuring) => {
+it.each(['none', 'select', 'delete', 'unavailable', 'refused'] as const)('delivers saved-profile mutations and reasons during %s', async (retireDuring) => {
     vi.stubGlobal('crypto', globalThis.crypto ?? webcrypto);
     const serverUrl = 'https://saved-profile-controls.test';
     const serverIdentityId = 'srv_saved_profile_controls';
@@ -49,6 +49,11 @@ it.each(['none', 'select', 'delete'] as const)('delivers saved-profile mutations
             const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
             expect(request.target).toEqual({ kind: 'machine', machineId: 'machine' });
             const input = request.input as { profileId: string; displayName: string; commandId: string };
+            if (actionId === 'browser.profile.create' && (retireDuring === 'unavailable' || retireDuring === 'refused')) {
+                return { body: { v: 1, actionId, requestId: request.requestId, execution: retireDuring === 'refused'
+                    ? { ok: false, errorCode: 'permission_denied', error: 'permission_denied' }
+                    : { ok: true, result: { status: 'unavailable', code: 'profile_exists' } } } };
+            }
             if (actionId === 'browser.profile.create') profiles = [{ profileId: input.profileId, displayName: input.displayName,
                 storageMode: 'user', owner: { kind: 'user', id: input.profileId }, lifecycleState: 'active', cleanupOnSessionClose: false }];
             if (actionId === 'browser.profile.delete') { profiles = []; deleteSignal = requestContext.signal; }
@@ -75,6 +80,7 @@ it.each(['none', 'select', 'delete'] as const)('delivers saved-profile mutations
     // Modal presentation is the human-input boundary; the mounted Action execution stays real.
     vi.spyOn(Modal, 'prompt').mockResolvedValue('Work');
     vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+    const alert = vi.spyOn(Modal, 'alert');
     const onSelected = vi.fn();
     await act(async () => harness.root.render(<div id="virtualized-list-host"><BrowserProfileStatus testID="profiles" model={{ profile: null,
         management: { source: { scope, machineId: 'machine', selection: {
@@ -84,6 +90,13 @@ it.each(['none', 'select', 'delete'] as const)('delivers saved-profile mutations
     try {
         await waitForHomeGovernance(() => expect(homes.requestsFor('/v1/actions/browser.profile.list')).toHaveLength(1));
         await act(async () => harness.container.querySelector<HTMLElement>('[data-testid="profiles-profile-create"]')!.click());
+        if (retireDuring === 'unavailable' || retireDuring === 'refused') {
+            const { t } = await import('@/text');
+            await waitForHomeGovernance(() => expect(alert).toHaveBeenCalledWith(t('common.error'),
+                retireDuring === 'refused' ? t('errors.permissionDenied') : t('browserShell.profile.management.profileExists')));
+            expect(profiles).toEqual([]);
+            return;
+        }
         await waitForHomeGovernance(() => expect(profiles[0]?.displayName).toBe('Work'));
         const profileId = profiles[0]!.profileId;
         await waitForHomeGovernance(async () => {

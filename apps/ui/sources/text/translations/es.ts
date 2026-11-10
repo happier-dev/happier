@@ -11856,7 +11856,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
         denied: 'Denegado',
       },
       management: {
-      profileExists: "Ya existe un perfil con esta identidad. Elige otro nombre.",
+      profileExists: "Ya existe un perfil con esta identidad. Vuelve a intentarlo.",
       profileNotFound: "Este perfil se eliminó. Abre Privacidad de nuevo para actualizar la lista.",
       profileUnavailable: "Este perfil no está disponible. Elige otro perfil.",
       profilePurgeFailed: "No se pudo eliminar el perfil. Cierra sus pestañas y vuelve a intentarlo.",

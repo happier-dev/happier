@@ -105,6 +105,11 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     if (code === 'machine_admin_access_required') return t('errors.machineAdminAccessRequired');
     if (code === 'machine_network_review_required') return t('errors.machineNetworkReviewRequired');
     if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');
+    if (code === 'profile_exists') return t('browserShell.profile.management.profileExists');
+    if (code === 'profile_not_found') return t('browserShell.profile.management.profileNotFound');
+    if (code === 'profile_unavailable') return t('browserShell.profile.management.profileUnavailable');
+    if (code === 'profile_purge_failed') return t('browserShell.profile.management.profilePurgeFailed');
+    if (code === 'managed_browser_required') return t('browserShell.profile.management.managedBrowserRequired');
     const nativeFailure = describeMachineNativeFailureCode(code);
     if (nativeFailure) {
         const details = asRecord(record.details);

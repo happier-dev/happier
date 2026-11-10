@@ -11039,7 +11039,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
                 denied: 'Denegat',
             },
             management: {
-      profileExists: "Ja existeix un perfil amb aquesta identitat. Tria un altre nom.",
+      profileExists: "Ja existeix un perfil amb aquesta identitat. Torna-ho a provar.",
       profileNotFound: "Aquest perfil s’ha eliminat. Torna a obrir Privadesa per actualitzar la llista.",
       profileUnavailable: "Aquest perfil no està disponible. Tria’n un altre.",
       profilePurgeFailed: "No s’ha pogut eliminar el perfil. Tanca les seves pestanyes i torna-ho a provar.",

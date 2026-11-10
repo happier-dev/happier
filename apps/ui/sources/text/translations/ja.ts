@@ -12153,7 +12153,7 @@ localTailscale: {
         denied: '拒否',
       },
       management: {
-      profileExists: "この識別情報のプロファイルは既に存在します。別の名前を選んでください。",
+      profileExists: "この識別情報のプロファイルは既に存在します。もう一度お試しください。",
       profileNotFound: "このプロファイルは削除されました。プライバシーを開き直して一覧を更新してください。",
       profileUnavailable: "このプロファイルは利用できません。別のプロファイルを選んでください。",
       profilePurgeFailed: "プロファイルを削除できませんでした。このプロファイルのタブを閉じて再試行してください。",

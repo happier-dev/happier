@@ -13667,7 +13667,7 @@ const enBrowserShell = {
       denied: 'Denied',
     },
     management: {
-      profileExists: "A profile with this identity already exists. Choose another name.",
+      profileExists: "A profile with this identity already exists. Try again.",
       profileNotFound: "This profile was removed. Reopen Privacy to refresh the list.",
       profileUnavailable: "This profile is unavailable. Choose another profile.",
       profilePurgeFailed: "The profile could not be deleted. Close its browser tabs and try again.",

@@ -12077,7 +12077,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
         denied: 'Negato',
       },
       management: {
-      profileExists: "Esiste già un profilo con questa identità. Scegli un altro nome.",
+      profileExists: "Esiste già un profilo con questa identità. Riprova.",
       profileNotFound: "Questo profilo è stato rimosso. Riapri Privacy per aggiornare l’elenco.",
       profileUnavailable: "Questo profilo non è disponibile. Scegline un altro.",
       profilePurgeFailed: "Impossibile eliminare il profilo. Chiudi le sue schede e riprova.",

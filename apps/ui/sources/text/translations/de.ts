@@ -11724,7 +11724,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
                 denied: 'Abgelehnt',
             },
             management: {
-      profileExists: "Ein Profil mit dieser Identität existiert bereits. Wähle einen anderen Namen.",
+      profileExists: "Ein Profil mit dieser Identität existiert bereits. Versuche es erneut.",
       profileNotFound: "Dieses Profil wurde entfernt. Öffne Datenschutz erneut, um die Liste zu aktualisieren.",
       profileUnavailable: "Dieses Profil ist nicht verfügbar. Wähle ein anderes Profil.",
       profilePurgeFailed: "Das Profil konnte nicht gelöscht werden. Schließe seine Browser-Tabs und versuche es erneut.",
