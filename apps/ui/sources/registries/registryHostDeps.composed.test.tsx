@@ -39,7 +39,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
         if (transport.unreachableList) return { op: 'error', status: { state: 'unreachable' } };
         return { op: 'list', page: { sourceId: input.sourceId, status: { state: 'ok', fetchedAt: 1 }, items: input.kind === 'app' && input.sourceId === 'environment-databases'
             ? [{ sourceId: input.sourceId, kind: 'app', itemId: 'postgresql', title: `${request.machineId} database`, appMetadata: { category: 'database' } }]
-            : [], nextCursor: null } };
+            : [], nextCursor: input.sourceId === 'carried-git' ? 'next' : null } };
     },
 }));
 vi.mock('react-native', async () => {
@@ -795,16 +795,30 @@ it('routes native non-GitHub Git through the captured Account Machine transport 
     }
 });
 
-it('reads a Machine-carried catalog again once a Machine arrives, without the person pressing Try again', async () => {
-    transport.platform = 'ios';
+it.each([
+    { platform: 'web', query: undefined },
+    { platform: 'ios', query: undefined },
+    { platform: 'web', query: 'review' },
+])('recovers only failed sources on $platform (query: $query) and preserves explicit Retry for healthy sources', async ({ platform, query }) => {
+    transport.platform = platform;
     const sources: RegistrySourceV1[] = [
         { id: 'carried-git', title: 'Carried Git', format: 'git', kinds: ['skill'], url: 'https://git.example.test/a/b.git', enabled: true, addedAt: 0 },
+        { id: 'healthy-github', title: 'Healthy GitHub', format: 'git', kinds: ['skill'], url: 'https://github.com/a/healthy', enabled: true, addedAt: 0 },
     ];
     const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: { v: 2, sources, disabledSourceIds: [] } }] });
-    const homes = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://registry-carrier-arrives.example.test', accountId: 'carrier-arrives-account', serverIdentityId: 'srv_registry_carrier_arrives' }],
+    const fixtureId = `carrier-arrives-${platform}-${query ?? 'browse'}`;
+    const homes = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: `https://${fixtureId}.example.test`, accountId: fixtureId, serverIdentityId: `srv_${fixtureId}` }],
         route: async request => await catalog.handle(request.path, { method: request.method, headers: request.headers,
             body: request.body === undefined ? undefined : JSON.stringify(request.body) }) ?? undefined });
     onTestFinished(async () => { try { await homes.dispose(); } finally { transport.platform = 'web'; } });
+    const healthyRequests: string[] = [];
+    setRuntimeFetch(async (url, init) => {
+        const address = new URL(String(url));
+        if (address.origin === new URL(homes.homes.home!.serverUrl).origin) return homes.fetch(url, init);
+        healthyRequests.push(address.pathname);
+        return Response.json(address.pathname.includes('/commits/') ? { sha: '1'.repeat(40) } : { sha: '2'.repeat(40),
+            tree: [{ path: 'review/SKILL.md', mode: '100644', type: 'blob', sha: '3'.repeat(40), size: 10 }] });
+    });
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     const serverId = homes.homes.home!.id;
     const previous = storage.getState();
@@ -813,15 +827,37 @@ it('reads a Machine-carried catalog again once a Machine arrives, without the pe
     storage.setState({ machines: {}, machineListByServerId: { ...previous.machineListByServerId, [serverId]: [] },
         machineListStatusByServerId: { ...previous.machineListStatusByServerId, [serverId]: 'idle' } });
     transport.calls.length = 0;
-    const input = { kind: 'skill' as const, sourceIds: ['carried-git'] };
+    const input = { kind: 'skill' as const, sourceIds: sources.map(source => source.id), query };
     const hook = await renderHook(() => useRegistryItems(input));
+    onTestFinished(() => hook.unmount());
     await waitForHomeGovernance(() => expect(hook.getCurrent().sourceFailures.map(failure => failure.status.state)).toEqual(['needs_machine']));
+    expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(['review']);
     expect(transport.calls).toHaveLength(0);
+    expect(healthyRequests.length).toBeGreaterThan(0);
+    const coldHealthyRequests = [...healthyRequests];
     const machine = createMachineFixture({ id: 'carrier-arrives-machine', activeAt: Date.now() });
     await act(async () => { storage.setState({ machines: { [machine.id]: machine },
         machineListByServerId: { ...storage.getState().machineListByServerId, [serverId]: [machine] } }); });
     await waitForHomeGovernance(() => expect(hook.getCurrent().sourceFailures).toEqual([]));
+    expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(['review']);
     expect(transport.calls.map(call => call.machineId)).toEqual([machine.id]);
+    expect(healthyRequests).toEqual(coldHealthyRequests);
+    await act(async () => { await hook.getCurrent().refresh(); });
+    expect(transport.calls.map(call => call.payload.op === 'list' ? call.payload.sourceId : call.payload.op))
+        .toEqual(['carried-git', 'carried-git']);
+    expect(healthyRequests).toEqual([...coldHealthyRequests, ...coldHealthyRequests]);
+    // Losing the carrier while paging must retire this source's healthy first
+    // page memo, otherwise recovery merely replays it without reaching the supplier.
+    await act(async () => { storage.setState({ machines: {}, machineListByServerId: {
+        ...storage.getState().machineListByServerId, [serverId]: [] } }); });
+    await act(async () => { await hook.getCurrent().nextPage(); });
+    expect(hook.getCurrent().sourceFailures.map(failure => failure.status.state)).toEqual(['needs_machine']);
+    await act(async () => { storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: {
+        ...storage.getState().machineListByServerId, [serverId]: [machine] } }); });
+    await waitForHomeGovernance(() => expect({ requests: transport.calls.length, failures: hook.getCurrent().sourceFailures })
+        .toEqual({ requests: 3, failures: [] }));
+    expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(['review']);
+    expect(healthyRequests).toEqual([...coldHealthyRequests, ...coldHealthyRequests]);
     await hook.unmount();
 });
 

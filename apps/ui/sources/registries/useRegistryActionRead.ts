@@ -104,6 +104,9 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
         } finally { if (pending.current === controller) pending.current = null; }
     }, [actionId, args, enabled, execution.execute, execution.isCurrent, execution.ready, scopeKey, scope, inputKey, revision, externalActionTarget]);
     const refresh = React.useCallback(() => load(true), [load]);
+    // The per-source host retries needs_machine pages on a normal read. Only
+    // the person's Retry bypasses healthy source memos.
+    const recover = React.useCallback(() => load(false), [load]);
     React.useEffect(() => {
         void load(false);
         return () => { generation.current += 1; pending.current?.abort(); };
@@ -112,7 +115,7 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
         || (actionId === 'registries.sources.list' && state.inputKey === inputKey))
         ? state : { scopeKey, inputKey, revision, value: null, loading: enabled, error: null, status: null };
     const failedSources = recovery?.failures?.(current.value).filter(page => page.status.state === 'needs_machine').map(page => page.sourceId) ?? [];
-    useRegistryCarrierRecovery(execution.ready && (current.status?.state === 'needs_machine' || failedSources.length > 0), refresh, scope,
+    useRegistryCarrierRecovery(execution.ready && (current.status?.state === 'needs_machine' || failedSources.length > 0), recover, scope,
         current.status?.state === 'needs_machine' ? recovery?.sourceIds : failedSources, enabled && !current.loading);
     // Credential retirement precedes the Sync store's next Account projection.
     // Never disclose that previous projection through an unbound mounted caller.

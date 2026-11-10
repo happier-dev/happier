@@ -1,4 +1,5 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { Linking } from 'react-native';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { executeConnectedServiceConfigurationActionV1, prepareConnectedServiceRevokeInputV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -259,7 +260,6 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                         createUiConnectedAccountAuthenticationHost(account, ownedSignal, context.actionRequestId ?? undefined).authenticationCommand(machineId, command));
                 },
                 openBillingDestination: async url => {
-                    const { Linking } = await import('react-native');
                     assertCurrent();
                     await Linking.openURL(url);
                 },

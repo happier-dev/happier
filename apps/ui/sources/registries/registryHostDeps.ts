@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { createRegistryHostV1, listRegistrySourcesV1, RegistryFetchErrorV1,
     RegistryFetchResponseV1Schema, REGISTRY_ACTION_INPUT_SCHEMAS_V1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, REGISTRY_FORMAT_ADAPTERS_V1,
     type RegistrySourceDescriptorV1, type RegistryFetchRequestV1, type RegistryActionIdV1,
@@ -138,7 +139,7 @@ export function invalidateUiRegistrySourcesMemoV1(scope: Readonly<{ serverId: st
 /** Compose the protocol registry owner with the captured Account's existing row CAS and Machine transport. */
 async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: PromptLibraryStackActionPortV1,
     context: ActionExecutorContext, options?: Readonly<{ explicitRefresh?: boolean }>) {
-    const [{ Platform }, { runtimeFetch }] = await Promise.all([import('react-native'), import('@/utils/system/runtimeFetch')]);
+    const { runtimeFetch } = await import('@/utils/system/runtimeFetch');
     const memo = memoFor(account);
     const readSources = async (): Promise<readonly RegistrySourceDescriptorV1[]> => {
         account.assertCurrent(); context.signal?.throwIfAborted();
@@ -264,17 +265,17 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
             const results = await Promise.all(sources.map(async source => {
                 // Views and shelves consume the same source page. A failed sibling
                 // must not invalidate healthy rows or spend their upstream budget.
-                const projectListQuery = !args.cursor
-                    ? (REGISTRY_FORMAT_ADAPTERS_V1 as Partial<Record<typeof source.format, RegistryFormatAdapterV1>>)[source.format]?.projectListQuery
-                    : undefined;
+                const projectListQuery = (REGISTRY_FORMAT_ADAPTERS_V1 as Partial<Record<typeof source.format, RegistryFormatAdapterV1>>)[source.format]?.projectListQuery;
                 const query = args.query;
-                const project = (value: { pages: RegistryListPageV1[] }) => projectListQuery && query
+                const project = (value: { pages: RegistryListPageV1[] }) => !args.cursor && projectListQuery && query
                     ? { pages: value.pages.map(page => projectListQuery(page, query)) } : value;
                 // Only the adapter can promise that its complete page answers a
                 // query locally. Remote searches and pagination keep their operands.
-                const input = { ...args, ...(projectListQuery ? { query: undefined } : {}), sourceIds: [source.id] };
-                const key = registryReadKey(actionId, input, context.externalActionTarget?.kind === 'machine'
-                    ? context.externalActionTarget.machineId : undefined);
+                const firstInput = { ...args, cursor: undefined, ...(projectListQuery ? { query: undefined } : {}), sourceIds: [source.id] };
+                const input = args.cursor ? { ...args, sourceIds: [source.id] } : firstInput;
+                const machineId = context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget.machineId : undefined;
+                const firstKey = registryReadKey(actionId, firstInput, machineId);
+                const key = args.cursor ? registryReadKey(actionId, input, machineId) : firstKey;
                 const revision = registrySourceRevision([source]);
                 const held = memo.values.get(key);
                 const cached = held?.revision === revision && 'pages' in held.value ? held.value : null;
@@ -291,7 +292,13 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
                         ? { ...page, items: prior.items, ...(prior.discovery ? { discovery: prior.discovery } : {}), nextCursor: null }
                         : page;
                 }) };
-                if (!input.cursor && !input.query) memo.values.set(key, { revision, value });
+                // Remote queries keep their own key, so supplier recovery also
+                // reuses healthy search results without treating them as a full page.
+                if (!input.cursor) memo.values.set(key, { revision, value });
+                // A later page can lose its carrier after the first page succeeded.
+                // Retire only that source so recovery reaches it instead of replaying
+                // the healthy first page; sibling memos remain reusable.
+                else if (value.pages.some(page => page.status.state === 'needs_machine')) memo.values.delete(firstKey);
                 return project(value);
             }));
             account.assertCurrent(); context.signal?.throwIfAborted();
