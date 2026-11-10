@@ -11,6 +11,7 @@ export type EntityDropResolveContext = Readonly<{
     pointer: WindowPointer | null;
     destination: PluginUiJsonValueV1 | null;
     input: EntityDragInput;
+    parentTargetInput?: PluginUiJsonValueV1 | null;
 }>;
 /** The carried card's identity: a title, one quiet state line, and the item's own mark (lab C2). */
 export type EntityDragSourceDescription = Readonly<{
@@ -43,6 +44,8 @@ export type EntityDropTarget = EntityDropTargetScope & Readonly<{
     /** Owns these accepted kinds throughout its measured region, including over child targets. */
     captureKinds?: readonly EntityDragKindV1[];
     parentId?: string;
+    /** Presentation data retained once by this mounted target for its immediate children. */
+    input?: PluginUiJsonValueV1;
     getBounds: () => WindowBounds | null;
     /** A region the carried card keeps clear of while this target is selected (the composer's block). */
     getClearBounds?: () => WindowBounds | null;

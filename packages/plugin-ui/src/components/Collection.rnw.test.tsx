@@ -134,6 +134,8 @@ import { Heading } from './Foundation.js';
 import { usePluginUiFocusTarget } from './Focus.js';
 import { PageHeader } from './PageHeader.js';
 import { HappierText } from '../presentation/text/Text.js';
+import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '../presentation/collection/CollectionList.js';
 import { capabilityCollectionAnatomy } from './Capabilities.js';
 import { HappierCollectionNavigationBackClosesDetailContext } from '../presentation/collection/collectionLayout.js';
 import {
@@ -3384,6 +3386,50 @@ describe('resting list rows', () => {
     expect(kinds(ruled).air).toBe(0);
     ruled.unmount();
   });
+
+  it("stands the resting list on the page's text edge: group label and row mark on it, the title one page row column after (PHONE-GEOMETRY-1110)", () => {
+    // The Collection stands on the column's sheet edge. A flat list's text sits on the page text edge just inside
+    // it (lab phone-system: label and mark 18, title 50), not on the sheet edge (Machines measured 16 / 51).
+    const textEdge = HAPPIER_PAGE_METRICS.pageTextInsetPx - HAPPIER_PAGE_METRICS.sheetInsetPx;
+    const marked: CollectionAnatomy<Entry> = { ...anatomy, glyph: (entry) => <Text testID={`mark:${entry.id}`}>•</Text> };
+    const view = mount({ presentation: 'list', anatomy: marked });
+    view.measure(360);
+    const px = (value: string | undefined) => Number.parseFloat(value || '0');
+    const label = [...view.container.querySelectorAll<HTMLElement>('*')]
+      .find((node) => node.children.length === 0 && node.textContent === 'Needs you')!;
+    const band = (() => {
+      let node: HTMLElement | null = label;
+      while (node !== null && px(node.style.paddingLeft) === 0 && node.style.height === '') node = node.parentElement;
+      return node!;
+    })();
+    expect(px(band.style.paddingLeft)).toBe(textEdge);
+    const markCell = view.query('mark:a')!.parentElement!;
+    const rowContent = markCell.parentElement!;
+    // The row's press target draws a 1 pt edge of its own before its content.
+    expect(px(rowContent.style.paddingLeft) + 1).toBe(textEdge);
+    expect(px(markCell.style.width) + px(rowContent.style.columnGap || rowContent.style.gap))
+      .toBe(HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx);
+    view.unmount();
+  });
+});
+
+describe('the group band', () => {
+  it("draws a table's group label as a quiet rounded band on the rows' gutter, never a full-bleed ruled rectangle (owner 2026-11-10)", () => {
+    // PRs & Issues "Pinned / Needs you / In review": radii derive from one base (DESIGN.md), and the band stands
+    // where a row's fill does, inset from the list's edges, so it groups its rows without shouting.
+    const view = mount({ presentation: 'table' });
+    view.measure(1440);
+    const label = [...view.container.querySelectorAll<HTMLElement>('*')]
+      .find((node) => node.children.length === 0 && node.textContent === 'Needs you')!;
+    let band: HTMLElement | null = label;
+    while (band !== null && (band.style.backgroundColor === '' || band.style.backgroundColor === 'transparent')) band = band.parentElement;
+    expect(band).not.toBeNull();
+    expect(band!.style.borderTopLeftRadius).toBe(`${HAPPIER_COLLECTION_LIST_METRICS.rowRadius}px`);
+    expect(band!.style.marginLeft).toBe(`${HAPPIER_COLLECTION_LIST_METRICS.rowInset}px`);
+    expect(band!.style.marginRight).toBe(`${HAPPIER_COLLECTION_LIST_METRICS.rowInset}px`);
+    expect(Number.parseFloat(band!.style.borderBottomWidth || '0')).toBe(0);
+    view.unmount();
+  });
 });
 
 describe('the title suffix', () => {
@@ -4011,6 +4057,32 @@ describe('board', () => {
       expect(mounts).toBe(1);
       act(() => { target.click(); });
       expect(view.openChanges).toEqual(['a']);
+    } finally { view.unmount(); }
+  });
+
+  it('mounts an assignable empty column through the real DropTarget transport and leaves derived columns read-only', async () => {
+    const requests: import('@happier-dev/plugin-sdk/ui').PluginUiUpdateEntityDragDropRequestV1[] = [];
+    const view = mount({
+      presentation: 'board', boardLayout: 'columns', detail: 'none',
+      grouping: { axis: [
+        { key: 'needs', title: 'Needs you', membership: { kind: 'derived' } },
+        { key: 'rest', title: 'Everything else', membership: { kind: 'derived' } },
+        { key: 'done', title: 'Done', membership: { kind: 'assignable', target: { targetId: 'task-status', input: { category: 'completed' } } } },
+      ], groupOf: entry => entry.group, retainEmpty: true },
+      hostApiOverrides: {
+        updateEntityDragDrop: async request => { requests.push(request); return { accepted: true }; },
+        watchEntityDragDrop: async () => ({ dispose() {} }),
+      },
+    });
+    try {
+      await act(async () => { view.measure(1440); });
+      const targets = requests.filter(request => request.kind === 'mountTarget');
+      expect(targets).toHaveLength(1);
+      expect(targets[0]).toMatchObject({ targetId: 'task-status', input: { category: 'completed' } });
+      expect(view.query('collection:column:done')?.querySelector('[data-testid^="row:"]')).toBeNull();
+      await view.update({ grouping: { axis: [{ key: 'needs', title: 'Needs you', membership: { kind: 'derived' } },
+        { key: 'rest', title: 'Everything else', membership: { kind: 'derived' } }], groupOf: entry => entry.group } });
+      expect(requests).toContainEqual({ kind: 'unmount', mountId: targets[0]!.mountId });
     } finally { view.unmount(); }
   });
 

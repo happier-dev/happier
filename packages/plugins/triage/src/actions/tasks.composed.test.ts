@@ -17,7 +17,7 @@ import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import { CORPUS_SESSION_LINKS_INDEX_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { TriageListEntriesResultV1Schema } from './listEntriesProtocol.js';
 import { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 } from './sessionLinksProtocol.js';
-import { TRIAGE_LIST_NO_FILTERS_V1 } from '../projection/listWindow.js';
+import { TRIAGE_LIST_NO_FILTERS_V1, triageEntryRowKey } from '../projection/listWindow.js';
 import { INTERNAL_TASK_DRAFT_V1, INTERNAL_TASK_SOURCE_V1 } from '../internalTasks/source.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
 import { administerConfiguredSourceInstance } from '../corpus/configuration/administerConfiguredSourceInstance.js';
@@ -25,6 +25,7 @@ import { buildTriageEntryRouteSegmentV1 } from '@happier-dev/triage-protocol/v1'
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { resolveTriageWorkItems, findLinkedTriageWorkItems, transitionTriageWorkItem, observeTriageWorkItems } from '../workItems/runtime.js';
 import { activate as activateTriageWorkClient, TRIAGE_ENTITY_DRAG_DROP_ARTIFACT_ID_V1 } from '../ui/list/entryDragDrop.js';
+import { settleTriageTaskDropResult } from '../ui/list/taskDropOutcome.js';
 
 const fixture = createTriageSourceV1Fixture();
 const configured = fixture.configuredInstance;
@@ -644,6 +645,47 @@ describe('Tasks through a separately authored source and registered aggregate Ac
             }, { surface: 'agent' }));
             expect(older.window.rows).toEqual([]);
         }, { unboundedCompleted: true, completedScanSupport: false });
+    });
+    it('registers status-column drops as one existing domain transition Action with truthful settlement', async () => {
+        await withExternalTaskSource(async ({ aggregate, writes }) => {
+            const client = await createPluginClientTestkit({ manifest: PLUGIN_MANIFEST,
+                target: { artifactId: TRIAGE_ENTITY_DRAG_DROP_ARTIFACT_ID_V1, exportName: 'activate', platform: 'web' },
+                activate: activateTriageWorkClient });
+            try {
+                const runtime = client.registration('dropTargets', 'task-status');
+                expect(runtime).toBeDefined();
+                if (runtime === undefined) throw new Error('The status-column target is not registered');
+                const admission = runtime.resolve({ item: { kind: 'plugin', scope: { serverId: 'home', accountId: 'account' },
+                    contribution: { pluginId: 'happier.triage', localId: 'entry-reference' }, reference: {
+                        entryRef, sourceInstance: configured.instance, lastKnownLocator: initialTask.locator,
+                        title: initialTask.snapshot.title, subtitle: 'Example task',
+                    } }, targetInput: { candidatesByEntry: { [triageEntryRowKey(entryRef)]: { v: 1, entryRef, sourceInstanceId: instanceId, transitionId: 'finish' } },
+                    preview: { verb: 'Change status', target: 'Done' }, unavailableReason: 'Use the task status menu.' }, destination: null, input: 'pointer' });
+                expect(admission).toMatchObject({ status: 'allowed', effect: { actionId: 'plugin:happier.triage/tasks/transition-v1' } });
+                if (admission.status !== 'allowed') throw new Error('The offered native transition was refused');
+                const result = await aggregate.invokeAction('tasks/transition-v1', admission.effect.input, { surface: 'ui' });
+                expect(runtime.settle?.(result)).toEqual({ status: 'applied' });
+                expect(writes.map(write => write.role)).toEqual(['transition']);
+            } finally { await client.dispose(); }
+        });
+    });
+    it('settles task drops from the real transition Action without turning refused or uncertain writes into Applied', async () => {
+        await withExternalTaskSource(async ({ aggregate, writes, setWriteResult }) => {
+            const input = { v: 1, entryRef, sourceInstanceId: instanceId, transitionId: 'finish' };
+            expect(settleTriageTaskDropResult(await aggregate.invokeAction('tasks/transition-v1', input, { surface: 'agent' })))
+                .toEqual({ status: 'applied' });
+            setWriteResult({ kind: 'refused', reason: 'nativeFieldUnavailable' });
+            expect(settleTriageTaskDropResult(await aggregate.invokeAction('tasks/transition-v1', input, { surface: 'agent' })))
+                .toMatchObject({ status: 'refused', reason: { code: 'nativeFieldUnavailable' } });
+            setWriteResult({ kind: 'uncertain' });
+            expect(settleTriageTaskDropResult(await aggregate.invokeAction('tasks/transition-v1', input, { surface: 'agent' })))
+                .toMatchObject({ status: 'unknown' });
+            setWriteResult({ kind: 'failed', failure: { class: 'transient', code: 'provider_unavailable' } });
+            expect(settleTriageTaskDropResult(await aggregate.invokeAction('tasks/transition-v1', input, { surface: 'agent' })))
+                .toMatchObject({ status: 'refused', reason: { code: 'provider_unavailable' } });
+            expect(writes.map(write => write.role)).toEqual(['transition', 'transition', 'transition', 'transition']);
+            expect(settleTriageTaskDropResult({ kind: 'applied' })).toMatchObject({ status: 'unknown' });
+        });
     });
     it('completes once through the declared role and rereads due/completion facts through the same strict list consumer', async () => {
         await withExternalTaskSource(async ({ aggregate, writes }) => {

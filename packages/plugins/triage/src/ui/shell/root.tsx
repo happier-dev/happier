@@ -1941,7 +1941,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     tasks: taskAudience !== undefined,
     taskAudience,
     taskItems: items,
-    taskGroups: collectionView === 'board' ? collectionGroups : undefined,
+    taskGroupOf: collectionView === 'board' ? collectionGroups.groupOf : undefined,
     readBlockerName: listPublication.getBlockerName,
     personalTaskOrder: personalTaskOrder.available ? personalTaskOrder.value : null,
     onTaskOrderOutcome: personalTaskOrder.onDropOutcome,

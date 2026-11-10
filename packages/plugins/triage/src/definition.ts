@@ -197,7 +197,7 @@ import {
   TRIAGE_ENTRY_DRAG_SOURCE_ID_V1,
   TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1,
   TRIAGE_PERSONAL_TASK_ORDER_TARGET_ID_V1,
-  TriageEntryDragReferenceV1Schema,
+  TriageEntryDragReferenceV1Schema, TRIAGE_TASK_STATUS_DROP_TARGET_ID_V1,
 } from './ui/list/entryDragDropProtocol.js';
 
 import { PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS } from './targetedContributions.js';
@@ -369,10 +369,17 @@ function createTriagePlugin(): TriagePlugin {
       },
     },
     dropTargets: {
+      [TRIAGE_TASK_STATUS_DROP_TARGET_ID_V1]: {
+        title: { key: 'plugins.triage.tasks.changeStatus', fallback: 'Change task status' },
+        acceptedKinds: [`plugin:${TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1}/${TRIAGE_ENTRY_DRAG_SOURCE_ID_V1}`],
+        actions: [{ kind: 'plugin', action: TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1 }],
+        client: { artifactId: TRIAGE_ENTITY_DRAG_DROP_ARTIFACT_ID_V1, exportName: 'activate' },
+        platforms: ['web', 'ios', 'android'],
+      },
       [TRIAGE_PERSONAL_TASK_ORDER_TARGET_ID_V1]: {
         title: { key: 'plugins.triage.tasks.reorder', fallback: 'Move task' },
         acceptedKinds: [`plugin:${TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1}/${TRIAGE_ENTRY_DRAG_SOURCE_ID_V1}`],
-        actions: [{ kind: 'host', actionId: 'tasks.internal.reorder' }],
+        actions: [{ kind: 'host', actionId: 'tasks.internal.reorder' }, { kind: 'plugin', action: TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1 }],
         client: { artifactId: TRIAGE_ENTITY_DRAG_DROP_ARTIFACT_ID_V1, exportName: 'activate' },
         platforms: ['web', 'ios', 'android'],
       },

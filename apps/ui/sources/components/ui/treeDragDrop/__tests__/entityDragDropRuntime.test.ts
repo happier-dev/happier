@@ -25,6 +25,25 @@ function fixture() {
 }
 
 describe('mounted entity drag owner', () => {
+    it.each(['current', 'foreign-account', 'retired'] as const)('shares only a current same-scope parent input with a nested target (%s)', parentState => {
+        const f = fixture();
+        f.retireTarget();
+        const parentInput = { destination: 'Done' };
+        f.runtime.registerTarget({ ...f.target, input: parentInput,
+            scope: parentState === 'foreign-account' ? { ...scope, accountId: 'other-account' } : scope,
+            isCurrent: () => parentState !== 'retired' });
+        f.runtime.registerTarget({ ...f.target, id: 'card', parentId: 'target',
+            resolve: ({ parentTargetInput }) => ({ status: 'allowed', effect: {
+                ...allowed.effect, input: { parent: parentTargetInput ?? null },
+            } }) });
+        const carry = f.runtime.begin('source', 'keyboard')!;
+        carry.choose('card');
+        expect(f.runtime.getSnapshot().admission).toMatchObject({ status: 'allowed', effect: {
+            input: { parent: parentState === 'current' ? parentInput : null },
+        } });
+        carry.cancel();
+    });
+
     it('uses a source-scoped collection without widening real mounted target scopes', async () => {
         const runtime = createEntityDragDropRuntime();
         const sourceScope = { serverId: 'home-b', accountId: 'account-b' };

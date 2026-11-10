@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 import { resolveHappierRovingSelection } from './semantics.js';
 import type { HappierWorkStatusTone } from '../work/workStatus.js';
+import type { DropTargetProps } from '../../components/EntityDragDrop.js';
 
 /**
  * The Collection's pure model rules (COLLECTION.md §2). `useHappierCollection` composes them; they
@@ -100,6 +101,11 @@ export type HappierCollectionGroup = Readonly<{
   /** The group's visible and semantic name. An empty title groups the rows without a label. */
   title: string;
   description?: string;
+  /** Derived by default; assignable Board columns reuse a declared DnD target and its existing Action. */
+  membership?: Readonly<{ kind: 'derived' }> | Readonly<{
+    kind: 'assignable';
+    target: Pick<DropTargetProps, 'targetId' | 'input'>;
+  }>;
   /** Work groups may announce attention with the same semantic tone as their rows. */
   tone?: HappierWorkStatusTone;
   /**

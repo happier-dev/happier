@@ -2396,6 +2396,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -3780,6 +3786,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -4727,6 +4739,12 @@
                             "type": "string",
                             "x-happier-max-utf8-bytes": 7181
                           },
+                          "requestId": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 128
+                          },
                           "requiredPermissions": {
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -5036,6 +5054,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -5234,6 +5258,12 @@
                             "type": "string",
                             "x-happier-max-utf8-bytes": 7181
                           },
+                          "requestId": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 128
+                          },
                           "requiredPermissions": {
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -5317,6 +5347,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -6087,6 +6123,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -7583,6 +7625,12 @@
                                 "type": "string",
                                 "x-happier-max-utf8-bytes": 7181
                               },
+                              "requestId": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              },
                               "requiredPermissions": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -7710,6 +7758,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -9206,6 +9260,12 @@
                                 "type": "string",
                                 "x-happier-max-utf8-bytes": 7181
                               },
+                              "requestId": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              },
                               "requiredPermissions": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -9315,6 +9375,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -11931,6 +11997,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -13887,6 +13959,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -15270,6 +15348,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -17241,6 +17325,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -18624,6 +18714,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -20436,6 +20532,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -21820,6 +21922,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -22834,6 +22942,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -23523,6 +23637,12 @@
                                     "type": "string",
                                     "x-happier-max-utf8-bytes": 7181
                                   },
+                                  "requestId": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
                                   "requiredPermissions": {
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -23691,6 +23811,12 @@
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
                                     "x-happier-max-utf8-bytes": 7181
+                                  },
+                                  "requestId": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
                                   },
                                   "requiredPermissions": {
                                     "minLength": 1,
@@ -23942,6 +24068,12 @@
                                         "type": "string",
                                         "x-happier-max-utf8-bytes": 7181
                                       },
+                                      "requestId": {
+                                        "minLength": 1,
+                                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                        "type": "string",
+                                        "x-happier-max-utf8-bytes": 128
+                                      },
                                       "requiredPermissions": {
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -24041,6 +24173,12 @@
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
                                     "x-happier-max-utf8-bytes": 7181
+                                  },
+                                  "requestId": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
                                   },
                                   "requiredPermissions": {
                                     "minLength": 1,
@@ -25669,6 +25807,12 @@
                                         "type": "string",
                                         "x-happier-max-utf8-bytes": 7181
                                       },
+                                      "requestId": {
+                                        "minLength": 1,
+                                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                        "type": "string",
+                                        "x-happier-max-utf8-bytes": 128
+                                      },
                                       "requiredPermissions": {
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -27127,6 +27271,12 @@
                                           "type": "string",
                                           "x-happier-max-utf8-bytes": 7181
                                         },
+                                        "requestId": {
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "type": "string",
+                                          "x-happier-max-utf8-bytes": 128
+                                        },
                                         "requiredPermissions": {
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -27556,6 +27706,12 @@
                                                   "type": "string",
                                                   "x-happier-max-utf8-bytes": 7181
                                                 },
+                                                "requestId": {
+                                                  "minLength": 1,
+                                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                  "type": "string",
+                                                  "x-happier-max-utf8-bytes": 128
+                                                },
                                                 "requiredPermissions": {
                                                   "minLength": 1,
                                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -27855,6 +28011,12 @@
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
                           "x-happier-max-utf8-bytes": 7181
+                        },
+                        "requestId": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
                         },
                         "requiredPermissions": {
                           "minLength": 1,
@@ -30628,6 +30790,12 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 7181
                         },
+                        "requestId": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
                         "requiredPermissions": {
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -32011,6 +32179,12 @@
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
                           "x-happier-max-utf8-bytes": 7181
+                        },
+                        "requestId": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
                         },
                         "requiredPermissions": {
                           "minLength": 1,
@@ -33436,6 +33610,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -34819,6 +34999,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -38335,6 +38521,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -39718,6 +39910,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -41313,6 +41511,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -42696,6 +42900,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -46038,6 +46248,12 @@
                                     "type": "string",
                                     "x-happier-max-utf8-bytes": 7181
                                   },
+                                  "requestId": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
                                   "requiredPermissions": {
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -46206,6 +46422,12 @@
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
                                     "x-happier-max-utf8-bytes": 7181
+                                  },
+                                  "requestId": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
                                   },
                                   "requiredPermissions": {
                                     "minLength": 1,
@@ -46457,6 +46679,12 @@
                                         "type": "string",
                                         "x-happier-max-utf8-bytes": 7181
                                       },
+                                      "requestId": {
+                                        "minLength": 1,
+                                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                        "type": "string",
+                                        "x-happier-max-utf8-bytes": 128
+                                      },
                                       "requiredPermissions": {
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -46556,6 +46784,12 @@
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
                                     "x-happier-max-utf8-bytes": 7181
+                                  },
+                                  "requestId": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
                                   },
                                   "requiredPermissions": {
                                     "minLength": 1,
@@ -48184,6 +48418,12 @@
                                         "type": "string",
                                         "x-happier-max-utf8-bytes": 7181
                                       },
+                                      "requestId": {
+                                        "minLength": 1,
+                                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                        "type": "string",
+                                        "x-happier-max-utf8-bytes": 128
+                                      },
                                       "requiredPermissions": {
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -49642,6 +49882,12 @@
                                           "type": "string",
                                           "x-happier-max-utf8-bytes": 7181
                                         },
+                                        "requestId": {
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "type": "string",
+                                          "x-happier-max-utf8-bytes": 128
+                                        },
                                         "requiredPermissions": {
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -50071,6 +50317,12 @@
                                                   "type": "string",
                                                   "x-happier-max-utf8-bytes": 7181
                                                 },
+                                                "requestId": {
+                                                  "minLength": 1,
+                                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                  "type": "string",
+                                                  "x-happier-max-utf8-bytes": 128
+                                                },
                                                 "requiredPermissions": {
                                                   "minLength": 1,
                                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -50370,6 +50622,12 @@
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
                           "x-happier-max-utf8-bytes": 7181
+                        },
+                        "requestId": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
                         },
                         "requiredPermissions": {
                           "minLength": 1,
@@ -53895,6 +54153,12 @@
                                     "type": "string",
                                     "x-happier-max-utf8-bytes": 7181
                                   },
+                                  "requestId": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
                                   "requiredPermissions": {
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -54419,6 +54683,12 @@
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                               "type": "string",
                                               "x-happier-max-utf8-bytes": 7181
+                                            },
+                                            "requestId": {
+                                              "minLength": 1,
+                                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                              "type": "string",
+                                              "x-happier-max-utf8-bytes": 128
                                             },
                                             "requiredPermissions": {
                                               "minLength": 1,
@@ -56805,6 +57075,14 @@
             "destination"
           ],
           "type": "object"
+        },
+        "operation": {
+          "presentation": {
+            "onStart": "current"
+          },
+          "progress": "reported",
+          "version": 1,
+          "visibility": "activity"
         },
         "placementBindings": [],
         "resultSchema": {
@@ -59887,6 +60165,7 @@
                                                       "deployments.domains.list",
                                                       "deployments.environments.create",
                                                       "deployments.environments.update",
+                                                      "deployments.environments.moveToRepository",
                                                       "deployments.targets.link",
                                                       "deployments.deploy",
                                                       "deployments.rollback",
@@ -59896,6 +60175,7 @@
                                                       "deployments.promote",
                                                       "deployments.restart",
                                                       "deployments.backups.restore",
+                                                      "deployments.backups.configure",
                                                       "deployments.backups.test",
                                                       "deployments.backups.history",
                                                       "deployments.backups.inventory",
@@ -59918,6 +60198,7 @@
                                                       "deployments.health.current",
                                                       "deployments.drift.read",
                                                       "deployments.logs.read",
+                                                      "deployments.data.query",
                                                       "registries.sources.list",
                                                       "registries.sources.detect",
                                                       "registries.sources.create",
@@ -59971,6 +60252,7 @@
                                                       "projects.sources.delete",
                                                       "projects.sources.moveToTeam",
                                                       "projects.deploymentDefaults.set",
+                                                      "projects.starters.create",
                                                       "projects.pages.list",
                                                       "projects.trust.list",
                                                       "projects.trust.revoke",
@@ -60488,6 +60770,7 @@
                                                       "session.draft.model.set",
                                                       "session.draft.append",
                                                       "notifications.notify_me",
+                                                      "notifications.test",
                                                       "notifications.webhooks.list",
                                                       "notifications.webhooks.add",
                                                       "notifications.webhooks.update",
@@ -61247,6 +61530,7 @@
                                                       "machines.setup.updates.apply",
                                                       "machines.managed.power.set",
                                                       "machines.managed.rebuild",
+                                                      "machines.managed.resize",
                                                       "machines.managed.retention.update",
                                                       "machines.managed.delete",
                                                       "machines.managed.controller.update",
@@ -65275,6 +65559,7 @@
                                                       "deployments.domains.list",
                                                       "deployments.environments.create",
                                                       "deployments.environments.update",
+                                                      "deployments.environments.moveToRepository",
                                                       "deployments.targets.link",
                                                       "deployments.deploy",
                                                       "deployments.rollback",
@@ -65284,6 +65569,7 @@
                                                       "deployments.promote",
                                                       "deployments.restart",
                                                       "deployments.backups.restore",
+                                                      "deployments.backups.configure",
                                                       "deployments.backups.test",
                                                       "deployments.backups.history",
                                                       "deployments.backups.inventory",
@@ -65306,6 +65592,7 @@
                                                       "deployments.health.current",
                                                       "deployments.drift.read",
                                                       "deployments.logs.read",
+                                                      "deployments.data.query",
                                                       "registries.sources.list",
                                                       "registries.sources.detect",
                                                       "registries.sources.create",
@@ -65359,6 +65646,7 @@
                                                       "projects.sources.delete",
                                                       "projects.sources.moveToTeam",
                                                       "projects.deploymentDefaults.set",
+                                                      "projects.starters.create",
                                                       "projects.pages.list",
                                                       "projects.trust.list",
                                                       "projects.trust.revoke",
@@ -65876,6 +66164,7 @@
                                                       "session.draft.model.set",
                                                       "session.draft.append",
                                                       "notifications.notify_me",
+                                                      "notifications.test",
                                                       "notifications.webhooks.list",
                                                       "notifications.webhooks.add",
                                                       "notifications.webhooks.update",
@@ -66635,6 +66924,7 @@
                                                       "machines.setup.updates.apply",
                                                       "machines.managed.power.set",
                                                       "machines.managed.rebuild",
+                                                      "machines.managed.resize",
                                                       "machines.managed.retention.update",
                                                       "machines.managed.delete",
                                                       "machines.managed.controller.update",
@@ -70674,6 +70964,7 @@
                                                       "deployments.domains.list",
                                                       "deployments.environments.create",
                                                       "deployments.environments.update",
+                                                      "deployments.environments.moveToRepository",
                                                       "deployments.targets.link",
                                                       "deployments.deploy",
                                                       "deployments.rollback",
@@ -70683,6 +70974,7 @@
                                                       "deployments.promote",
                                                       "deployments.restart",
                                                       "deployments.backups.restore",
+                                                      "deployments.backups.configure",
                                                       "deployments.backups.test",
                                                       "deployments.backups.history",
                                                       "deployments.backups.inventory",
@@ -70705,6 +70997,7 @@
                                                       "deployments.health.current",
                                                       "deployments.drift.read",
                                                       "deployments.logs.read",
+                                                      "deployments.data.query",
                                                       "registries.sources.list",
                                                       "registries.sources.detect",
                                                       "registries.sources.create",
@@ -70758,6 +71051,7 @@
                                                       "projects.sources.delete",
                                                       "projects.sources.moveToTeam",
                                                       "projects.deploymentDefaults.set",
+                                                      "projects.starters.create",
                                                       "projects.pages.list",
                                                       "projects.trust.list",
                                                       "projects.trust.revoke",
@@ -71275,6 +71569,7 @@
                                                       "session.draft.model.set",
                                                       "session.draft.append",
                                                       "notifications.notify_me",
+                                                      "notifications.test",
                                                       "notifications.webhooks.list",
                                                       "notifications.webhooks.add",
                                                       "notifications.webhooks.update",
@@ -72034,6 +72329,7 @@
                                                       "machines.setup.updates.apply",
                                                       "machines.managed.power.set",
                                                       "machines.managed.rebuild",
+                                                      "machines.managed.resize",
                                                       "machines.managed.retention.update",
                                                       "machines.managed.delete",
                                                       "machines.managed.controller.update",
@@ -75644,6 +75940,7 @@
                                                       "deployments.domains.list",
                                                       "deployments.environments.create",
                                                       "deployments.environments.update",
+                                                      "deployments.environments.moveToRepository",
                                                       "deployments.targets.link",
                                                       "deployments.deploy",
                                                       "deployments.rollback",
@@ -75653,6 +75950,7 @@
                                                       "deployments.promote",
                                                       "deployments.restart",
                                                       "deployments.backups.restore",
+                                                      "deployments.backups.configure",
                                                       "deployments.backups.test",
                                                       "deployments.backups.history",
                                                       "deployments.backups.inventory",
@@ -75675,6 +75973,7 @@
                                                       "deployments.health.current",
                                                       "deployments.drift.read",
                                                       "deployments.logs.read",
+                                                      "deployments.data.query",
                                                       "registries.sources.list",
                                                       "registries.sources.detect",
                                                       "registries.sources.create",
@@ -75728,6 +76027,7 @@
                                                       "projects.sources.delete",
                                                       "projects.sources.moveToTeam",
                                                       "projects.deploymentDefaults.set",
+                                                      "projects.starters.create",
                                                       "projects.pages.list",
                                                       "projects.trust.list",
                                                       "projects.trust.revoke",
@@ -76245,6 +76545,7 @@
                                                       "session.draft.model.set",
                                                       "session.draft.append",
                                                       "notifications.notify_me",
+                                                      "notifications.test",
                                                       "notifications.webhooks.list",
                                                       "notifications.webhooks.add",
                                                       "notifications.webhooks.update",
@@ -77004,6 +77305,7 @@
                                                       "machines.setup.updates.apply",
                                                       "machines.managed.power.set",
                                                       "machines.managed.rebuild",
+                                                      "machines.managed.resize",
                                                       "machines.managed.retention.update",
                                                       "machines.managed.delete",
                                                       "machines.managed.controller.update",
@@ -78683,6 +78985,14 @@
           ],
           "type": "object"
         },
+        "operation": {
+          "presentation": {
+            "onStart": "current"
+          },
+          "progress": "reported",
+          "version": 1,
+          "visibility": "activity"
+        },
         "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
@@ -79486,6 +79796,22 @@
                                 },
                                 "kind": {
                                   "const": "deploymentEnvironment"
+                                },
+                                "readiness": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "fact": {
+                                      "type": "string"
+                                    },
+                                    "projectId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "projectId",
+                                    "fact"
+                                  ],
+                                  "type": "object"
                                 },
                                 "serverId": {
                                   "type": "string"
@@ -80714,6 +81040,22 @@
                                   },
                                   "kind": {
                                     "const": "deploymentEnvironment"
+                                  },
+                                  "readiness": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "fact": {
+                                        "type": "string"
+                                      },
+                                      "projectId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "projectId",
+                                      "fact"
+                                    ],
+                                    "type": "object"
                                   },
                                   "serverId": {
                                     "type": "string"
@@ -86788,6 +87130,7 @@
                                                               "deployments.domains.list",
                                                               "deployments.environments.create",
                                                               "deployments.environments.update",
+                                                              "deployments.environments.moveToRepository",
                                                               "deployments.targets.link",
                                                               "deployments.deploy",
                                                               "deployments.rollback",
@@ -86797,6 +87140,7 @@
                                                               "deployments.promote",
                                                               "deployments.restart",
                                                               "deployments.backups.restore",
+                                                              "deployments.backups.configure",
                                                               "deployments.backups.test",
                                                               "deployments.backups.history",
                                                               "deployments.backups.inventory",
@@ -86819,6 +87163,7 @@
                                                               "deployments.health.current",
                                                               "deployments.drift.read",
                                                               "deployments.logs.read",
+                                                              "deployments.data.query",
                                                               "registries.sources.list",
                                                               "registries.sources.detect",
                                                               "registries.sources.create",
@@ -86872,6 +87217,7 @@
                                                               "projects.sources.delete",
                                                               "projects.sources.moveToTeam",
                                                               "projects.deploymentDefaults.set",
+                                                              "projects.starters.create",
                                                               "projects.pages.list",
                                                               "projects.trust.list",
                                                               "projects.trust.revoke",
@@ -87389,6 +87735,7 @@
                                                               "session.draft.model.set",
                                                               "session.draft.append",
                                                               "notifications.notify_me",
+                                                              "notifications.test",
                                                               "notifications.webhooks.list",
                                                               "notifications.webhooks.add",
                                                               "notifications.webhooks.update",
@@ -88148,6 +88495,7 @@
                                                               "machines.setup.updates.apply",
                                                               "machines.managed.power.set",
                                                               "machines.managed.rebuild",
+                                                              "machines.managed.resize",
                                                               "machines.managed.retention.update",
                                                               "machines.managed.delete",
                                                               "machines.managed.controller.update",
@@ -92176,6 +92524,7 @@
                                                               "deployments.domains.list",
                                                               "deployments.environments.create",
                                                               "deployments.environments.update",
+                                                              "deployments.environments.moveToRepository",
                                                               "deployments.targets.link",
                                                               "deployments.deploy",
                                                               "deployments.rollback",
@@ -92185,6 +92534,7 @@
                                                               "deployments.promote",
                                                               "deployments.restart",
                                                               "deployments.backups.restore",
+                                                              "deployments.backups.configure",
                                                               "deployments.backups.test",
                                                               "deployments.backups.history",
                                                               "deployments.backups.inventory",
@@ -92207,6 +92557,7 @@
                                                               "deployments.health.current",
                                                               "deployments.drift.read",
                                                               "deployments.logs.read",
+                                                              "deployments.data.query",
                                                               "registries.sources.list",
                                                               "registries.sources.detect",
                                                               "registries.sources.create",
@@ -92260,6 +92611,7 @@
                                                               "projects.sources.delete",
                                                               "projects.sources.moveToTeam",
                                                               "projects.deploymentDefaults.set",
+                                                              "projects.starters.create",
                                                               "projects.pages.list",
                                                               "projects.trust.list",
                                                               "projects.trust.revoke",
@@ -92777,6 +93129,7 @@
                                                               "session.draft.model.set",
                                                               "session.draft.append",
                                                               "notifications.notify_me",
+                                                              "notifications.test",
                                                               "notifications.webhooks.list",
                                                               "notifications.webhooks.add",
                                                               "notifications.webhooks.update",
@@ -93536,6 +93889,7 @@
                                                               "machines.setup.updates.apply",
                                                               "machines.managed.power.set",
                                                               "machines.managed.rebuild",
+                                                              "machines.managed.resize",
                                                               "machines.managed.retention.update",
                                                               "machines.managed.delete",
                                                               "machines.managed.controller.update",
@@ -97575,6 +97929,7 @@
                                                               "deployments.domains.list",
                                                               "deployments.environments.create",
                                                               "deployments.environments.update",
+                                                              "deployments.environments.moveToRepository",
                                                               "deployments.targets.link",
                                                               "deployments.deploy",
                                                               "deployments.rollback",
@@ -97584,6 +97939,7 @@
                                                               "deployments.promote",
                                                               "deployments.restart",
                                                               "deployments.backups.restore",
+                                                              "deployments.backups.configure",
                                                               "deployments.backups.test",
                                                               "deployments.backups.history",
                                                               "deployments.backups.inventory",
@@ -97606,6 +97962,7 @@
                                                               "deployments.health.current",
                                                               "deployments.drift.read",
                                                               "deployments.logs.read",
+                                                              "deployments.data.query",
                                                               "registries.sources.list",
                                                               "registries.sources.detect",
                                                               "registries.sources.create",
@@ -97659,6 +98016,7 @@
                                                               "projects.sources.delete",
                                                               "projects.sources.moveToTeam",
                                                               "projects.deploymentDefaults.set",
+                                                              "projects.starters.create",
                                                               "projects.pages.list",
                                                               "projects.trust.list",
                                                               "projects.trust.revoke",
@@ -98176,6 +98534,7 @@
                                                               "session.draft.model.set",
                                                               "session.draft.append",
                                                               "notifications.notify_me",
+                                                              "notifications.test",
                                                               "notifications.webhooks.list",
                                                               "notifications.webhooks.add",
                                                               "notifications.webhooks.update",
@@ -98935,6 +99294,7 @@
                                                               "machines.setup.updates.apply",
                                                               "machines.managed.power.set",
                                                               "machines.managed.rebuild",
+                                                              "machines.managed.resize",
                                                               "machines.managed.retention.update",
                                                               "machines.managed.delete",
                                                               "machines.managed.controller.update",
@@ -102545,6 +102905,7 @@
                                                               "deployments.domains.list",
                                                               "deployments.environments.create",
                                                               "deployments.environments.update",
+                                                              "deployments.environments.moveToRepository",
                                                               "deployments.targets.link",
                                                               "deployments.deploy",
                                                               "deployments.rollback",
@@ -102554,6 +102915,7 @@
                                                               "deployments.promote",
                                                               "deployments.restart",
                                                               "deployments.backups.restore",
+                                                              "deployments.backups.configure",
                                                               "deployments.backups.test",
                                                               "deployments.backups.history",
                                                               "deployments.backups.inventory",
@@ -102576,6 +102938,7 @@
                                                               "deployments.health.current",
                                                               "deployments.drift.read",
                                                               "deployments.logs.read",
+                                                              "deployments.data.query",
                                                               "registries.sources.list",
                                                               "registries.sources.detect",
                                                               "registries.sources.create",
@@ -102629,6 +102992,7 @@
                                                               "projects.sources.delete",
                                                               "projects.sources.moveToTeam",
                                                               "projects.deploymentDefaults.set",
+                                                              "projects.starters.create",
                                                               "projects.pages.list",
                                                               "projects.trust.list",
                                                               "projects.trust.revoke",
@@ -103146,6 +103510,7 @@
                                                               "session.draft.model.set",
                                                               "session.draft.append",
                                                               "notifications.notify_me",
+                                                              "notifications.test",
                                                               "notifications.webhooks.list",
                                                               "notifications.webhooks.add",
                                                               "notifications.webhooks.update",
@@ -103905,6 +104270,7 @@
                                                               "machines.setup.updates.apply",
                                                               "machines.managed.power.set",
                                                               "machines.managed.rebuild",
+                                                              "machines.managed.resize",
                                                               "machines.managed.retention.update",
                                                               "machines.managed.delete",
                                                               "machines.managed.controller.update",
@@ -105329,6 +105695,22 @@
                                         "kind": {
                                           "const": "deploymentEnvironment"
                                         },
+                                        "readiness": {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "fact": {
+                                              "type": "string"
+                                            },
+                                            "projectId": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "projectId",
+                                            "fact"
+                                          ],
+                                          "type": "object"
+                                        },
                                         "serverId": {
                                           "type": "string"
                                         }
@@ -106556,6 +106938,22 @@
                                           },
                                           "kind": {
                                             "const": "deploymentEnvironment"
+                                          },
+                                          "readiness": {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "fact": {
+                                                "type": "string"
+                                              },
+                                              "projectId": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "projectId",
+                                              "fact"
+                                            ],
+                                            "type": "object"
                                           },
                                           "serverId": {
                                             "type": "string"
@@ -116804,6 +117202,7 @@
                                                                                         "deployments.domains.list",
                                                                                         "deployments.environments.create",
                                                                                         "deployments.environments.update",
+                                                                                        "deployments.environments.moveToRepository",
                                                                                         "deployments.targets.link",
                                                                                         "deployments.deploy",
                                                                                         "deployments.rollback",
@@ -116813,6 +117212,7 @@
                                                                                         "deployments.promote",
                                                                                         "deployments.restart",
                                                                                         "deployments.backups.restore",
+                                                                                        "deployments.backups.configure",
                                                                                         "deployments.backups.test",
                                                                                         "deployments.backups.history",
                                                                                         "deployments.backups.inventory",
@@ -116835,6 +117235,7 @@
                                                                                         "deployments.health.current",
                                                                                         "deployments.drift.read",
                                                                                         "deployments.logs.read",
+                                                                                        "deployments.data.query",
                                                                                         "registries.sources.list",
                                                                                         "registries.sources.detect",
                                                                                         "registries.sources.create",
@@ -116888,6 +117289,7 @@
                                                                                         "projects.sources.delete",
                                                                                         "projects.sources.moveToTeam",
                                                                                         "projects.deploymentDefaults.set",
+                                                                                        "projects.starters.create",
                                                                                         "projects.pages.list",
                                                                                         "projects.trust.list",
                                                                                         "projects.trust.revoke",
@@ -117405,6 +117807,7 @@
                                                                                         "session.draft.model.set",
                                                                                         "session.draft.append",
                                                                                         "notifications.notify_me",
+                                                                                        "notifications.test",
                                                                                         "notifications.webhooks.list",
                                                                                         "notifications.webhooks.add",
                                                                                         "notifications.webhooks.update",
@@ -118164,6 +118567,7 @@
                                                                                         "machines.setup.updates.apply",
                                                                                         "machines.managed.power.set",
                                                                                         "machines.managed.rebuild",
+                                                                                        "machines.managed.resize",
                                                                                         "machines.managed.retention.update",
                                                                                         "machines.managed.delete",
                                                                                         "machines.managed.controller.update",
@@ -122192,6 +122596,7 @@
                                                                                         "deployments.domains.list",
                                                                                         "deployments.environments.create",
                                                                                         "deployments.environments.update",
+                                                                                        "deployments.environments.moveToRepository",
                                                                                         "deployments.targets.link",
                                                                                         "deployments.deploy",
                                                                                         "deployments.rollback",
@@ -122201,6 +122606,7 @@
                                                                                         "deployments.promote",
                                                                                         "deployments.restart",
                                                                                         "deployments.backups.restore",
+                                                                                        "deployments.backups.configure",
                                                                                         "deployments.backups.test",
                                                                                         "deployments.backups.history",
                                                                                         "deployments.backups.inventory",
@@ -122223,6 +122629,7 @@
                                                                                         "deployments.health.current",
                                                                                         "deployments.drift.read",
                                                                                         "deployments.logs.read",
+                                                                                        "deployments.data.query",
                                                                                         "registries.sources.list",
                                                                                         "registries.sources.detect",
                                                                                         "registries.sources.create",
@@ -122276,6 +122683,7 @@
                                                                                         "projects.sources.delete",
                                                                                         "projects.sources.moveToTeam",
                                                                                         "projects.deploymentDefaults.set",
+                                                                                        "projects.starters.create",
                                                                                         "projects.pages.list",
                                                                                         "projects.trust.list",
                                                                                         "projects.trust.revoke",
@@ -122793,6 +123201,7 @@
                                                                                         "session.draft.model.set",
                                                                                         "session.draft.append",
                                                                                         "notifications.notify_me",
+                                                                                        "notifications.test",
                                                                                         "notifications.webhooks.list",
                                                                                         "notifications.webhooks.add",
                                                                                         "notifications.webhooks.update",
@@ -123552,6 +123961,7 @@
                                                                                         "machines.setup.updates.apply",
                                                                                         "machines.managed.power.set",
                                                                                         "machines.managed.rebuild",
+                                                                                        "machines.managed.resize",
                                                                                         "machines.managed.retention.update",
                                                                                         "machines.managed.delete",
                                                                                         "machines.managed.controller.update",
@@ -127591,6 +128001,7 @@
                                                                                         "deployments.domains.list",
                                                                                         "deployments.environments.create",
                                                                                         "deployments.environments.update",
+                                                                                        "deployments.environments.moveToRepository",
                                                                                         "deployments.targets.link",
                                                                                         "deployments.deploy",
                                                                                         "deployments.rollback",
@@ -127600,6 +128011,7 @@
                                                                                         "deployments.promote",
                                                                                         "deployments.restart",
                                                                                         "deployments.backups.restore",
+                                                                                        "deployments.backups.configure",
                                                                                         "deployments.backups.test",
                                                                                         "deployments.backups.history",
                                                                                         "deployments.backups.inventory",
@@ -127622,6 +128034,7 @@
                                                                                         "deployments.health.current",
                                                                                         "deployments.drift.read",
                                                                                         "deployments.logs.read",
+                                                                                        "deployments.data.query",
                                                                                         "registries.sources.list",
                                                                                         "registries.sources.detect",
                                                                                         "registries.sources.create",
@@ -127675,6 +128088,7 @@
                                                                                         "projects.sources.delete",
                                                                                         "projects.sources.moveToTeam",
                                                                                         "projects.deploymentDefaults.set",
+                                                                                        "projects.starters.create",
                                                                                         "projects.pages.list",
                                                                                         "projects.trust.list",
                                                                                         "projects.trust.revoke",
@@ -128192,6 +128606,7 @@
                                                                                         "session.draft.model.set",
                                                                                         "session.draft.append",
                                                                                         "notifications.notify_me",
+                                                                                        "notifications.test",
                                                                                         "notifications.webhooks.list",
                                                                                         "notifications.webhooks.add",
                                                                                         "notifications.webhooks.update",
@@ -128951,6 +129366,7 @@
                                                                                         "machines.setup.updates.apply",
                                                                                         "machines.managed.power.set",
                                                                                         "machines.managed.rebuild",
+                                                                                        "machines.managed.resize",
                                                                                         "machines.managed.retention.update",
                                                                                         "machines.managed.delete",
                                                                                         "machines.managed.controller.update",
@@ -132561,6 +132977,7 @@
                                                                                         "deployments.domains.list",
                                                                                         "deployments.environments.create",
                                                                                         "deployments.environments.update",
+                                                                                        "deployments.environments.moveToRepository",
                                                                                         "deployments.targets.link",
                                                                                         "deployments.deploy",
                                                                                         "deployments.rollback",
@@ -132570,6 +132987,7 @@
                                                                                         "deployments.promote",
                                                                                         "deployments.restart",
                                                                                         "deployments.backups.restore",
+                                                                                        "deployments.backups.configure",
                                                                                         "deployments.backups.test",
                                                                                         "deployments.backups.history",
                                                                                         "deployments.backups.inventory",
@@ -132592,6 +133010,7 @@
                                                                                         "deployments.health.current",
                                                                                         "deployments.drift.read",
                                                                                         "deployments.logs.read",
+                                                                                        "deployments.data.query",
                                                                                         "registries.sources.list",
                                                                                         "registries.sources.detect",
                                                                                         "registries.sources.create",
@@ -132645,6 +133064,7 @@
                                                                                         "projects.sources.delete",
                                                                                         "projects.sources.moveToTeam",
                                                                                         "projects.deploymentDefaults.set",
+                                                                                        "projects.starters.create",
                                                                                         "projects.pages.list",
                                                                                         "projects.trust.list",
                                                                                         "projects.trust.revoke",
@@ -133162,6 +133582,7 @@
                                                                                         "session.draft.model.set",
                                                                                         "session.draft.append",
                                                                                         "notifications.notify_me",
+                                                                                        "notifications.test",
                                                                                         "notifications.webhooks.list",
                                                                                         "notifications.webhooks.add",
                                                                                         "notifications.webhooks.update",
@@ -133921,6 +134342,7 @@
                                                                                         "machines.setup.updates.apply",
                                                                                         "machines.managed.power.set",
                                                                                         "machines.managed.rebuild",
+                                                                                        "machines.managed.resize",
                                                                                         "machines.managed.retention.update",
                                                                                         "machines.managed.delete",
                                                                                         "machines.managed.controller.update",
@@ -135581,6 +136003,22 @@
                                             "kind": {
                                               "const": "deploymentEnvironment"
                                             },
+                                            "readiness": {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "fact": {
+                                                  "type": "string"
+                                                },
+                                                "projectId": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": [
+                                                "projectId",
+                                                "fact"
+                                              ],
+                                              "type": "object"
+                                            },
                                             "serverId": {
                                               "type": "string"
                                             }
@@ -136808,6 +137246,22 @@
                                               },
                                               "kind": {
                                                 "const": "deploymentEnvironment"
+                                              },
+                                              "readiness": {
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                  "fact": {
+                                                    "type": "string"
+                                                  },
+                                                  "projectId": {
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "projectId",
+                                                  "fact"
+                                                ],
+                                                "type": "object"
                                               },
                                               "serverId": {
                                                 "type": "string"
@@ -144917,6 +145371,7 @@
                                                           "deployments.domains.list",
                                                           "deployments.environments.create",
                                                           "deployments.environments.update",
+                                                          "deployments.environments.moveToRepository",
                                                           "deployments.targets.link",
                                                           "deployments.deploy",
                                                           "deployments.rollback",
@@ -144926,6 +145381,7 @@
                                                           "deployments.promote",
                                                           "deployments.restart",
                                                           "deployments.backups.restore",
+                                                          "deployments.backups.configure",
                                                           "deployments.backups.test",
                                                           "deployments.backups.history",
                                                           "deployments.backups.inventory",
@@ -144948,6 +145404,7 @@
                                                           "deployments.health.current",
                                                           "deployments.drift.read",
                                                           "deployments.logs.read",
+                                                          "deployments.data.query",
                                                           "registries.sources.list",
                                                           "registries.sources.detect",
                                                           "registries.sources.create",
@@ -145001,6 +145458,7 @@
                                                           "projects.sources.delete",
                                                           "projects.sources.moveToTeam",
                                                           "projects.deploymentDefaults.set",
+                                                          "projects.starters.create",
                                                           "projects.pages.list",
                                                           "projects.trust.list",
                                                           "projects.trust.revoke",
@@ -145518,6 +145976,7 @@
                                                           "session.draft.model.set",
                                                           "session.draft.append",
                                                           "notifications.notify_me",
+                                                          "notifications.test",
                                                           "notifications.webhooks.list",
                                                           "notifications.webhooks.add",
                                                           "notifications.webhooks.update",
@@ -146277,6 +146736,7 @@
                                                           "machines.setup.updates.apply",
                                                           "machines.managed.power.set",
                                                           "machines.managed.rebuild",
+                                                          "machines.managed.resize",
                                                           "machines.managed.retention.update",
                                                           "machines.managed.delete",
                                                           "machines.managed.controller.update",
@@ -147610,6 +148070,22 @@
                                         "kind": {
                                           "const": "deploymentEnvironment"
                                         },
+                                        "readiness": {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "fact": {
+                                              "type": "string"
+                                            },
+                                            "projectId": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "projectId",
+                                            "fact"
+                                          ],
+                                          "type": "object"
+                                        },
                                         "serverId": {
                                           "type": "string"
                                         }
@@ -148837,6 +149313,22 @@
                                           },
                                           "kind": {
                                             "const": "deploymentEnvironment"
+                                          },
+                                          "readiness": {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "fact": {
+                                                "type": "string"
+                                              },
+                                              "projectId": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "projectId",
+                                              "fact"
+                                            ],
+                                            "type": "object"
                                           },
                                           "serverId": {
                                             "type": "string"
@@ -159085,6 +159577,7 @@
                                                                                         "deployments.domains.list",
                                                                                         "deployments.environments.create",
                                                                                         "deployments.environments.update",
+                                                                                        "deployments.environments.moveToRepository",
                                                                                         "deployments.targets.link",
                                                                                         "deployments.deploy",
                                                                                         "deployments.rollback",
@@ -159094,6 +159587,7 @@
                                                                                         "deployments.promote",
                                                                                         "deployments.restart",
                                                                                         "deployments.backups.restore",
+                                                                                        "deployments.backups.configure",
                                                                                         "deployments.backups.test",
                                                                                         "deployments.backups.history",
                                                                                         "deployments.backups.inventory",
@@ -159116,6 +159610,7 @@
                                                                                         "deployments.health.current",
                                                                                         "deployments.drift.read",
                                                                                         "deployments.logs.read",
+                                                                                        "deployments.data.query",
                                                                                         "registries.sources.list",
                                                                                         "registries.sources.detect",
                                                                                         "registries.sources.create",
@@ -159169,6 +159664,7 @@
                                                                                         "projects.sources.delete",
                                                                                         "projects.sources.moveToTeam",
                                                                                         "projects.deploymentDefaults.set",
+                                                                                        "projects.starters.create",
                                                                                         "projects.pages.list",
                                                                                         "projects.trust.list",
                                                                                         "projects.trust.revoke",
@@ -159686,6 +160182,7 @@
                                                                                         "session.draft.model.set",
                                                                                         "session.draft.append",
                                                                                         "notifications.notify_me",
+                                                                                        "notifications.test",
                                                                                         "notifications.webhooks.list",
                                                                                         "notifications.webhooks.add",
                                                                                         "notifications.webhooks.update",
@@ -160445,6 +160942,7 @@
                                                                                         "machines.setup.updates.apply",
                                                                                         "machines.managed.power.set",
                                                                                         "machines.managed.rebuild",
+                                                                                        "machines.managed.resize",
                                                                                         "machines.managed.retention.update",
                                                                                         "machines.managed.delete",
                                                                                         "machines.managed.controller.update",
@@ -164473,6 +164971,7 @@
                                                                                         "deployments.domains.list",
                                                                                         "deployments.environments.create",
                                                                                         "deployments.environments.update",
+                                                                                        "deployments.environments.moveToRepository",
                                                                                         "deployments.targets.link",
                                                                                         "deployments.deploy",
                                                                                         "deployments.rollback",
@@ -164482,6 +164981,7 @@
                                                                                         "deployments.promote",
                                                                                         "deployments.restart",
                                                                                         "deployments.backups.restore",
+                                                                                        "deployments.backups.configure",
                                                                                         "deployments.backups.test",
                                                                                         "deployments.backups.history",
                                                                                         "deployments.backups.inventory",
@@ -164504,6 +165004,7 @@
                                                                                         "deployments.health.current",
                                                                                         "deployments.drift.read",
                                                                                         "deployments.logs.read",
+                                                                                        "deployments.data.query",
                                                                                         "registries.sources.list",
                                                                                         "registries.sources.detect",
                                                                                         "registries.sources.create",
@@ -164557,6 +165058,7 @@
                                                                                         "projects.sources.delete",
                                                                                         "projects.sources.moveToTeam",
                                                                                         "projects.deploymentDefaults.set",
+                                                                                        "projects.starters.create",
                                                                                         "projects.pages.list",
                                                                                         "projects.trust.list",
                                                                                         "projects.trust.revoke",
@@ -165074,6 +165576,7 @@
                                                                                         "session.draft.model.set",
                                                                                         "session.draft.append",
                                                                                         "notifications.notify_me",
+                                                                                        "notifications.test",
                                                                                         "notifications.webhooks.list",
                                                                                         "notifications.webhooks.add",
                                                                                         "notifications.webhooks.update",
@@ -165833,6 +166336,7 @@
                                                                                         "machines.setup.updates.apply",
                                                                                         "machines.managed.power.set",
                                                                                         "machines.managed.rebuild",
+                                                                                        "machines.managed.resize",
                                                                                         "machines.managed.retention.update",
                                                                                         "machines.managed.delete",
                                                                                         "machines.managed.controller.update",
@@ -169872,6 +170376,7 @@
                                                                                         "deployments.domains.list",
                                                                                         "deployments.environments.create",
                                                                                         "deployments.environments.update",
+                                                                                        "deployments.environments.moveToRepository",
                                                                                         "deployments.targets.link",
                                                                                         "deployments.deploy",
                                                                                         "deployments.rollback",
@@ -169881,6 +170386,7 @@
                                                                                         "deployments.promote",
                                                                                         "deployments.restart",
                                                                                         "deployments.backups.restore",
+                                                                                        "deployments.backups.configure",
                                                                                         "deployments.backups.test",
                                                                                         "deployments.backups.history",
                                                                                         "deployments.backups.inventory",
@@ -169903,6 +170409,7 @@
                                                                                         "deployments.health.current",
                                                                                         "deployments.drift.read",
                                                                                         "deployments.logs.read",
+                                                                                        "deployments.data.query",
                                                                                         "registries.sources.list",
                                                                                         "registries.sources.detect",
                                                                                         "registries.sources.create",
@@ -169956,6 +170463,7 @@
                                                                                         "projects.sources.delete",
                                                                                         "projects.sources.moveToTeam",
                                                                                         "projects.deploymentDefaults.set",
+                                                                                        "projects.starters.create",
                                                                                         "projects.pages.list",
                                                                                         "projects.trust.list",
                                                                                         "projects.trust.revoke",
@@ -170473,6 +170981,7 @@
                                                                                         "session.draft.model.set",
                                                                                         "session.draft.append",
                                                                                         "notifications.notify_me",
+                                                                                        "notifications.test",
                                                                                         "notifications.webhooks.list",
                                                                                         "notifications.webhooks.add",
                                                                                         "notifications.webhooks.update",
@@ -171232,6 +171741,7 @@
                                                                                         "machines.setup.updates.apply",
                                                                                         "machines.managed.power.set",
                                                                                         "machines.managed.rebuild",
+                                                                                        "machines.managed.resize",
                                                                                         "machines.managed.retention.update",
                                                                                         "machines.managed.delete",
                                                                                         "machines.managed.controller.update",
@@ -174842,6 +175352,7 @@
                                                                                         "deployments.domains.list",
                                                                                         "deployments.environments.create",
                                                                                         "deployments.environments.update",
+                                                                                        "deployments.environments.moveToRepository",
                                                                                         "deployments.targets.link",
                                                                                         "deployments.deploy",
                                                                                         "deployments.rollback",
@@ -174851,6 +175362,7 @@
                                                                                         "deployments.promote",
                                                                                         "deployments.restart",
                                                                                         "deployments.backups.restore",
+                                                                                        "deployments.backups.configure",
                                                                                         "deployments.backups.test",
                                                                                         "deployments.backups.history",
                                                                                         "deployments.backups.inventory",
@@ -174873,6 +175385,7 @@
                                                                                         "deployments.health.current",
                                                                                         "deployments.drift.read",
                                                                                         "deployments.logs.read",
+                                                                                        "deployments.data.query",
                                                                                         "registries.sources.list",
                                                                                         "registries.sources.detect",
                                                                                         "registries.sources.create",
@@ -174926,6 +175439,7 @@
                                                                                         "projects.sources.delete",
                                                                                         "projects.sources.moveToTeam",
                                                                                         "projects.deploymentDefaults.set",
+                                                                                        "projects.starters.create",
                                                                                         "projects.pages.list",
                                                                                         "projects.trust.list",
                                                                                         "projects.trust.revoke",
@@ -175443,6 +175957,7 @@
                                                                                         "session.draft.model.set",
                                                                                         "session.draft.append",
                                                                                         "notifications.notify_me",
+                                                                                        "notifications.test",
                                                                                         "notifications.webhooks.list",
                                                                                         "notifications.webhooks.add",
                                                                                         "notifications.webhooks.update",
@@ -176202,6 +176717,7 @@
                                                                                         "machines.setup.updates.apply",
                                                                                         "machines.managed.power.set",
                                                                                         "machines.managed.rebuild",
+                                                                                        "machines.managed.resize",
                                                                                         "machines.managed.retention.update",
                                                                                         "machines.managed.delete",
                                                                                         "machines.managed.controller.update",
@@ -177862,6 +178378,22 @@
                                             "kind": {
                                               "const": "deploymentEnvironment"
                                             },
+                                            "readiness": {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "fact": {
+                                                  "type": "string"
+                                                },
+                                                "projectId": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": [
+                                                "projectId",
+                                                "fact"
+                                              ],
+                                              "type": "object"
+                                            },
                                             "serverId": {
                                               "type": "string"
                                             }
@@ -179089,6 +179621,22 @@
                                               },
                                               "kind": {
                                                 "const": "deploymentEnvironment"
+                                              },
+                                              "readiness": {
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                  "fact": {
+                                                    "type": "string"
+                                                  },
+                                                  "projectId": {
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "projectId",
+                                                  "fact"
+                                                ],
+                                                "type": "object"
                                               },
                                               "serverId": {
                                                 "type": "string"
@@ -186594,6 +187142,7 @@
                                                           "deployments.domains.list",
                                                           "deployments.environments.create",
                                                           "deployments.environments.update",
+                                                          "deployments.environments.moveToRepository",
                                                           "deployments.targets.link",
                                                           "deployments.deploy",
                                                           "deployments.rollback",
@@ -186603,6 +187152,7 @@
                                                           "deployments.promote",
                                                           "deployments.restart",
                                                           "deployments.backups.restore",
+                                                          "deployments.backups.configure",
                                                           "deployments.backups.test",
                                                           "deployments.backups.history",
                                                           "deployments.backups.inventory",
@@ -186625,6 +187175,7 @@
                                                           "deployments.health.current",
                                                           "deployments.drift.read",
                                                           "deployments.logs.read",
+                                                          "deployments.data.query",
                                                           "registries.sources.list",
                                                           "registries.sources.detect",
                                                           "registries.sources.create",
@@ -186678,6 +187229,7 @@
                                                           "projects.sources.delete",
                                                           "projects.sources.moveToTeam",
                                                           "projects.deploymentDefaults.set",
+                                                          "projects.starters.create",
                                                           "projects.pages.list",
                                                           "projects.trust.list",
                                                           "projects.trust.revoke",
@@ -187195,6 +187747,7 @@
                                                           "session.draft.model.set",
                                                           "session.draft.append",
                                                           "notifications.notify_me",
+                                                          "notifications.test",
                                                           "notifications.webhooks.list",
                                                           "notifications.webhooks.add",
                                                           "notifications.webhooks.update",
@@ -187954,6 +188507,7 @@
                                                           "machines.setup.updates.apply",
                                                           "machines.managed.power.set",
                                                           "machines.managed.rebuild",
+                                                          "machines.managed.resize",
                                                           "machines.managed.retention.update",
                                                           "machines.managed.delete",
                                                           "machines.managed.controller.update",
@@ -191982,6 +192536,7 @@
                                                           "deployments.domains.list",
                                                           "deployments.environments.create",
                                                           "deployments.environments.update",
+                                                          "deployments.environments.moveToRepository",
                                                           "deployments.targets.link",
                                                           "deployments.deploy",
                                                           "deployments.rollback",
@@ -191991,6 +192546,7 @@
                                                           "deployments.promote",
                                                           "deployments.restart",
                                                           "deployments.backups.restore",
+                                                          "deployments.backups.configure",
                                                           "deployments.backups.test",
                                                           "deployments.backups.history",
                                                           "deployments.backups.inventory",
@@ -192013,6 +192569,7 @@
                                                           "deployments.health.current",
                                                           "deployments.drift.read",
                                                           "deployments.logs.read",
+                                                          "deployments.data.query",
                                                           "registries.sources.list",
                                                           "registries.sources.detect",
                                                           "registries.sources.create",
@@ -192066,6 +192623,7 @@
                                                           "projects.sources.delete",
                                                           "projects.sources.moveToTeam",
                                                           "projects.deploymentDefaults.set",
+                                                          "projects.starters.create",
                                                           "projects.pages.list",
                                                           "projects.trust.list",
                                                           "projects.trust.revoke",
@@ -192583,6 +193141,7 @@
                                                           "session.draft.model.set",
                                                           "session.draft.append",
                                                           "notifications.notify_me",
+                                                          "notifications.test",
                                                           "notifications.webhooks.list",
                                                           "notifications.webhooks.add",
                                                           "notifications.webhooks.update",
@@ -193342,6 +193901,7 @@
                                                           "machines.setup.updates.apply",
                                                           "machines.managed.power.set",
                                                           "machines.managed.rebuild",
+                                                          "machines.managed.resize",
                                                           "machines.managed.retention.update",
                                                           "machines.managed.delete",
                                                           "machines.managed.controller.update",
@@ -197381,6 +197941,7 @@
                                                           "deployments.domains.list",
                                                           "deployments.environments.create",
                                                           "deployments.environments.update",
+                                                          "deployments.environments.moveToRepository",
                                                           "deployments.targets.link",
                                                           "deployments.deploy",
                                                           "deployments.rollback",
@@ -197390,6 +197951,7 @@
                                                           "deployments.promote",
                                                           "deployments.restart",
                                                           "deployments.backups.restore",
+                                                          "deployments.backups.configure",
                                                           "deployments.backups.test",
                                                           "deployments.backups.history",
                                                           "deployments.backups.inventory",
@@ -197412,6 +197974,7 @@
                                                           "deployments.health.current",
                                                           "deployments.drift.read",
                                                           "deployments.logs.read",
+                                                          "deployments.data.query",
                                                           "registries.sources.list",
                                                           "registries.sources.detect",
                                                           "registries.sources.create",
@@ -197465,6 +198028,7 @@
                                                           "projects.sources.delete",
                                                           "projects.sources.moveToTeam",
                                                           "projects.deploymentDefaults.set",
+                                                          "projects.starters.create",
                                                           "projects.pages.list",
                                                           "projects.trust.list",
                                                           "projects.trust.revoke",
@@ -197982,6 +198546,7 @@
                                                           "session.draft.model.set",
                                                           "session.draft.append",
                                                           "notifications.notify_me",
+                                                          "notifications.test",
                                                           "notifications.webhooks.list",
                                                           "notifications.webhooks.add",
                                                           "notifications.webhooks.update",
@@ -198741,6 +199306,7 @@
                                                           "machines.setup.updates.apply",
                                                           "machines.managed.power.set",
                                                           "machines.managed.rebuild",
+                                                          "machines.managed.resize",
                                                           "machines.managed.retention.update",
                                                           "machines.managed.delete",
                                                           "machines.managed.controller.update",
@@ -202351,6 +202917,7 @@
                                                           "deployments.domains.list",
                                                           "deployments.environments.create",
                                                           "deployments.environments.update",
+                                                          "deployments.environments.moveToRepository",
                                                           "deployments.targets.link",
                                                           "deployments.deploy",
                                                           "deployments.rollback",
@@ -202360,6 +202927,7 @@
                                                           "deployments.promote",
                                                           "deployments.restart",
                                                           "deployments.backups.restore",
+                                                          "deployments.backups.configure",
                                                           "deployments.backups.test",
                                                           "deployments.backups.history",
                                                           "deployments.backups.inventory",
@@ -202382,6 +202950,7 @@
                                                           "deployments.health.current",
                                                           "deployments.drift.read",
                                                           "deployments.logs.read",
+                                                          "deployments.data.query",
                                                           "registries.sources.list",
                                                           "registries.sources.detect",
                                                           "registries.sources.create",
@@ -202435,6 +203004,7 @@
                                                           "projects.sources.delete",
                                                           "projects.sources.moveToTeam",
                                                           "projects.deploymentDefaults.set",
+                                                          "projects.starters.create",
                                                           "projects.pages.list",
                                                           "projects.trust.list",
                                                           "projects.trust.revoke",
@@ -202952,6 +203522,7 @@
                                                           "session.draft.model.set",
                                                           "session.draft.append",
                                                           "notifications.notify_me",
+                                                          "notifications.test",
                                                           "notifications.webhooks.list",
                                                           "notifications.webhooks.add",
                                                           "notifications.webhooks.update",
@@ -203711,6 +204282,7 @@
                                                           "machines.setup.updates.apply",
                                                           "machines.managed.power.set",
                                                           "machines.managed.rebuild",
+                                                          "machines.managed.resize",
                                                           "machines.managed.retention.update",
                                                           "machines.managed.delete",
                                                           "machines.managed.controller.update",
@@ -207783,6 +208355,7 @@
                                                                     "deployments.domains.list",
                                                                     "deployments.environments.create",
                                                                     "deployments.environments.update",
+                                                                    "deployments.environments.moveToRepository",
                                                                     "deployments.targets.link",
                                                                     "deployments.deploy",
                                                                     "deployments.rollback",
@@ -207792,6 +208365,7 @@
                                                                     "deployments.promote",
                                                                     "deployments.restart",
                                                                     "deployments.backups.restore",
+                                                                    "deployments.backups.configure",
                                                                     "deployments.backups.test",
                                                                     "deployments.backups.history",
                                                                     "deployments.backups.inventory",
@@ -207814,6 +208388,7 @@
                                                                     "deployments.health.current",
                                                                     "deployments.drift.read",
                                                                     "deployments.logs.read",
+                                                                    "deployments.data.query",
                                                                     "registries.sources.list",
                                                                     "registries.sources.detect",
                                                                     "registries.sources.create",
@@ -207867,6 +208442,7 @@
                                                                     "projects.sources.delete",
                                                                     "projects.sources.moveToTeam",
                                                                     "projects.deploymentDefaults.set",
+                                                                    "projects.starters.create",
                                                                     "projects.pages.list",
                                                                     "projects.trust.list",
                                                                     "projects.trust.revoke",
@@ -208384,6 +208960,7 @@
                                                                     "session.draft.model.set",
                                                                     "session.draft.append",
                                                                     "notifications.notify_me",
+                                                                    "notifications.test",
                                                                     "notifications.webhooks.list",
                                                                     "notifications.webhooks.add",
                                                                     "notifications.webhooks.update",
@@ -209143,6 +209720,7 @@
                                                                     "machines.setup.updates.apply",
                                                                     "machines.managed.power.set",
                                                                     "machines.managed.rebuild",
+                                                                    "machines.managed.resize",
                                                                     "machines.managed.retention.update",
                                                                     "machines.managed.delete",
                                                                     "machines.managed.controller.update",
@@ -213171,6 +213749,7 @@
                                                                     "deployments.domains.list",
                                                                     "deployments.environments.create",
                                                                     "deployments.environments.update",
+                                                                    "deployments.environments.moveToRepository",
                                                                     "deployments.targets.link",
                                                                     "deployments.deploy",
                                                                     "deployments.rollback",
@@ -213180,6 +213759,7 @@
                                                                     "deployments.promote",
                                                                     "deployments.restart",
                                                                     "deployments.backups.restore",
+                                                                    "deployments.backups.configure",
                                                                     "deployments.backups.test",
                                                                     "deployments.backups.history",
                                                                     "deployments.backups.inventory",
@@ -213202,6 +213782,7 @@
                                                                     "deployments.health.current",
                                                                     "deployments.drift.read",
                                                                     "deployments.logs.read",
+                                                                    "deployments.data.query",
                                                                     "registries.sources.list",
                                                                     "registries.sources.detect",
                                                                     "registries.sources.create",
@@ -213255,6 +213836,7 @@
                                                                     "projects.sources.delete",
                                                                     "projects.sources.moveToTeam",
                                                                     "projects.deploymentDefaults.set",
+                                                                    "projects.starters.create",
                                                                     "projects.pages.list",
                                                                     "projects.trust.list",
                                                                     "projects.trust.revoke",
@@ -213772,6 +214354,7 @@
                                                                     "session.draft.model.set",
                                                                     "session.draft.append",
                                                                     "notifications.notify_me",
+                                                                    "notifications.test",
                                                                     "notifications.webhooks.list",
                                                                     "notifications.webhooks.add",
                                                                     "notifications.webhooks.update",
@@ -214531,6 +215114,7 @@
                                                                     "machines.setup.updates.apply",
                                                                     "machines.managed.power.set",
                                                                     "machines.managed.rebuild",
+                                                                    "machines.managed.resize",
                                                                     "machines.managed.retention.update",
                                                                     "machines.managed.delete",
                                                                     "machines.managed.controller.update",
@@ -218570,6 +219154,7 @@
                                                                     "deployments.domains.list",
                                                                     "deployments.environments.create",
                                                                     "deployments.environments.update",
+                                                                    "deployments.environments.moveToRepository",
                                                                     "deployments.targets.link",
                                                                     "deployments.deploy",
                                                                     "deployments.rollback",
@@ -218579,6 +219164,7 @@
                                                                     "deployments.promote",
                                                                     "deployments.restart",
                                                                     "deployments.backups.restore",
+                                                                    "deployments.backups.configure",
                                                                     "deployments.backups.test",
                                                                     "deployments.backups.history",
                                                                     "deployments.backups.inventory",
@@ -218601,6 +219187,7 @@
                                                                     "deployments.health.current",
                                                                     "deployments.drift.read",
                                                                     "deployments.logs.read",
+                                                                    "deployments.data.query",
                                                                     "registries.sources.list",
                                                                     "registries.sources.detect",
                                                                     "registries.sources.create",
@@ -218654,6 +219241,7 @@
                                                                     "projects.sources.delete",
                                                                     "projects.sources.moveToTeam",
                                                                     "projects.deploymentDefaults.set",
+                                                                    "projects.starters.create",
                                                                     "projects.pages.list",
                                                                     "projects.trust.list",
                                                                     "projects.trust.revoke",
@@ -219171,6 +219759,7 @@
                                                                     "session.draft.model.set",
                                                                     "session.draft.append",
                                                                     "notifications.notify_me",
+                                                                    "notifications.test",
                                                                     "notifications.webhooks.list",
                                                                     "notifications.webhooks.add",
                                                                     "notifications.webhooks.update",
@@ -219930,6 +220519,7 @@
                                                                     "machines.setup.updates.apply",
                                                                     "machines.managed.power.set",
                                                                     "machines.managed.rebuild",
+                                                                    "machines.managed.resize",
                                                                     "machines.managed.retention.update",
                                                                     "machines.managed.delete",
                                                                     "machines.managed.controller.update",
@@ -223540,6 +224130,7 @@
                                                                     "deployments.domains.list",
                                                                     "deployments.environments.create",
                                                                     "deployments.environments.update",
+                                                                    "deployments.environments.moveToRepository",
                                                                     "deployments.targets.link",
                                                                     "deployments.deploy",
                                                                     "deployments.rollback",
@@ -223549,6 +224140,7 @@
                                                                     "deployments.promote",
                                                                     "deployments.restart",
                                                                     "deployments.backups.restore",
+                                                                    "deployments.backups.configure",
                                                                     "deployments.backups.test",
                                                                     "deployments.backups.history",
                                                                     "deployments.backups.inventory",
@@ -223571,6 +224163,7 @@
                                                                     "deployments.health.current",
                                                                     "deployments.drift.read",
                                                                     "deployments.logs.read",
+                                                                    "deployments.data.query",
                                                                     "registries.sources.list",
                                                                     "registries.sources.detect",
                                                                     "registries.sources.create",
@@ -223624,6 +224217,7 @@
                                                                     "projects.sources.delete",
                                                                     "projects.sources.moveToTeam",
                                                                     "projects.deploymentDefaults.set",
+                                                                    "projects.starters.create",
                                                                     "projects.pages.list",
                                                                     "projects.trust.list",
                                                                     "projects.trust.revoke",
@@ -224141,6 +224735,7 @@
                                                                     "session.draft.model.set",
                                                                     "session.draft.append",
                                                                     "notifications.notify_me",
+                                                                    "notifications.test",
                                                                     "notifications.webhooks.list",
                                                                     "notifications.webhooks.add",
                                                                     "notifications.webhooks.update",
@@ -224900,6 +225495,7 @@
                                                                     "machines.setup.updates.apply",
                                                                     "machines.managed.power.set",
                                                                     "machines.managed.rebuild",
+                                                                    "machines.managed.resize",
                                                                     "machines.managed.retention.update",
                                                                     "machines.managed.delete",
                                                                     "machines.managed.controller.update",
@@ -230991,6 +231587,12 @@
                                   "type": "string",
                                   "x-happier-max-utf8-bytes": 7181
                                 },
+                                "requestId": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
                                 "requiredPermissions": {
                                   "minLength": 1,
                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -231578,6 +232180,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -232054,6 +232662,12 @@
                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                   "type": "string",
                                   "x-happier-max-utf8-bytes": 7181
+                                },
+                                "requestId": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
                                 },
                                 "requiredPermissions": {
                                   "minLength": 1,
@@ -232816,6 +233430,12 @@
                                   "type": "string",
                                   "x-happier-max-utf8-bytes": 7181
                                 },
+                                "requestId": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
                                 "requiredPermissions": {
                                   "minLength": 1,
                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -232956,6 +233576,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -237568,8 +238194,37 @@
         ],
         "actions": [
           {
+            "action": "tasks/transition-v1",
+            "kind": "plugin"
+          }
+        ],
+        "client": {
+          "artifactId": "triage-entity-drag-drop-native",
+          "exportName": "activate"
+        },
+        "id": "task-status",
+        "platforms": [
+          "web",
+          "ios",
+          "android"
+        ],
+        "title": {
+          "fallback": "Change task status",
+          "key": "plugins.triage.tasks.changeStatus"
+        }
+      },
+      {
+        "acceptedKinds": [
+          "plugin:happier.triage/entry-reference"
+        ],
+        "actions": [
+          {
             "actionId": "tasks.internal.reorder",
             "kind": "host"
+          },
+          {
+            "action": "tasks/transition-v1",
+            "kind": "plugin"
           }
         ],
         "client": {
@@ -240662,6 +241317,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -242045,6 +242706,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -244008,6 +244675,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -245391,6 +246064,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -247996,6 +248675,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -248864,6 +249549,12 @@
                                     "type": "string",
                                     "x-happier-max-utf8-bytes": 7181
                                   },
+                                  "requestId": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
                                   "requiredPermissions": {
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -249173,6 +249864,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -249371,6 +250068,12 @@
                                     "type": "string",
                                     "x-happier-max-utf8-bytes": 7181
                                   },
+                                  "requestId": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
                                   "requiredPermissions": {
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -249454,6 +250157,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -249908,6 +250617,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -250076,6 +250791,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -251226,6 +251947,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -251765,6 +252492,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -252234,6 +252967,12 @@
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                       "type": "string",
                                       "x-happier-max-utf8-bytes": 7181
+                                    },
+                                    "requestId": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 128
                                     },
                                     "requiredPermissions": {
                                       "minLength": 1,
@@ -252711,6 +253450,12 @@
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
                                           "x-happier-max-utf8-bytes": 7181
+                                        },
+                                        "requestId": {
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "type": "string",
+                                          "x-happier-max-utf8-bytes": 128
                                         },
                                         "requiredPermissions": {
                                           "minLength": 1,
@@ -253473,6 +254218,12 @@
                                           "type": "string",
                                           "x-happier-max-utf8-bytes": 7181
                                         },
+                                        "requestId": {
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "type": "string",
+                                          "x-happier-max-utf8-bytes": 128
+                                        },
                                         "requiredPermissions": {
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -253613,6 +254364,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -254240,6 +254997,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -254693,6 +255456,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -255451,6 +256220,12 @@
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                       "type": "string",
                                       "x-happier-max-utf8-bytes": 7181
+                                    },
+                                    "requestId": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 128
                                     },
                                     "requiredPermissions": {
                                       "minLength": 1,
@@ -256947,6 +257722,12 @@
                                         "type": "string",
                                         "x-happier-max-utf8-bytes": 7181
                                       },
+                                      "requestId": {
+                                        "minLength": 1,
+                                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                        "type": "string",
+                                        "x-happier-max-utf8-bytes": 128
+                                      },
                                       "requiredPermissions": {
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -257074,6 +257855,12 @@
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                       "type": "string",
                                       "x-happier-max-utf8-bytes": 7181
+                                    },
+                                    "requestId": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 128
                                     },
                                     "requiredPermissions": {
                                       "minLength": 1,
@@ -258570,6 +259357,12 @@
                                         "type": "string",
                                         "x-happier-max-utf8-bytes": 7181
                                       },
+                                      "requestId": {
+                                        "minLength": 1,
+                                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                        "type": "string",
+                                        "x-happier-max-utf8-bytes": 128
+                                      },
                                       "requiredPermissions": {
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -258679,6 +259472,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -260483,6 +261282,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -261866,6 +262671,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,

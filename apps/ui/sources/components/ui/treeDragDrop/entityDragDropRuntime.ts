@@ -115,9 +115,11 @@ export function createEntityDragDropRuntime(options: Readonly<{
         if (!matchesScope(target, active.item)) return refused('scope-mismatch');
         if (!accepts(target, active.item)) return refused('kind-not-accepted');
         try {
+            const parent = target.parentId === undefined ? undefined : targets.get(target.parentId);
             return target.resolve({
                 item: active.item, pointer: active.input === 'pointer' ? pointer : null,
                 destination: active.destination, input: active.input,
+                parentTargetInput: parent && targetCurrent(parent) && matchesScope(parent, active.item) ? parent.input ?? null : null,
             });
         } catch { return refused('admission-unavailable'); }
     };

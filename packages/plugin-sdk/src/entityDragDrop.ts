@@ -37,5 +37,7 @@ export interface PluginDropTargetRuntime {
     destination: JsonValue | null;
     input: 'pointer' | 'keyboard' | 'chooser' | 'action';
     targetInput: JsonValue | null;
+    /** The mounted immediate parent's input, shared with nested targets without copying it into every child. */
+    parentTargetInput?: JsonValue | null;
   }>): EntityDropAdmissionV1;
 }

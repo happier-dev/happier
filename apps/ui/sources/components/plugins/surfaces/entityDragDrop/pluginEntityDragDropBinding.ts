@@ -177,6 +177,7 @@ export function createPluginEntityDragDropBinding(input: CreatePluginEntityDragD
             const targetId = id(mount.mountId);
             const allowedAction = (actionId: string) => isPluginDropTargetActionAllowedV1(registration.descriptor, input.pluginId, actionId);
             const retire = input.runtime.registerTarget({ id: targetId, scope: input.scope,
+                input: targetInput.data,
                 acceptedKinds: registration.descriptor.acceptedKinds,
                 ...(mount.parentId === undefined ? {} : { parentId: mount.parentId }),
                 getBounds: mount.getBounds, isCurrent: () => isCurrent() && interactionEnabled(),
@@ -184,7 +185,8 @@ export function createPluginEntityDragDropBinding(input: CreatePluginEntityDragD
                 resolve: context => {
                     if (!isCurrent() || !interactionEnabled()) return refusal('plugin-drag-occurrence-retired');
                     const parsed = EntityDropAdmissionV1Schema.safeParse(registration.resolve({ item: context.item,
-                        destination: context.destination, input: context.input, targetInput: targetInput.data }));
+                        destination: context.destination, input: context.input, targetInput: targetInput.data,
+                        parentTargetInput: context.parentTargetInput ?? null }));
                     if (!parsed.success) return refusal('plugin-drop-admission-invalid');
                     return parsed.data.status === 'allowed' && !allowedAction(parsed.data.effect.actionId)
                         ? refusal('plugin-drop-action-not-declared') : parsed.data;

@@ -235,7 +235,7 @@ export function PluginEntityDropTargetView(props: DropTargetProps & Readonly<{ b
     const attachDrop = useEntityDropDomBinding(props.disabled ? undefined : binding.runtime);
     const attach = React.useCallback((value: unknown) => { node.current = value; attachDrop(value); }, [attachDrop]);
     const snapshot = useEntityDropTargetState(binding.runtime, targetId);
-    return <ParentTarget.Provider value={targetId || parentId}><View ref={attach} testID={props.testID}
+    return <ParentTarget.Provider value={targetId || parentId}><View ref={attach} testID={props.testID} style={props.style}
         onLayout={() => { void refreshBounds().then(binding.refresh); }}>
         {props.children}
         {snapshot?.admission?.status === 'allowed' && (snapshot.phase === 'carrying' || snapshot.phase === 'pending') ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}>

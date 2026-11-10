@@ -1320,6 +1320,20 @@ declared `glyph`, or
 Keep this resolver free of writes: the host resolves again on release and
 dispatches the admitted Action through its existing approval policy.
 
+A nested target's resolver also receives `parentTargetInput` from its mounted
+immediate parent in the same drag scope. Use it to compose card ordering with a
+column's destination without copying the column's input into every card. The
+child still owns admission; a refused child does not fall through to its parent.
+
+If your Action can return a domain refusal or an uncertain write after successful
+execution, register `PluginDropTargetRuntime.settle(result)` too. Parse your
+Action's result schema there and return an `EntityDropOutcomeV1`: `applied` only
+for a confirmed effect, `refused` with its reason, or `unknown` when the result
+does not establish whether the effect happened. This callback only projects the
+result; it must not write or retry. The host preserves transport and approval
+failures before calling it. Omit it when successful execution establishes the
+effect and the returned data needs no domain settlement.
+
 For example, a copy target can return
 `preview: { verb: 'Copy', target: 'Review queue', glyph: 'copy' }`.
 Choose a bounded named mark from `EntityDropPreviewV1['glyph']` in the SDK's
@@ -1572,6 +1586,15 @@ the accessible name. The disclosure intentionally uses the public instant motion
 a custom animated composition may supply a public `HappierDisclosureMotionDriver`
 while honoring `reducedMotion`. Its header receives the toggle and expanded
 accessibility state together. Keep `defineUiSurface` as the provider boundary.
+
+In unreleased 0.3 development source, groups are derived by default. To make a
+Board column assignable, set `membership: { kind: 'assignable', target: {
+targetId: 'your-declared-target', input: yourTargetInput } }` on its group in
+`useHappierCollection`'s grouping axis. The column, including an empty column
+kept by `retainEmpty`, mounts the existing `DropTarget`. Declare and register
+that target through the DnD contract and have it resolve to your existing domain
+Action; that owner retains confirmation and the write. Use `{ kind: 'derived' }`
+when membership follows facts that dropping an item cannot change.
 
 In unreleased 0.3 development source, `headerPlacement="list"` puts that header
 over the list pane in a collection-scrolling split, letting the adjacent detail

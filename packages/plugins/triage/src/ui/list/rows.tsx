@@ -558,6 +558,8 @@ export function useTriageListAnatomyV1(input: Readonly<{
   tasks?: boolean;
   taskAudience?: 'mine' | 'agents' | 'everyone';
   taskItems?: readonly TriageListItemV1[];
+  /** The Collection's actual Board grouping also owns same-column order anchors. */
+  taskGroupOf?: (item: TriageListItemV1) => string | null;
   /** The mounted keyed projection supplies current names without replacing the anatomy. */
   readBlockerName?: (ref: TriageListItemV1['row']['entryRef']) => string | null;
   personalTaskOrder?: PersonalTaskOrder | null;
@@ -576,7 +578,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
   const { withAgent = true, organizing = false, sharedGroupReasons = NO_SHARED_GROUP_REASONS, tasks = false, onTaskApplied = NO_TASK_REREAD, pinMarks = false } = input;
   const withSignal = input.withSignal && !tasks;
   const withReason = (input.withReason ?? true) && !tasks;
-  const { taskItems, readBlockerName, personalTaskOrder, onTaskOrderOutcome, taskAudience = 'mine' } = input;
+  const { taskItems, taskGroupOf, readBlockerName, personalTaskOrder, onTaskOrderOutcome, taskAudience = 'mine' } = input;
   return React.useMemo<CollectionAnatomy<TriageListItemV1>>(() => {
     const descriptorOf = (item: TriageListItemV1) => resolveTriageSourceDescriptorV1(targetedContributions, item.row.entryRef.source);
     const agent = (item: TriageListItemV1) => {
@@ -590,11 +592,13 @@ export function useTriageListAnatomyV1(input: Readonly<{
     const blockerName = readBlockerName ?? ((blocker: TriageListItemV1['row']['entryRef']) =>
       readTriageTaskBlockerNameV1(taskItems?.find(item => item.key === triageEntryRowKey(blocker))));
     const unfinished = new Set(personalTaskOrder?.undoneOrder ?? []);
-    const orderByGroup = new Map<TriageListGroupIdV1, string[]>();
+    const groupOf = taskGroupOf ?? ((item: TriageListItemV1) => item.group);
+    const orderByGroup = new Map<string | null, string[]>();
     for (const item of taskItems ?? []) {
       if (!isPersonalTaskReferenceV1(item.row.entryRef, personalTaskOrder?.scope.accountId) || !unfinished.has(item.row.entryRef.entryId)) continue;
-      const group = orderByGroup.get(item.group) ?? [];
-      group.push(item.row.entryRef.entryId); orderByGroup.set(item.group, group);
+      const groupId = groupOf(item);
+      const group = orderByGroup.get(groupId) ?? [];
+      group.push(item.row.entryRef.entryId); orderByGroup.set(groupId, group);
     }
     return {
       wrapItem: (item, children) => {
@@ -615,7 +619,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
           <DragSource
             sourceId={TRIAGE_ENTRY_DRAG_SOURCE_ID_V1}
             organizing={organizing}
-            {...(tasks && personal ? { onDropOutcome: onTaskOrderOutcome } : {})}
+            {...(tasks ? { onDropOutcome: () => { if (personal) onTaskOrderOutcome?.(); else void onTaskApplied(); } } : {})}
             reference={{
               entryRef: row.entryRef,
               sourceInstance: { source: row.entryRef.source, sourceInstanceId: row.sourceInstanceId },
@@ -627,7 +631,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
           >
             {tasks ? <DropTarget targetId={TRIAGE_PERSONAL_TASK_ORDER_TARGET_ID_V1}
               input={{ ...(personalTaskOrder == null ? {} : { scope: personalTaskOrder.scope }),
-                targetId: row.entryRef.entryId, orderedIds: personal ? orderByGroup.get(item.group) ?? [] : [],
+                targetId: row.entryRef.entryId, orderedIds: personal ? orderByGroup.get(groupOf(item)) ?? [] : [],
                 preview: { before: text('plugins.triage.tasks.order.before', 'Move before'), after: text('plugins.triage.tasks.order.after', 'Move after'), target: row.title },
                 unavailableReason,
               }} testID={`triage-task-order-drop:${encodeURIComponent(row.key)}`}>{sessionTarget}</DropTarget> : sessionTarget}
@@ -760,5 +764,5 @@ export function useTriageListAnatomyV1(input: Readonly<{
         age: text('plugins.triage.surface.column.age', 'Age'),
       },
     };
-  }, [contributionSnapshotJson, locale, onTaskApplied, organizing, pinMarks, sharedGroupReasons, tasks, taskAudience, text, withAgent, withReason, withSignal, taskItems, readBlockerName, personalTaskOrder, onTaskOrderOutcome]);
+  }, [contributionSnapshotJson, locale, onTaskApplied, organizing, pinMarks, sharedGroupReasons, tasks, taskAudience, text, withAgent, withReason, withSignal, taskItems, taskGroupOf, readBlockerName, personalTaskOrder, onTaskOrderOutcome]);
 }

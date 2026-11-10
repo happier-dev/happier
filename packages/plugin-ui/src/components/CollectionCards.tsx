@@ -20,6 +20,7 @@ import { HappierSkeletonBlock } from '../presentation/feedback/Skeleton.js';
 import { HappierSegmentedChoice } from '../presentation/form/SegmentedChoice.js';
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import { Button } from './Button.js';
+import { DropTarget } from './EntityDragDrop.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import { HAPPIER_WIDGET_FRAME_METRICS, HappierWidgetFrame } from '../presentation/layout/WidgetFrame.js';
 import type { HappierFocusable, HappierPortableStyle, HappierStyleProp } from '../presentation/portableTypes.js';
@@ -338,8 +339,7 @@ function BoardColumn<Item>(props: Readonly<{
         ...(single === undefined ? {} : { onValueChange: choose }) }) },
   }), [choose, model, props.eligibleKeys, props.pageScroll, props.selection?.multiple?.store, props.tabStopKey, scrollRequest, single === undefined, viewport]);
   const group = section.group;
-  return (
-    <View style={props.style} testID={props.testID}>
+  const content = <>
       {!props.showHeader || group === null || group.title === '' ? null : (
         <View style={card.columnHeaderStyle}>
           <View style={card.lineStyle}>
@@ -373,8 +373,12 @@ function BoardColumn<Item>(props: Readonly<{
           />
         </ListCollectionControlContext.Provider>
       </View>
-    </View>
-  );
+    </>;
+  return <View style={props.style} testID={props.testID}>
+    {group?.membership?.kind === 'assignable'
+      ? <DropTarget {...group.membership.target} style={fillStyle}>{content}</DropTarget>
+      : content}
+  </View>;
 }
 
 function CollectionBoard<Item>(props: CollectionCardsProps<Item>): ReactElement {

@@ -11,6 +11,9 @@ import type { TriageListItemV1 } from './sections.js';
 import { useTriageListAnatomyV1 } from './rows.js';
 import type { PersonalTaskOrder } from './usePersonalTaskOrder.js';
 import { triagePersonalTaskOrderTargetRuntime } from './entryDragDrop.js';
+import { assignTriageTaskStatusGroup } from './taskGroupMembership.js';
+import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
+import { triageTaskStatusCategoryV1 } from '@happier-dev/triage-protocol/v1';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: PluginUiTestkit[] = [];
@@ -30,11 +33,12 @@ function entry(materialized = true): TriageListItemV1 {
 }
 
 async function renderAnatomy(item: TriageListItemV1, organizing = false, tasks = false,
-  personalTaskOrder?: PersonalTaskOrder, taskItems?: readonly TriageListItemV1[]) {
+  personalTaskOrder?: PersonalTaskOrder, taskItems?: readonly TriageListItemV1[],
+  taskGroupOf?: Parameters<typeof useTriageListAnatomyV1>[0]['taskGroupOf']) {
   let source: DragSourceProps | null = null;
   let target: DropTargetProps | null = null;
   const surface = defineUiSurface(function Probe() {
-    const anatomy = useTriageListAnatomyV1({ withSignal: false, organizing, tasks, personalTaskOrder, taskItems });
+    const anatomy = useTriageListAnatomyV1({ withSignal: false, organizing, tasks, personalTaskOrder, taskItems, taskGroupOf });
     const content = <Text value="The Collection still owns this row" />;
     const wrapped = anatomy.wrapItem?.(item, content) ?? content;
     // Inspect the public author boundary, then mount its actual children through
@@ -61,6 +65,27 @@ async function renderAnatomy(item: TriageListItemV1, organizing = false, tasks =
 }
 
 describe('the real PR Collection public drag/drop binding', () => {
+  it('uses the Collection status axis on cards while keeping same-column manual ordering', async () => {
+    const scope = { serverId: 'home', accountId: 'account' };
+    const base = entry();
+    const task = (id: string, group: 'unstarted' | 'started'): TriageListItemV1 => ({ ...base, key: id, group, statusGroup: group,
+      task: { category: group, statusLabel: null, relations: null, transitions: INTERNAL_TASK_DESCRIPTOR_V1.kinds[0]!.taskCapabilities!.transitions?.map(transition => ({ ...transition, category: triageTaskStatusCategoryV1(transition.state) })) },
+      row: { ...base.row, key: id, entryRef: { source: { pluginId: 'happier.triage', localId: 'internal' }, kindId: 'task', collisionScope: 'personal', entryId: id } } });
+    const items = [task('a', 'unstarted'), task('b', 'started'), task('c', 'started')];
+    const groups = { axis: [assignTriageTaskStatusGroup({ key: 'started', title: 'In progress' }, items,
+      { verb: 'Change status', unavailableReason: 'Use the status menu.' })], groupOf: (item: TriageListItemV1) => item.statusGroup };
+    const order: PersonalTaskOrder = { scope, undoneOrder: ['a', 'b', 'c'] };
+    const a = await renderAnatomy(items[0]!, false, true, order, items, groups.groupOf);
+    const b = await renderAnatomy(items[1]!, false, true, order, items, groups.groupOf);
+    const c = await renderAnatomy(items[2]!, false, true, order, items, groups.groupOf);
+    const resolve = (source: NonNullable<typeof a.source>) => triagePersonalTaskOrderTargetRuntime.resolve({
+      item: { kind: 'plugin', scope, contribution: { pluginId: 'happier.triage', localId: 'entry-reference' }, reference: source.reference },
+      targetInput: b.target!.input ?? null, destination: null, input: 'pointer',
+      parentTargetInput: groups.axis[0]!.membership?.kind === 'assignable' ? groups.axis[0]!.membership.target.input : undefined,
+    });
+    expect(resolve(a.source!)).toMatchObject({ status: 'allowed', effect: { actionId: 'plugin:happier.triage/tasks/transition-v1', input: { transitionId: 'started' } } });
+    expect(resolve(c.source!)).toMatchObject({ status: 'allowed', effect: { actionId: 'tasks.internal.reorder', input: { sourceId: 'c', position: { anchorId: 'b', placement: 'before' } } } });
+  });
   it('feeds actual row bindings through the strict target and refuses external or wrong-group tasks', async () => {
     const scope = { serverId: 'home', accountId: 'account' };
     const base = entry();
@@ -72,7 +97,7 @@ describe('the real PR Collection public drag/drop binding', () => {
     const b = await renderAnatomy(items[1]!, false, true, order, items);
     const resolve = (reference: NonNullable<typeof a.source>['reference'], input: NonNullable<typeof b.target>['input']) => triagePersonalTaskOrderTargetRuntime.resolve({
       item: { kind: 'plugin', scope, contribution: { pluginId: 'happier.triage', localId: 'entry-reference' }, reference },
-      targetInput: input ?? null, destination: null, input: 'pointer',
+      targetInput: input ?? null, parentTargetInput: null, destination: null, input: 'pointer',
     });
     expect(resolve(a.source!.reference, b.target!.input)).toMatchObject({ status: 'allowed', effect: {
       actionId: 'tasks.internal.reorder', input: { scope, sourceId: 'a', position: { anchorId: 'b', placement: 'after' } },
@@ -81,7 +106,7 @@ describe('the real PR Collection public drag/drop binding', () => {
     const ownRow = await renderAnatomy(qualifiedOwn, false, true, order, [qualifiedOwn, ...items.slice(1)]);
     expect(resolve(ownRow.source!.reference, b.target!.input)).toMatchObject({ status: 'allowed' });
     const external = await renderAnatomy(base, false, true, order, items);
-    expect(resolve(external.source!.reference, b.target!.input)).toMatchObject({ status: 'refused' });
+    expect(resolve(external.source!.reference, b.target!.input)).toMatchObject({ status: 'refused', reason: { code: 'task_order_unavailable' } });
     expect(resolve(a.source!.reference, external.target!.input)).toMatchObject({ status: 'refused', reason: { message: 'External tasks keep their source order.' } });
     const working = await renderAnatomy(items[2]!, false, true, order, items);
     expect(resolve(a.source!.reference, working.target!.input)).toMatchObject({ status: 'refused' });

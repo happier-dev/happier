@@ -292,6 +292,8 @@ identity merely because its presentation becomes neutral.
 
 Initial landing is optional: when the consumer supplies visit memory, items are ready and the measured mode is split, the model chooses the last visited available item, otherwise the first. Overview indexes may omit this policy. A draft uses a separate key and title store; it is not silently persisted as a real item.
 
+In 0.3 development source, a group's optional `membership` declares either `{ kind: 'derived' }` (the default) or `{ kind: 'assignable', target: { targetId, input? } }`. Board columns mount that existing public `DropTarget` across the column, including an empty retained column. Collection owns the group identity and meaning; the declared DnD target owns admission, gestures, preview, cancellation and settlement, and invokes the domain's existing Action. Collection adds no writer or confirmation. Triage's task status columns bind the selected source's single field-free native transition; ambiguous, read-only or field-requiring choices remain in the status menu. PR, Session and review groups remain derived. The same transition Action remains available to agents.
+
 In 0.3 development source, `CapabilityAddBody` uses that initial-key resolver
 over the displayed group order without visit persistence. Its Collection marks
 an implicit detail as `detailOpenIntent="landing"`: it mounts only in a measured

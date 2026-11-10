@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import type { EntityDropOutcomeV1, JsonValue } from '@happier-dev/plugin-sdk';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
+import type { HappierStyleProp } from '../presentation/portableTypes.js';
 import { bindHostedEntityDragSource, bindHostedEntityDropTarget } from '@happier-dev/plugin-sdk/ui/client';
 import type { PluginHostedEntityDragSourceMount } from '@happier-dev/plugin-sdk/ui/client';
 import type { PluginUiEntityDropDestinationV1, PluginUiEntityDragDropStateV1 } from '@happier-dev/plugin-sdk/ui';
@@ -187,9 +188,9 @@ function HostedDropTarget(props: DropTargetProps): ReactElement {
     return () => { setFeedback(null); mount.dispose(); };
   }, [hostApi, mountId, parentId, props.targetId, inputKey, props.disabled]);
   const active = !props.disabled && feedback?.current && feedback.admission?.status === 'allowed' && (feedback.phase === 'carrying' || feedback.phase === 'pending');
-  return <HostedDropParent.Provider value={props.disabled ? parentId : mountId}><div ref={element} data-testid={props.testID} aria-busy={active && feedback?.phase === 'pending' ? true : undefined} style={{ position: 'relative' }}>{props.children}
+  return <HostedDropParent.Provider value={props.disabled ? parentId : mountId}><View ref={(node: unknown) => { element.current = node instanceof HTMLDivElement ? node : null; }} testID={props.testID} accessibilityState={{ busy: Boolean(active && feedback?.phase === 'pending') }} style={[{ position: 'relative' }, props.style]}>{props.children}
     {active ? <HappierDropTargetOutline testID={props.testID ? `${props.testID}-outline` : undefined} colors={{ border: theme.colors.accent, background: theme.colors.control }} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }} /> : null}
-  </div></HostedDropParent.Provider>;
+  </View></HostedDropParent.Provider>;
 }
 
 /** An instance of this plugin's manifest-declared source, never a caller-built host identity. */
@@ -213,6 +214,8 @@ export type DropTargetProps = Readonly<{
   input?: JsonValue;
   children: ReactNode;
   disabled?: boolean;
+  /** Geometry of the target itself, including an empty Collection column. */
+  style?: HappierStyleProp;
   testID?: string;
 }>;
 

@@ -2,11 +2,12 @@ import * as React from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import {
-  Avatar, Banner, Button, DetailsPaneFooter, EmptyState, ErrorState, Form, Icon, IconButton, Item, ItemGroup, LoadingState, Menu, Popover, PropertyList, RelationList, Row,
+  Avatar, Banner, Button, DetailsPaneFooter, EmptyState, ErrorState, Form, Icon, IconButton, Item, ItemGroup, LoadingState, MarkdownEditor, Menu, Popover, PropertyList, RelationList, Row,
   ReplyQuote, ScrollArea, Stack, Status, TaskStatusGlyph, Text, Toggle,
   useAccountActorName, usePluginHostApi, usePluginHostReadiness, usePluginTranslation, usePluginUiFocusTarget, useSurfaceContext,
-  type ActionFormFieldHint, type PropertyNameTones,
+  type ActionFormFieldHint, type PropertyChoice, type PropertyChoiceDirectory, type PropertyNameTones,
 } from '@happier-dev/plugin-ui';
+import { useHostPeopleDirectory } from '@happier-dev/plugin-ui/hostApi';
 import { type TriageTaskFieldChoicesV1, TriageTaskFieldsV1Schema, TriageTaskTransitionFieldValuesV1Schema, triageTaskStatusCategoryV1,
   type TriageConfiguredSourceInstanceV1, type TriageEntryLocatorV1, type TriageEntryRefV1, type TriageEntryStateV1, type TriageSourceInstanceIdV1, type TriageTaskFieldV1,
   type TriageTaskWriteResultV1, type TriageTaskCapabilitiesV1, type TriageTaskFieldsV1 } from '@happier-dev/triage-protocol/v1';
@@ -25,6 +26,9 @@ import { projectTriageTaskDraftStatusV1 } from './taskDraftStatus.js';
 import { TriageSourceMark } from '../list/sourceMark.js';
 import { TriageTaskOriginLink } from './taskOrigin.js';
 import { openLinkedSession } from '../../sessions/entrySessionOpen.js';
+import { taskWriteMessage, type TaskWriteMessageContext } from '../taskWriteMessage.js';
+import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
+import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 
 export const TRIAGE_TASK_PROPERTIES_TEST_ID_V1 = 'triage-task-properties';
 export const TRIAGE_TASK_BLOCKERS_TEST_ID_V1 = 'triage-task-blockers';
@@ -41,9 +45,44 @@ function useTriageTaskAssigneeLabels(accountId: string | undefined) {
   return accountId === undefined ? undefined : new Map([[accountId, name]]);
 }
 
+const NO_PEOPLE_SCOPE = Object.freeze({ serverId: '', accountId: '' });
+type TriageTaskAssigneeDirectory = Readonly<{ choices: readonly PropertyChoice[]; state: PropertyChoiceDirectory }>;
+
+/**
+ * Where a task's assignees are picked from when the source's own read carries no directory. A Happier task's people
+ * are the host's (the share sheet's people owner), read only once the picker opens; any other source gets the
+ * `otherwise` state it can truthfully offer. Assignees are never typed.
+ */
+function useTriageTaskAssigneeDirectory(input: Readonly<{
+  happier: boolean;
+  scope: Readonly<{ serverId: string; accountId: string }> | undefined;
+  otherwise?: PropertyChoiceDirectory;
+}>): TriageTaskAssigneeDirectory | undefined {
+  const text = usePluginTranslation();
+  const [demanded, setDemanded] = React.useState(false);
+  const host = useHostPeopleDirectory({ scope: input.scope ?? NO_PEOPLE_SCOPE, enabled: input.happier && demanded && input.scope !== undefined });
+  if (!input.happier) return input.otherwise === undefined ? undefined : { choices: [], state: input.otherwise };
+  if (host === null || input.scope === undefined) return { choices: [], state: { status: 'unavailable',
+    unavailableLabel: text('plugins.triage.tasks.assignees.noPeople', 'People can\u2019t be listed here') } };
+  return {
+    choices: host.people.map(person => ({ id: person.accountId, label: person.name, ...(person.handle === undefined ? {} : { subtitle: person.handle }) })),
+    state: host.status === 'failed'
+      ? { status: 'unavailable', unavailableLabel: text('plugins.triage.tasks.assignees.peopleFailed', 'Your people couldn\u2019t be loaded'), retry: host.retry }
+      : { status: host.status === 'ready' ? 'ready' : 'loading', onOpen: () => setDemanded(true) },
+  };
+}
+
 /** One assignee's mark, from Happier's person owner (never an image URL). */
 function renderTriageTaskAssigneeFace(name: string): React.ReactNode {
   return <Avatar name={name} size="small" />;
+}
+
+/** The person owner's names first, then the names the people directory read for the rest. */
+function withAssigneeNames(labels: ReadonlyMap<string, string | null> | undefined, directory: TriageTaskAssigneeDirectory | undefined) {
+  if (directory === undefined || directory.choices.length === 0) return labels;
+  const names = new Map<string, string | null>(directory.choices.map(choice => [choice.id, choice.label]));
+  for (const [id, name] of labels ?? []) names.set(id, name);
+  return names;
 }
 
 /** List age and other sources' health do not decide whether this source can execute. */
@@ -51,23 +90,6 @@ function useTriageTaskExecutionUnavailable(): boolean {
   const machineBound = Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon');
   const readiness = usePluginHostReadiness(machineBound);
   return readiness.pending || readiness.ready === false;
-}
-
-type TaskWriteMessageContext = Readonly<{ sourceName?: string; operation: 'create' | 'edit'; target?: string | null }>;
-
-function taskWriteMessage(text: ReturnType<typeof usePluginTranslation>, result: TriageTaskWriteResultV1,
-  context?: TaskWriteMessageContext): string {
-  if (result.kind === 'uncertain' && context?.sourceName !== undefined) {
-    if (context.target != null) return text('plugins.triage.tasks.write.uncertainMove',
-      '{source} may have moved this task to {target}. Check it before moving it again.', { source: context.sourceName, target: context.target });
-    return context.operation === 'create' ? text('plugins.triage.tasks.write.uncertainCreate',
-      '{source} may have created this task. Check it before creating another.', { source: context.sourceName })
-      : text('plugins.triage.tasks.write.uncertainEdit',
-        '{source} may have saved your changes. Check it before saving again.', { source: context.sourceName });
-  }
-  return text(`plugins.triage.tasks.write.${result.kind}`, result.kind === 'applied' ? 'Saved at the source'
-    : result.kind === 'uncertain' ? 'The source may have saved this. Check it before creating or saving again.'
-      : result.kind === 'refused' ? 'This change is not available for this task.' : 'The source could not save this change.');
 }
 
 function taskSourceLinkLabel(text: ReturnType<typeof usePluginTranslation>, sourceName?: string): string {
@@ -296,6 +318,11 @@ export function TriageCreateTaskFields(props: Readonly<{
   const chosenValue = where === undefined && defaultPlace !== undefined
     ? JSON.stringify([defaultPlace.sourceInstanceId, defaultPlace.kindId]) : where;
   const chosen = choices.find((choice) => choice.value === chosenValue);
+  // A source with a directory reads it for an existing entry; before the task exists there is none to read yet.
+  const assigneeDirectory = useTriageTaskAssigneeDirectory({ scope: context.accountScope,
+    happier: chosen !== undefined && sameTriageSourceIdentity(chosen.source.configured.instance.source, INTERNAL_TASK_SOURCE_V1),
+    ...(chosen?.kind.taskCapabilities?.fieldChoices === true ? { otherwise: { status: 'unavailable' as const,
+      unavailableLabel: text('plugins.triage.tasks.assignees.afterCreate', 'Assign people once the task is created') } } : {}) });
   const candidates = React.useMemo(() => triageTaskRelationCandidatesV1(props.suggestionRows ?? []), [props.suggestionRows]);
   const suggestions = React.useMemo(() => suggestTriageTaskDraftPlacesV1(origin?.repository, props.suggestionRows ?? [], choices.filter(choice => choice.supportsCreate).map(choice => ({
     source: choice.source.configured.instance.source, sourceInstanceId: choice.source.sourceInstanceId, kindId: choice.kind.id,
@@ -387,8 +414,9 @@ export function TriageCreateTaskFields(props: Readonly<{
     ...Object.fromEntries(Object.entries(draft).filter(([field]) => field !== 'title' && field !== 'body' && field !== 'initialStatusId')),
   } as Partial<TriageTaskFieldsV1>;
   const setDraftFields = (next: TriageTaskFieldsV1) => setDraft(previous => ({ ...previous, ...next }));
-  const properties = projectTriageTaskPropertiesV1({ fields, values: draftValues, candidates, assigneeLabels, assigneeFace: renderTriageTaskAssigneeFace, commit: setDraftFields, text,
-    locale: context.locale });
+  const properties = projectTriageTaskPropertiesV1({ fields, values: draftValues, candidates, assigneeLabels: withAssigneeNames(assigneeLabels, assigneeDirectory),
+    assigneeFace: renderTriageTaskAssigneeFace, commit: setDraftFields, text, locale: context.locale,
+    ...(assigneeDirectory === undefined ? {} : { assigneeDirectory }) });
   if (initialStatus.property !== null) properties.unshift(initialStatus.property);
   const blockers = fields.includes('blockedBy')
     ? projectTriageTaskBlockersV1({ blockedBy: draftValues.blockedBy ?? [], candidates, text, commit: setDraftFields }) : null;
@@ -436,7 +464,7 @@ export function TriageCreateTaskFields(props: Readonly<{
             placeholder={text('plugins.triage.tasks.draft.titlePlaceholder', 'Task title')} value={title} required disabled={held}
             onChange={value => setDraft(previous => ({ ...previous, title: value }))} onSubmitEditing={() => undefined}
             testID={TRIAGE_TASK_DRAFT_TITLE_TEST_ID_V1} />
-          {!fields.includes('body') ? null : <Form.TextField presentation="document" multiline label={text('plugins.triage.tasks.body', 'Notes')}
+          {!fields.includes('body') ? null : <MarkdownEditor presentation="document" accessibilityLabel={text('plugins.triage.tasks.body', 'Notes')}
             placeholder={text('plugins.triage.tasks.draft.notesPlaceholder', 'Add notes\u2026')} disabled={held}
             value={typeof draft.body === 'string' ? draft.body : ''} onChange={value => setDraft(previous => ({ ...previous, body: value }))} />}
         </Stack>
@@ -468,10 +496,6 @@ export function TriageCreateTaskFields(props: Readonly<{
 
 /** The task's text edits in one deliberate Save; every other field is its own typed property. */
 const TASK_TEXT_FIELDS = ['title', 'body'] as const satisfies readonly TriageTaskFieldV1[];
-const TASK_TEXT_HINTS = {
-  title: { widget: 'text', required: true },
-  body: { widget: 'textarea' },
-} as const satisfies Record<(typeof TASK_TEXT_FIELDS)[number], Omit<ActionFormFieldHint, 'path' | 'title'>>;
 
 /** One of a task's relations as a chapter of the detail's story: its list, and the source's fact about it. */
 export type TriageTaskRelationChapterV1 = Readonly<{
@@ -541,6 +565,12 @@ export function TriageEditTaskScope(props: Readonly<{
     props.disabled || executionUnavailable || props.instance === undefined || write.busy || write.checking || write.result?.kind === 'uncertain', descriptor?.displayName);
   const candidates = React.useMemo(() => triageTaskRelationCandidatesV1(props.relationRows ?? []), [props.relationRows]);
   const labelTones = useTriageTaskLabelTones(snapshot?.labelColors, props.onApplied);
+  // A source that declares a directory but whose read carried none says so and reads the entry again on request.
+  const assigneeDirectory = useTriageTaskAssigneeDirectory({ scope: context.accountScope,
+    happier: sameTriageSourceIdentity(props.row.entryRef.source, INTERNAL_TASK_SOURCE_V1),
+    ...(capabilities?.fieldChoices === true && props.taskFieldChoices?.assigneeIds === undefined ? { otherwise: { status: 'unavailable' as const,
+      unavailableLabel: text('plugins.triage.tasks.assignees.readFailed', 'The people list couldn\u2019t be read'),
+      retry: () => { void props.onApplied().catch(() => undefined); } } } : {}) });
   const canEdit = kind?.task === true && fields.length > 0
     && resolveTriageSourceTaskOperationV1(context.targetedContributions, props.row.entryRef.source, 'edit') !== undefined;
   if (kind?.task !== true || selected === null || snapshot === undefined) {
@@ -593,13 +623,14 @@ export function TriageEditTaskScope(props: Readonly<{
       onSelect={(value) => { const transition = transitions.find(candidate => candidate.id === value);
         if (transition !== undefined && value !== statusMenu.currentId) workflow.select(transition); }} />;
   const propertyValues = values ?? {};
-  const propertyAssigneeLabels = new Map<string, string | null>(assigneeLabels);
+  const propertyAssigneeLabels = new Map<string, string | null>(withAssigneeNames(assigneeLabels, assigneeDirectory));
   const assigneeIds = propertyValues.assigneeIds ?? [];
   if (assigneeIds.length === 1 && snapshot.assigneeLabel !== undefined && !propertyAssigneeLabels.has(assigneeIds[0]!)) {
     propertyAssigneeLabels.set(assigneeIds[0]!, snapshot.assigneeLabel);
   }
   const properties = projectTriageTaskPropertiesV1({ fields: editable, values: propertyValues, self: props.row.entryRef, candidates, assigneeLabels: propertyAssigneeLabels, assigneeFace: renderTriageTaskAssigneeFace,
     ...(props.taskFieldChoices === undefined ? {} : { fieldChoices: props.taskFieldChoices }),
+    ...(assigneeDirectory === undefined ? {} : { assigneeDirectory }),
     ...(snapshot.assigneeLabel === undefined ? {} : { assigneeLabel: snapshot.assigneeLabel }),
     ...(labelTones === null ? {} : { labelTones }),
     commit: commitFields, text, locale: context.locale, busy: write.busy });
@@ -642,27 +673,39 @@ export function TriageEditTaskScope(props: Readonly<{
           { count: subTasks.total - childEntries.length }) } : {})} />,
     },
   };
+  const saveText = async () => {
+    if (!canEdit || disabled || values === null) return;
+    const changed = Object.fromEntries(textFields.filter(field => !pluginJsonValuesEqual(draft[field], values[field]))
+      .map(field => [field, draft[field]]));
+    const fields = TriageTaskFieldsV1Schema.safeParse(changed);
+    if (!fields.success) {
+      setIssues(Object.fromEntries(fields.error.issues.map(issue => [String(issue.path[0]),
+        text('plugins.triage.tasks.invalidField', 'Check this value before saving.')])));
+      return;
+    }
+    if (Object.keys(fields.data).length === 0) { setEditing(false); return; }
+    const result = await write.commit(TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, { ...address, fields: fields.data });
+    if (result?.kind === 'applied') setEditing(false);
+  };
+  const editText = (field: (typeof TASK_TEXT_FIELDS)[number], value: string) => { setDraft(previous => ({ ...previous, [field]: value })); setIssues({}); };
+  const textHeld = disabled || !canEdit || write.busy;
+  const draftTitle = typeof draft.title === 'string' ? draft.title : '';
+  // The open editor is the task's own title and notes written in place, as a draft is; the notes are the host's one
+  // Markdown editor (the source stores them as Markdown).
   const form = !editing ? null : <Stack gap="small" testID={TRIAGE_TASK_TEXT_EDITOR_TEST_ID_V1}>
     {valuesNotice}
-    <Form
-      value={draft} onChange={value => { setDraft(value); setIssues({}); }} issues={issues}
-      disabled={disabled || !canEdit} busy={write.busy}
-      hints={{ submitLabel: text('plugins.triage.tasks.save', 'Save changes'), fields: textFields.map(field => ({
-        ...TASK_TEXT_HINTS[field], path: field, title: triageTaskFieldTitleV1(text, field),
-      })) }} onCancel={() => setEditing(false)} onSubmit={async (value) => {
-        if (!canEdit || disabled || values === null) return;
-        const changed = Object.fromEntries(textFields.filter(field => !pluginJsonValuesEqual(value[field], values[field]))
-          .map(field => [field, value[field]]));
-        const fields = TriageTaskFieldsV1Schema.safeParse(changed);
-        if (!fields.success) {
-          setIssues(Object.fromEntries(fields.error.issues.map(issue => [String(issue.path[0]),
-            text('plugins.triage.tasks.invalidField', 'Check this value before saving.')])));
-          return;
-        }
-        if (Object.keys(fields.data).length === 0) { setEditing(false); return; }
-        const result = await write.commit(TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, { ...address, fields: fields.data });
-        if (result?.kind === 'applied') setEditing(false);
-      }} />
+    {!textFields.includes('title') ? null : <Form.TextField presentation="document" documentRole="title" multiline required
+      label={triageTaskFieldTitleV1(text, 'title')} disabled={textHeld} value={draftTitle} onChange={value => editText('title', value)} />}
+    {issues.title === undefined ? null : <Form.ValidationMessage message={issues.title} />}
+    {!textFields.includes('body') ? null : <MarkdownEditor presentation="document" accessibilityLabel={triageTaskFieldTitleV1(text, 'body')}
+      placeholder={text('plugins.triage.tasks.draft.notesPlaceholder', 'Add notes\u2026')} disabled={textHeld}
+      value={typeof draft.body === 'string' ? draft.body : ''} onChange={value => editText('body', value)} />}
+    {issues.body === undefined ? null : <Form.ValidationMessage message={issues.body} />}
+    <Form.Actions>
+      <Button title={text('plugins.triage.tasks.save', 'Save changes')} busy={write.busy}
+        disabled={textHeld || (textFields.includes('title') && draftTitle.trim().length === 0)} onPress={saveText} />
+      <Button title={text('plugins.triage.tasks.cancel', 'Cancel')} variant="secondary" disabled={write.busy} onPress={() => setEditing(false)} />
+    </Form.Actions>
     <TaskWriteNotice result={write.result} sessionLink={write.sessionLink} checking={write.checking} onCheckAgain={checkAgain}
       context={{ sourceName: descriptor?.displayName, operation: 'edit', target: write.progress }}
       sourceUrl={selected.observation.locator.webUrl} />
