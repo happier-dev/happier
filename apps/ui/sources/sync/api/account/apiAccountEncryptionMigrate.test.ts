@@ -68,6 +68,7 @@ describe('migrateAccountEncryptionMode', () => {
       code: 'migration_inventory_changed', messageKey: 'settingsAccount.encryptionInventoryChanged' },
     { status: 403, body: { error: 'e2ee-required' }, code: 'e2ee-required', messageKey: 'settingsAccount.encryptionRequiredByHome' },
     { status: 403, body: { error: 'plaintext-only' }, code: 'plaintext-only', messageKey: 'settingsAccount.encryptionPlainOnlyHome' },
+    { status: 400, body: { error: 'plugin_collections_not_empty' }, code: 'plugin_collections_not_empty', messageKey: 'settingsAccount.encryptionPluginDataBlocks' },
   ] as const)('presents the typed $code refusal without losing its code or status', async ({ status, body, code, messageKey }) => {
     fetchBoundary.mockResolvedValueOnce(jsonResponse(body, status));
     await expect(migrateAccountEncryptionMode({ token: 't' }, PLAIN_REQUEST, { retry: 'none' }))

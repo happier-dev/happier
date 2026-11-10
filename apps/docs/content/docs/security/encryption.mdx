@@ -128,6 +128,11 @@ Safe next actions are:
 Server at-rest sealing cannot recover client-E2EE ciphertext, and a new plaintext login
 does not manufacture the missing key.
 
+In 0.3 development builds, Accounts with plugin data cannot change encryption modes
+yet. If conversion is refused for this reason, the current mode and data remain
+unchanged. Keep using the current encryption mode until plugin data conversion is
+supported.
+
 In the current 0.3 development flow, older Automation triggers tied to an encrypted
 Session stay encrypted. A trusted device that retains the original material can use
 them; a keyless device sees a locked trigger and can delete it. Switching the Account

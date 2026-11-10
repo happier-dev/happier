@@ -2830,6 +2830,11 @@ owners. It never replaces them:
   and canonical migration digest. The finalizer replaces the credential and flips
   `Account.encryptionMode` in the same transaction; passwordless transitions keep their
   existing request. The independently gated staged V5 routes remain disabled.
+- In 0.3 development, conversion refuses Accounts with live plugin Collection data
+  (`plugin_collections_not_empty`). Collection row ids can be derived from the
+  encryption mode and Account key material; conversion cannot yet relocate them.
+  The refusal leaves the current mode and data unchanged, with nothing lost. Keep
+  using the current mode until plugin data conversion is supported.
 - In 0.3 development, whole-Account conversion enters `settings.invoke` at
   `account.encryptionMode` with `account_encryption_mode_convert` and the target
   mode. Settings and Agent calls share

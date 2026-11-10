@@ -105,6 +105,7 @@ export async function migrateAccountEncryptionMode(
       }
       const message = err.error === 'e2ee-required' ? t('settingsAccount.encryptionRequiredByHome')
         : err.error === 'plaintext-only' ? t('settingsAccount.encryptionPlainOnlyHome')
+        : err.error === 'plugin_collections_not_empty' ? t('settingsAccount.encryptionPluginDataBlocks')
         : t('settingsAccount.encryptionUpdateFailed');
       throw new HappyError(message, false, {
         status: response.status,
