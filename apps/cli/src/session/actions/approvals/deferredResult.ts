@@ -11,12 +11,12 @@ export type CliApprovalRequestedHandler = (artifactId: string, signal: AbortSign
   decide: (decision: 'approve' | 'reject') => Promise<ActionExecuteResult>) => void | ActionExecuteResult | Promise<void | ActionExecuteResult>;
 
 /** Progress can prompt for Ask while the original transport retains private output. */
-export async function executeLiveCliApprovalRequest(options: Readonly<{
+export async function executeLiveCliApprovalRequest<T extends ActionExecuteResult | null = ActionExecuteResult>(options: Readonly<{
   onApprovalRequested: CliApprovalRequestedHandler;
   execute: ReturnType<typeof createActionExecutor>['execute'];
   context: ActionExecutorContext;
-  run(signal: AbortSignal, onApprovalRequested: (approval: ActionApprovalRequestCreatedResult) => void): Promise<ActionExecuteResult>;
-}>): Promise<ActionExecuteResult> {
+  run(signal: AbortSignal, onApprovalRequested: (approval: ActionApprovalRequestCreatedResult) => void): Promise<T>;
+}>): Promise<T | ActionExecuteResult> {
   const lifetime = new AbortController();
   const signal = options.context.signal ? AbortSignal.any([options.context.signal, lifetime.signal]) : lifetime.signal;
   let notification: Promise<void | ActionExecuteResult> | undefined;

@@ -6,17 +6,32 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent,
   encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
-import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { buildTargetActionApprovalArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ACTION_API_SERVER_ORIGIN, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+  EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationRequestV1Schema,
+  ExternalActionExecutionAuthorizationV1Schema, parseExternalActionDaemonDispatchResult,
+  projectExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { configuration } from '@/configuration';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
+import { registerExternalActionRpcHandler } from '@/rpc/handlers/externalAction';
+import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
+import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import type { VerifyExternalActionExecutionAuthorization } from '@/daemon/externalActions/executeExternalAction';
+import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { createClientActionReverseDispatcher } from '../clientActionReverseDispatch';
+import { SessionMessageContentSchema, UserMessageSchema } from '@/api/types';
+import { UiActionDispatchRequestV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
 
 // Replace network transport only. The credentialed deciding factory, Artifact
@@ -27,23 +42,30 @@ vi.mock('@/session/transport/rpc/machineRpc', async importOriginal => ({
 }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); transport.mockReset(); resetActiveAccountSettingsSnapshotForTests(); });
 
+const managerSessionId = 'c123456789012345678901234';
+
 describe('remote person approval through credentialed CLI and registered daemon replay', () => {
-  async function approveGoal(externalActionClient: boolean, scenario: 'goal' | 'missing_client' | 'agent_live' | 'missing_app_live' | 'missing_app_plugin_live' | 'background_plugin_post' | 'background_plugin_resume' | 'target_live' = 'goal', decision: 'approve' | 'reject' = 'approve') {
+  async function approveGoal(externalActionClient: boolean, scenario: 'goal' | 'missing_client' | 'missing_app_live' | 'missing_app_plugin_live' | 'background_plugin_post' | 'background_plugin_refusal' | 'target_live' | 'mcp_client' = 'goal', decision: 'approve' | 'reject' = 'approve') {
     const missingClientPort = scenario === 'missing_client';
-    const liveResult = scenario === 'agent_live';
+    const mcpClient = scenario === 'mcp_client';
     const missingAppWaiter = scenario === 'missing_app_live' || scenario === 'missing_app_plugin_live';
-    const backgroundPluginPost = scenario === 'background_plugin_post' || scenario === 'background_plugin_resume';
-    const failedFirstResumption = scenario === 'background_plugin_resume';
+    const backgroundPluginPost = scenario === 'background_plugin_post' || scenario === 'background_plugin_refusal';
+    const refusedOriginDelivery = scenario === 'background_plugin_refusal';
     return await withConfiguredDaemonTestHome({ prefix: 'happier-remote-decider-', env: {
       HAPPIER_SERVER_URL: 'https://approval.test', HAPPIER_WEBAPP_URL: 'https://approval.test',
       HAPPIER_TOKEN: undefined, HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE: undefined,
       HAPPIER_ACCOUNT_SETTINGS_MODE: 'auto', HAPPIER_ACTIONS_SETTINGS_V1: undefined,
     } }, async () => {
       const serverId = configuration.activeServerId;
-      const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner', provenance: {
-        v: 1, kind: 'terminal', authority: 'account_automation',
+      const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1, provenance: {
+        v: 1, kind: 'account', authority: 'present_user',
       } })).toString('base64url')}.signature`;
       const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+      const installation = await readOrCreateInstallationIdentity();
+      const privateKey = decodeBase64(installation.privateKey, 'base64url');
+      const publicKey = decodeBase64(installation.publicKey, 'base64url');
+      const currentnessChannel = await createRequesterCurrentnessSocketHarness();
+      onTestFinished(() => currentnessChannel.close());
       const settings = AccountSettingsSchema.parse({});
       setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKeyForToken(token)!,
         loadedAtMs: 1, settingsVersion: 1, settingsSecretsReadKeys: [], settings });
@@ -52,6 +74,12 @@ describe('remote person approval through credentialed CLI and registered daemon 
       let stored: ApprovalRequest | null = null;
       let approvalCreates = 0;
       let waiterAdmissions = 0;
+      let signedAdmissions = 0;
+      let signedDeliveries = 0;
+      const dispatchCount = () => transport.mock.calls.length + signedDeliveries;
+      const executionCounts = () => ({ rpc: transport.mock.calls.length, admissions: signedAdmissions,
+        deliveries: signedDeliveries, effects: effects.length });
+      const issuedAuthorizations = new Map<string, ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>>();
       const target = scenario === 'target_live' ? TargetActionApprovalRequestV1Schema.parse({
         v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
         createdBy: { surface: 'agent' }, requestedSurface: 'agent', qualifiedActionId: 'acme.alpha/actions/run',
@@ -59,11 +87,15 @@ describe('remote person approval through credentialed CLI and registered daemon 
         approvalInputCustody: 'live_only', policyFingerprint: 'a'.repeat(64), subjectFingerprint: 'b'.repeat(64),
         replayPlacement: { serverId, machineId: 'origin-machine' }, summary: 'Review private operation',
         executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
-          caller: { kind: 'session', sessionId: 'manager-1', starterDepth: 0, turnDepth: 0 },
+          caller: { kind: 'session', sessionId: managerSessionId, starterDepth: 0, turnDepth: 0 },
           serverId, serverIdentityId: 'srv_home', accountId: 'owner', machineId: 'origin-machine',
           actionId: 'action.invoke', requestId: 'target-live' },
       }) : null;
       const effects: unknown[] = [];
+      const publications = new Map<string, string>();
+      const publicationRequests: string[] = [];
+      const managerSession = createSessionRecordFixture({ id: managerSessionId, active: true,
+        encryptionMode: 'plain', share: null, metadata: JSON.stringify({ machineId: 'origin-machine' }) });
       const http: string[] = [];
       const coordinator = createBlockingApprovalCoordinator();
       onTestFinished(() => coordinator.dispose());
@@ -71,7 +103,6 @@ describe('remote person approval through credentialed CLI and registered daemon 
       onTestFinished(() => lifetime.abort());
       let waiterReady!: () => void;
       const waiting = new Promise<void>(resolve => { waiterReady = resolve; });
-      const bearer = `hap_v1_dd03e74b-4aae-4a0a-81ee-1c23ddc4525d_${'A'.repeat(43)}`;
       const daemon = createActionExecutor({
         ...(backgroundPluginPost ? { hostActionApprovalLifetime: { actionId: 'discussion.post' as const,
           signal: lifetime.signal, surface: 'plugin' as const, isCurrent: () => !lifetime.signal.aborted } } : {}),
@@ -85,6 +116,14 @@ describe('remote person approval through credentialed CLI and registered daemon 
           stored = ApprovalRequestV2Schema.parse(request); return { ok: true };
         },
         isApprovalExecutionOriginCurrent: async ({ origin }) => origin.machineId === 'origin-machine',
+        ...(mcpClient ? { clientActionExecute: createClientActionReverseDispatcher(() => ({
+          hasConnectedClientRpcHandler: () => true,
+          callConnectedClientRpc: async (_method, raw, options) => {
+            effects.push(UiActionDispatchRequestV1Schema.parse(raw));
+            options.onIssued();
+            return { ok: true, result: { v: 1, execution: { ok: true, result: { ok: true } } } };
+          },
+        })) } : {}),
         sessionGoalSet: async input => { effects.push(input); return { updated: true }; },
         discussionAction: async ({ actionId, input, context }) => {
           if (actionId !== 'discussion.post') throw new Error(`Unexpected Discussion operation: ${actionId}`);
@@ -104,17 +143,10 @@ describe('remote person approval through credentialed CLI and registered daemon 
           return { ...result, request: ApprovalRequestV2Schema.parse(result.request) };
         },
         approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
-        accountApiTokensCreateAction: async input => {
-          effects.push(input);
-          return { token: bearer, apiToken: { tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: 'Fixture',
-            displayPrefix: 'hap_v1_dd03e74b', createdAt: '2026-08-22T12:00:00.000Z', lastUsedAt: null,
-            expiresAt: null, hasEncryptionAccess: false, hasUnattendedTeamAccess: false,
-            grant: API_TOKEN_FULL_GRANT_V1, parentTokenId: null, activeChildCount: 0, embedConfig: null } };
-        },
       });
       const originContext = { surface: 'agent' as const, authority: 'account_automation' as const, serverId, serverIdentityId: 'srv_home', runtimeAccountId: 'owner',
-        defaultSessionId: 'manager-1', defaultSessionMachineId: 'origin-machine', actionRequestId: 'goal-request',
-        actionCaller: { kind: 'session' as const, sessionId: 'manager-1', starterDepth: 0, turnDepth: 0 } };
+        defaultSessionId: managerSessionId, defaultSessionMachineId: 'origin-machine', actionRequestId: 'goal-request',
+        actionCaller: { kind: 'session' as const, sessionId: managerSessionId, starterDepth: 0, turnDepth: 0 } };
       const pluginCaller = { kind: 'plugin' as const, pluginId: 'acme.channels', contributionLocalId: 'ingress',
         occurrenceId: 'channels-occurrence', originSurface: 'background' as const,
         sourceCustody: { kind: 'development' as const, registeredRootId: 'channels-root' },
@@ -124,10 +156,9 @@ describe('remote person approval through credentialed CLI and registered daemon 
         content: { v: 1, parts: [{ t: 'text', text: 'Background publication' }] },
       }, { surface: 'plugin', authority: 'account_automation', serverId, serverIdentityId: 'srv_home',
         runtimeAccountId: 'owner', actionRequestId: 'background-post', signal: lifetime.signal, actionCaller: pluginCaller })
-        : liveResult ? daemon.execute('account.apiTokens.create', {
-          tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: 'Fixture' }, originContext) : null;
+        : null;
       if (originalInvocation) onTestFinished(async () => { lifetime.abort(); coordinator.dispose(); await originalInvocation; });
-      if (liveResult || backgroundPluginPost) await waiting;
+      if (backgroundPluginPost) await waiting;
       // A prior app process is gone. Supply its schema-valid stored record at
       // the HTTP boundary; a contextual Machine never owned its private result.
       else if (missingAppWaiter) stored = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
@@ -139,11 +170,24 @@ describe('remote person approval through credentialed CLI and registered daemon 
             contributionLocalId: pluginCaller.contributionLocalId, sourceCustody: pluginCaller.sourceCustody } : { kind: 'host' },
           serverId, serverIdentityId: 'srv_home', accountId: 'owner', machineId: 'origin-machine',
           actionId: 'account.apiTokens.create', requestId: 'app-token' } });
+      else if (mcpClient) expect(await daemon.execute('session.connected_services_auth.set', {
+        sessionId: managerSessionId, agentId: 'codex', machineId: 'origin-machine',
+        bindings: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
+          source: 'connected', selection: 'profile', profileId: 'profile' } } },
+      }, { ...originContext, surface: 'mcp', actionCaller: { kind: 'host' },
+        externalActionTarget: { kind: 'session', sessionId: managerSessionId } }))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       else if (!target) expect(await daemon.execute('approval.request.create', {
         ...(missingClientPort ? { actionId: 'file.editor.save', actionArgs: {} }
-          : { actionId: 'session.goal.set', actionArgs: { sessionId: 'manager-1', objective: 'Ship goal controls', resumeInactiveWithInitialGoal: false } }),
+          : { actionId: 'session.goal.set', actionArgs: { sessionId: managerSessionId, objective: 'Ship goal controls', resumeInactiveWithInitialGoal: false } }),
         summary: 'Set manager goal', createdBy: { surface: 'agent' },
       }, originContext)).toMatchObject({ ok: true, result: { artifactId: 'approval' } });
+      if (mcpClient) {
+        const request = ApprovalRequestV2Schema.parse(stored);
+        expect(request.executionOriginV1).toMatchObject({ machineId: 'origin-machine',
+          target: { kind: 'session', sessionId: managerSessionId } });
+        expect(request.executionOriginV1.externalActionExecutionAuthorization).toBeUndefined();
+      }
       let artifact = { id: 'approval', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
         dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
         header: encodePlainArtifactStoredContent(target ? buildTargetActionApprovalArtifactHeaderV1(target)
@@ -152,12 +196,34 @@ describe('remote person approval through credentialed CLI and registered daemon 
         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
       const rpc = new RpcHandlerManager({ scopePrefix: 'origin-machine', encryptionMode: 'plain', logger: () => {} });
       registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: daemon });
-      let firstResumptionUnavailable = failedFirstResumption;
+      const verifyExecutionAuthorization: VerifyExternalActionExecutionAuthorization = input =>
+        verifyExternalActionExecutionAuthorizationCurrent({ ...input, privateKey, installationId: installation.installationId,
+          serverHttpBaseUrl: 'https://approval.test' });
+      registerExternalActionRpcHandler(rpc, {
+        machineId: 'origin-machine', currentServerId: serverId, currentServerHttpBaseUrl: 'https://approval.test',
+        resolveAccountId: async () => 'owner', resolveInstallationId: () => installation.installationId,
+        externalActionMachineRequestPrivateKey: privateKey,
+        verifyExecutionAuthorization,
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: 'https://approval.test' }),
+        executor: daemon,
+        prepareRequesterAccountContext: input => prepareRequesterAccountActionContext({ ...input,
+          purpose: input.purpose ?? { kind: 'external_action' }, machineId: 'origin-machine',
+          installationId: installation.installationId, installationPrivateKey: privateKey,
+          serverId, serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://approval.test',
+          isCurrent: () => verifyExecutionAuthorization({ authorization: input.authorization,
+            effectActionId: input.authorization.binding.actionId, target: input.authorization.binding.target,
+            ...(input.signal ? { signal: input.signal } : {}) }),
+          isCustodyCurrent: async () => !lifetime.signal.aborted,
+          // The same daemon executor retains the original waiter and client port.
+          createExecutor: () => daemon,
+        }),
+      });
+      let originRefusalPending = refusedOriginDelivery;
       transport.mockImplementation(async (input: { machineId: string; method: string; request: unknown }) => {
         expect(input.machineId).toBe('origin-machine');
-        expect(input.method).toBe(liveResult || backgroundPluginPost || target ? RPC_METHODS.APPROVAL_REQUEST_DECIDE : RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED);
-        if (firstResumptionUnavailable) {
-          firstResumptionUnavailable = false;
+        expect(input.method).toBe(backgroundPluginPost || target ? RPC_METHODS.APPROVAL_REQUEST_DECIDE : RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED);
+        if (originRefusalPending) {
+          originRefusalPending = false;
           expect(stored).toMatchObject({ status: 'approved', decision: { kind: 'approve', authority: 'present_user' } });
           return { ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable', effectAttempted: false };
         }
@@ -176,6 +242,14 @@ describe('remote person approval through credentialed CLI and registered daemon 
       vi.spyOn(axios, 'get').mockImplementation(async url => {
         const path = new URL(String(url)).pathname;
         http.push(`GET ${path}`);
+        if (path === '/v1/machines/origin-machine') return { status: 200, data: { machine: {
+          id: 'origin-machine', kind: 'persistent', active: true, installationId: installation.installationId,
+          installationPublicKey: encodeBase64(publicKey, 'base64'),
+          revokedAt: null, replacedByMachineId: null, storageMode: 'plain',
+          access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage',
+            resourceMode: 'plain', accessState: 'ready' },
+        } } };
+        if (path === `/v2/sessions/${managerSessionId}`) return { status: 200, data: { session: managerSession } };
         if (path === '/v1/account/profile') return { status: 200, data: { id: 'owner' } };
         if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
         if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
@@ -188,9 +262,82 @@ describe('remote person approval through credentialed CLI and registered daemon 
         }
         throw new Error(`Unexpected HTTP read: ${path}`);
       });
-      vi.spyOn(axios, 'post').mockImplementation(async (url, input) => {
-        http.push(`POST ${new URL(String(url)).pathname}`);
-        expect(new URL(String(url)).pathname).toBe('/v1/artifacts/approval');
+      vi.spyOn(axios, 'post').mockImplementation(async (url, input, config) => {
+        const path = new URL(String(url)).pathname;
+        http.push(`POST ${path}`);
+        if (path === `/v2/sessions/${managerSessionId}/pending`) {
+          // Plain host result publication uses authenticated Account Pending
+          // ingress. reply:none observes no socket; the server retains localId.
+          expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
+          expect(input).toMatchObject({ localId: 'approval-result:approval', messageRole: 'user',
+            requestedAction: { v: 1, kind: 'enqueue' } });
+          const content = SessionMessageContentSchema.parse(input.content);
+          if (content.t !== 'plain') throw new Error('Expected plain result publication');
+          const authored = UserMessageSchema.parse(content.v);
+          const localId = String(input.localId);
+          publicationRequests.push(localId);
+          const existing = publications.get(localId);
+          if (existing !== undefined) expect(authored.content.text).toBe(existing);
+          else publications.set(localId, authored.content.text);
+          return { status: 200, data: { didWrite: existing === undefined, terminal: false } };
+        }
+        if (path === '/v1/actions/approval.request.decide/execution-authorization') {
+          expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
+          const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(input);
+          expect(request.machineId).toBe('origin-machine');
+          if (request.envelope.v !== 1 || !request.envelope.target) throw new Error('Expected plain decision envelope');
+          const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1,
+            token: `approval-admission-${++signedAdmissions}`, binding: {
+              serverIdentityId: 'srv_home', accountId: 'owner', custodianAccountId: 'owner',
+              authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+              machineId: 'origin-machine', installationId: installation.installationId,
+              actionId: 'approval.request.decide', requestId: request.envelope.requestId,
+              target: request.envelope.target,
+              requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+              approvalDecisionAdmission: projectExternalActionApprovalDecisionAdmissionV1(request.envelope.input),
+            } });
+          issuedAuthorizations.set(authorization.token, authorization);
+          return { status: 200, data: authorization };
+        }
+        if (path === '/v1/actions/approval.request.decide/execution-authorization/verify') {
+          const authorization = issuedAuthorizations.get(String(config?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]));
+          if (!authorization) throw new Error('Unknown decision admission');
+          expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+            effectActionId: authorization.binding.actionId, target: authorization.binding.target,
+            installationId: installation.installationId, requestId: authorization.binding.requestId,
+            method: 'POST', path, body: input, publicKey,
+            signature: String(config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]),
+          })).toBe(true);
+          return { status: 200, data: { ok: true } };
+        }
+        if (path === '/v1/actions/approval.request.decide') {
+          const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(input);
+          const authorization = request.executionAuthorization;
+          if (!authorization) throw new Error('Missing decision admission');
+          expect(issuedAuthorizations.get(authorization.token)?.binding).toEqual(authorization.binding);
+          signedDeliveries++;
+          let execution;
+          if (originRefusalPending) {
+            originRefusalPending = false;
+            expect(stored).toMatchObject({ status: 'approved', decision: { kind: 'approve', authority: 'present_user' } });
+            execution = { ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable', effectAttempted: false };
+          } else if (target) execution = { ok: true, result: { artifactId: 'approval', status: 'approved' } };
+          else {
+            const relayed = parseExternalActionDaemonDispatchResult(await rpc.handleRequest({
+              method: `origin-machine:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
+              authorization: ACTION_API_SERVER_ORIGIN,
+              params: { actionId: 'approval.request.decide', envelope: request.envelope,
+                executionAuthorization: authorization,
+                principal: { accountId: 'owner', authority: 'present_user', authentication: { kind: 'account', tokenEpoch: 1 } },
+                placement: { machineId: 'origin-machine', target: { kind: 'machine', machineId: 'origin-machine' } } },
+            }, undefined, 'authenticated_home_socket'));
+            if (!relayed || relayed.kind !== 'response') throw new Error(`Invalid daemon response: ${JSON.stringify(relayed)}`);
+            return { status: 200, data: relayed.prepared.response };
+          }
+          return { status: 200, data: { v: 1, actionId: 'approval.request.decide',
+            requestId: request.envelope.requestId, execution } };
+        }
+        expect(path).toBe('/v1/artifacts/approval');
         expect(input.expectedHeaderVersion).toBe(artifact.headerVersion);
         const body = decodePlainArtifactStoredContent(input.body);
         if (!body || typeof body !== 'object' || !('body' in body) || typeof body.body !== 'string') throw new Error('invalid approval body');
@@ -200,7 +347,11 @@ describe('remote person approval through credentialed CLI and registered daemon 
         stored = next;
         // The remote Artifact write is pushed back to the original host.
         // Rejection is durable settlement; only approval needs live ingress.
-        if (backgroundPluginPost) coordinator.notifyApprovalUpdated({ artifactId: 'approval', request: next });
+        // A refused origin receives its definitive failed receipt, after the
+        // decision owner settles it; consent alone never reaches that waiter.
+        if (backgroundPluginPost && (!refusedOriginDelivery || next.status === 'failed')) {
+          coordinator.notifyApprovalUpdated({ artifactId: 'approval', request: next });
+        }
         artifact = { ...artifact, header: input.header, body: input.body,
           headerVersion: artifact.headerVersion + 1, bodyVersion: artifact.bodyVersion + 1 };
         return { status: 200, data: { success: true, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } };
@@ -212,17 +363,25 @@ describe('remote person approval through credentialed CLI and registered daemon 
       const decide = () => executor.execute('approval.request.decide', { artifactId: 'approval', decision }, {
         surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
       });
-      let result = await decide();
-      if (failedFirstResumption) {
-        expect(result).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable', effectAttempted: false });
-        expect(stored).toMatchObject({ status: 'approved', decision: { kind: 'approve', authority: 'present_user' } });
-        expect(ApprovalRequestV2Schema.parse(stored).execution).toBeUndefined();
+      const result = await decide();
+      if (refusedOriginDelivery) {
+        expect(result).toMatchObject({ ok: true, result: { status: 'failed', execution: {
+          ok: false, errorCode: 'approval_origin_unavailable', effectAttempted: false,
+        } } });
+        expect(stored).toMatchObject({ status: 'failed', decision: { kind: 'approve', authority: 'present_user' },
+          execution: { ok: false, errorCode: 'approval_origin_unavailable', effectAttempted: false } });
+        expect(await originalInvocation).toMatchObject({ ok: false,
+          errorCode: 'approval_origin_unavailable', effectAttempted: false });
+        expect(await decide()).toMatchObject({ ok: true, result: { status: 'failed' } });
         expect(effects).toEqual([]);
-        expect(coordinator.getLiveWaiterCount('approval')).toBe(1);
+        expect(coordinator.getLiveWaiterCount('approval')).toBe(0);
         expect(approvalCreates).toBe(1);
         expect(waiterAdmissions).toBe(1);
-        expect(transport).toHaveBeenCalledOnce();
-        result = await decide();
+        expect(signedAdmissions).toBe(1);
+        expect(signedDeliveries).toBe(1);
+        expect(transport).not.toHaveBeenCalled();
+        const counts: Record<string, number> = {};
+        return { first: { http: counts, ...executionCounts() }, replay: { http: counts, ...executionCounts() } };
       }
       if (backgroundPluginPost) {
         expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
@@ -232,13 +391,14 @@ describe('remote person approval through credentialed CLI and registered daemon 
           expect(stored).toMatchObject({ status: 'rejected', decision: { kind: 'reject', authority: 'present_user' } });
           expect(await decide()).toMatchObject({ ok: true, result: { status: 'rejected' } });
           expect(transport).not.toHaveBeenCalled();
+          expect(signedDeliveries).toBe(0);
           expect(effects).toEqual([]);
           const http: Record<string, number> = {};
-          return { first: { http, rpc: 0, effects: 0 }, replay: { http, rpc: 0, effects: 0 } };
+          return { first: { http, ...executionCounts() }, replay: { http, ...executionCounts() } };
         }
         expect(await originalInvocation).toMatchObject({ ok: true, result: { messageSeq: 1 } });
         expect(await decide()).toMatchObject({ ok: true, result: { status: 'executed' } });
-        expect(transport).toHaveBeenCalledTimes(failedFirstResumption ? 2 : 1);
+        expect(dispatchCount()).toBe(1);
         expect(approvalCreates).toBe(1);
         expect(waiterAdmissions).toBe(1);
         expect(coordinator.getLiveWaiterCount('approval')).toBe(0);
@@ -249,44 +409,77 @@ describe('remote person approval through credentialed CLI and registered daemon 
         }) })]);
         expect(stored).toMatchObject({ status: 'executed', execution: { ok: true } });
         const http: Record<string, number> = {};
-        return { first: { http, rpc: 1, effects: 1 }, replay: { http, rpc: 1, effects: 1 } };
+        return { first: { http, ...executionCounts() }, replay: { http, ...executionCounts() } };
       }
       if (target) {
-        expect(transport, JSON.stringify(result)).toHaveBeenCalledOnce();
+        expect(dispatchCount(), JSON.stringify(result)).toBe(1);
         expect(result).toMatchObject({ ok: true, result: { status: 'approved' } });
         expect(effects).toEqual([]);
         const http: Record<string, number> = {};
-        return { first: { http, rpc: 1, effects: 0 }, replay: { http, rpc: 1, effects: 0 } };
+        return { first: { http, ...executionCounts() }, replay: { http, ...executionCounts() } };
       }
-      if (liveResult) {
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
-        expect(transport).toHaveBeenCalledOnce();
-        expect(await originalInvocation).toMatchObject({ ok: true, result: { token: bearer } });
+      if (mcpClient) {
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(await decide()).toMatchObject({ ok: true, result: { status: 'executed' } });
         expect(effects).toHaveLength(1);
-        expect(JSON.stringify(stored)).not.toContain(bearer);
-        const http: Record<string, number> = {};
-        return { first: { http, rpc: 1, effects: 1 }, replay: { http, rpc: 1, effects: 1 } };
-      }
-      if (missingClientPort || missingAppWaiter) {
+        expect(effects[0]).toMatchObject({ input: { sessionId: managerSessionId },
+          actionId: 'session.connected_services_auth.set' });
         expect(transport).not.toHaveBeenCalled();
-        expect(result).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
+        expect(signedAdmissions).toBe(1);
+        expect(signedDeliveries).toBe(1);
+        expect(approvalCreates).toBe(1);
+        const counts: Record<string, number> = {};
+        return { first: { http: counts, ...executionCounts() }, replay: { http: counts, ...executionCounts() } };
+      }
+      if (missingClientPort) {
+        expect(result).toMatchObject({ ok: true, result: { status: 'failed', execution: {
+          ok: false, errorCode: 'unsupported_action',
+        } } });
+        expect(stored).toMatchObject({ status: 'failed', execution: {
+          ok: false, errorCode: 'unsupported_action',
+        } });
+        expect(await decide()).toMatchObject({ ok: true, result: { status: 'failed', execution: {
+          ok: false, errorCode: 'unsupported_action',
+        } } });
+        expect(transport).not.toHaveBeenCalled();
+        expect(signedAdmissions).toBe(1);
+        expect(signedDeliveries).toBe(1);
+        expect(effects).toEqual([]);
+        expect(publications.size).toBe(1);
+        expect(publicationRequests).toEqual(['approval-result:approval', 'approval-result:approval']);
+        expect(JSON.parse(publications.get('approval-result:approval')!)).toMatchObject({
+          artifactId: 'approval', actionId: 'file.editor.save', status: 'failed',
+          execution: { ok: false, errorCode: 'unsupported_action' },
+        });
+        const http: Record<string, number> = {};
+        return { first: { http, ...executionCounts() }, replay: { http, ...executionCounts() } };
+      }
+      if (missingAppWaiter) {
+        expect(transport).not.toHaveBeenCalled();
+        expect(signedDeliveries).toBe(0);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
         expect(effects).toEqual([]);
         const http: Record<string, number> = {};
-        return { first: { http, rpc: 0, effects: 0 }, replay: { http, rpc: 0, effects: 0 } };
+        return { first: { http, ...executionCounts() }, replay: { http, ...executionCounts() } };
       }
       const first = {
         http: Object.fromEntries([...new Set(http)].map(route => [route, http.filter(value => value === route).length])),
-        rpc: transport.mock.calls.length, effects: effects.length };
+        rpc: transport.mock.calls.length, admissions: signedAdmissions, deliveries: signedDeliveries, effects: effects.length };
       console.info('FLOWBUDGET_APPROVE', JSON.stringify({ externalActionClient, ...first }));
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
       http.length = 0;
       expect(await decide()).toMatchObject({ ok: true, result: { status: 'executed' } });
       const replay = {
         http: Object.fromEntries([...new Set(http)].map(route => [route, http.filter(value => value === route).length])),
-        rpc: transport.mock.calls.length, effects: effects.length };
+        rpc: transport.mock.calls.length, admissions: signedAdmissions, deliveries: signedDeliveries, effects: effects.length };
       console.info('FLOWBUDGET_APPROVE_REPLAY', JSON.stringify({ externalActionClient, ...replay }));
-      expect(effects).toEqual([expect.objectContaining({ sessionId: 'manager-1', objective: 'Ship goal controls' })]);
-      expect(transport).toHaveBeenCalledOnce();
+      expect(effects).toEqual([expect.objectContaining({ sessionId: managerSessionId, objective: 'Ship goal controls' })]);
+      expect(dispatchCount()).toBe(1);
+      expect(publications.size).toBe(1);
+      expect(publicationRequests).toEqual(['approval-result:approval', 'approval-result:approval']);
+      expect(JSON.parse(publications.get('approval-result:approval')!)).toMatchObject({
+        artifactId: 'approval', actionId: 'session.goal.set', status: 'executed', execution: { ok: true },
+      });
       return { first, replay };
     });
   }
@@ -295,12 +488,32 @@ describe('remote person approval through credentialed CLI and registered daemon 
     await approveGoal(externalActionClient);
   });
 
-  it('never sends a client approval to the origin daemon when the approving CLI lacks a client port', async () => {
+  it('replays a deferred MCP Session-targeted client switch once through the original executor', async () => {
+    await approveGoal(false, 'mcp_client');
+  });
+
+  it('records a failed client effect when the originating daemon lacks a client port', async () => {
     await approveGoal(false, 'missing_client');
   });
 
-  it('forwards a private-result decision to the original agent invocation on its Machine', async () => {
-    await approveGoal(false, 'agent_live');
+  it('refuses human-only token creation before an Agent approval or secret effect', async () => {
+    let approvalCreates = 0;
+    let tokenCreates = 0;
+    const executor = createActionExecutor({
+      approvalsCreate: async () => { approvalCreates++; return { artifactId: 'approval' }; },
+      accountApiTokensCreateAction: async () => { tokenCreates++; throw new Error('Unexpected token creation'); },
+    });
+    // The canonical Action excludes Agent/MCP bearer creation. Retained live
+    // approvals remain covered by background plugin and target invocations.
+    expect(await executor.execute('account.apiTokens.create', {
+      tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: 'Fixture',
+    }, { surface: 'agent', authority: 'account_automation', serverId: 'home',
+      serverIdentityId: 'srv_home', runtimeAccountId: 'owner',
+      defaultSessionId: managerSessionId, defaultSessionMachineId: 'origin-machine',
+      actionCaller: { kind: 'session', sessionId: managerSessionId, starterDepth: 0, turnDepth: 0 },
+    })).toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface' } });
+    expect(approvalCreates).toBe(0);
+    expect(tokenCreates).toBe(0);
   });
 
   it('does not infer a daemon destination from a contextual Machine on a missing app live invocation', async () => {
@@ -315,8 +528,8 @@ describe('remote person approval through credentialed CLI and registered daemon 
     await approveGoal(false, 'background_plugin_post', decision);
   });
 
-  it('preserves the original background plugin waiter after consent when its first resumption is unavailable', async () => {
-    await approveGoal(false, 'background_plugin_resume');
+  it('settles a definitive pre-effect origin refusal for the retained background plugin invocation', async () => {
+    await approveGoal(false, 'background_plugin_refusal');
   });
 
   it('forwards a live target approval to its captured Machine rather than the local target decision owner', async () => {
