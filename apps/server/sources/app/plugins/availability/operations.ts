@@ -1,3 +1,4 @@
+import { readDeclarationIntentIdentitiesTx } from './declarationReadRows';
 import { readIntentRows, decodeIntentReadRow, readIntentListDeclarations, decodeIntentListDeclaration } from './intentReadRows';
 import { updateIntentRow } from './intentWriteRows';
 import type { Prisma } from "@prisma/client";
@@ -67,6 +68,7 @@ import {
     readCurrentPluginDeclarationV1,
     readCurrentMachinePluginDeclarationsV1,
     readReleaseLessDeclarationsV2,
+    readReleaseLessDeclarationListSummary,
     mergeReleaseLessDeclarationV2,
     readStoredPluginManifestV2,
     type ReleaseLessDeclarationV1,
@@ -1322,8 +1324,10 @@ function releaseLessDeclarationDigestForMaterialization(
     intent: Readonly<{ desiredVersion: string | null; releaseLessDeclaration: unknown }> | null | undefined,
 ): PluginUiArtifactDigestV1 | null {
     if (materialization.portableRelease) return null;
-    const declaration = readCurrentReleaseLessDeclarationV1(intent, materialization.pluginId, { machineId: materialization.machineId });
-    return declaration?.manifest.version === materialization.version
+    if (!intent || intent.desiredVersion !== null) return null;
+    const declaration = readReleaseLessDeclarationListSummary(intent.releaseLessDeclaration, materialization.pluginId,
+        { machineId: materialization.machineId }).currentDeclaration;
+    return declaration?.manifestVersion === materialization.version
         ? declaration.manifestDigestSha256
         : null;
 }
@@ -1439,13 +1443,7 @@ export async function resolveCurrentClaimablePluginMachineMaterializationsTx(par
     const nonPortablePluginIds = [...new Set(rows.flatMap((row) => (
         row.portableRelease ? [] : [row.pluginId]
     )))];
-    const intents = [];
-    for (const ids of portableQueryChunks({ values: nonPortablePluginIds, bindingsPerValue: 1, fixedBindings: 2 })) {
-        intents.push(...await params.tx.accountPluginIntent.findMany({
-            where: { accountId: params.accountId, pluginId: { in: [...ids] } },
-            select: { pluginId: true, desiredVersion: true, releaseLessDeclaration: true },
-        }));
-    }
+    const intents = await readDeclarationIntentIdentitiesTx(params.tx, params.accountId, nonPortablePluginIds);
     const intentsByPluginId = new Map(intents.map((intent) => [intent.pluginId, intent] as const));
     const releases = [];
     const releaseRefs = [...new Map(portableRows.map(row => [`${row.pluginId}\0${row.version}`, row])).values()];
@@ -1564,15 +1562,7 @@ export async function resolveCurrentClaimablePluginMachineMaterializationTx(para
         return { kind: "notCurrent" };
     }
     if (!materialization.portableRelease) {
-        const intent = await params.tx.accountPluginIntent.findUnique({
-            where: {
-                accountId_pluginId: {
-                    accountId: params.accountId,
-                    pluginId: materialization.pluginId,
-                },
-            },
-            select: { desiredVersion: true, releaseLessDeclaration: true },
-        });
+        const [intent] = await readDeclarationIntentIdentitiesTx(params.tx, params.accountId, [materialization.pluginId]);
         const declarationDigestSha256 = releaseLessDeclarationDigestForMaterialization(
             materialization,
             intent,

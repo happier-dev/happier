@@ -4,6 +4,8 @@ import type { PluginAccountAvailabilityIntentReadResponseV1 } from '@happier-dev
 import { computePluginUiArtifactSha256DigestV1, PluginUiArtifactDigestV1Schema, type PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 
 import type { Tx } from "@/storage/inTx";
+import { readDeclarationIntentIdentitiesTx, readSelectedDeclarationManifestsTx } from './declarationReadRows';
+import { getDbProviderFromEnv } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
 /**
@@ -159,21 +161,22 @@ function selectCurrentReleaseLessDeclaration<T extends Readonly<{ manifestDigest
 }
 
 type ReleaseLessDeclarationListSummary = Readonly<{
-    currentDeclaration: Readonly<{ manifestDigestSha256: PluginUiArtifactDigestV1; manifestPath: readonly string[] }> | null;
+    currentDeclaration: Readonly<{ manifestDigestSha256: PluginUiArtifactDigestV1; manifestPath: readonly string[]; manifestVersion: string }> | null;
     machineDeclarations: NonNullable<PluginAccountAvailabilityIntentReadResponseV1['machineDeclarations']>;
 }>;
 
 /** Select from body-free storage identities through the same parser and currentness owner. */
-export function readReleaseLessDeclarationListSummary(stored: unknown, pluginId: string): ReleaseLessDeclarationListSummary {
+export function readReleaseLessDeclarationListSummary(stored: unknown, pluginId: string, machine?: PluginDeclarationMachineV1): ReleaseLessDeclarationListSummary {
     const store = readReleaseLessDeclarations(stored, pluginId, (entry, id, location) => {
         const envelope = readReleaseLessDeclarationEnvelope(entry, id);
         if (!envelope) return null;
         const manifestPath = typeof location === 'number' ? ['machines', String(location), 'declaration', 'manifest']
             : location === 'legacy' ? ['legacyDeclaration', 'manifest'] : ['manifest'];
-        return { manifestDigestSha256: envelope.manifestDigestSha256, manifestPath };
+        return { manifestDigestSha256: envelope.manifestDigestSha256, manifestPath,
+            manifestVersion: (envelope.manifest as ParsedPluginManifestV2).version };
     });
     return {
-        currentDeclaration: selectCurrentReleaseLessDeclaration(store),
+        currentDeclaration: selectCurrentReleaseLessDeclaration(store, machine),
         machineDeclarations: store.machines.map(entry => ({ machineId: entry.machineId,
             machineInstallationId: entry.machineInstallationId,
             declaration: { declarationDigestSha256: entry.declaration.manifestDigestSha256 } })),
@@ -257,13 +260,7 @@ export async function resolveCurrentPluginDeclarationsTx(params: Readonly<{
     const resolved = new Map<string, CurrentPluginDeclarationV1>();
     if (params.refs.length === 0) return resolved;
     const pluginIds = [...new Set(params.refs.map((ref) => ref.pluginId))];
-    const intents = [];
-    for (const ids of portableQueryChunks({ values: pluginIds, bindingsPerValue: 1, fixedBindings: 2 })) {
-        intents.push(...await params.tx.accountPluginIntent.findMany({
-            where: { accountId: params.accountId, pluginId: { in: [...ids] } },
-            select: { pluginId: true, enabled: true, desiredVersion: true, releaseLessDeclaration: true },
-        }));
-    }
+    const intents = await readDeclarationIntentIdentitiesTx(params.tx, params.accountId, pluginIds);
     const intentsByPluginId = new Map(intents.map((intent) => [intent.pluginId, intent] as const));
     const releaseRefs = [...new Map(params.refs.flatMap((ref) => (
         intentsByPluginId.get(ref.pluginId)?.desiredVersion === ref.version
@@ -284,11 +281,28 @@ export async function resolveCurrentPluginDeclarationsTx(params: Readonly<{
         declarationRefKey(release.pluginId, release.version),
         release,
     ] as const));
+    const projected = getDbProviderFromEnv(process.env, 'postgres') === 'postgres';
+    const selected = new Map(params.refs.flatMap(ref => {
+        const intent = intentsByPluginId.get(ref.pluginId);
+        if (!projected || !intent?.enabled || intent.desiredVersion !== null) return [];
+        const current = readReleaseLessDeclarationListSummary(intent.releaseLessDeclaration, ref.pluginId,
+            ref.machineId === undefined ? undefined : { machineId: ref.machineId,
+                ...(ref.machineInstallationId === undefined ? {} : { machineInstallationId: ref.machineInstallationId }) }).currentDeclaration;
+        if (!current || current.manifestVersion !== ref.version) return [];
+        const key = declarationRefKey(ref.pluginId, ref.version, ref.machineId, ref.machineInstallationId);
+        return [[key, { key, pluginId: ref.pluginId, path: current.manifestPath,
+            declarationDigestSha256: current.manifestDigestSha256 }] as const];
+    }));
+    const manifests = await readSelectedDeclarationManifestsTx(params.tx, params.accountId, [...selected.values()]);
     for (const ref of params.refs) {
         const intent = intentsByPluginId.get(ref.pluginId);
         const key = declarationRefKey(ref.pluginId, ref.version, ref.machineId, ref.machineInstallationId);
-        const declaration = readCurrentPluginDeclarationV1({ ...ref, intent,
-            release: releasesByRef.get(declarationRefKey(ref.pluginId, ref.version)) });
+        const chosen = selected.get(key);
+        const manifest = chosen ? readStoredPluginManifestV2(manifests.get(key), ref.pluginId) : null;
+        const declaration = projected && intent?.desiredVersion === null
+            ? chosen && manifest ? { manifest, declarationDigestSha256: chosen.declarationDigestSha256 } : null
+            : readCurrentPluginDeclarationV1({ ...ref, intent,
+                release: releasesByRef.get(declarationRefKey(ref.pluginId, ref.version)) });
         if (declaration?.manifest.version === ref.version) resolved.set(key, declaration);
     }
     return resolved;

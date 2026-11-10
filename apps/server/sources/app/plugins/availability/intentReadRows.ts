@@ -1,3 +1,4 @@
+import { releaseLessDeclarationIdentitySql } from './declarationReadRows';
 import type { Tx } from '@/storage/inTx';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from '@/storage/prisma';
 import type { ParsedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
@@ -37,36 +38,7 @@ export async function readIntentRows(tx: Tx, input: Readonly<{
     const identifier = (name: string) => prisma.raw(`${quote}${name}${quote}`);
     const column = (alias: 'a' | 'i', name: string) => prisma.sql`${prisma.raw(alias)}.${identifier(name)}`;
     const text = (name: string) => prisma.sql`CAST(${column('i', name)} AS ${prisma.raw(mysql ? 'CHAR' : 'TEXT')})`;
-    // This is a storage projection, not a declaration decision: preserve every
-    // identity field and whether contributes is an object. The domain owner
-    // applies the same envelope validation and consensus selection to it.
-    const declarationIdentity = (digestExpression: string, manifestExpression: string) => {
-        const digest = prisma.raw(digestExpression);
-        const manifest = prisma.raw(manifestExpression);
-        return prisma.sql`jsonb_build_object(
-            'manifestDigestSha256', ${digest},
-            'manifest', jsonb_build_object(
-                'schemaVersion', ${manifest}->'schemaVersion',
-                'id', ${manifest}->'id',
-                'version', ${manifest}->'version',
-                'contributes', CASE WHEN jsonb_typeof(${manifest}->'contributes') = 'object'
-                    THEN '{}'::jsonb ELSE NULL END))`;
-    };
-    const declarationSummary = summarize ? prisma.sql`(
-        SELECT ${declarationIdentity('d."manifestDigestSha256"', 'd.manifest')} || jsonb_build_object(
-            'schemaVersion', d."schemaVersion",
-            'legacyDeclaration', ${declarationIdentity('(d."legacyDeclaration"->\'manifestDigestSha256\')', '(d."legacyDeclaration"->\'manifest\')')},
-            'machines', CASE WHEN jsonb_typeof(d.machines) = 'array'
-                THEN (SELECT COALESCE(jsonb_agg(jsonb_build_object(
-                    'machineId', e.value->'machineId',
-                    'machineInstallationId', e.value->'machineInstallationId',
-                    'declaration', ${declarationIdentity('(e.value->\'declaration\'->\'manifestDigestSha256\')', '(e.value->\'declaration\'->\'manifest\')')}) ORDER BY e.ordinality), '[]'::jsonb)
-                    FROM jsonb_array_elements(d.machines) WITH ORDINALITY e(value, ordinality))
-                ELSE NULL END)
-        FROM jsonb_to_record(CASE WHEN jsonb_typeof(i."releaseLessDeclaration") = 'object'
-            THEN i."releaseLessDeclaration" ELSE '{}'::jsonb END)
-            AS d("schemaVersion" jsonb, machines jsonb, "legacyDeclaration" jsonb, "manifestDigestSha256" jsonb, manifest jsonb)
-    )` : prisma.empty;
+    const declarationSummary = summarize ? releaseLessDeclarationIdentitySql() : prisma.empty;
     return tx.$queryRaw<IntentReadRow[]>(prisma.sql`
         SELECT ${column('a', 'seq')} AS ${identifier('availabilityCursor')},
             ${column('i', 'pluginId')} AS ${identifier('pluginId')},

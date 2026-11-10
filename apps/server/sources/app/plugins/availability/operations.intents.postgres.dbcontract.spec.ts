@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE } from "@happier-dev/protocol/plugins/availability/v1";
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
-import type { Tx } from "@/storage/inTx";
-import { createPluginAvailabilityOperations } from "./operations";
-import { readStoredPluginManifestV2 } from "./currentDeclaration";
+import { inTx, type Tx } from "@/storage/inTx";
+import { resolveCurrentClaimablePluginMachineMaterializationTx, resolveCurrentClaimablePluginMachineMaterializationsTx, createPluginAvailabilityOperations } from "./operations";
+import { resolveCurrentPluginDeclarationsTx, readStoredPluginManifestV2 } from "./currentDeclaration";
 import { createReleaseLessDeclarationV1, mergeReleaseLessDeclarationV2 } from "./currentDeclaration";
 import { PluginManifestV2Schema } from "@happier-dev/protocol/plugins/manifest/v2";
 import historicalUiGraphPublication from "./historicalUiGraphPublication.fixture.json";
@@ -37,6 +37,108 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         await db.$connect();
     });
     afterAll(async () => { await db.$disconnect(); });
+
+    it("transfers only one selected manifest per concurrent current-declaration reader while the connection is held", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const pluginId = "com.acme.current-declaration";
+        const machineId = randomUUID();
+        const marker = "current-declaration-body-marker";
+        const declaration = createReleaseLessDeclarationV1(PluginManifestV2Schema.parse({
+            schemaVersion: 2, id: pluginId, version: "1.0.0", displayName: "Current declaration",
+            engines: { happier: "^1.0.0" }, contributes: {},
+            metadata: { measuredBody: marker + "x".repeat(128 * 1024) },
+        }));
+        // Retained Account census: 490 Machine envelopes in a single intent.
+        const stored = { schemaVersion: 2, machines: Array.from({ length: 490 }, (_, index) => ({
+            machineId: index === 489 ? machineId : `machine-${index}`, machineInstallationId: `installation-${index}`, declaration,
+        })), legacyDeclaration: null };
+        await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId, enabled: true,
+            desiredVersion: null, writableCollections: [], releaseLessDeclaration: stored } });
+        await db.machine.create({ data: { id: machineId, accountId: account.id, installationId: "installation-489",
+            metadata: "{}", pluginMaterializationRevision: 1n } });
+        await db.pluginMachineMaterialization.create({ data: { accountId: account.id, machineId,
+            serverIdentityId: "srv_declaration_transfer_test", materializationId: "test-materialization", pluginId, version: "1.0.0",
+            sourceClass: "bundledFirstParty", portableRelease: false, uiArtifacts: [], enabled: true,
+            trustState: "trusted", observedAt: new Date() } });
+        let replaceAfterIdentity: (() => Promise<unknown>) | undefined;
+        const original = db.$transaction;
+        const copies: number[] = [];
+        const bytes: number[] = [];
+        db.$transaction = new Proxy(original, { apply(target, receiver, args: unknown[]) {
+            const callback = args[0];
+            if (typeof callback !== "function") return Reflect.apply(target, receiver, args);
+            return Reflect.apply(target, receiver, [async (tx: Tx) => {
+                let transferredCopies = 0;
+                let transferredBytes = 0;
+                const observe = async (owner: object, method: (...args: unknown[]) => unknown, values: unknown[]) => {
+                    const result = await Reflect.apply(method, owner, values);
+                    const text = JSON.stringify(result, (_key, value) => typeof value === "bigint" ? String(value) : value);
+                    transferredCopies += text.split(marker).length - 1;
+                    transferredBytes += Buffer.byteLength(text);
+                    if (replaceAfterIdentity && Array.isArray(result) && result.some(row => row
+                        && typeof row === "object" && "releaseLessDeclaration" in row)) {
+                        const replace = replaceAfterIdentity; replaceAfterIdentity = undefined;
+                        await replace();
+                    }
+                    return result;
+                };
+                const observed = new Proxy(tx, { get(inner, property, receiver) {
+                    const value = Reflect.get(inner, property, receiver);
+                    if (property === "$queryRaw") return (...values: unknown[]) => observe(inner, value, values);
+                    if (property === "accountPluginIntent") return new Proxy(value, { get(delegate, method, receiver) {
+                        const operation = Reflect.get(delegate, method, receiver);
+                        return typeof operation === "function" ? (...values: unknown[]) => observe(delegate, operation, values) : operation;
+                    } });
+                    return value;
+                } });
+                const result = await callback(observed);
+                // Real backend is still in this interactive transaction after the observed transfer.
+                const [{ held }] = await tx.$queryRaw<Array<{ held: boolean }>>`
+                    SELECT xact_start IS NOT NULL AS held FROM pg_stat_activity WHERE pid = pg_backend_pid()`;
+                expect(held).toBe(true);
+                copies.push(transferredCopies); bytes.push(transferredBytes);
+                return result;
+            }, ...args.slice(1)]);
+        } });
+        try {
+            const read = () => inTx(tx => resolveCurrentPluginDeclarationsTx({ tx, accountId: account.id,
+                refs: [{ pluginId, version: "1.0.0", machineId }] }));
+            const results = await Promise.all([read(), read()]);
+            for (const result of results) expect([...result.values()][0]?.manifest).toEqual(declaration.manifest);
+            console.info("CURRENT_DECLARATION_TRANSFER", JSON.stringify({ copies, bytes }));
+            expect(copies).toEqual([1, 1]);
+            const readDigests = () => inTx(async tx => {
+                const exact = await resolveCurrentClaimablePluginMachineMaterializationTx({ tx, accountId: account.id,
+                    serverIdentityId: "srv_declaration_transfer_test", machineId, machineInstallationId: "installation-489",
+                    materializationId: "test-materialization", pluginId, version: "1.0.0" });
+                const batch = await resolveCurrentClaimablePluginMachineMaterializationsTx({ tx, accountId: account.id,
+                    serverIdentityId: "srv_declaration_transfer_test", machineId, machineInstallationId: "installation-489" });
+                return { exact, batch };
+            });
+            const initialDigests = await readDigests();
+            expect(initialDigests.exact).toMatchObject({ kind: "current", declarationDigestSha256: declaration.manifestDigestSha256 });
+            expect(initialDigests.batch).toHaveLength(1);
+            expect(copies.at(-1)).toBe(0);
+            console.info("CURRENT_DECLARATION_DIGEST_TRANSFER", JSON.stringify({ copies: copies.at(-1), bytes: bytes.at(-1) }));
+            const next = createReleaseLessDeclarationV1({ ...declaration.manifest, version: "2.0.0" });
+            await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId } },
+                data: { releaseLessDeclaration: { ...stored, machines: [...stored.machines.slice(0, -1),
+                    { ...stored.machines[489]!, declaration: next }] } } });
+            expect((await read()).size).toBe(0);
+            const changedDigests = await readDigests();
+            expect(changedDigests.exact.kind).toBe("notCurrent");
+            expect(changedDigests.batch).toHaveLength(0);
+            await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId } },
+                data: { releaseLessDeclaration: stored } });
+            const replacement = createReleaseLessDeclarationV1({ ...declaration.manifest, displayName: "Replacement" });
+            replaceAfterIdentity = () => db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId } },
+                data: { releaseLessDeclaration: { ...stored, machines: [...stored.machines.slice(0, -1),
+                    { ...stored.machines[489]!, declaration: replacement }] } } });
+            // READ COMMITTED may see a new body at the selected path. Never stamp it with the old digest.
+            expect((await read()).size).toBe(0);
+            expect([...((await read()).values())][0]?.declarationDigestSha256).toBe(replacement.manifestDigestSha256);
+        } finally { db.$transaction = original; }
+    });
 
     it("fetches one consumed declaration body for a 490-Machine list, with set reads and fresh divergent claims", async () => {
         // The retained busy Account had 490 envelopes and about 65 MB of declarations.
