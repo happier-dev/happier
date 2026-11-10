@@ -43,8 +43,8 @@ export function SavedHealthCheckControls(props: Readonly<{ subject: HealthCheckS
                     setCatalog(kinds);
                     const kind = kinds.find(item => item.pluginId === check.kind.pluginId && item.id === check.kind.localId);
                     if (!kind) { setUnavailable(true); return; }
-                    const value = await host.executeAction('action.invoke', { action: { pluginId: kind.pluginId, localId: kind.action },
-                        input: { sourceInstanceId: createHealthCheckSourceInstanceIdV1(props.subject), checkId: check.checkId } },
+                    const value = await host.executeAction({ pluginId: kind.pluginId, localId: kind.action },
+                        { sourceInstanceId: createHealthCheckSourceInstanceIdV1(props.subject), checkId: check.checkId },
                     { signal: props.signal });
                     if (!props.signal.aborted) setSettled({ checkId: check.checkId, result: HealthCheckResultV1ProtocolSchema.parse(value) });
                 } catch {

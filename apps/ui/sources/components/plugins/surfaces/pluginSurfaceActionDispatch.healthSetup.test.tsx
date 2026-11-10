@@ -12,9 +12,10 @@ import { DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
     DaemonContributionRegistryProjectionDescribeResponseSchema, DaemonPluginActionSchemasReadResponseSchema,
     PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { PluginUiSurfaceContextV1 } from '@happier-dev/protocol/plugins/ui';
 import * as healthSetupModule from '@happier-dev/plugins-machine-services/happier-plugin-ui/health-setup';
 import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/machine-services/src/manifest';
-import { HEALTH_SETUP_OPEN_ACTION_ID } from '../../../../../../packages/plugins/machine-services/src/healthSetup';
+import { HEALTH_SETUP_OPEN_ACTION_ID, createHealthCheckSourceInstanceIdV1 } from '../../../../../../packages/plugins/machine-services/src/healthSetup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary,
@@ -55,6 +56,102 @@ installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
 function isActivation(value: unknown): value is (api: PluginClientApi) => void {
     return typeof value === 'function';
 }
+
+it.each(['current', 'wrong-observer'] as const)('runs a saved check through its admitted observer while the AppShell has no matching Action supply (%s)', async placement => {
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+    const { createPluginSurfaceActionHostApi } = await import('./pluginSurfaceActionDispatch');
+    const { createCanonicalPluginReactNativeHostApiAdapter } = await import('../reactNative/hostApi');
+    const { createPluginSurfaceContextFixture } = await import('@/dev/testkit/fixtures/pluginSurfaceContextFixture');
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const { createCurrentUiContextVoiceToolPort } = await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
+    const { executeCurrentUiContextContributedAction, registerCurrentUiContextActionPort } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+    const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    if (!admitted.ok) throw new Error('Health manifest must be admitted');
+    const pluginId = admitted.manifest.id;
+    const observer = 'saved-health-observer';
+    const occurrenceId = 'saved-health-current';
+    const subject = { kind: 'environment', environmentId: 'production' } as const;
+    const check = { checkId: 'http', kind: { pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
+        config: { endpoint: 'https://app.example.test/health', expectStatus: 503 }, periodMs: 60_000,
+        consecutiveFailuresBeforeAlerting: 1 };
+    const sourceConfig = { v: 1, subject, checks: [check], investigation: { mode: 'inbox' },
+        alerts: { channels: [], phases: ['open', 'recovered'] } };
+    const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, actionsById: Object.fromEntries(
+        admitted.manifest.contributes.actions.map(({ inputSchema: _input, resultSchema: _result, ...action }) =>
+            [`${pluginId}/${action.id}`, { ...action, pluginId, occurrenceId, available: true }])) });
+    const createPort = (invocationSurface: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['invocationSurface'],
+        hostAction?: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['hostAction']) => createCurrentUiContextVoiceToolPort({
+        invocationSurface, hostAction, readProjection: () => EMPTY_PLUGIN_UI_PROJECTION, readNavigationBinding: () => null,
+        reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+    });
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        listContributedActionDefinitions: selection => createPort('plugin').listCurrentContributedActionDefinitions?.('allSurfaces', selection) ?? [],
+        invokeContributedAction: request => executeCurrentUiContextContributedAction(request, {
+            execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
+        }),
+    }));
+    const unregister = registerCurrentUiContextActionPort(createPort);
+    const requestSurface: PluginUiSurfaceContextV1 = { pluginId, contributionId: 'health-setup', surfaceId: 'saved-health-setup',
+        placement: 'appSurface', platform: 'web', channel: 'internal', resourceScope: [], diagnostics: [] };
+    const executed: Array<Readonly<{ machineId: string; actionId: string; input: unknown; invocation: unknown }>> = [];
+    const host = createPluginSurfaceActionHostApi({ surfaceContext: requestSurface,
+        callerBinding: { pluginId, contributionLocalId: 'health-setup', occurrenceId,
+            materializationRef: { pluginId, machineId: observer, materializationId: 'saved-health-materialization' } },
+        callerSourceCustody: { kind: 'development', registeredRootId: 'saved-health-source' },
+        hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
+            authority: 'present_user', serverId: 'saved-health-home', runtimeAccountId: 'saved-health-account',
+        } },
+        resolveContributedAction: identity => projection.actionsById[`${identity.pluginId}/${identity.localId}`] ?? null,
+        // The Machine process is the only substituted execution boundary. The mounted dispatcher,
+        // core Action executor, AppShell invoker, native carrier and renderer all stay real.
+        contributedAction: { machineId: placement === 'current' ? observer : 'another-observer', serverId: 'saved-health-home', execute: async (machineId, options) => {
+            executed.push({ machineId, actionId: options.qualifiedActionId, input: options.input, invocation: options.invocation });
+            const actionId = options.qualifiedActionId;
+            const result = actionId.endsWith('/health/setup') ? { mode: 'preview', sourceConfig }
+                : actionId.endsWith('/health/kinds') ? admitted.manifest.contributes.healthCheckKinds.map(kind => ({ ...kind, pluginId }))
+                : { status: 'down', observedAt: 1000, evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'HTTP' },
+                    author: { kind: 'process' }, text: 'HTTP 200; expected 503' }] } };
+            return { supported: true, result: { ok: true, result } };
+        } },
+    });
+    const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture(),
+        requestSurface, installedMethods: host.installedMethods, handleRequest: host.handleRequest });
+    const failures: unknown[] = [];
+    let mounted: PluginUiTestkit | undefined;
+    try {
+        await act(async () => { mounted = await createPluginUiTestkit({ surface: healthSetupModule.renderSurface,
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+            identity: { instanceId: 'saved-health-check', mountNonce: 'saved-health-check-mount' },
+            authorPlugin: { id: pluginId, version: PLUGIN_MANIFEST.version }, surfaceContext: createSurfaceContextFixture(),
+            launchInput: { initialInput: sourceConfig, observerMachineId: observer },
+            handlers: { executeAction: async request => {
+                try { return await adapter.api.executeAction(request.action, request.input, { signal: request.signal }); }
+                catch (error) { failures.push(error); throw error; }
+            } },
+        }); });
+        await act(async () => { await mounted!.press(await mounted!.getByRole('button', { name: 'Check now' })); });
+        if (placement === 'wrong-observer') {
+            expect(executed).toEqual([]);
+            await expect(mounted!.getByText('The check could not run. Try again when its Machine is available.')).resolves.toBeDefined();
+            expect(failures).toContainEqual(expect.objectContaining({ diagnostics: expect.arrayContaining([
+                { code: 'plugin_mounted_caller_unavailable', severity: 'error' },
+            ]) }));
+            return;
+        }
+        expect(failures).toEqual([]);
+        await expect(mounted!.getByText('Down')).resolves.toBeDefined();
+        expect(executed.filter(value => value.actionId.endsWith('/health/http'))).toEqual([expect.objectContaining({
+            machineId: observer, input: { sourceInstanceId: createHealthCheckSourceInstanceIdV1(subject), checkId: 'http' },
+            invocation: { kind: 'mountedPluginSurface', mountedBinding: expect.objectContaining({ pluginId,
+                contributionLocalId: 'health-setup', occurrenceId,
+                materializationRef: expect.objectContaining({ machineId: observer }) }) },
+        })]);
+    } finally {
+        await act(async () => { await mounted?.dispose(); });
+        adapter.dispose(); host.dispose?.(); unregister();
+    }
+});
 
 it('carries the watched subject from public Health client activation through the Action route into the native setup renderer', async () => {
     const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);

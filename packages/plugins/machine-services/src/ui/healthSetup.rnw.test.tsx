@@ -325,10 +325,9 @@ it('checks a saved Domain through its declared finite Action and preserves its r
   expect(calls).toEqual([]);
   await act(async () => { await page.press(await page.getByRole('button', { name: 'Check now' })); });
   expect(calls).toEqual([expect.objectContaining({ action: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/kinds' } }),
-    expect.objectContaining({ action: 'action.invoke', input: expect.objectContaining({
-      action: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/http' },
+    expect.objectContaining({ action: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/http' },
       input: expect.objectContaining({ checkId: 'public-http', sourceInstanceId: expect.stringMatching(/^health:/) }),
-    }) })]);
+    })]);
   await expect(page.getByText('Up')).resolves.toBeDefined();
   refuse = true;
   await act(async () => { await page.press(await page.getByRole('button', { name: 'Check now' })); });
