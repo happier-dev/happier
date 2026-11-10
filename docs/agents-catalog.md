@@ -26,6 +26,13 @@ composable parser as `AgentExecutionTargetV1Schema`. Plugin `readSession`
 returns its admitted metadata target separately from catalog presentation;
 an unknown or unavailable target stays absent.
 
+For unnamed Voice Session creation in 0.3 development source, the inventory's
+`defaultTargetKey` comes from the shared backend preference owner using the
+selected Machine and Account's held Agent readiness. A ready Agent takes
+precedence over an unavailable automatic default, without starting another
+probe. Explicit Agent choices remain unchanged. If no Agent is ready, creation
+retains the ordinary default so its named launch refusal reaches the caller.
+
 ---
 
 ## Kimi background continuations (0.3 development)

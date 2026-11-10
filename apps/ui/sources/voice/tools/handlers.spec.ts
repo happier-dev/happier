@@ -1446,9 +1446,7 @@ describe('voice tool handlers', () => {
     const configuredDefault = agentChoice === 'configured-default';
     const selectedAgentTarget = configuredDefault
       ? { kind: 'agent' as const, identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'qa-c-exact-args' }
-      : agentChoice === 'signed-out-default'
-        ? { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }
-        : { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+      : { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
     const rememberedDefault = agentChoice === 'remembered-default';
     const signedOutDefault = agentChoice === 'signed-out-default';
     if (signedOutDefault) {
@@ -1470,7 +1468,7 @@ describe('voice tool handlers', () => {
     }
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
     const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');
-    const prompt = buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' });
+    const prompt = buildLocalVoiceAgentSystemPrompt({ sessionId: sourceSessionId });
     expect(prompt).toContain('A native Agent/Task subagent or execution run is not a Happier Session');
     expect(prompt).toContain('Only report a Session as created or started after the Session creation Action returns success with its sessionId');
     const { getAppliedActiveServerSnapshot, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -1526,6 +1524,19 @@ describe('voice tool handlers', () => {
       dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
       storageMode: 'plain',
     }], true);
+    if (signedOutDefault) {
+      const { resolveServerCredentialAccountScope, captureServerCredentialAccountScopeLifetime } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+      const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
+      const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
+      const scope = await resolveServerCredentialAccountScope(homeA);
+      if (scope.kind !== 'bound') throw new Error('Expected Account scope');
+      const lifetime = captureServerCredentialAccountScopeLifetime(scope);
+      const key = serverAccountScopedResourceKey(lifetime.scope, 'machine-agents', 'm1');
+      const inventory = createReadyMachineAgentInventoryFixture([{ agentId: 'claude', title: 'Claude' }, { agentId: 'codex', title: 'Codex' }]);
+      machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 1,
+        items: Object.values(inventory.capabilities.results).map(result => result.data).map(item => item.agentId === 'claude'
+          ? { ...item, signIn: { ...item.signIn, status: 'signedOut' } } : item) });
+    }
     let spawnSettlement: unknown = spawnResult;
     daemonRpc.mockImplementation(async request => {
       if (request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
@@ -1570,24 +1581,17 @@ describe('voice tool handlers', () => {
       // in its startup catalog, then exercise that same entry below.
       expect(prompt, 'Voice must list creation before a default-Agent request').toContain(`- ${spawnTool}:`);
     }
-    const turn = extractVoiceActionsFromAssistantText(
-      `<voice_actions>${JSON.stringify({ actions: [{ t: spawnTool, args: spawnInput }] })}</voice_actions>`,
-    );
-    expect(turn.actions).toHaveLength(1);
-    let action = turn.actions[0]!;
-    if (configuredDefault || rememberedDefault || signedOutDefault) {
-      // Consume the real published block before binding the test's known Home,
-      // Machine and task. RUN107 hand-wrapped Args and lost actions[0]'s brace.
-      const published = prompt.split('\n').find(line => line.startsWith(`- ${spawnTool}:`))
-        ?.match(/<voice_actions>.*<\/voice_actions>/)?.[0] ?? '';
-      const publishedTurn = extractVoiceActionsFromAssistantText(published);
-      expect(publishedTurn.actions, 'Default-Agent creation needs a complete executable published block').toHaveLength(1);
-      const example = publishedTurn.actions[0]!;
-      if (!example.args || typeof example.args !== 'object' || Array.isArray(example.args)) throw new Error('Expected published Action arguments');
-      expect(example.t).toBe(spawnTool);
-      expect(example.args).not.toHaveProperty('agentTarget');
-      action = { t: example.t, args: { ...example.args, ...spawnInput } };
-    }
+    // Both Home and Session calls consume the offered channel, including when
+    // an Agent is named. A hand-built block bypasses the published projection.
+    const published = prompt.split('\n').find(line => line.startsWith(`- ${spawnTool}:`))
+      ?.match(/<voice_actions>.*<\/voice_actions>/)?.[0] ?? '';
+    const publishedTurn = extractVoiceActionsFromAssistantText(published);
+    expect(publishedTurn.actions, 'Creation needs an executable block in the offered catalog').toHaveLength(1);
+    const example = publishedTurn.actions[0]!;
+    if (!example.args || typeof example.args !== 'object' || Array.isArray(example.args)) throw new Error('Expected published Action arguments');
+    expect(example.t).toBe(spawnTool);
+    expect(example.args).not.toHaveProperty('agentTarget');
+    const action = { t: example.t, args: { ...example.args, ...spawnInput } };
     const invokeCreate = (effectId: string, input: unknown = action.args) => (entry === 'discovered'
       ? tools.action_execute!({ actionId: 'session.spawn_new', input }, { serverId: homeA, effectId })
       : tools[action.t]!(input, { serverId: homeA, effectId }));
@@ -1692,8 +1696,27 @@ describe('voice tool handlers', () => {
             providerErrorMessage: 'Claude is signed out on the selected machine' } } });
       machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 1,
         items: items.map(item => item.agentId === 'claude' ? { ...item, signIn: { ...item.signIn, status: 'signedOut' } } : item) });
+      const claudeTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+      const startupFailure = spawnSettlement;
+      spawnSettlement = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'agent_signed_out', retryable: false, agentId: 'claude' });
+      const explicitFailure = JSON.parse(await invokeCreate('voice-explicit-signed-out', {
+        ...spawnInput, agentTarget: claudeTarget, creationKey: 'manual:voice-explicit-signed-out',
+      }));
+      expect(explicitFailure).toMatchObject({ agentTarget: claudeTarget, errorMessage: expect.stringContaining('claude') });
+      expect(entry === 'discovered' ? explicitFailure.result : explicitFailure).toMatchObject(spawnSettlement);
+      expect(explicitFailure).not.toHaveProperty('alternativeAgent');
+      // With no ready Agent, preserve and name the preferred Agent's actual refusal.
+      machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 1,
+        items: items.map(item => ({ ...item, signIn: { ...item.signIn, status: 'signedOut' } })) });
+      const unavailable = JSON.parse(await invokeCreate('voice-none-ready', { ...spawnInput, creationKey: 'manual:voice-none-ready' }));
+      expect(unavailable).toMatchObject({ agentTarget: claudeTarget, errorMessage: expect.stringContaining('claude') });
+      expect(entry === 'discovered' ? unavailable.result : unavailable).toMatchObject(spawnSettlement);
+      expect(unavailable).not.toHaveProperty('alternativeAgent');
+      // A failure after selecting the ready default may offer another ready Agent.
+      machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 1, items });
+      spawnSettlement = startupFailure;
       const failed = JSON.parse(await invokeCreate('voice-signed-out-failure', { ...spawnInput, creationKey: 'manual:voice-signed-out' }));
-      expect(failed).toMatchObject({ agentTarget: selectedAgentTarget,
+      expect(failed).toMatchObject({ agentTarget: claudeTarget,
         alternativeAgent: { label: 'Codex', agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
         errorMessage: expect.stringContaining('Codex') });
       // Retained facts do not promise runnable alternatives after presence loss.

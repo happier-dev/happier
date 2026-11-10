@@ -46,6 +46,8 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { PersistedBackendTargetRefV2Schema, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readMachineAgentsForScope } from '@/agents/machineAgents/useMachineAgents';
+import { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -379,7 +381,10 @@ export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDi
     const target = PersistedBackendTargetRefV2Schema.safeParse(item.agentTarget);
     return target.success ? [target.data] : [];
   });
-  const preferred = resolvePreferredBackendTarget({ ...readLastUsedBackendSelection(settingsScope), availableBackendTargets });
+  const scope = machineId && serverId ? await resolveServerCredentialAccountScope(serverId) : null;
+  const machineAgents = scope?.kind === 'bound'
+    ? readMachineAgentsForScope(captureServerCredentialAccountScopeLifetime(scope), machineId).agents : undefined;
+  const preferred = resolvePreferredBackendTarget({ ...readLastUsedBackendSelection(settingsScope), availableBackendTargets, machineAgents });
   const defaultTargetKey = buildBackendTargetKeyV2(preferred);
 
   return AgentsBackendsListOutputSchema.parse({

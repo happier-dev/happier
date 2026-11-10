@@ -190,6 +190,42 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
 });
 
 describe('resolvePreferredBackendTarget', () => {
+    it('prefers held ready Agents for an automatic default while preserving an explicit choice and a no-ready refusal target', () => {
+        const params = {
+            availableBackendTargets: [CLAUDE_TARGET, CODEX_TARGET],
+            lastUsedAgent: 'claude',
+            machineAgents: [
+                { agentId: 'claude', state: 'needsSignIn' as const, stale: false },
+                { agentId: 'codex', state: 'ready' as const, stale: false },
+            ],
+        };
+        expect(resolvePreferredBackendTarget(params)).toEqual(CODEX_TARGET);
+        expect(resolvePreferredBackendTarget({ ...params, candidateBackendTargets: [CLAUDE_TARGET] })).toEqual(CLAUDE_TARGET);
+        expect(resolvePreferredBackendTarget({ ...params,
+            machineAgents: params.machineAgents.map(agent => ({ ...agent, state: 'needsSignIn' as const })),
+        })).toEqual(CLAUDE_TARGET);
+        expect(resolvePreferredBackendTarget({ ...params,
+            machineAgents: params.machineAgents.map(agent => ({ ...agent, stale: true })),
+        })).toEqual(CLAUDE_TARGET);
+    });
+
+    it('can automatically select a ready qualified external Agent without collapsing its identity', () => {
+        const external = { kind: 'agent' as const, identity: { pluginId: 'example.review', localId: 'review' } };
+        expect(resolvePreferredBackendTarget({ lastUsedAgent: 'claude', availableBackendTargets: [CLAUDE_TARGET, external],
+            machineAgents: [{ agentId: 'example.review/review', state: 'ready', stale: false }],
+        })).toEqual(external);
+    });
+
+    it('matches held readiness to the exact configured Agent definition', () => {
+        const params = { lastUsedAgent: 'claude', availableBackendTargets: [CLAUDE_TARGET, REVIEW_BOT_TARGET] };
+        expect(resolvePreferredBackendTarget({ ...params,
+            machineAgents: [{ agentId: 'custom-acp', definitionId: 'another-bot', state: 'ready', stale: false }],
+        })).toEqual(CLAUDE_TARGET);
+        expect(resolvePreferredBackendTarget({ ...params,
+            machineAgents: [{ agentId: 'custom-acp', definitionId: 'review-bot', state: 'ready', stale: false }],
+        })).toEqual(REVIEW_BOT_TARGET);
+    });
+
     it('keeps the first explicit configured candidate for repair before settings or available defaults', () => {
         expect(resolvePreferredBackendTarget({
             candidateBackendTargets: [

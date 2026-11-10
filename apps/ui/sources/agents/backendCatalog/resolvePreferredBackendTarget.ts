@@ -10,11 +10,17 @@ import { DEFAULT_AGENT_ID, isBundledAgentId, resolveBundledAgentIdFromContributi
 import { isLegacyCompatAgentType } from './legacyCompatAgents';
 import { formatBackendTargetKeyV2 } from './backendTargetKeyV2';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
+import { buildMachineAgentInventoryKey } from '@happier-dev/protocol/capabilities';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
+import { isMachineAgentReady } from '@/agents/machineAgents/resolveMachineAgentState';
 
 export type BackendTargetPreferenceInput = Readonly<{
     candidateBackendTargets?: ReadonlyArray<unknown>;
     preferredBuiltInAgentIds?: ReadonlyArray<unknown>;
     availableBackendTargets?: ReadonlyArray<PersistedBackendTargetRefV2>;
+    /** Held scoped readiness for an automatic launch; never probes or replaces explicit candidates. */
+    machineAgents?: ReadonlyArray<Pick<MachineAgent, 'agentId' | 'definitionId' | 'state' | 'stale'>>;
     lastUsedAgent: unknown;
     lastUsedBackendTarget?: unknown;
     defaultBuiltInAgentId?: AgentId;
@@ -65,6 +71,22 @@ export function resolvePreferredBackendTarget(params: BackendTargetPreferenceInp
         if (resolvedCandidate) {
             return resolvedCandidate;
         }
+    }
+
+    if (params.machineAgents) {
+        const readyKeys = new Set(params.machineAgents.filter(isMachineAgentReady).map(buildMachineAgentInventoryKey));
+        const readyTargets = (params.availableBackendTargets ?? []).filter(target => target.kind === 'agent' && (
+            readyKeys.has(buildMachineAgentInventoryKey({ agentId: target.identity.localId, definitionId: target.definitionId }))
+            || readyKeys.has(buildMachineAgentInventoryKey({ agentId: buildQualifiedPluginContributionKey(target.identity), definitionId: target.definitionId }))
+        ));
+        if (readyTargets.length > 0) {
+            const preferred = resolvePreferredBackendTarget({ ...params, candidateBackendTargets: undefined,
+                machineAgents: undefined, availableBackendTargets: readyTargets });
+            const preferredKey = formatBackendTargetKeyV2(preferred);
+            return readyTargets.find(target => formatBackendTargetKeyV2(target) === preferredKey) ?? readyTargets[0]!;
+        }
+        // No ready alternative: retain the normal choice so launch reports its
+        // actual named refusal rather than inventing an unknown-Agent result.
     }
 
     const resolvedLastUsedBackendTarget = resolveParseableBackendTarget(
