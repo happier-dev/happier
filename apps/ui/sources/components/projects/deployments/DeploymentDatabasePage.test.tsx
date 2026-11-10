@@ -30,7 +30,8 @@ import { DeploymentTemplateV1Schema, BUILT_IN_REGISTRY_SOURCES_V1, projectPlugin
   REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
 import { listHappierAppCatalogV1, readHappierAppCatalogItemV1 } from '@happier-dev/protocol/registries/formats/happierAppCatalog';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -860,6 +861,9 @@ describe('Environment → Data → Add (P10)', () => {
       const checkout = { id: 'checkout', serverId, machineId: checkoutMachineId, rootPath: '/project', createdAtMs: 1,
         repositoryIdentity: identity, source: { sourceId: detail.environment.projectSourceId, revision: 2 } };
       applyProjectAccountRowsFixture(storage, { workspaceRefs: [checkout] });
+      homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, {
+        body: createPlainProjectAccountRowListFixture({ workspaceRefs: [checkout] }),
+      });
       storage.getState().updateWorkspaceScmSnapshot(checkout, { projectKey: 'checkout-machine:/project', fetchedAt: Date.now(),
         repo: { isRepo: true, rootPath: checkout.rootPath },
         branch: { head: 'main', headOid: 'a'.repeat(40), upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
@@ -995,6 +999,15 @@ describe('Environment → Data → Add (P10)', () => {
         expect(screen.findByTestId('project-deployments.template.diff')).not.toBeNull();
         expect(screen.getTextContent()).toMatch(/image: app:\s*2/);
       }
+      if (repository) {
+        expect(screen.findByTestId('project-deployments.template.repositoryDiff')).not.toBeNull();
+        if (update) {
+          const { DiffViewer } = await import('@/components/ui/code/diff/DiffViewer');
+          expect(screen.findAllByType(DiffViewer).map(view => view.props)).toContainEqual(expect.objectContaining({
+            oldText: 'legacy-setting=true\n', newText: '',
+          }));
+        }
+      }
       await screen.pressByTestIdAsync('project-deployments.add.confirm');
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.added')
         ?? screen.findByTestId('project-deployments.add.refused')
@@ -1012,13 +1025,6 @@ describe('Environment → Data → Add (P10)', () => {
       if (repository) {
         expect(applied[0]).toMatchObject({ destination: { kind: 'repositoryPullRequest', workspace: { kind: 'workspace-ref', serverId, id: 'checkout' },
           composePath: 'deploy/compose.yaml', baseCommit: 'a'.repeat(40), sourceRevision: 2 } });
-        expect(screen.findByTestId('project-deployments.template.repositoryDiff')).not.toBeNull();
-        if (update) {
-          const { DiffViewer } = await import('@/components/ui/code/diff/DiffViewer');
-          expect(screen.findAllByType(DiffViewer).map(view => view.props)).toContainEqual(expect.objectContaining({
-            oldText: 'legacy-setting=true\n', newText: '',
-          }));
-        }
         expect(screen.getTextContent()).toContain(outcome === 'partial' ? 'add-database' : 'github.com/acme/app/pull/42');
       }
       expect(review.request).not.toHaveBeenCalled();
@@ -1491,7 +1497,8 @@ describe('Environment → Data → Database page (P9)', () => {
       // A scheduled snapshot names its exact run on both steps; the same restore Action an agent calls.
       for (const [input] of restore.mock.calls) {
         expect(DeploymentActionInputSchemasV1['deployments.backups.restore'].parse({ ...input, serverId: 'home' })).toMatchObject({
-          deploymentId: 'deployment-a', restoreBackupId: 'f'.repeat(64), backupOperationId: 'nightly',
+          deploymentId: 'deployment-a',
+          source: { kind: 'repository', snapshotId: 'f'.repeat(64), backupOperationId: 'nightly' },
         });
       }
     } finally {

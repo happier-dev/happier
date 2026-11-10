@@ -73,6 +73,7 @@ import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { createDeploymentActions } from './deploymentActions';
 import {
+  deploymentBackupCaptureChoices,
   deploymentRestoreOperands,
   retainedBackupFromSummary,
 } from './deploymentRestore';
@@ -346,33 +347,27 @@ export function DeploymentDatabasePage(
   // The restore points are the destination's inventory, read when the sheet opens. A deploy's pre-migration capture
   // restores through its receipt; any other retained run's snapshot names its run (`backupOperationId`, T2-DATA 16:06).
   const loadChoices = actions && factsInput && target && activeId && database.kind === 'selfHosted' ? async (): Promise<readonly DeploymentRestoreChoice[]> => {
-    const dump = backupConfiguration?.sources.find((source) => source.kind === 'dump' && source.service === database.data.service);
     try {
       const inventory = await actions.backupInventory(factsInput);
-      const listed = inventory.snapshots.map((entry): DeploymentRestoreChoice => {
-        if (entry.snapshot.snapshotId === retainedChoice?.snapshotId) return retainedChoice;
-        const takenAtMs = Date.parse(entry.snapshot.time);
-        const run = entry.verification.kind === 'verified' ? entry.verification.backupOperationId : null;
-        return { snapshotId: entry.snapshot.snapshotId, takenAtMs, kind: 'scheduled', restore: run ? {
-          backup: { deploymentId: activeId, restoreBackupId: entry.snapshot.snapshotId, takenAtMs,
-            service: database.data.service, database: dump?.sourceId ?? database.data.service, versionLabel: null },
-          operands: { ...target, deploymentId: activeId,
-            source: { kind: 'repository', snapshotId: entry.snapshot.snapshotId, backupOperationId: run } },
-        } : null };
-      });
-      const all = retainedChoice && !listed.includes(retainedChoice) ? [retainedChoice, ...listed] : listed;
-      return [...all].sort((left, right) => right.takenAtMs - left.takenAtMs);
+      const dump = backupConfiguration?.sources.find((source) => source.kind === 'dump' && source.service === database.data.service);
+      return deploymentBackupCaptureChoices({ inventory, target, deploymentId: activeId,
+        sourceId: dump?.sourceId ?? null,
+        service: database.data.service, database: retainedBackup?.service === database.data.service ? retainedBackup.database : '', retainedChoice });
     } catch (error) {
       // The kept capture is still restorable through its own receipt when the inventory can't be read.
       if (retainedChoice) return [retainedChoice];
       throw error;
     }
   } : null;
+  const uploadTarget: DeploymentRestoreSheetInput['uploadTarget'] = lifetime && target && activeId && database.kind === 'selfHosted'
+    ? { scope: lifetime.scope, operands: { ...target, deploymentId: activeId }, destinations: [{ kind: 'database', service: database.data.service,
+      ...(retainedBackup?.service === database.data.service ? { database: retainedBackup.database } : {}) }] } : undefined;
   const restoreMachineId = restoreOperands?.machineId ?? target?.machineId ?? null;
   const openRestore = restoreAction && loadChoices && restoreMachineId ? () => showDeploymentRestoreSheet({
     name: detail.content.name,
     machine: machineName(restoreMachineId),
     loadChoices,
+    ...(uploadTarget ? { uploadTarget } : {}),
     restore: restoreAction,
     onApproval: props.review.request,
   }) : null;
