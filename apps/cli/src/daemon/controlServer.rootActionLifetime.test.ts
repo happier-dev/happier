@@ -1,5 +1,6 @@
 import { once } from 'node:events';
 import { createServer } from 'node:http';
+import { Readable } from 'node:stream';
 import { Server as SocketIoServer } from 'socket.io';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import axios from 'axios';
@@ -26,6 +27,7 @@ import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createExternalMcpServer } from '@/mcp/createExternalMcpServer';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveManagedControlControllerTarget } from './externalActions/reconcileExternalActionTarget';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 describe('signed root Action lifetime', () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -384,6 +386,8 @@ describe('signed root Action lifetime', () => {
     const rootAddress = app.server.address();
     if (!rootAddress || typeof rootAddress === 'string') throw new Error('Missing daemon address');
     const controller = new AbortController();
+    const streamsApproval = getActionSpec(actionId).approvalResultCustody === 'live_only';
+    const frames: unknown[] = [];
     const response = runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
       const reply = await axios.post(`http://127.0.0.1:${rootAddress.port}/actions/root/execute`, { actionId, actionRequestId: 'pool-approval-request', input: actionId === 'mcp.servers.import'
         ? { source: { kind: 'paste', text: JSON.stringify({ mcpServers: {
@@ -394,7 +398,23 @@ describe('signed root Action lifetime', () => {
         : actionId === 'connectedServices.authentication.completeOAuth' ? { attemptId: 'oauth-attempt', completion: { code: 'private-oauth-code', callbackUrl: 'https://callback.invalid/', state: 'private-oauth-state' } }
         : {
         service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, group: { groupId: 'pool-approval' },
-      } }, { signal: controller.signal, headers: { 'x-happier-daemon-token': 'private-control-token' } });
+      } }, { signal: controller.signal, responseType: streamsApproval ? 'stream' : 'json',
+        headers: { 'x-happier-daemon-token': 'private-control-token',
+          ...(streamsApproval ? { accept: 'application/x-ndjson' } : {}) } });
+      if (streamsApproval) {
+        if (!(reply.data instanceof Readable)) throw new Error('Missing daemon approval stream');
+        let buffered = '';
+        for await (const chunk of reply.data) {
+          buffered += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+          let newline: number;
+          while ((newline = buffered.indexOf('\n')) !== -1) {
+            frames.push(JSON.parse(buffered.slice(0, newline)));
+            buffered = buffered.slice(newline + 1);
+          }
+        }
+        expect(buffered).toBe('');
+        return { json: () => frames.at(-1) };
+      }
       return { json: () => reply.data };
     });
     let artifactId: string | undefined;
@@ -404,8 +424,17 @@ describe('signed root Action lifetime', () => {
       })]);
       let result: unknown;
       void response.then(reply => { result = reply.json(); });
-      await expect.poll(() => result).toEqual({ ok: true,
-        result: { kind: 'approval_request_created', artifactId, actionId } });
+      const notice = { ok: true,
+        result: { kind: 'approval_request_created', artifactId, actionId } };
+      await expect.poll(() => streamsApproval ? frames[0] : result).toEqual(notice);
+      if (streamsApproval) {
+        expect(result).toBeUndefined();
+        expect(frames).toEqual([notice]);
+        coordinator.cancelApproval(artifactId, 'test cleanup');
+        await response;
+        expect(result).toMatchObject({ ok: false, errorCode: 'action_failed', requestId: 'pool-approval-request' });
+        expect(frames).toEqual([notice, result]);
+      }
       expect(JSON.stringify(storedApproval)).not.toContain('private-manual-token');
       expect(JSON.stringify(storedApproval)).not.toContain('private-oauth-code');
       expect(storedApproval).toMatchObject({ status: 'open', approval: {
