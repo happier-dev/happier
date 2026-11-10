@@ -187,13 +187,17 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             title={conflict ? t('machinePresets.conflict') : refusal === 'permission_denied' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed')}
             diagnosticCode={mutationError ?? refusal ?? undefined} action={{ label: t(conflict ? 'managedMachines.actions.review' : 'common.retry'), onPress: () => { setMutationError(null); detail.refresh(); } }} /> : null}
     </>;
+    // What it puts on a Machine leads the page; whoever can manage it edits it in the one editor.
+    const editSetup = canManage && !archived ? visibleCreation ? () => openConfiguration(true)
+        : () => navigate(`/settings/machines/presets/${encodeURIComponent(visiblePreset.id)}?serverId=${encodeURIComponent(props.serverId)}&edit=true`) : undefined;
+    const setup: MachinePresetDetailModel['setup'] = { value: visiblePreset.setup, scope: detail.scope, ...(editSetup ? { onEdit: editSetup } : {}) };
     const audience: MachinePresetDetailModel['audience'] = { title: ownerTitle,
         description: visiblePreset.owner.kind === 'account' ? t('machinePresets.audiencePersonalHelp') : undefined,
         leading: <Icon name={visiblePreset.owner.kind === 'team' ? 'users' : 'user-circle'} color={theme.colors.text.secondary} />,
         subtitle: [canUse ? t('machinePresets.canUse') : null, canManage ? t('machinePresets.canManage') : null].filter(Boolean).join(' · ') };
     // A setup-only preset: what it sets up, who can use it, and archive; nothing about creating Machines.
     if (!visibleCreation) return <MachinePresetDetail compact={layout?.mode !== 'split'} testID="machine-preset.detail" model={{
-        name: visiblePreset.name,
+        name: visiblePreset.name, setup,
         mark: <ManagedPresetMark serverId={props.serverId} preset={visiblePreset} size={MANAGED_PROVISIONER_MARK_SIZE.header} />,
         description: t('machinePresets.setupOnlyPurpose'),
         meta: [{ key: 'home', text: homeName }, { key: 'owner', text: visiblePreset.owner.kind === 'account' ? t('machinePresets.ownerPersonal') : ownerTitle }],
@@ -227,12 +231,14 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     // Where member-made machines are billed: a local VM runs on the controller and bills no one; a cloud one
     // bills the account the preset names, or the provider account its controller holds.
     const credentialAccount = credentialTargets.length === 1 ? credentialAccounts.presentationsByKey[credentialTargets[0]!.key]?.primaryLabel : undefined;
+    // Managed from names the controller once, above; here it is the managing computer.
+    const managingComputer = t('managedMachines.receipt.managingComputer');
     const memberCreateHelp = presentation.billing?.location === 'local'
-        ? t('machinePresets.memberCreateHelpLocal', { controller: controllerSentenceName })
-        : credentialAccount ? t('machinePresets.memberCreateHelpAccount', { controller: controllerSentenceName, account: credentialAccount })
-            : t('machinePresets.memberCreateHelp', { controller: controllerSentenceName });
+        ? t('machinePresets.memberCreateHelpLocal', { controller: managingComputer })
+        : credentialAccount ? t('machinePresets.memberCreateHelpAccount', { controller: managingComputer, account: credentialAccount })
+            : t('machinePresets.memberCreateHelp', { controller: managingComputer });
     const model: MachinePresetDetailModel = {
-        name: visiblePreset.name, mark,
+        name: visiblePreset.name, mark, setup,
         // The page says what this preset makes and who may make it; the edit rule sits under Edit choices.
         // An archived preset makes nothing: its notice is the one message, so no creation sentence stands beside it.
         description: archived ? undefined : visiblePreset.owner.kind === 'account' ? t('machinePresets.purposePersonal', { what })
@@ -251,8 +257,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             : { title: visiblePreset.simultaneousLimit
                 ? `${t('machinePresets.atMost')} ${visiblePreset.simultaneousLimit.maximum}` : t('machinePresets.limitNone'),
                 ...(visiblePreset.simultaneousLimit ? { subtitle: t('machinePresets.limitWaits') } : {}) } },
-        controller: { description: pooled ? t('machinePresets.controllerPoolHelp')
-            : t('managedMachines.controller.required', { controller: controllerSentenceName }),
+        // Its row names the controller; the description says only why it matters.
+        controller: { description: pooled ? t('machinePresets.controllerPoolHelp') : t('managedMachines.controller.requiredUnnamed'),
             row: pooled ? { title: controllerName, ...(poolName ? { subtitle: t('machinePresets.controllerPoolAny') } : {}),
                 leading: <Icon name="stack" color={theme.colors.text.secondary} /> } : controllerChoices.length ? {
                 title: t('machinePresets.controllerRow'),
@@ -274,7 +280,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
                 row.presetRevision !== visiblePreset.revision ? t('machinePresets.historyRevision', { revision: row.presetRevision }) : null,
                 row.subtitle].filter(Boolean).join(' · '),
             mark: rowMark, onPress: () => navigate(row.href) })),
-        receipt: { ...receipt,
+        // A preset's receipt describes each machine it will make: its cost is one of its facts, not the page's lead.
+        receipt: { ...receipt, costPlacement: 'fact',
             ...(canManage ? { secondary: [{ label: t('machinePresets.editChoices'), testID: 'machine-preset.edit', onPress: () => openConfiguration(true), disabled: busy }],
                 secondaryNote: t('machinePresets.futureOnly') } : {}) },
         ...(canUse && visiblePreset.archivedAt === undefined && configuration.creationEnabled && !cannotCreateHere

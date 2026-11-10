@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { MachinePresetItemV1Schema, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
@@ -17,6 +17,7 @@ afterEach(() => standardCleanup());
 
 // Load the real component after boundary mocks, outside any render's act lifetime.
 const { MachineSetupSection } = await import('./MachineSetupSection');
+const { MachineSetupContents } = await import('./MachineSetupContents');
 
 async function renderSection(
   setup: MachineSetupV1 | undefined,
@@ -203,5 +204,28 @@ describe('MachineSetupSection (D53)', () => {
     expect(facts[0]!.value).toBe('Mise');
     expect(facts[2]!.value).toBe('NPM_TOKEN');
     expect(JSON.stringify(facts)).not.toContain('apt-get');
+  });
+
+  it('reads what a preset sets up by kind in apply order, with the script commands closing Setup', async () => {
+    const setup: MachineSetupV1 = {
+      items: [
+        MachinePresetItemV1Schema.parse({ kind: 'app', definition: { name: 'Status page', project: { kind: 'create' },
+          definition: { from: 'compose', document: 'services:\n  app:\n    image: example/app:1\n', profiles: [], services: ['app'] },
+          bindings: [] } }),
+        { kind: 'softwareRecipe', selection: { ref: { pluginId: 'acme.tools', recipeId: 'node', revision: '1' }, inputs: {} } },
+      ],
+      scripts: [{ body: 'npm install -g pnpm' }],
+    };
+    const screen = await renderScreen(<MachineSetupContents testID="sets" setup={setup} scope={null} />);
+    const groups = screen.tree.findAll(node => typeof node.props?.testID === 'string'
+      && /^sets\.(setupRecipe|softwareRecipe|app)$/.test(node.props.testID) && node.props.title !== undefined)
+      .map(node => node.props.testID as string);
+    expect([...new Set(groups)]).toEqual(['sets.setupRecipe', 'sets.softwareRecipe', 'sets.app']);
+    expect(screen.getTextContent()).toContain('$ npm install -g pnpm');
+    await screen.unmount();
+    // Nothing set up and nothing to edit: the section isn't drawn.
+    const empty = await renderScreen(<MachineSetupContents testID="sets" setup={undefined} scope={null} />);
+    expect(empty.tree.findAll(node => node.props?.testID === 'sets' && node.props.title !== undefined)).toHaveLength(0);
+    await empty.unmount();
   });
 });

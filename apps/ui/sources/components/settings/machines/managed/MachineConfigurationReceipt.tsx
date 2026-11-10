@@ -50,6 +50,11 @@ export type ManagedReceiptModel = Readonly<{
   facts: readonly ManagedReceiptFact[];
   /** `null` for a resource that no longer exists: nothing runs or bills, so the receipt is only its record. */
   cost: ManagedReceiptCost | null;
+  /**
+   * `lead` (default): the cost is the receipt's figure, where a machine is being chosen or runs. `fact`: a preset's
+   * receipt describes each machine it will make, so its cost reads at fact weight (lab `p/editor` puts it in a row).
+   */
+  costPlacement?: 'lead' | 'fact';
   /** The exact reviewed launch; rendering is owned by the shared Environment section. */
   setup?: MachineSetupV1;
   keep?: Omit<
@@ -139,7 +144,7 @@ export const MachineConfigurationReceipt = React.memo(
         ) : null}
         {model.cost ? (
           <SectionContentRow testID={`${props.testID}:cost`}>
-            <ReceiptCost cost={model.cost} />
+            <ReceiptCost cost={model.cost} placement={model.costPlacement ?? 'lead'} />
           </SectionContentRow>
         ) : null}
         {model.keep ? (
@@ -198,9 +203,11 @@ export const MachineConfigurationReceipt = React.memo(
   },
 );
 
-function ReceiptCost(props: Readonly<{ cost: ManagedReceiptCost }>) {
+function ReceiptCost(props: Readonly<{ cost: ManagedReceiptCost; placement: 'lead' | 'fact' }>) {
   const { theme } = useUnistyles();
   const { cost } = props;
+  const figure = props.placement === 'lead' ? styles.big : styles.figure;
+  const figureUnit = props.placement === 'lead' ? styles.bigUnit : styles.quietLine;
   const headline = presentManagedCost(cost);
   if (cost.kind === 'unpriced') {
     return (
@@ -219,8 +226,8 @@ function ReceiptCost(props: Readonly<{ cost: ManagedReceiptCost }>) {
         {hero && label(hero) !== null ? <Text style={styles.quietLine}>{label(hero)}</Text> : null}
         {hero ? (
           <View style={styles.bigRow}>
-            <Text style={styles.big}>{headline.value}</Text>
-            <Text style={styles.bigUnit}>{headline.unit}</Text>
+            <Text style={figure}>{headline.value}</Text>
+            <Text style={figureUnit}>{headline.unit}</Text>
           </View>
         ) : null}
         {more.map((price, index) => (
@@ -252,7 +259,7 @@ function ReceiptCost(props: Readonly<{ cost: ManagedReceiptCost }>) {
         <Text style={styles.quietLine}>{t('managedMachines.price.runsOn', { computer: cost.computer })}</Text>
       )}
       <View style={styles.bigRow}>
-        <Text style={styles.big}>{headline.value}</Text>
+        <Text style={figure}>{headline.value}</Text>
       </View>
       {cost.meters.map((meter) => (
         <View
@@ -356,6 +363,12 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.default('bold'),
     ...Typography.tabular(),
     ...happierPageTextMetrics('heroTitle'),
+    color: theme.colors.text.primary,
+  },
+  figure: {
+    ...Typography.default('medium'),
+    ...Typography.tabular(),
+    ...happierPageTextMetrics('rowTitle'),
     color: theme.colors.text.primary,
   },
   bigUnit: {

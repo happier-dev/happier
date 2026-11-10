@@ -2893,7 +2893,7 @@ describe('reachable preset detail', () => {
     );
   });
 
-  it('names its controller apart from same-named machines, in the Managed from sentence and its choices', async () => {
+  it('names its controller apart from same-named machines, once, in its Managed from choice', async () => {
     const serverId = await seed();
     const scopeId = await seedConfiguration(serverId);
     const { storage } = await import('@/sync/domains/state/storage');
@@ -2915,9 +2915,9 @@ describe('reachable preset detail', () => {
     const controllerTitle = field()!.props.items
       .find((item: { id: string }) => item.id === preset.controller.machineId).title as string;
     expect(controllerTitle).not.toBe('Builder');
-    // The sentence names the same machine the choice does (a word joiner may keep a hyphenated name together).
+    // The choice names it; the section's sentence and Member creation don't say it again.
     const description = String(screen.findGroup(t('managedMachines.config.managedFrom'))?.props.description).replace(/\u2060/g, '');
-    expect(description).toContain(controllerTitle);
+    expect(description).not.toContain(controllerTitle);
     await screen.unmount();
   });
 

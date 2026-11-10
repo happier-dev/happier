@@ -17,6 +17,9 @@ import { t } from '@/text';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
 import { ManagedReceiptPageLayout } from './ManagedReceiptPageLayout';
 import { ManagedSectionCount } from './ManagedSectionCount';
+import { MachineSetupContents } from './MachineSetupContents';
+import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 
 export type ManagedFieldChoice = Readonly<{
   id: string;
@@ -43,9 +46,14 @@ export type ManagedLinkedMachine = Readonly<{
   onPress?: () => void;
 }>;
 
-/** A preset as Machines shows it (lab `m-presets`): who can use it, its limit, its controller, what it made. */
+/**
+ * A preset as Machines shows it (labs `p/editor`, `m-presets`): what it sets up first, then where it is managed
+ * from, who can use it, its limit and what it made; what each new machine is and costs stays in the receipt.
+ */
 export type MachinePresetDetailModel = Readonly<{
   name: string;
+  /** What it puts on every Machine; `onEdit` opens the one editor (an empty setup shows only to someone who can edit it). */
+  setup: Readonly<{ value: MachineSetupV1 | undefined; scope: AccountSettingsScope | null; onEdit?: () => void }>;
   /** Absent while the page's one message is a state notice (an archived preset makes nothing). */
   description?: string;
   mark: React.ReactNode;
@@ -125,8 +133,8 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
       compact={props.compact}
       notice={model.notice}
       receipt={model.receipt}
-      // A preset is its launch: a phone leads with it, and the archive row always ends the page.
-      compactReceipt="first"
+      // A phone reads what the preset sets up first (lab `pp/editor`), the launch after; the archive row always ends the page.
+      compactReceipt="last"
       closing={closing}
       header={{
         title: model.name,
@@ -164,6 +172,23 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
         ),
       }}
     >
+      <MachineSetupContents
+        testID={`${props.testID}.setup`}
+        setup={model.setup.value}
+        scope={model.setup.scope}
+        onEdit={model.setup.onEdit}
+      />
+      {model.controller ? (
+        <ItemGroup
+          title={t('managedMachines.config.managedFrom')}
+          description={model.controller.description}
+        >
+          <ManagedFieldRow
+            row={model.controller.row}
+            testID={`${props.testID}.controller`}
+          />
+        </ItemGroup>
+      ) : null}
       <ItemGroup
         title={t('machinePresets.audience')}
         description={model.audience.description}
@@ -210,17 +235,6 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
           <ManagedFieldRow
             row={model.limit.row}
             testID={`${props.testID}.limit`}
-          />
-        </ItemGroup>
-      ) : null}
-      {model.controller ? (
-        <ItemGroup
-          title={t('managedMachines.config.managedFrom')}
-          description={model.controller.description}
-        >
-          <ManagedFieldRow
-            row={model.controller.row}
-            testID={`${props.testID}.controller`}
           />
         </ItemGroup>
       ) : null}

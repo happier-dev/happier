@@ -188,7 +188,7 @@ export const MachineSetupSection = React.memo(
       ) : null}
       {groups.map((group, groupIndex) => (
         <ItemGroup key={group.kind} testID={`${props.testID}.items.${group.kind}`}
-          title={t(ITEM_GROUP_TITLE[group.kind])}
+          title={t(MACHINE_SETUP_ITEM_GROUP_TITLE[group.kind])}
           {...(groupIndex === 0 ? { description: t('machinePresets.setup.itemsOrder'), action: addAction } : {})}>
           {group.rows.map(({ item, index }, at) => {
             const presented = machineSetupItemPresentation(item, offers);
@@ -435,7 +435,8 @@ export const MachineSetupSection = React.memo(
   },
 );
 
-const ITEM_GROUP_TITLE = {
+/** Each item kind's heading, in the editor and wherever a preset's setup is read. */
+export const MACHINE_SETUP_ITEM_GROUP_TITLE = {
   setupRecipe: 'machinePresets.setup.itemsGroupSetup',
   softwareRecipe: 'machinePresets.setup.itemsGroupSoftware',
   app: 'machinePresets.setup.itemsGroupApps',

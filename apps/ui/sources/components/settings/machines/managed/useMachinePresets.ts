@@ -480,6 +480,6 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
         actionId: 'machines.presets.update', input: { homeId: home, id: preset.id, expectedRevision: preset.revision, patch } })), [mutate]);
     const history = React.useMemo(() => visibleState.value && homeId ? buildManagedPresetHistory({ serverId, homeId, presetId,
         machines: visibleState.value.machines }) : [], [visibleState.value?.machines, homeId, presetId, serverId]);
-    return { state: visibleState, history, refresh, refreshRevision, archiveOrRestore, update, accountId,
+    return { state: visibleState, history, refresh, refreshRevision, archiveOrRestore, update, accountId, scope: binding?.scope ?? null,
         mutationResult: mutationResult?.queryKey === queryKey ? mutationResult.value : null };
 }
