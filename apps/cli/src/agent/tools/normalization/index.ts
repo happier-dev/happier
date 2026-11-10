@@ -516,5 +516,8 @@ export function normalizeToolResultV2(opts: {
     })();
 
     const withHappier = mergeHappierMeta(withCommonErrorMessage(normalized), meta);
+    // MCP normalization preserves every unique native field itself; reattaching
+    // raw output here would restore the exact mirrors that owner removed.
+    if (opts.canonicalToolName.startsWith('mcp__')) return withHappier;
     return withUnrepresentedRaw(withHappier, opts.rawOutput);
 }

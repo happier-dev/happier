@@ -245,6 +245,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
       canonicalToolName: 'mcp__qa_marker_stdio_20260306__get_marker',
       rawOutput: { stdout: '{"renamed":true,"marker":"qa-marker-stdio-20260306"}', exit_code: 0 },
     });
-    expect(asRecord(customMcpResult)).toMatchObject({ text: '{"renamed":true,"marker":"qa-marker-stdio-20260306"}' });
+    // MSG-REDUCE-2: previews read the kept stream rather than a stored text mirror.
+    expect(asRecord(customMcpResult)).toMatchObject({ stdout: '{"renamed":true,"marker":"qa-marker-stdio-20260306"}' });
   });
 });

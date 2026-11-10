@@ -63,6 +63,25 @@ At the **CLI boundary** (before events become “session messages”), tool call
 - tool input/result is normalized into a stable shape suitable for rendering
 - `_raw` retains only provider details absent from the canonical fields, within its existing bounds
 
+In 0.3 development, MCP results retain their original `content` (including non-text
+blocks and annotations) without manufacturing a `text` copy. Exact text aliases,
+JSON-equivalent `structuredContent`, and identical fields in Claude's
+`tool_use_result` wrapper are omitted from new transcript results. Distinct fields
+remain. The MCP renderer reads previews from the retained content or stdout and
+still accepts historical `text` fields; Action readers accept the content JSON.
+Full Action schemas remain available in the tool's full result view. This storage
+projection does not alter the result delivered to the agent or rewrite history.
+
+SCM execution-run results in 0.3 development retain the complete captured
+comparison in the tool-result body. When `meta.happier.payload` exactly repeats
+that body, the committed transcript publisher keeps only its structured kind
+marker; the transcript reader obtains the payload from the result body. Existing
+metadata payloads retain precedence when reading history. Sidechain messages
+retain their payload because they do not carry a tool-result body, and execution
+run state retains the full output for saved comparisons and later turns.
+The matching development CLI and UI readers load together; an older UI needs
+the updated reader to render a kind-only SCM marker.
+
 This is the **preferred** normalization path.
 
 ### Codex local-control: where tool events come from

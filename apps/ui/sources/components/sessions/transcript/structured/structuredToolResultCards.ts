@@ -10,7 +10,7 @@ import { DelegateOutputV1Schema } from '@happier-dev/protocol/messages/structure
 import { ExecutionRunCompletionV1Schema } from '@happier-dev/protocol/execution/runs/completionInputV1';
 import { ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { readScmDiffSummaryPublicationReceipt } from '@/sync/domains/scm/diffSummary/publicationReceipt';
-import { parseHappierMetaEnvelope } from './happierMetaEnvelope';
+import { readMessageHappierMetaEnvelope } from './happierMetaEnvelope';
 
 /** The structured renderer consumes these same descriptors for every tool-carried result card. */
 export const STRUCTURED_TOOL_RESULT_CARDS = {
@@ -27,7 +27,7 @@ const toolResultCardDescriptors = Object.values(STRUCTURED_TOOL_RESULT_CARDS);
 
 /** Valid cards stand beside tool chrome; malformed or non-card metadata stays in ordinary details. */
 export function hasToolCarriedStructuredResultCard(message: ToolCallMessage): boolean {
-    const envelope = parseHappierMetaEnvelope(message.meta);
+    const envelope = readMessageHappierMetaEnvelope(message);
     if (!envelope) return false;
     const descriptor = toolResultCardDescriptors.find(({ kind }) => kind === envelope.kind);
     if (!descriptor) return false;

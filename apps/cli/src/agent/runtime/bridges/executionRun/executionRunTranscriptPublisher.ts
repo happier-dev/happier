@@ -4,6 +4,7 @@ import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol/tools/v2/meta';
 import type { ExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import type { ExecutionRunLaunchOrigin } from '@happier-dev/protocol';
+import { EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/runs/startRequest';
 
 /** Explicit Session starts retain one way back to their Run even when its profile keeps the sidechain private. */
 export function shouldPublishExecutionRunTranscriptMarker(
@@ -28,10 +29,23 @@ export function createCommittedExecutionRunTranscriptPublisher(params: Readonly<
   return async (provider, body, opts) => {
     const localId = 'id' in body && typeof body.id === 'string' ? body.id : randomUUID();
     const toolNormalizationSource = opts?.toolNormalizationSource ?? params.readParentToolNormalizationSource();
+    let meta = opts?.meta;
+    const envelope = meta?.happier;
+    if (body.type === 'tool-result' && envelope && typeof envelope === 'object' && !Array.isArray(envelope)) {
+      const happier = envelope as Record<string, unknown>;
+      if (happier.kind === EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary
+        && happier.payload !== undefined
+        && (happier.payload === body.output || JSON.stringify(happier.payload) === JSON.stringify(body.output))) {
+        // The result body owns the captured comparison; retain its structured renderer marker.
+        const marker = { ...happier };
+        delete marker.payload;
+        meta = { ...meta, happier: marker };
+      }
+    }
     const admission = await params.enqueueAgentMessageCommitted(provider, body, {
       localId,
       ...(toolNormalizationSource ? { toolNormalizationSource } : {}),
-      ...(opts?.meta ? { meta: opts.meta } : {}),
+      ...(meta ? { meta } : {}),
       provenance: { kind: 'non_dependent', source: 'sidechain' },
     });
     if (!admission.persisted) throw createExecutionRunTranscriptCustodyError();

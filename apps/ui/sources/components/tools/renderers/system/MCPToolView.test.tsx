@@ -21,6 +21,17 @@ vi.mock('@/components/ui/media/CodeView', () => ({
 await import('./MCPToolView');
 
 describe('MCPToolView', () => {
+    it('previews canonical MCP content and historical text aliases equally', async () => {
+        for (const result of [
+            { content: [{ type: 'text', text: 'Kept result body' }] },
+            { content: 'Kept result body' },
+            { stdout: 'Kept result body' },
+            { text: 'Kept result body' },
+        ]) {
+            const tool = makeToolCall({ name: 'mcp__example__read', state: 'completed', result });
+            expect((await renderView(tool, 'summary')).getTextContent()).toContain('Kept result body');
+        }
+    });
     it('indexes its decoded preview and exact full JSON, and reveals a preview match beyond the summary clamp', async () => {
         const { MCPToolView, projectMCPDisplayText } = await import('./MCPToolView');
         const text = 'x'.repeat(850) + 'needle\nnext line';

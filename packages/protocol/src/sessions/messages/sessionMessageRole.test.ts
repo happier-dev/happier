@@ -40,6 +40,16 @@ describe('session message role schema', () => {
     })).toBe('user');
   });
 
+  it('preserves ACP tool-call-result bodies as semantic events', () => {
+    const body = { type: 'tool-call-result', callId: 'call-1', output: { text: 'tool output' } };
+
+    expect(protocol.resolveTranscriptBodySessionMessageRole({ protocol: 'acp', body })).toBe('event');
+    expect(protocol.resolveTranscriptBodySemanticEvent({ protocol: 'acp', body })).toEqual({
+      role: 'event',
+      body,
+    });
+  });
+
   it('classifies canonical raw external-session bodies without host-side wrapper parsing', () => {
     expect(protocol.resolveTranscriptBodySessionMessageRole({
       protocol: 'acp',

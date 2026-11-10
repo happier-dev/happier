@@ -19,6 +19,12 @@ describe('session message role classifiers', () => {
     expect(resolveAcpSessionMessageRole({ type: 'permission-response', requestId: 'r1' } as any)).toBe('event');
   });
 
+  it('classifies ACP tool-call-result rows as events', () => {
+    expect(resolveAcpSessionMessageRole({
+      type: 'tool-call-result', callId: 'call-1', output: { text: 'tool output' },
+    })).toBe('event');
+  });
+
   it('classifies ACP agent_message rows as agent messages', () => {
     expect(resolveAcpSessionMessageRole({ type: 'agent_message', text: 'assistant text' } as any)).toBe('agent');
   });

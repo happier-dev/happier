@@ -105,7 +105,10 @@ function getResultText(result: unknown): string | null {
     const parsed = maybeParseJson(result);
     const obj = asRecord(parsed);
     if (!obj) return typeof parsed === 'string' ? parsed : null;
-    const candidates = [obj.text, obj.message, obj.result, obj.output];
+    const content = typeof obj.content === 'string' ? obj.content : Array.isArray(obj.content)
+        ? obj.content.map((block) => asRecord(block)?.text).filter((text): text is string => typeof text === 'string').join('\n')
+        : null;
+    const candidates = [obj.text, obj.message, obj.result, obj.output, content, obj.stdout];
     for (const c of candidates) {
         if (typeof c === 'string' && c.trim()) return c;
     }

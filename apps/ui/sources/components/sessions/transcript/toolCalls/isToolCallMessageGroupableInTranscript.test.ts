@@ -40,7 +40,7 @@ describe('transcript tool group admission', () => {
         }))).toBe(true);
     });
 
-    it('places a retained published SCM receipt beside tool chrome, but leaves an unsaved result in details', () => {
+    it.each(['historical', 'single'] as const)('places a retained published SCM receipt beside tool chrome, but leaves an unsaved result in details (%s)', shape => {
         const payload = ScmDiffSummaryGenerateSuccessSchema.parse({ success: true, sourceKey: 'comparison', resultId: 'saved', revision: 2,
             metadata: { source: { kind: 'workingTree' }, sourceKey: 'comparison' },
             comparison: { id: 'comparison', source: { kind: 'workingTree' }, repository: { rootPath: '/repo' }, endpoints: {},
@@ -50,7 +50,9 @@ describe('transcript tool group admission', () => {
             } } }, analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
         });
         const retainedPayload = { ...payload, retiredPayloadField: true };
-        const published = createToolCallMessageFixture({ meta: { happier: { kind: 'scm_diff_summary.v1', payload: retainedPayload },
+        const base = createToolCallMessageFixture();
+        const published = createToolCallMessageFixture({ tool: { ...base.tool, result: retainedPayload },
+            meta: { happier: shape === 'historical' ? { kind: 'scm_diff_summary.v1', payload: retainedPayload } : { kind: 'scm_diff_summary.v1' },
             scmResultUpdate: { status: 'published', canUndo: true, outputs: [{ kind: 'walkthrough', change: 'created' }] } } });
         expect(isToolCallMessageGroupableInTranscript(published)).toBe(false);
         expect(isToolCallMessageGroupableInTranscript({ ...published, meta: { happier: { kind: 'scm_diff_summary.v1', payload: retainedPayload } } })).toBe(true);

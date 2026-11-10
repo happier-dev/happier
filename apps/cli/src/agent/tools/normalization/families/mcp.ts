@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 type UnknownRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): UnknownRecord | null {
@@ -114,11 +116,33 @@ export function normalizeMcpResult(toolName: string, rawOutput: unknown): Unknow
     if (!parsed) return record;
 
     const out: UnknownRecord = { ...record };
-    // Common MCP-style output: { content: [{type:'text',text:'...'}], isError: boolean }
-    const text = coerceTextFromContentBlocks((record as any).content);
-    if (text && typeof out.text !== 'string') out.text = text;
-    if (typeof out.text !== 'string' && typeof (record as any).stdout === 'string' && (record as any).stdout.trim()) {
-        out.text = (record as any).stdout;
+    const native = asRecord(record.tool_use_result);
+    // Claude may flatten MCP blocks into a string beside the original result.
+    // Keep the original blocks in the canonical slot so annotations/media survive.
+    if (typeof out.content === 'string' && native && coerceTextFromContentBlocks(native.content) === out.content) {
+        out.content = native.content;
+    }
+    // Preserve the original MCP content, including annotations and non-text blocks.
+    // Text previews are a reader projection, not another stored body.
+    const text = coerceTextFromContentBlocks(out.content);
+    if (typeof out.text === 'string' && (out.text === text || out.text === record.stdout)) delete out.text;
+    let parsedContent: unknown;
+    if (text !== null && (record.structuredContent != null || native?.structuredContent != null)) {
+        try {
+            parsedContent = JSON.parse(text);
+        } catch {
+            // Distinct or non-JSON text and structured facts both remain useful.
+        }
+    }
+    if (record.structuredContent != null && isDeepStrictEqual(parsedContent, record.structuredContent)) delete out.structuredContent;
+    if (native) {
+        const remaining = Object.fromEntries(Object.entries(native).filter(([key, value]) => {
+            if (key === 'structuredContent' && value != null && isDeepStrictEqual(value, parsedContent)) return false;
+            if (key === 'text' && typeof value === 'string' && value === text) return false;
+            return !Object.hasOwn(out, key) || !isDeepStrictEqual(value, out[key]);
+        }));
+        if (Object.keys(remaining).length) out.tool_use_result = remaining;
+        else delete out.tool_use_result;
     }
 
     return {

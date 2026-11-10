@@ -2,8 +2,21 @@ import { parseSessionMediaMessageMeta, type ParsedSessionMediaMessageMeta } from
 import { HappierMetaEnvelopeSchema, type HappierMetaEnvelope } from '@happier-dev/protocol/messages/structured/HappierMetaEnvelope';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { AttachmentsMessageMetaV1Schema, type AttachmentsMessageMetaV1 } from '@/sync/domains/attachments/attachmentsMessageMeta';
+import type { Message } from '@happier-dev/session-core/messages';
+import { EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/runs/startRequest';
 
 export type { HappierMetaEnvelope };
+
+/** New SCM result rows keep their captured payload in the tool body; history may carry it in metadata. */
+export function readMessageHappierMetaEnvelope(message: Message): HappierMetaEnvelope | null {
+    const envelope = parseHappierMetaEnvelope(message.meta);
+    if (envelope?.kind === EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary
+        && envelope.payload === undefined
+        && message.kind === 'tool-call') {
+        return { ...envelope, payload: message.tool.result };
+    }
+    return envelope;
+}
 
 export function readTranscriptAttachmentsMeta(meta: unknown): AttachmentsMessageMetaV1 | null {
     const primary = parseHappierMetaEnvelope(meta);

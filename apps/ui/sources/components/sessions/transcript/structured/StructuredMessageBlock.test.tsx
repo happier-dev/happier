@@ -7,7 +7,8 @@ import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol/ses
 import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryGenerateSuccessSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { ScmDiffSummaryPublicationReceiptSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { renderWithSessionTranscriptSource as renderScreen } from '@/dev/testkit';
+import { createToolCallMessageFixture, renderWithSessionTranscriptSource as renderScreen } from '@/dev/testkit';
+import { buildCapturedComparisonFiles } from '@/components/sessions/files/comparison/capturedComparisonFiles';
 import { createTestSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import {
@@ -126,17 +127,27 @@ describe('StructuredMessageBlock', () => {
         expect(renderStructuredMessage({ message, sessionId: 's1', interaction: editableInteraction, onJumpToAnchor: () => {} })).toBeNull();
         expect(projectStructuredMessageFindText(message)).toBeNull();
     });
-    it('shows a saved SCM publication as one receipt that opens its exact captured comparison, replacing the notice prose', async () => {
+    it.each(['sidechain', 'tool-history', 'tool-single'] as const)('shows a saved SCM publication as one receipt that opens its exact captured comparison (%s)', async shape => {
         const payload = ScmDiffSummaryGenerateSuccessSchema.parse({ success: true, sourceKey: 'cmp-7', resultId: 'saved-1', revision: 3,
             metadata: { source: { kind: 'workingTree' }, sourceKey: 'cmp-7' },
             comparison: { id: 'cmp-7', source: { kind: 'workingTree' }, repository: { rootPath: '/repo' }, endpoints: {},
-                inventory: { state: 'complete', reasons: [], files: [] } },
+                inventory: { state: 'complete', reasons: [], files: [{ path: 'a.ts', changeKind: 'modified',
+                    binary: false, generated: false, lockfile: false, occurrences: [],
+                    evidence: { state: 'available', unifiedDiff: '@@ -1 +1 @@\n-old\n+new\n' } }] } },
             requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'complete', value: {
                 title: 'Coupons apply per line', intro: '', stops: [], otherChangeRefs: [] } } },
             analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } });
-        const message = { kind: 'agent-text' as const, id: 'notice-published', localId: null, createdAt: 1, text: 'Walkthrough written.',
+        const notice = { kind: 'agent-text' as const, id: 'notice-published', localId: null, createdAt: 1, text: 'Walkthrough written.',
             meta: { happier: { kind: 'scm_diff_summary.v1', payload },
                 scmResultUpdate: { status: 'published', canUndo: true, outputs: [{ kind: 'walkthrough', change: 'created' }] } } };
+        const base = createToolCallMessageFixture();
+        const message = shape === 'sidechain' ? notice : createToolCallMessageFixture({
+            meta: { ...notice.meta, happier: shape === 'tool-history' ? notice.meta.happier : { kind: 'scm_diff_summary.v1' } },
+            tool: { ...base.tool, name: 'SubAgentRun', state: 'completed', result: payload },
+        });
+        const captured = buildCapturedComparisonFiles(payload.comparison!);
+        expect(captured.diffByPath.get('a.ts')).toContain('+new');
+        expect(captured.files[0]).toMatchObject({ fullPath: 'a.ts', linesAdded: 1, linesRemoved: 1 });
         const navigate = vi.fn();
         const screen = await renderScreen(
             <StructuredMessageBlock message={message} sessionId="s1" interaction={editableInteraction} onJumpToAnchor={() => {}} />,

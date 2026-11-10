@@ -22,7 +22,7 @@ import {
     DeclarativeStructuredMessageRenderer,
     type StructuredMessageActionSelection,
 } from './DeclarativeStructuredMessageRenderer';
-import { parseHappierMetaEnvelope } from './happierMetaEnvelope';
+import { readMessageHappierMetaEnvelope } from './happierMetaEnvelope';
 import { projectReviewToolMessage } from '@/components/sessions/reviews/messages/projectReviewToolMessage';
 import type { StructuredMessageRendererParams } from './structuredMessageRegistry';
 import {
@@ -66,7 +66,7 @@ function resolveStructuredMessagePresentation(message: Message, debugInformation
     if (message.kind === 'tool-call') message = projectReviewToolMessage(message);
     if (hasStructuredPresentation(message)) return { kind: 'persisted' as const, message };
     if (isUnavailableStructuredTranscriptRecord(message, debugInformationEnabled)) return { kind: 'unavailable' as const };
-    const envelope = parseHappierMetaEnvelope(message.meta);
+    const envelope = readMessageHappierMetaEnvelope(message);
     if (!envelope || NON_STRUCTURED_HAPPIER_META_KINDS.has(envelope.kind)) return null;
     const entry = findBuiltInStructuredMessageEntry(envelope.kind);
     if (!entry) return { kind: 'unavailable' as const };
