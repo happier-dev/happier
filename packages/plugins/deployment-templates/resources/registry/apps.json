@@ -143,7 +143,7 @@
       "app": {
         "schemaVersion": 1,
         "title": "MySQL",
-        "description": "A MySQL database with internal connectivity.",
+        "description": "A MySQL database with internal connectivity. Backups and restore are not supported in Happier yet.",
         "category": "database",
         "documentationUrl": "https://dev.mysql.com/doc/refman/8.4/en/",
         "compose": {
