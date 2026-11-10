@@ -1234,6 +1234,7 @@ test('verified plugin Vitest configs skip publication while dist configs retain 
     ['claude', ['--config=vitest.mcpToolPolicy.config.ts']],
     ['kilo', ['--config=vitest.mcpToolPolicy.config.ts']],
     ['opencode', ['--config=vitest.mcpToolPolicy.config.ts']],
+    ['opencode', []],
     ['pi', ['--config=vitest.mcpApproval.config.ts']],
   ];
   for (const [plugin, configArgs] of requests) {
@@ -1968,6 +1969,41 @@ test('native test preparation follows reachable source imports rather than the p
   assert.equal(classify().kind, 'runtime', 'unobserved module loading cannot certify source-only consumption');
   await writeFile(leaf, 'import "./missing.mjs";');
   assert.equal(classify().kind, 'runtime', 'an incomplete source graph cannot suppress prerequisites');
+});
+
+test('stack-only native selections share one import-derived preparation decision', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'stack-native-selection-' });
+  const repoRoot = fixture.root;
+  const scripts = fixture.path('apps/stack/scripts');
+  await mkdir(scripts, { recursive: true });
+  await writeFile(join(scripts, 'first.test.mjs'), 'import "node:test"; import "./leaf.mjs";');
+  await writeFile(join(scripts, 'second.test.mjs'), 'import "node:assert/strict";');
+  await writeFile(join(scripts, 'leaf.mjs'), 'export const value = 1;');
+  const env = { ...process.env, NODE_OPTIONS: '' };
+  const args = ['node', '--test', 'apps/stack/scripts/first.test.mjs', 'apps/stack/scripts/second.test.mjs'];
+  const policy = resolveRemoteCommandPolicy(args, { repoRoot, cwd: repoRoot, env });
+  assert.equal(policy.kind, 'source-test');
+  assert.equal(policy.bootstrap, '0');
+  assert.equal(policy.heavyClass, 'native-source-test');
+  assert.deepEqual(commandPolicy.resolveCommandWorkspaceLocks(policy, repoRoot, env), []);
+  for (const command of [['nodejs', ...args.slice(1)], ['env', 'LANE_PROBE=1', ...args], ['pnpm', 'exec', ...args]]) {
+    const wrapped = resolveRemoteCommandPolicy(command, { repoRoot, cwd: repoRoot, env });
+    assert.equal(wrapped.kind, 'source-test', command[0]);
+    assert.equal(wrapped.bootstrap, '0', command[0]);
+  }
+  assert.equal(resolveRemoteCommandPolicy(['node', '--test', 'first.test.mjs', 'second.test.mjs'],
+    { repoRoot, cwd: scripts, env }).kind, 'source-test');
+  if (process.platform !== 'win32') {
+    const artifact = fixture.path('policy.sh');
+    await writeFile(artifact, renderNativeCommandPolicy());
+    const owner = fileURLToPath(new URL('./remote_commands.mjs', import.meta.url));
+    const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2; projection_command_policy=$3; shift 3; resolve_native_command_policy "$@"; printf "%s,%s,%s" "$policy_kind" "$policy_bootstrap" "$policy_heavyClass"', 'policy', artifact, repoRoot, owner, ...args], { encoding: 'utf8', env });
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, 'source-test,0,native-source-test');
+  }
+  await writeFile(join(scripts, 'leaf.mjs'), 'import "@happier-dev/protocol";');
+  assert.equal(resolveRemoteCommandPolicy(args, { repoRoot, cwd: repoRoot, env }).kind, 'runtime',
+    'one workspace consumer keeps preparation for the selection');
 });
 
 test('native UI test installed dependencies do not demand unrelated workspace dist preparation', async t => {

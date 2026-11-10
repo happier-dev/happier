@@ -14,7 +14,8 @@ export function readNativeTestPreparationDemand(repoDir, entryPath) {
   let root;
   try { root = realpathSync(repoDir); }
   catch { return null; }
-  const pending = [resolve(root, entryPath)];
+  const entries = new Set((Array.isArray(entryPath) ? entryPath : [entryPath]).map(path => resolve(root, path)));
+  const pending = [...entries];
   const files = new Set();
   let requiresDependencyBootstrap = false;
   let hasProcessBoundary = false;
@@ -31,9 +32,11 @@ export function readNativeTestPreparationDemand(repoDir, entryPath) {
     let source;
     try { source = readFileSync(path, 'utf8'); }
     catch { return null; }
-    if (files.size === 0 && /\.test\.mjs$/.test(path)
+    if (entries.has(path) && /\.test\.mjs$/.test(path)
       && /^\/\/ @happier-test-preparation source\r?\n/.test(source)) {
-      return { sourceInputs: null, requiresDependencyBootstrap: true, hasProcessBoundary: false };
+      requiresDependencyBootstrap = true;
+      files.add(path);
+      continue;
     }
     files.add(path);
     if (/\b(?:import|require)\s*\(\s*[^'"\s]/.test(source)
@@ -62,7 +65,7 @@ export function readNativeTestPreparationDemand(repoDir, entryPath) {
       }
     }
   }
-  return { sourceInputs: [...files].map(path => relative(root, path).split(sep).join('/')).sort(), requiresDependencyBootstrap, hasProcessBoundary };
+  return { sourceInputs: requiresDependencyBootstrap ? null : [...files].map(path => relative(root, path).split(sep).join('/')).sort(), requiresDependencyBootstrap, hasProcessBoundary };
 }
 
 /** Watchers without installed-dependency inputs retain their source-only scope. */

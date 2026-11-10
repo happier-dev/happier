@@ -767,6 +767,7 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
     nativeLoader: args.some(arg => /^(?:--import|--require|--loader|--experimental-loader)(?:=|$)/.test(arg) || /^-r/.test(arg)) ? '1' : '0',
     workerRequest: args.some(arg => arg.startsWith('--worker-request=') && arg.length > '--worker-request='.length) ? '1' : '0',
     component: normalizeCommandPath(slashCwd), managerCwd, project, singleProject: projects.length === 1 ? '1' : '0', mixedProjects: projectScopes.size > 1 ? '1' : '0',
+    nativeTestPaths: testPaths,
     nativeTestPath: testPaths.length === 1 ? testPaths[0] : '',
     sourceConditionNativeTests: testPaths.length > 0 && testPaths.every(path => REMOTE_COMMAND_CLASSIFICATION.sourceConditionNativeTestPaths.includes(path)) ? '1' : '0',
     nativeCompilerSuite: testPaths.some(path => REMOTE_COMMAND_CLASSIFICATION.compilerNativeTestFiles.includes(path)) ? '1' : '0',
@@ -934,8 +935,8 @@ function resolveCommandPolicyContext(commandArgs, { cwd = '.', repoRoot = COMMAN
     policy.requiredTools = resolveSourceTestRequiredTools(repoRoot, facts.component, policy.requiredTools);
   }
   if (['node', 'nodejs'].includes(facts.command) && facts.nativeTest === '1'
-    && facts.nativeTestPath && facts.nativeLoader === '0' && !env.NODE_OPTIONS) {
-    const demand = readNativeTestPreparationDemand(repoRoot, facts.nativeTestPath);
+    && facts.nativeTestPaths.length && facts.nativeLoader === '0' && !env.NODE_OPTIONS) {
+    const demand = readNativeTestPreparationDemand(repoRoot, facts.nativeTestPaths);
     if (demand) Object.assign(policy, { kind: 'source-test',
       bootstrap: demand.requiresDependencyBootstrap ? '1' : '0',
       heavyClass: policy.heavyClass === 'validation'
@@ -1580,7 +1581,7 @@ resolve_native_command_policy() {
   # Recursive argv normalization already resolved the actual payload. Reuse
   # its metadata child rather than parsing a package-manager alias twice.
   [ "$native_test_policy_resolved" = 0 ] || return 0
-  if { [ "$policy_workerTool" = vitest ] || { [ "$policy_compilerLeaf" = 1 ] && [ -z "$policy_project" ]; }; } && [ "$policy_generatorCheck" = 0 ] && [ "$policy_admissionWrapper" = 0 ]; then
+  if { [ "$policy_nativeTest" = 1 ] || [ "$policy_workerTool" = vitest ] || { [ "$policy_compilerLeaf" = 1 ] && [ -z "$policy_project" ]; }; } && [ "$policy_generatorCheck" = 0 ] && [ "$policy_admissionWrapper" = 0 ]; then
     native_policy_request_cwd=$invoked_cwd
     if [ "\${explicit_relative_cwd_set-0}" = 1 ]; then
       case "$explicit_relative_cwd" in
@@ -1588,7 +1589,10 @@ resolve_native_command_policy() {
         *) native_policy_request_cwd=$repo_root/$explicit_relative_cwd ;;
       esac
     fi
-    native_payload_policy=$(node "\${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --package-policy "$repo_root" "$native_policy_request_cwd" "$@") || return $?
+    native_payload_policy=$(
+      eval "\${explicit_remote_environment-}"
+      node "\${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --package-policy "$repo_root" "$native_policy_request_cwd" "$@"
+    ) || return $?
     eval "$native_payload_policy"
     native_test_policy_resolved=1
   fi
@@ -1828,22 +1832,6 @@ native_resolve_command_policy_arguments() {
   if [ -z "$policy_componentOverride" ] && [ "$policy_componentFromNative" = 1 ] && [ -n "$native_test_component" ]; then policy_component=$native_test_component; fi
   case "$policy_component" in packages/*) policy_packageComponent=1 ;; *) policy_packageComponent=0 ;; esac
   native_command_policy_finish || return $?
-  case "$policy_command:$policy_nativeTest:$policy_nativeLoader" in
-    node:1:0|nodejs:1:0)
-      if [ -n "$policy_nativeTestPath" ] && [ -f "$repo_root/$policy_nativeTestPath" ]; then
-        native_source_only=$(
-          eval "\${explicit_remote_environment-}"
-          node "\${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --native-source-test "$repo_root" "$policy_nativeTestPath"
-        ) || return $?
-        case "$native_source_only" in
-          1) policy_kind=source-test; policy_bootstrap=0
-             [ "$policy_heavyClass" != validation ] || policy_heavyClass=native-source-test ;;
-          2) policy_kind=source-test; policy_bootstrap=1 ;;
-          3) policy_kind=source-test; policy_bootstrap=0 ;;
-        esac
-      fi
-      ;;
-  esac
 }
 `;
 
@@ -3142,11 +3130,6 @@ export async function runRemoteCommandPolicyCli(argv = process.argv.slice(2)) {
   }
   if (args[0] === '--workspace-locks') {
     process.stdout.write(JSON.stringify(resolveCommandWorkspaceLocks({ workspaceLock: args[2], bootstrap: args[3], validation: args[4], commandClass: args[5] }, args[1])));
-    return 0;
-  }
-  if (args[0] === '--native-source-test') {
-    const demand = !process.env.NODE_OPTIONS && readNativeTestPreparationDemand(args[1], args[2]);
-    process.stdout.write(demand ? demand.requiresDependencyBootstrap ? '2\n' : demand.hasProcessBoundary ? '3\n' : '1\n' : '0\n');
     return 0;
   }
   const sourceTestTools = args[0] === '--source-test-tools';

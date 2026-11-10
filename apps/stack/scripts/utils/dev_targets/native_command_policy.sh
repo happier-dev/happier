@@ -844,7 +844,7 @@ resolve_native_command_policy() {
   # Recursive argv normalization already resolved the actual payload. Reuse
   # its metadata child rather than parsing a package-manager alias twice.
   [ "$native_test_policy_resolved" = 0 ] || return 0
-  if { [ "$policy_workerTool" = vitest ] || { [ "$policy_compilerLeaf" = 1 ] && [ -z "$policy_project" ]; }; } && [ "$policy_generatorCheck" = 0 ] && [ "$policy_admissionWrapper" = 0 ]; then
+  if { [ "$policy_nativeTest" = 1 ] || [ "$policy_workerTool" = vitest ] || { [ "$policy_compilerLeaf" = 1 ] && [ -z "$policy_project" ]; }; } && [ "$policy_generatorCheck" = 0 ] && [ "$policy_admissionWrapper" = 0 ]; then
     native_policy_request_cwd=$invoked_cwd
     if [ "${explicit_relative_cwd_set-0}" = 1 ]; then
       case "$explicit_relative_cwd" in
@@ -852,7 +852,10 @@ resolve_native_command_policy() {
         *) native_policy_request_cwd=$repo_root/$explicit_relative_cwd ;;
       esac
     fi
-    native_payload_policy=$(node "${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --package-policy "$repo_root" "$native_policy_request_cwd" "$@") || return $?
+    native_payload_policy=$(
+      eval "${explicit_remote_environment-}"
+      node "${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --package-policy "$repo_root" "$native_policy_request_cwd" "$@"
+    ) || return $?
     eval "$native_payload_policy"
     native_test_policy_resolved=1
   fi
@@ -1092,20 +1095,4 @@ native_resolve_command_policy_arguments() {
   if [ -z "$policy_componentOverride" ] && [ "$policy_componentFromNative" = 1 ] && [ -n "$native_test_component" ]; then policy_component=$native_test_component; fi
   case "$policy_component" in packages/*) policy_packageComponent=1 ;; *) policy_packageComponent=0 ;; esac
   native_command_policy_finish || return $?
-  case "$policy_command:$policy_nativeTest:$policy_nativeLoader" in
-    node:1:0|nodejs:1:0)
-      if [ -n "$policy_nativeTestPath" ] && [ -f "$repo_root/$policy_nativeTestPath" ]; then
-        native_source_only=$(
-          eval "${explicit_remote_environment-}"
-          node "${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --native-source-test "$repo_root" "$policy_nativeTestPath"
-        ) || return $?
-        case "$native_source_only" in
-          1) policy_kind=source-test; policy_bootstrap=0
-             [ "$policy_heavyClass" != validation ] || policy_heavyClass=native-source-test ;;
-          2) policy_kind=source-test; policy_bootstrap=1 ;;
-          3) policy_kind=source-test; policy_bootstrap=0 ;;
-        esac
-      fi
-      ;;
-  esac
 }
