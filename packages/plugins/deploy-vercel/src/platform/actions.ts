@@ -1,8 +1,9 @@
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetRoleResultV1ProtocolSchema as output,
-  PluginError, type DeploymentTargetDeployInputV1, type DeploymentTargetObserveInputV1, type DeploymentTargetCancelInputV1, type DeploymentTargetRoleResultV1,
+  PluginError, type DeploymentTargetDeployInputV1, type DeploymentTargetObserveInputV1, type DeploymentTargetCancelInputV1, type DeploymentTargetRollbackInputV1, type DeploymentTargetRoleResultV1,
   type DeploymentTargetRoleFailureV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { cancelVercelDeployment, deployVercelCommit, observeVercelDeployment } from './operations.js';
+import { changeVercelTraffic, observeVercelTraffic } from './traffic.js';
 
 const common = { execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
   scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [],
@@ -33,7 +34,18 @@ export const lifecycleActions = {
     run: (input: JsonValue, ctx: PluginAccountActionContext) => deploy(input as unknown as DeploymentTargetDeployInputV1, ctx) },
   observe: { ...common, title: 'Observe the selected Vercel deployment', dangerLevel: 'safe', readOnly: true,
     inputSchema: inputs.observe.jsonSchema,
-    run: async (input: JsonValue, ctx: PluginAccountActionContext) => result(await observeVercelDeployment(input as unknown as DeploymentTargetObserveInputV1, context(ctx))) },
+    run: async (input: JsonValue, ctx: PluginAccountActionContext) => {
+      const selection = input as unknown as DeploymentTargetObserveInputV1;
+      return selection.operation === 'promote' || selection.operation === 'rollback'
+        ? observeVercelTraffic(selection, selection.operation, context(ctx))
+        : result(await observeVercelDeployment(selection, context(ctx)));
+    } },
+  promote: { ...common, title: 'Promote the selected Vercel deployment', dangerLevel: 'writesRemote', readOnly: false,
+    confirmation: { title: 'Send production traffic to this Vercel deployment?' }, inputSchema: inputs.promote.jsonSchema,
+    run: (input: JsonValue, ctx: PluginAccountActionContext) => changeVercelTraffic(input as unknown as DeploymentTargetRollbackInputV1, 'promote', context(ctx)) },
+  rollback: { ...common, title: 'Restore the selected Vercel deployment', dangerLevel: 'writesRemote', readOnly: false,
+    confirmation: { title: 'Restore production traffic to this Vercel deployment?' }, inputSchema: inputs.rollback.jsonSchema,
+    run: (input: JsonValue, ctx: PluginAccountActionContext) => changeVercelTraffic(input as unknown as DeploymentTargetRollbackInputV1, 'rollback', context(ctx)) },
   cancel: { ...common, title: 'Cancel the selected Vercel deployment', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Cancel this Vercel deployment?' },
     inputSchema: inputs.cancel.jsonSchema,

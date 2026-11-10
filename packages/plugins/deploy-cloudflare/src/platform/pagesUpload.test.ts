@@ -6,6 +6,7 @@ import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugi
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import type { ExecService, PluginExecSpawnRequest, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import * as entry from '../index.js';
+import { CLOUDFLARE_BUILD_IMAGE, CLOUDFLARE_WRANGLER_VERSION } from './pagesBuild.js';
 
 const credentialRef = { service: { pluginId: entry.manifest.id, localId: 'cloudflare' }, accountId: 'recorded-profile' };
 const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1, credentialRef,
@@ -25,7 +26,7 @@ function result(exitCode = 0): PluginProcessResult {
   return { termination: { observed: { kind: 'exit', exitCode }, requestedBy: { kind: 'none' } }, stdout: new Uint8Array(),
     stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
 }
-async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lostCreate' | 'malformedCreate' | 'denied' | 'cached' | 'observeLost' | 'observeDenied' | 'monorepo' | 'acceptedQueued' | 'assetRejected' = 'success') {
+async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lostCreate' | 'malformedCreate' | 'denied' | 'cached' | 'observeLost' | 'observeDenied' | 'monorepo' | 'acceptedQueued' | 'assetRejected' = 'success', preparedBundle = workerBundle) {
   const root = await mkdtemp(join(tmpdir(), 'pages-upload-'));
   const sourceRoot = join(root, 'approved');
   await mkdir(sourceRoot);
@@ -54,7 +55,7 @@ async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lostCreate
       const outputDirectory = mode === 'monorepo' ? 'apps/web/public' : 'public';
       await mkdir(join(scratch, 'project', outputDirectory), { recursive: true });
       await writeFile(join(scratch, 'project', outputDirectory, 'binary.bin'), binary);
-      await writeFile(join(scratch, '_worker.bundle'), workerBundle);
+      await writeFile(join(scratch, '_worker.bundle'), preparedBundle);
       await writeFile(join(scratch, 'metadata.json'), JSON.stringify({ outputDirectory,
         assets: [{ path: 'binary.bin', hash: 'pinned-vendor-hash', contentType: 'application/octet-stream' }],
         multipartFiles: [{ name: '_worker.bundle', path: '_worker.bundle', contentType: 'multipart/form-data; boundary=vendor-bundle' }],
@@ -103,7 +104,10 @@ async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lostCreate
 it('uploads only pinned-container output with project JWT missing-assets/hash manifest/functions and returns the original provider identity', async () => {
   const h = await fixture();
   try {
-    expect(await h.invoke()).toMatchObject({ state: 'succeeded', providerDeploymentId: 'deployment-exact' });
+    expect(await h.invoke()).toMatchObject({ state: 'succeeded', providerDeploymentId: 'deployment-exact',
+      uploadProvenance: { sourceManifestFingerprint: 'approved-source', build: { location: 'controller',
+        image: CLOUDFLARE_BUILD_IMAGE, toolchain: { name: 'wrangler', version: CLOUDFLARE_WRANGLER_VERSION },
+        outputManifestFingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) } } });
     expect(h.materialize).toHaveBeenCalledExactlyOnceWith({ environmentId: 'environment', deploymentId: 'receipt' }, { signal: expect.any(AbortSignal) });
     expect(h.spawn).toHaveBeenCalledOnce();
     expect(h.requests.map(request => [request.method, new URL(request.url).pathname])).toEqual([
@@ -258,4 +262,21 @@ it.each(['observeLost', 'observeDenied'] as const)('keeps a finite retained-ID %
       ['GET', '/client/v4/accounts/account/pages/projects/existing-pages/deployments/deployment-exact'],
     ]);
   } finally { await h.dispose(); }
+});
+
+
+it('records the same output fingerprint across provider asset-cache hits and changes it when the prepared executable changes', async () => {
+  const original = await fixture();
+  const cached = await fixture('cached');
+  const changed = await fixture('success', workerBundle + 'changed executable bytes');
+  try {
+    const fingerprint = async (h: typeof original) => {
+      const result = await h.invoke();
+      if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('Expected upload evidence');
+      return JSON.stringify(result.uploadProvenance);
+    };
+    const first = await fingerprint(original);
+    expect(await fingerprint(cached)).toBe(first);
+    expect(await fingerprint(changed)).not.toBe(first);
+  } finally { await original.dispose(); await cached.dispose(); await changed.dispose(); }
 });

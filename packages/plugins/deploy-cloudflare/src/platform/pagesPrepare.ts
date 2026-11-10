@@ -1,16 +1,18 @@
-import { DeploymentTargetPreparationBaseV1ProtocolSchema as preparation, PluginError,
+import { DeploymentTargetPreparationBaseV1ProtocolSchema as preparation, DeploymentTargetRoleInputProtocolSchemasV1 as inputs, PluginError,
+  type DeploymentTargetDeployInputV1, type DeploymentTargetUploadDeployInputV1,
   type DeploymentTargetPreparationBaseV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import { ScmHostingRepositoryIdentityV1ProtocolSchema, projectNativeJsonValueForTransport, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginAccountActionContext, PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
 import { isObject } from '../connectedAccounts/probe.js';
 import { targetProductSchema } from './targetOptions.js';
 import { request } from './deploymentHttp.js';
+import { CLOUDFLARE_BUILD_IMAGE, CLOUDFLARE_WRANGLER_VERSION } from './cloudflareToolchain.js';
 
 const base = preparation.jsonSchema;
 export const pagesLinkSchema: PluginJsonSchema = { type: 'object', additionalProperties: false,
   properties: { credentialPrincipal: base.properties!.credentialPrincipal!, providerIdentity: base.properties!.providerIdentity!,
     providerEnvironment: base.properties!.providerEnvironment!, repositoryAccess: base.properties!.repositoryAccess!, preparedNative: base.properties!.preparedNative! },
-  required: ['credentialPrincipal', 'providerIdentity', 'providerEnvironment', 'repositoryAccess', 'preparedNative'] };
+  required: ['credentialPrincipal', 'providerIdentity', 'providerEnvironment', 'preparedNative'] };
 export const pagesCommon = { execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
   scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [], hostAccess: ['cloudflare-pages', 'deploy.manage'],
   connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }] } as const;
@@ -33,7 +35,8 @@ function relativeDirectory(value: unknown): value is string {
 }
 
 export const pagesPrepareInput = { type: 'object', additionalProperties: false, properties: { ...base.properties, product: targetProductSchema,
-    repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema }, required: [...base.required ?? [], 'providerIdentity', 'preparedNative', 'repository'] } satisfies PluginJsonSchema;
+    repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema,
+    sourceMethod: { anyOf: [inputs.deploy.jsonSchema.properties!.sourceMethod!, inputs.uploadDeploy.jsonSchema.properties!.sourceMethod!] } }, required: [...base.required ?? [], 'providerIdentity', 'preparedNative', 'repository'] } satisfies PluginJsonSchema;
 
 export const pagesPrepare: PreparationAction = { ...pagesCommon, title: 'Adopt the selected existing Cloudflare Pages project',
   dangerLevel: 'safe', readOnly: true,
@@ -42,6 +45,7 @@ export const pagesPrepare: PreparationAction = { ...pagesCommon, title: 'Adopt t
   async run(value: JsonValue, context: PluginAccountActionContext) {
     const input = value as unknown as DeploymentTargetPreparationBaseV1 & {
       repository: ReturnType<typeof ScmHostingRepositoryIdentityV1ProtocolSchema.parse>;
+      sourceMethod?: (DeploymentTargetDeployInputV1 | DeploymentTargetUploadDeployInputV1)['sourceMethod'];
     };
     if (!input.providerIdentity || !input.preparedNative || (input.providerEnvironment.kind !== 'production'
       && (input.providerEnvironment.kind !== 'preview' || 'scriptName' in input.providerEnvironment))) {
@@ -68,8 +72,11 @@ export const pagesPrepare: PreparationAction = { ...pagesCommon, title: 'Adopt t
     return projectNativeJsonValueForTransport({ credentialPrincipal: input.credentialPrincipal,
       providerIdentity: { ...input.providerIdentity, providerEnvironment: input.providerEnvironment.kind === 'production' ? 'production'
         : input.providerEnvironment.gitBranch ? `preview:${input.providerEnvironment.gitBranch}` : 'preview' },
-      providerEnvironment: input.providerEnvironment, repositoryAccess: { status: ready ? 'ready' : 'needsGitAccess', repository: input.repository },
-      preparedNative: { projectName: project.name, pages: { projectMode, productionBranch: project.production_branch,
+      providerEnvironment: input.providerEnvironment,
+      ...(input.sourceMethod === 'upload' ? {} : { repositoryAccess: { status: ready ? 'ready' : 'needsGitAccess', repository: input.repository } }),
+      preparedNative: { projectName: project.name,
+        reviewNotice: `Uploads build on the controller in ${CLOUDFLARE_BUILD_IMAGE} with Wrangler ${CLOUDFLARE_WRANGLER_VERSION}, then send the prepared output to Cloudflare Pages.`,
+        pages: { projectMode, productionBranch: project.production_branch,
         ...(isObject(build) && typeof build.build_command === 'string' ? { buildCommand: build.build_command } : {}),
         ...(isObject(build) && typeof build.destination_dir === 'string' ? { buildOutputDirectory: build.destination_dir } : {}),
         ...(isObject(build) && typeof build.root_dir === 'string' ? { rootDirectory: build.root_dir } : {}) } } });
@@ -80,9 +87,9 @@ export const pagesLink: PreparationAction = { ...pagesPrepare, title: 'Link the 
   inputSchema: preparation.jsonSchema,
   async run(value: JsonValue) {
     const input = value as unknown as DeploymentTargetPreparationBaseV1;
-    if (!input.providerIdentity || !input.repositoryAccess || !input.preparedNative?.pages) {
+    if (!input.providerIdentity || !input.preparedNative?.pages) {
       throw new PluginError({ code: 'deployment_content_unavailable' });
     }
     return projectNativeJsonValueForTransport({ credentialPrincipal: input.credentialPrincipal, providerIdentity: input.providerIdentity,
-      providerEnvironment: input.providerEnvironment, repositoryAccess: input.repositoryAccess, preparedNative: input.preparedNative });
+      providerEnvironment: input.providerEnvironment, ...(input.repositoryAccess ? { repositoryAccess: input.repositoryAccess } : {}), preparedNative: input.preparedNative });
   } };

@@ -54,6 +54,32 @@ async function fixture(effect?: (request: HttpRequest, controller: AbortControll
 }
 
 describe('Vercel activated controller upload', () => {
+  it('inspects a non-GitHub upload source without provider Git access and links its exact project', async () => {
+    const requests: HttpRequest[] = [];
+    const http = createPluginHttpFixture({ async request(request) {
+      requests.push(request);
+      return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({
+        id: 'prj_exact', accountId: 'team_exact', name: 'example',
+        link: { type: 'github', org: 'other', repo: 'repository', repoId: 123 },
+      })) };
+    } });
+    const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+    try {
+      const { sourceIntent, deploymentId, expectedDeploymentRevision, actionOperationId, targetLinkId,
+        expectedTargetLinkRevision, ...selection } = input;
+      const prepared = await kit.invokeAction('targets-inspect-v1', {
+        ...selection, repository: input.repositoryAccess.repository,
+      });
+      expect(prepared).toMatchObject({ providerIdentity: input.providerIdentity, preparedNative: { projectName: 'example', reviewNotice: expect.stringContaining('Vercel builds uploaded source remotely') } });
+      expect(prepared).not.toHaveProperty('repositoryAccess');
+      if (!prepared || typeof prepared !== 'object' || Array.isArray(prepared)) throw new Error('Expected prepared project');
+      const { sourceMethod, ...linkInput } = selection;
+      const { repositoryAccess, ...withoutGitObservation } = linkInput;
+      expect(await kit.invokeAction('project-link', { ...withoutGitObservation, ...prepared })).toEqual(prepared);
+      expect(requests.map(request => [request.method, new URL(request.url).pathname])).toEqual([['GET', '/v9/projects/prj_exact']]);
+    } finally { await kit.dispose(); }
+  });
+
   it('uploads the admitted exact source bytes without a Git grant or controller build and returns remote build progress', async () => {
     const h = await fixture();
     try {
@@ -61,7 +87,8 @@ describe('Vercel activated controller upload', () => {
       const declaration = entry.manifest.contributes.actions.find(action => action.id === 'deploy-upload-v1');
       expect(declaration?.execution.target).toBe('daemon');
       const outcome = await h.invoke();
-      expect(DeploymentTargetRoleResultV1ProtocolSchema.parse(outcome)).toMatchObject({ state: 'running', providerDeploymentId: 'dpl_exact' });
+      expect(DeploymentTargetRoleResultV1ProtocolSchema.parse(outcome)).toMatchObject({ state: 'running', providerDeploymentId: 'dpl_exact',
+        uploadProvenance: { sourceManifestFingerprint: 'reviewed-manifest', build: { location: 'provider' } } });
       expect(h.materialize).toHaveBeenCalledExactlyOnceWith({ environmentId: 'environment', deploymentId: 'receipt' }, { signal: expect.any(AbortSignal) });
       const creation = h.requests.find(request => new URL(request.url).pathname === '/v13/deployments');
       expect(creation).toBeDefined();

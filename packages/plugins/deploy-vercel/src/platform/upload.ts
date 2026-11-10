@@ -48,8 +48,11 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
   await visit(source.rootPath, '');
   // Scratch custody stays uncommitted: invocation cleanup owns abort on every
   // outcome. commit() would retain an own-server serving release indefinitely.
-  return deployVercelFiles({ providerIdentity: input.providerIdentity, providerEnvironment: input.providerEnvironment,
+  const result = await deployVercelFiles({ providerIdentity: input.providerIdentity, providerEnvironment: input.providerEnvironment,
     projectName: input.preparedNative.projectName, files, sha: input.sourceIntent.sha }, io);
+  return 'code' in result ? result : { ...result, uploadProvenance: {
+    sourceManifestFingerprint: source.manifestFingerprint, build: { location: 'provider' as const },
+  } };
 }
 
 export const uploadAction: Extract<PluginActionDeclaration, { execution?: { target: 'daemon' } }> & {

@@ -1,6 +1,6 @@
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import type {
-  DeploymentTargetDeployInputV1, DeploymentTargetProviderIdentityV1,
+  DeploymentTargetDeployInputV1, DeploymentTargetUploadDeployInputV1, DeploymentTargetProviderIdentityV1,
   DeploymentTargetProviderEnvironmentV1, DeploymentTargetRepositoryAccessV1,
   DeploymentTargetRoleFailureV1, DeploymentTargetRoleResultV1,
 } from '@happier-dev/plugin-sdk';
@@ -14,6 +14,7 @@ type Selection = Readonly<{
   providerIdentity: ProjectCoordinates;
   providerEnvironment: DeploymentTargetProviderEnvironmentV1;
   repository: Repository;
+  sourceMethod?: (DeploymentTargetDeployInputV1 | DeploymentTargetUploadDeployInputV1)['sourceMethod'];
 }>;
 type ObservationInput = Pick<Selection, 'providerIdentity'> & Readonly<{ providerDeploymentId?: string }>;
 export type VercelPlatformContext = Readonly<{
@@ -24,7 +25,7 @@ export type VercelPlatformContext = Readonly<{
 export type VercelProjectPreparation = Readonly<{
   providerIdentity: DeploymentTargetProviderIdentityV1;
   providerEnvironment: VercelEnvironment;
-  repositoryAccess: DeploymentTargetRepositoryAccessV1;
+  repositoryAccess?: DeploymentTargetRepositoryAccessV1;
   projectName: string;
   reviewNotice?: string;
   gitSource?: Readonly<{ type: 'github'; repoId: string }>;
@@ -102,7 +103,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
   // Vercel's native GitHub integration does not support GitHub Enterprise Server
   // or other Git providers through this producer. Return the existing typed UI
   // refusal rather than a needsGitAccess result with no supported remedy.
-  if (input.repository.kind !== 'github' || input.repository.deployment !== 'https://github.com') {
+  if (input.sourceMethod !== 'upload' && (input.repository.kind !== 'github' || input.repository.deployment !== 'https://github.com')) {
     return failure('unsupported_action', 'link');
   }
   let response: HttpResponse;
@@ -160,6 +161,13 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
       reviewNotice = "Vercel will make this the project's first Production deployment.";
     }
   }
+  const identity = { providerAccountId: project.accountId, providerResourceId: project.id, providerEnvironment: scope(environment) };
+  // Upload is admitted against Happier's exact Source, independently of the provider's Git integration.
+  if (input.sourceMethod === 'upload') {
+    reviewNotice = [reviewNotice, 'Vercel builds uploaded source remotely; the controller only materializes and uploads the reviewed files.']
+      .filter(Boolean).join(' ');
+    return { providerIdentity: identity, providerEnvironment: environment, projectName: project.name, reviewNotice };
+  }
   const linked = record(link) && link.type === 'github' && text(link.org) && text(link.repo)
     && (text(link.repoId) || typeof link.repoId === 'number' && Number.isSafeInteger(link.repoId))
     && `${link.org}/${link.repo}`.toLowerCase() === input.repository.repository;
@@ -187,7 +195,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
       && repo.provider === 'github' && text(repo.namespace) && text(repo.slug)
       && `${repo.namespace}/${repo.slug}`.toLowerCase() === input.repository.repository);
   }
-  return { providerIdentity: { providerAccountId: project.accountId, providerResourceId: project.id, providerEnvironment: scope(environment) },
+  return { providerIdentity: identity,
     providerEnvironment: environment, projectName: project.name,
     ...(reviewNotice ? { reviewNotice } : {}),
     // Official installation entry: choose the GitHub account/organization and
@@ -256,7 +264,7 @@ export async function deployVercelCommit(input: VercelProjectPreparation & Pick<
   if (input.sourceIntent.kind !== 'repository') return failure('unsupported_action', 'source');
   // Connect/Check again owns repository inspection. Consume its admitted facts;
   // the provider request itself decides current write permissions.
-  if (input.repositoryAccess.status !== 'ready' || !input.gitSource) return failure('needsGitAccess', 'source');
+  if (input.repositoryAccess?.status !== 'ready' || !input.gitSource) return failure('needsGitAccess', 'source');
   return createVercelDeployment(input, { gitSource: { ...input.gitSource,
     ref: input.providerEnvironment.kind === 'preview' && input.providerEnvironment.gitBranch
       ? input.providerEnvironment.gitBranch : input.sourceIntent.sha, sha: input.sourceIntent.sha } }, context);

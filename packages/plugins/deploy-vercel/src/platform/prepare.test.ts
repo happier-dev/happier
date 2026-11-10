@@ -222,8 +222,8 @@ it('contributes executable runtime roles consuming captured preparation without 
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
     expect(entry.manifest.contributes.deploymentTargets).toContainEqual(expect.objectContaining({ role: 'runtime',
-      targetKind: 'vercel', actions: { inspect: 'targets-inspect-v1', link: 'project-link',
-        deploy: 'deploy', uploadDeploy: 'deploy-upload-v1', observe: 'observe', cancel: 'cancel', logs: { build: 'build-logs-read' } } }));
+      targetKind: 'vercel', actions: expect.objectContaining({ inspect: 'targets-inspect-v1', link: 'project-link',
+        deploy: 'deploy', uploadDeploy: 'deploy-upload-v1', observe: 'observe', cancel: 'cancel', logs: { build: 'build-logs-read' } }) }));
     const account = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'connected-project-pat' };
     const common = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1, credentialRef: account,
       credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,

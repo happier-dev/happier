@@ -11,6 +11,26 @@ const preparation = { v: 1, serverId: 'home', environmentId: 'environment', expe
   providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'existing-pages' } };
 const repository = { kind: 'gitlab', deployment: 'https://gitlab.com', repository: 'example/app' };
 
+it('prepares and links a direct upload without requiring provider Git access', async () => {
+  const requests: HttpRequest[] = [];
+  const http = createPluginHttpFixture({ async request(request) {
+    requests.push(request);
+    return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: true,
+      result: { id: 'project-id', name: 'existing-pages', production_branch: 'main' } })) };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  try {
+    const prepared = await kit.invokeAction('pages-inspect', { ...preparation, repository, sourceMethod: 'upload' });
+    expect(prepared).toMatchObject({ providerIdentity: preparation.providerIdentity,
+      preparedNative: { reviewNotice: expect.stringContaining('Wrangler'), pages: { projectMode: 'directUpload' } } });
+    expect(prepared).not.toHaveProperty('repositoryAccess');
+    if (!prepared || typeof prepared !== 'object' || Array.isArray(prepared)) throw new Error('Expected prepared Pages project');
+    expect(await kit.invokeAction('pages-link', { ...preparation, ...prepared })).toEqual(prepared);
+    expect(requests.map(request => [request.method, new URL(request.url).pathname]))
+      .toEqual([['GET', '/client/v4/accounts/account/pages/projects/existing-pages']]);
+  } finally { await kit.dispose(); }
+});
+
 it('adopts the exact existing Pages project, discloses native mode/build configuration and links without another provider read', async () => {
   const requests: HttpRequest[] = [];
   const http = createPluginHttpFixture({ async request(request) {

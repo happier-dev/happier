@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetRoleResultV1ProtocolSchema as output,
@@ -54,12 +55,23 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
   const form = new FormData();
   form.set('manifest', JSON.stringify(Object.fromEntries(prepared.assets.map(asset => [`/${asset.path}`, asset.hash]))));
   for (const [name, value] of Object.entries(prepared.multipartFields ?? {})) form.set(name, value);
+  const files: { name: string; contentType: string; sha256: string }[] = [];
   for (const file of prepared.multipartFiles) {
     const bytes = await readFile(file.path, { signal: context.signal });
-    form.set(file.name, new Blob([Uint8Array.from(bytes).buffer], { type: file.contentType ?? 'application/octet-stream' }), file.name);
+    const contentType = file.contentType ?? 'application/octet-stream';
+    form.set(file.name, new Blob([Uint8Array.from(bytes).buffer], { type: contentType }), file.name);
+    files.push({ name: file.name, contentType, sha256: createHash('sha256').update(bytes).digest('hex') });
   }
   // The source stays uncommitted: the existing invocation cleanup owns scratch.
-  return pagesResult(await createPagesDeployment(input, form, io));
+  const result = pagesResult(await createPagesDeployment(input, form, io));
+  return { ...result, uploadProvenance: { sourceManifestFingerprint: source.manifestFingerprint,
+    build: { location: 'controller', image: prepared.provenance.image,
+      toolchain: { name: 'wrangler', version: prepared.provenance.wranglerVersion },
+      outputManifestFingerprint: `sha256:${createHash('sha256').update(JSON.stringify({
+        assets: [...prepared.assets].sort((a, b) => a.path.localeCompare(b.path)),
+        fields: Object.entries(prepared.multipartFields ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+        files: files.sort((a, b) => a.name.localeCompare(b.name)),
+      })).digest('hex')}` } } };
 }
 
 export const pagesUpload: Extract<PluginActionDeclaration, { execution?: { target: 'daemon' } }> & {
