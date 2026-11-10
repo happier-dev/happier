@@ -1,4 +1,5 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import axios from 'axios';
 import { logger } from '@/ui/logger';
 import { isRecord } from '@happier-dev/protocol/common/records';
@@ -29,12 +30,13 @@ import { DeploymentActionFailureV1Schema } from '@happier-dev/protocol/deploymen
 import { resolveOwnServerDeploymentIdentityForHost } from './targets/ownServer/paths';
 import { readEnvironmentSecretLaunchAdmissionForHost } from './secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { prepareEnvironmentSecretBindings } from './secrets/environmentSecretBindingService';
-import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntimeRegistry } from '@/plugins/testkit/admittedRuntime';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { DeploymentTargetLinkProviderContentV1Schema, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
-import { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+import { DeploymentTargetVariablesReadResultV1ProtocolSchema, DeploymentTargetVariablesSyncResultV1ProtocolSchema, DeploymentTargetLogsResultV1ProtocolSchema, DeploymentTargetDomainResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+import { DeploymentDomainHeaderV1Schema, DeploymentDomainTransitionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import * as installationStore from '@/daemon/identity/store';
 import { createPlainProjectAccountRefRow, mockProjectAccountRowsHttpBoundary, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
@@ -92,6 +94,8 @@ import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourc
 import { isReviewedDeploymentChild } from '@/api/externalActionExecutionAuthorization';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { projectDaemonRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { handleActionsCommand } from '@/cli/commands/actions';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { DeploymentDeployIntentInputV1Schema, DeploymentDeployInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { WorkflowDefinitionV1Schema, openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1,
@@ -171,6 +175,190 @@ const resolveOwnerRequesterIdentity = async (context: import('@happier-dev/proto
 };
 
 describe('installed deployment storage and target composition', () => {
+    it.each(['missing', 'other service'] as const)('holds a read-only query when its exact role is %s without opening administrator grants', async role => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-data-query-',
+            env: { HAPPIER_SERVER_URL: 'https://home.test', HAPPIER_WEBAPP_URL: 'https://home.test' } }, async () => {
+        const detail = createDeploymentEnvironmentDetailV1();
+        const receipt = createDeploymentReceiptDetailV1();
+        const link = detail.targetLinks[0]!.targetLink;
+        link.activeDeploymentId = receipt.deployment.id;
+        detail.content.template = { templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '1', ref: { kind: 'version', version: '1' } },
+            definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+            services: ['db', 'analytics'], data: [
+                { engine: 'postgres', service: 'db', version: '16', variables: { database: 'DB_NAME' } },
+                { engine: 'postgres', service: 'analytics', version: '16', variables: { database: 'ANALYTICS_NAME' } },
+            ] };
+        detail.content.bindings = [{ purpose: 'variable', name: 'DB_NAME', phase: 'runtime', source: { kind: 'value', value: 'app' } },
+            { purpose: 'variable', name: 'ANALYTICS_NAME', phase: 'runtime', source: { kind: 'value', value: 'analytics' } },
+            ...(role === 'other service' ? [{ purpose: 'dataRole' as const, service: 'analytics', role: 'readOnlyPassword' as const,
+                source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('analytics-role'), resourceRevision: 1 } }] : [])];
+        receipt.deployment.environmentId = detail.environment.id;
+        receipt.deployment.targetLinkId = link.id;
+        receipt.content.ownServer = { approvedInputBasis: OwnServerDeploymentInputBasisV1Schema.parse({
+            v: 1, environmentId: detail.environment.id, environmentRevision: detail.environment.revision,
+            targetLinkId: link.id, targetLinkRevision: link.revision, sourceIntent: receipt.content.sourceIntent,
+            manifestFingerprint: `sha256:${'b'.repeat(64)}`, configInputDigests: [], physicalProjectName: 'query-project',
+            toolVersion: '2.35.1', services: ['db', 'analytics'], profiles: [],
+            members: link.members.map(({ state: _state, ...member }) => member),
+            bindings: detail.content.bindings, images: [],
+        }) };
+        const documents = new Map<string, { row: Pick<typeof receipt.deployment,
+            'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>; kind: string; content: unknown }>([
+            [detail.environment.contentArtifactId, { row: detail.environment, kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, content: detail.content }],
+            [link.contentArtifactId, { row: link, kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, content: detail.targetLinks[0]!.content }],
+            [receipt.deployment.contentArtifactId, { row: receipt.deployment, kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, content: receipt.content }],
+        ]);
+        const keys = tweetnacl.sign.keyPair();
+        vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+            installationId: 'installation-a', createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),
+            privateKey: Buffer.from(keys.secretKey).toString('base64url') });
+        const secretAdmissions: string[] = [];
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            const path = new URL(String(request.url)).pathname;
+            if (path.endsWith('/secret-launch-admission')) {
+                secretAdmissions.push(path);
+                throw new Error('Missing role must not acquire any credential');
+            }
+            return { status: 200, data: path.includes('/receipts/')
+                ? { ok: true, deployment: receipt.deployment, cancellable: false }
+                : { ok: true, environment: detail.environment, targetLinks: [link] } };
+        });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200,
+                data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+            const document = documents.get(path.slice('/v1/artifacts/'.length));
+            if (!document) throw new Error(`Unexpected read ${path}`);
+            return { status: 200, data: { id: document.row.contentArtifactId, ownerAccountId: 'owner', access: 'owner',
+                publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                header: encodePlainArtifactStoredContent({ kind: document.kind, title: 'Database' }),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(document.content) }),
+                headerVersion: document.row.contentHeaderVersion, bodyVersion: document.row.contentBodyVersion,
+                seq: 1, createdAt: 1, updatedAt: 1 } };
+        });
+        let nativeAcquisitions = 0;
+        const deps = createDaemonDeploymentActionDeps({ credentials: { token: 'fixture', encryption: null }, serverId: 'home',
+            serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a', resolveRequesterIdentity: resolveOwnerRequesterIdentity,
+            runtime: { async acquire() { nativeAcquisitions++; throw new Error('Setup hold cannot acquire native custody'); } } });
+        expect(await deps.deploymentAction('deployments.data.query', { serverId: 'home', environmentId: detail.environment.id,
+            expectedRevision: detail.environment.revision, machineId: 'machine-a', installationId: 'installation-a',
+            targetLinkId: link.id, deploymentId: receipt.deployment.id, service: 'db', sql: 'SELECT 1', params: {} }, ownerContext))
+            .toMatchObject({ ok: false, error: 'deployment_unavailable', diagnostic: { code: 'read_role_setup_required' } });
+        expect(secretAdmissions).toEqual([]);
+        expect(nativeAcquisitions).toBe(0);
+        });
+    });
+    it.each(['deployments.receipts.observe', 'deployments.observation.get'] as const)(
+        'routes CLI %s to the receipt owner for a cold native receipt', async actionId => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-native-observation-',
+            env: { HAPPIER_SERVER_URL: 'https://home.test', HAPPIER_WEBAPP_URL: 'https://home.test' } }, async () => {
+        const detail = createDeploymentEnvironmentDetailV1();
+        const receipt = createDeploymentReceiptDetailV1();
+        const link = detail.targetLinks[0]!.targetLink;
+        const keys = tweetnacl.sign.keyPair();
+        const machine = { id: 'machine-a', kind: 'persistent', active: true, activeAt: Date.now(),
+            installationId: 'installation-a', installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+            revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
+        receipt.deployment.environmentId = detail.environment.id;
+        receipt.deployment.targetLinkId = link.id;
+        const documents = new Map<string, { row: Pick<typeof receipt.deployment,
+            'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>; kind: string; content: unknown }>([
+            [detail.environment.contentArtifactId, { row: detail.environment, kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, content: detail.content }],
+            [link.contentArtifactId, { row: link, kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, content: detail.targetLinks[0]!.content }],
+            [receipt.deployment.contentArtifactId, { row: receipt.deployment, kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, content: receipt.content }],
+        ]);
+        // Home metadata and the Account Artifact transport are system boundaries.
+        const transportPaths: string[] = [];
+        vi.spyOn(axios, 'request').mockImplementation(async request => ({ status: 200,
+            data: String(request.url).includes('/receipts/')
+                ? { ok: true, deployment: receipt.deployment, cancellable: false }
+                : { ok: true, environment: detail.environment, targetLinks: [link] } }));
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(url).pathname;
+            transportPaths.push(`GET ${path}`);
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200,
+                data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+            if (path === '/v1/features/authenticated') return { status: 200,
+                data: { features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_native_home' } } } };
+            if (path === '/v1/machines/machine-a') return { status: 200, data: { machine } };
+            if (path === '/v1/machines') return { status: 200, data: [machine] };
+            const document = documents.get(path.slice('/v1/artifacts/'.length));
+            if (!document) throw new Error('Unexpected Artifact read');
+            return { status: 200, data: { id: document.row.contentArtifactId, ownerAccountId: 'owner',
+                access: 'owner', publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                header: encodePlainArtifactStoredContent({ kind: document.kind, title: 'Native deployment' }),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(document.content) }),
+                headerVersion: document.row.contentHeaderVersion, bodyVersion: document.row.contentBodyVersion,
+                seq: 1, createdAt: 1, updatedAt: 1 } };
+        });
+        const deps = createDaemonDeploymentActionDeps({ credentials: { token: 'fixture', encryption: null },
+            serverId: 'srv_native_home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
+            resolveRequesterIdentity: resolveOwnerRequesterIdentity,
+            runtime: { async acquire() { throw new Error('Observation cannot acquire native runtime'); } } });
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
+        const input = { serverId: 'srv_native_home', environmentId: detail.environment.id, deploymentId: receipt.deployment.id,
+            ...(actionId === 'deployments.observation.get' ? { targetLinkId: link.id } : {}) };
+        const context = { ...ownerContext, surface: 'cli' as const, serverId: 'srv_native_home',
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) };
+        const expected = {
+            ok: false, errorCode: 'unsupported_action', effectAttempted: false,
+            details: { reason: 'target_not_supported', targetKind: 'ownServer',
+                requiredFact: 'providerDeploymentObservation', supportedAction: 'deployments.receipts.get',
+                remedy: expect.stringMatching(/\S/) },
+        };
+        expect(await executor.execute(actionId, input, context)).toMatchObject(expected);
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+        const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+        const profile = { id: configuration.activeServerId, name: 'Home', serverUrl: 'https://home.test', webappUrl: 'https://home.test',
+            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact' as const,
+            homeConnectionDescriptor: { v: 1 as const, homeServerIdentityId: 'srv_native_home', canonicalServerUrl: 'https://home.test',
+                revision: 1, endpoints: [{ kind: 'https' as const, url: 'https://home.test' }] } };
+        await persistence.updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [profile.id]: profile } }));
+        persistence.writeDaemonState({ pid: process.pid, httpPort: 43123, startedAt: Date.now(), startedWithCliVersion: 'test',
+            controlToken: 'fixture-control', machineId: 'machine-a', accountId: 'owner' });
+        const received: string[] = [];
+        // Home admits these private-content roots even on the own Machine.
+        // Substitute HTTP only; the CLI dispatcher and receiving daemon Action owners stay real.
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            transportPaths.push(`POST ${new URL(String(url)).pathname}`);
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            expect(request.envelope.target).toEqual({ kind: 'machine', machineId: machine.id });
+            if (String(url).endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'home-proof', binding: {
+                accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+                admittedMachineRole: 'manage', environmentId: detail.environment.id,
+                serverIdentityId: 'srv_native_home', custodianAccountId: 'owner', machineId: machine.id, installationId: machine.installationId,
+                actionId, requestId: request.envelope.requestId, target: request.envelope.target,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+            } } };
+            received.push(actionId);
+            const result = await executor.execute(actionId, request.envelope.input, context);
+            return { status: 200, data: { v: 1, actionId, requestId: request.envelope.requestId, execution: result } };
+        });
+        let output = '';
+        vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+            output += String(chunk);
+            const callback = args.find(argument => typeof argument === 'function');
+            if (typeof callback === 'function') callback();
+            return true;
+        });
+        try {
+            await handleActionsCommand(['invoke', actionId, '--input-json', JSON.stringify(input),
+                '--server-id', profile.id, '--machine-id', 'machine-a', '--json'], {
+                readCredentialsFn: async () => credentials, readCredentialsForServerIdFn: async () => credentials,
+                getServerProfileFn: async () => profile,
+                createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params,
+                    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }) }),
+            });
+            expect(received, JSON.stringify({ output: JSON.parse(output), transportPaths })).toEqual([actionId]);
+            expect(JSON.parse(output)).toMatchObject({ ok: false, error: { code: 'unsupported_action', details: expected.details } });
+        } finally { vi.unstubAllGlobals(); process.exitCode = undefined; }
+        });
+    });
+
     it('keeps own-server runtime log preparation independent of private Account content', async () => {
         const detail = createDeploymentEnvironmentDetailV1();
         const link = detail.targetLinks[0]!.targetLink;
@@ -579,7 +767,7 @@ describe('installed deployment storage and target composition', () => {
         await expect(deps.deploymentAction('deployments.environments.update', { ...prepared,
             environmentId: environment.environment.id, expectedRevision: 1 }, context))
             .resolves.toMatchObject({ ok: false, errorCode: 'action_forbidden' });
-        for (const override of [{ sha: 'a'.repeat(40) }, { sourceMethod: 'upload' as const },
+        for (const override of [{ sha: 'a'.repeat(40) }, { sourceMethod: 'upload' as const }, { services: ['database'] },
             { sourceIntent: createDeploymentReceiptDetailV1().content.sourceIntent }]) {
             await expect(deps.prepareDeployCandidate({ environmentId: environment.environment.id, context, ...override }))
                 .resolves.toMatchObject({ ok: false, errorCode: 'action_forbidden' });
@@ -980,9 +1168,13 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['explicit failure policy', 'build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['provider Domain verify', 'provider Domain teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
+        const variableScenario = scenario.startsWith('variable ');
+        const domainScenario = scenario.startsWith('provider Domain');
+        const domainTeardown = scenario === 'provider Domain teardown';
+        const domainRole = domainTeardown ? 'domains.remove' as const : 'domains.verify' as const;
         const rootSource = scenario.startsWith('root source ');
         const rootSourceForeign = scenario === 'root source foreign';
         const rootApproval = scenario.startsWith('root source approval ');
@@ -1017,7 +1209,7 @@ describe('installed deployment storage and target composition', () => {
             repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/project' } };
         // Retained older links/receipts did not carry a native preparation.
         const capturedPreparation = scenario === 'retained receipt observe' ? {} : { preparedNative, repositoryAccess };
-        const roles = ['inspect', 'link', 'deploy', 'observe', 'uploadDeploy', ...(scenario === 'build logs' ? ['logs.build' as const] : [])] as const;
+        const roles = ['inspect', 'link', 'deploy', 'observe', 'uploadDeploy', ...(scenario === 'build logs' ? ['logs.build' as const] : []), ...(variableScenario ? ['variables.read' as const, 'variables.sync' as const] : []), ...(domainScenario ? [domainRole, ...(domainTeardown ? ['teardown' as const] : [])] : [])] as const;
         const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner', ...(sdkBackgroundObservation ? {
             tokenEpoch: 1, provenance: { v: 1, kind: 'account', authority: 'present_user' } } : {}) })).toString('base64url')}.s`, encryption: null };
         let sdkHomeUrl = 'https://platform.test';
@@ -1068,7 +1260,7 @@ describe('installed deployment storage and target composition', () => {
             // SCM materialization consumes the real daemon-applied registry owner.
             ...(scenario === 'upload source' ? { controller: pluginReloadController } : {}),
             runtimeOptions: { resolveCurrentMachineId: () => 'machine-a', connectedAccounts,
-                ...(scenario === 'build logs' ? { deploymentAccountExecution: { credentials, serverUrl: sdkHomeUrl,
+                ...(scenario === 'build logs' || variableScenario || domainScenario ? { deploymentAccountExecution: { credentials, serverUrl: sdkHomeUrl,
                     serverId: 'home', serverIdentityId: 'home', machineId: 'machine-a', isCurrent: async () => true } } : {}),
                 ...(rootApproval ? { readDaemonRequesterWorkAttribution: () => projectDaemonRequesterWorkAttribution({
                     serverId: 'profile-home', custodianAccountId: 'owner', machineId: 'machine-a', installationId: 'installation-a' }, rootApprovalHomeUnavailable ? null : 'home') } : {}),
@@ -1085,14 +1277,16 @@ describe('installed deployment storage and target composition', () => {
                     connectedAccountDescriptors: [{ id: 'service', title: 'Platform account', authentication: {
                     defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
                         fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }] }] } }],
-                    actions: [...roles.map(id => ({ id: id === 'uploadDeploy' ? 'upload-deploy' : id === 'logs.build' ? 'build-logs-read' : id, title: id, scopes: ['global'], surfaces: ['plugin'],
+                    actions: [...roles.map(id => ({ id: id === 'uploadDeploy' ? 'upload-deploy' : id === 'logs.build' ? 'build-logs-read' : id === 'variables.read' ? 'variables-read' : id === 'variables.sync' ? 'variables-sync' : id === 'domains.verify' ? 'domains-verify' : id === 'domains.remove' ? 'domains-remove' : id, title: id, scopes: ['global'], surfaces: ['plugin'],
                     placementBindings: [],
                     execution: { target: 'daemon' },
                     hostAccess: ['manage'],
                     connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'manage' }],
-                    dangerLevel: id === 'inspect' || id === 'observe' || id === 'logs.build' ? 'safe' : 'writesLocal',
+                    dangerLevel: id === 'inspect' || id === 'observe' || id === 'logs.build' || id === 'variables.read' || id === 'domains.verify' ? 'safe' : 'writesLocal',
                     inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema,
-                    resultSchema: id === 'logs.build' ? DeploymentTargetLogsResultV1ProtocolSchema.jsonSchema : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
+                    resultSchema: id === 'domains.verify' || id === 'domains.remove' ? DeploymentTargetDomainResultV1ProtocolSchema.jsonSchema : id === 'variables.read' ? DeploymentTargetVariablesReadResultV1ProtocolSchema.jsonSchema
+                        : id === 'variables.sync' ? DeploymentTargetVariablesSyncResultV1ProtocolSchema.jsonSchema
+                        : id === 'logs.build' ? DeploymentTargetLogsResultV1ProtocolSchema.jsonSchema : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
                 })), ...(scenario === 'upload source' ? [{ id: 'source-check', title: 'Check retired source', scopes: ['global'],
                     surfaces: ['cli'], placementBindings: [], execution: { target: 'daemon' }, dangerLevel: 'safe',
                     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -1101,7 +1295,10 @@ describe('installed deployment storage and target composition', () => {
                     linkSchema: { type: 'object', properties: {}, additionalProperties: false },
                     ...(scenario === 'teardown with data target' ? { role: 'data' } : { role: 'runtime',
                         actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', uploadDeploy: 'upload-deploy',
-                            ...(scenario === 'build logs' ? { logs: { build: 'build-logs-read' } } : {}) } }) }] } },
+                            ...(scenario === 'build logs' ? { logs: { build: 'build-logs-read' } } : {}),
+                            ...(variableScenario ? { variables: { read: 'variables-read', sync: 'variables-sync' } } : {}),
+                            ...(domainScenario ? { domains: domainTeardown ? { remove: 'domains-remove' } : { verify: 'domains-verify' } } : {}),
+                            ...(domainTeardown ? { teardown: 'teardown' } : {}) } }) }] } },
             files: { 'daemon.mjs': `import { PluginError } from '@happier-dev/plugin-sdk/errors';
                 import { readFile } from 'node:fs/promises';
                 import { join } from 'node:path';
@@ -1124,7 +1321,13 @@ describe('installed deployment storage and target composition', () => {
                     catch (error) { backgroundProbe = { errorCode: error.code, error: error.message }; }
                     finally { finishBackground(); }
                 });` : ''}
-                ${roles.map(role => `api.actions.register('${role === 'uploadDeploy' ? 'upload-deploy' : role === 'logs.build' ? 'build-logs-read' : role}', async (input, context) => {
+                ${roles.map(role => `api.actions.register('${role === 'uploadDeploy' ? 'upload-deploy' : role === 'logs.build' ? 'build-logs-read' : role === 'variables.read' ? 'variables-read' : role === 'variables.sync' ? 'variables-sync' : role === 'domains.verify' ? 'domains-verify' : role === 'domains.remove' ? 'domains-remove' : role}', async (input, context) => {
+                    ${role === 'domains.remove' ? `return { v: 1, hostname: input.domain.hostname, state: 'removed', dns: [] };` : ''}
+                    ${role === 'domains.verify' ? `return { v: 1, hostname: input.domain.hostname, state: 'pending', dns: [{ type: 'TXT', name: '_verification.example.test', value: 'private-dns-token' }] };` : ''}
+                    ${role === 'variables.read' ? `return { v: 1, variables: [{ key: 'MODE', providerId: 'provider-mode', present: true, secret: false, owned: true, drift: 'current', providerRevision: '10' }] };` : ''}
+                    ${role === 'variables.sync' ? `if (input.set[0]?.name !== 'MODE' || input.set[0]?.source.value !== 'release' || input.owned.length !== 0) throw new Error('Wrong reviewed variables');
+                    return { v: 1, owned: [{ key: 'MODE', providerId: 'provider-mode', desiredRevision: input.desiredRevision, providerRevision: '10' }],
+                        variables: [{ key: 'MODE', providerId: 'provider-mode', present: true, secret: false, owned: true, drift: 'current', providerRevision: '10' }], failures: [] };` : ''}
                     ${role === 'logs.build' ? `if (input.providerDeploymentId !== 'existing-provider-deployment') throw new Error('Wrong retained deployment');
                     return { kind: 'page', page: { sourceRevision: input.providerDeploymentId, text: 'Build complete\\n', nextCursor: null, truncated: false } };` : ''}
                     ${backgroundObservation && role === 'observe' ? `if (++observationCount === 1) return {
@@ -1194,6 +1397,9 @@ describe('installed deployment storage and target composition', () => {
                 document: 'services: {}', profiles: [], services: [] });
             const sourceIntent = environment.content.definition;
             if (scenario === 'compact repository missing SCM provider') environment.content.definition = { kind: 'repository', ref: 'main' };
+            if (variableScenario) environment.content.bindings.push({ purpose: 'registry', targetLinkId: row.targetLink.id,
+                access: 'pull', registryOrigin: 'https://registry.example.test',
+                source: { kind: 'secret', ref: 'happier:shared-secret:v1:registry', resourceRevision: 1 } });
             const documents = new Map<string, Record<string, unknown>>();
             let settling = false;
             const settlementReads = { metadata: 0, environmentBodies: 0, targetBodies: 0 };
@@ -1251,6 +1457,11 @@ describe('installed deployment storage and target composition', () => {
             vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(MachineInstallationIdentityV1Schema.parse({ version: 1,
                 installationId: 'installation-a', createdAt: 1, publicKey: Buffer.from(identity.publicKey).toString('base64url'),
                 privateKey: Buffer.from(identity.secretKey).toString('base64url') }));
+            const retainedLease = scenario === 'leased target preparation' ? runtime.controller.tryAcquireRuntimeRegistry() : null;
+            if (scenario === 'leased target preparation') {
+                if (!retainedLease) throw new Error('Expected the preparation registry lease');
+                await retireAdmittedPluginRuntimeRegistry(runtime);
+            }
             const deps = createDaemonDeploymentActionDeps({
                 resolveRequesterIdentity: rootSourceForeign ? async current => {
                     const owner = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home',
@@ -1268,11 +1479,112 @@ describe('installed deployment storage and target composition', () => {
                 credentials,
                 serverId: 'home', serverHttpBaseUrl: 'https://platform.test', machineId: 'machine-a',
                 acquirePluginRuntimeRegistryLease: async () => {
-                    const lease = runtime.controller.tryAcquireRuntimeRegistry();
+                    const lease = retainedLease ?? runtime.controller.tryAcquireRuntimeRegistry();
                     if (!lease) throw new Error('Fixture registry retired');
                     return lease;
                 },
                 runtime: { async acquire() { throw new Error('Platform must not acquire native execution'); } } });
+            if (domainScenario) {
+                Object.assign(row.targetLink, { machineId: 'machine-a', installationId: 'installation-a' });
+                const content = { hostname: 'app.example.test', target: { kind: 'provider' } };
+                const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'platform-domain', environmentId: environment.environment.id,
+                    targetLinkId: row.targetLink.id, revision: 1, state: 'pending', provider: true,
+                    providerPlacement: { serverId: 'home', accountId: 'owner', environmentId: environment.environment.id,
+                        targetLinkId: row.targetLink.id, domainId: 'platform-domain', controller: { machineId: 'machine-a', installationId: 'installation-a' },
+                        actionOperationId: 'domain-operation', requestId: 'domain-request' },
+                    contentArtifactId: 'platform-domain-artifact', contentHeaderVersion: 1, contentBodyVersion: 1,
+                    createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1 });
+                put(domain.contentArtifactId, 'deployment-domain.v1', content);
+                const previousHttp = vi.mocked(axios.request).getMockImplementation()!;
+                vi.mocked(axios.request).mockImplementation(async request => {
+                    const path = new URL(request.url!).pathname;
+                    if (path.endsWith('/domains')) return { status: 200, data: { ok: true, environmentId: environment.environment.id,
+                        revision: environment.environment.revision, domains: [domain], nextCursor: null } };
+                    if (path.endsWith(`/domains/${domain.id}`)) return { status: 200, data: { ok: true,
+                        environmentId: environment.environment.id, revision: environment.environment.revision, domain } };
+                    if (path.endsWith(`/domains/${domain.id}/transitions`)) {
+                        const wire = DeploymentDomainTransitionInputV1Schema.parse(request.data);
+                        expect(wire).toMatchObject({ observations: [], providerObservation: { placement: domain.providerPlacement,
+                            state: 'warning', proof: expect.any(Object), contentUpdate: { expectedBodyVersion: 1 } } });
+                        const privateBody = decodePlainArtifactStoredContent(String(wire.providerObservation!.contentUpdate!.body));
+                        expect(privateBody).toMatchObject({ body: expect.stringContaining('private-dns-token') });
+                        return { status: 200, data: { ok: true, environmentId: environment.environment.id,
+                            revision: environment.environment.revision, domain: { ...domain, state: 'warning', revision: 2, contentBodyVersion: 2 } } };
+                    }
+                    return previousHttp(request);
+                });
+                if (domainTeardown) {
+                    const plan = await deps.prepareHostReviewedChildren!({ actionId: 'deployments.teardown',
+                        input: { serverId: 'home', environmentId: environment.environment.id,
+                            expectedRevision: environment.environment.revision, targetLinkId: row.targetLink.id,
+                            expectedTargetLinkRevision: row.targetLink.revision, requestKey: 'retire-provider-domain', reason: 'manual',
+                            contentArtifactId: 'teardown-artifact', contentHeaderVersion: 1, contentBodyVersion: 1 }, context: ownerContext });
+                    expect(plan, JSON.stringify(plan)).toMatchObject({ children: expect.arrayContaining([
+                        expect.objectContaining({ role: 'domains.remove', input: expect.objectContaining({ domainId: domain.id,
+                            domain: { hostname: content.hostname } }) }),
+                    ]) });
+                    expect(nativeReads).toBe(0);
+                    return;
+                }
+                const acquireLease = async () => runtime.controller.tryAcquireRuntimeRegistry() ?? (() => { throw new Error('Retired Domain registry'); })();
+                const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                    listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(runtime.registry, selection),
+                    invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: acquireLease }) });
+                const result = await executor.execute('deployments.domains.verify', { serverId: 'home', environmentId: environment.environment.id,
+                    domainId: domain.id, expectedRevision: environment.environment.revision, expectedDomainRevision: domain.revision, requestKey: 'check-domain' },
+                    { ...ownerContext, surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home',
+                        serverIdentityId: 'home', runtimeAccountId: 'owner', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, domain: { id: domain.id, state: 'warning', revision: 2 } } });
+                expect(JSON.stringify(result)).not.toContain('private-dns-token');
+                expect(nativeReads).toBe(0);
+                return;
+            }
+            if (variableScenario) {
+                const acquireLease = async () => {
+                    const lease = runtime.controller.tryAcquireRuntimeRegistry();
+                    if (!lease) throw new Error('Fixture registry retired');
+                    return lease;
+                };
+                const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                    listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(runtime.registry, selection),
+                    invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: acquireLease }) });
+                const context = { ...ownerContext, surface: 'cli' as const, authority: 'present_user' as const,
+                    actionCaller: { kind: 'host' as const }, serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'owner',
+                    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+                        'deployments.bindings.set': ['cli'], 'deployments.observation.get': ['cli'] } }) };
+                if (scenario === 'variable metadata') {
+                    const result = await executor.execute('deployments.observation.get', { serverId: 'home',
+                        environmentId: environment.environment.id, targetLinkId: row.targetLink.id, variables: true }, context);
+                    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, providerVariables: { v: 1,
+                        variables: [{ key: 'MODE', present: true, secret: false, owned: true, drift: 'current' }] } } });
+                    expect(nativeReads).toBe(0);
+                    return;
+                }
+                const previousHttp = vi.mocked(axios.request).getMockImplementation()!;
+                vi.mocked(axios.request).mockImplementation(async request => {
+                    if (!new URL(request.url!).pathname.endsWith('/bindings')) return previousHttp(request);
+                    const prepared = request.data;
+                    expect(prepared).toMatchObject({ grants: [], targetLinkContent: { targetLinkId: row.targetLink.id,
+                        expectedTargetLinkRevision: row.targetLink.revision } });
+                    const environmentBody = decodePlainArtifactStoredContent(String(documents.get(prepared.contentArtifactId)!.body));
+                    expect(environmentBody).toMatchObject({ body: expect.stringContaining('registry.example.test') });
+                    const candidate = documents.get(prepared.targetLinkContent.contentArtifactId)!;
+                    const body = decodePlainArtifactStoredContent(String(candidate.body));
+                    expect(body).toMatchObject({ body: expect.stringContaining('provider-mode') });
+                    return scenario === 'variable sync storage conflict'
+                        ? { status: 409, data: { ok: false, error: 'deployment_conflict' } }
+                        : { status: 200, data: { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision + 1 } };
+                });
+                const result = await executor.execute('deployments.bindings.set', { serverId: 'home',
+                    environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
+                    set: [{ purpose: 'variable', phase: 'build', name: 'MODE', source: { kind: 'value', value: 'release' } }], remove: [] }, context);
+                expect(result, JSON.stringify(result)).toMatchObject(scenario === 'variable sync storage conflict'
+                    ? { ok: false, errorCode: 'deployment_conflict', effectAttempted: true, details: {
+                        providerVariables: { persisted: false, failures: [], variables: [{ key: 'MODE', owned: true }] } } }
+                    : { ok: true, result: { ok: true, providerVariables: { persisted: true, failures: [], variables: [{ key: 'MODE', owned: true }] } } });
+                expect(nativeReads).toBe(0);
+                return;
+            }
             if (scenario === 'teardown without role' || scenario === 'teardown without role, descriptor unavailable'
                 || scenario === 'teardown without role, remove Environment' || scenario === 'teardown with data target') {
                 if (scenario === 'teardown without role, descriptor unavailable') row.targetLink.source = { kind: 'plugin',
@@ -1336,6 +1648,7 @@ describe('installed deployment storage and target composition', () => {
             expect(environmentBodies() - bodiesBeforeCandidate).toBe(1);
             expect(nativeReads).toBe(0);
             if (!candidate.ok) throw new Error(candidate.errorCode);
+            if (scenario === 'leased target preparation') return;
             const platformCandidate = DeploymentPlatformContentV1Schema.parse(candidate.content);
             const prepared = await deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: candidate.input,
                 context: ownerContext });
@@ -1385,7 +1698,9 @@ describe('installed deployment storage and target composition', () => {
                 ? { ...candidate.content, sourceIntent: { ...sourceIntent, contentRevision: sourceIntent.contentRevision + 1 } }
                 : scenario === 'build logs' || scenario === 'retained receipt observe' || backgroundObservation ? { ...platformCandidate,
                     platform: { ...platformCandidate.platform, observation: { v: 1, state: backgroundObservation ? 'queued' : 'running',
-                        providerDeploymentId: 'existing-provider-deployment', observedAtMs: 1 } } }
+                        providerDeploymentId: 'existing-provider-deployment', observedAtMs: 1,
+                        ...(scenario === 'retained receipt observe' ? { uploadProvenance: { sourceManifestFingerprint: 'approved-manifest',
+                            build: { location: 'provider' as const } } } : {}) } } }
                 : scenario === 'admission cause retained approval' ? { ...platformCandidate,
                     platform: { ...platformCandidate.platform, providerIdentity: {
                         ...platformCandidate.platform.providerIdentity, providerResourceId: 'private-substituted-project' } } }
@@ -1879,6 +2194,8 @@ describe('installed deployment storage and target composition', () => {
                 const persisted = DeploymentPlatformContentV1Schema.parse(JSON.parse(body.body));
                 expect(persisted.steps).toContainEqual(expect.objectContaining({ streamRef: 'masked-provider-stream' }));
                 expect(persisted.platform.observation.urls).toEqual(['https://app.example.test']);
+                if (scenario === 'retained receipt observe') expect(persisted.platform.observation.uploadProvenance)
+                    .toEqual({ sourceManifestFingerprint: 'approved-manifest', build: { location: 'provider' } });
             }
             if (childSucceeds) expect(result).not.toHaveProperty('errorCode');
             expect(result).toMatchObject(childSucceeds ? { ok: true } : { ok: false,
@@ -1903,6 +2220,120 @@ describe('installed deployment storage and target composition', () => {
             }
         } finally { await requesterPreparation?.dispose(); await runtime.dispose(); }
     });
+    it('returns native named-volume backup choices through the public defaults preview before a target exists', async () => {
+        const serverHttpBaseUrl = 'https://backup-first-configure.test';
+        const settings = await persistence.readSettings();
+        vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { home: {
+            id: 'home', name: 'Home', serverUrl: serverHttpBaseUrl, webappUrl: serverHttpBaseUrl,
+            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+            homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_backup_home',
+                canonicalServerUrl: serverHttpBaseUrl, revision: 1, endpoints: [{ kind: 'https', url: serverHttpBaseUrl }] }),
+        } } });
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const credentials: StoredCredentials = { token, encryption: null };
+        const operation = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createInvocationSavedSecretOperationContextV1({
+            credentials, serverHttpBaseUrl, isCurrent: async () => true,
+            snapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+                loadedAtMs: 1, scopeKey: resolveAccountSettingsScopeKey(credentials), settingsSecretsReadKeys: [] },
+        }));
+        const detail = createDeploymentEnvironmentDetailV1();
+        detail.environment.runtimeTargetLinkId = undefined;
+        detail.environment.buildMachineId = undefined;
+        detail.targetLinks = [];
+        const document = 'services:\n  web:\n    image: app\n    volumes:\n      - content:/srv/content\n      - content:/srv/mirror:ro\nvolumes:\n  content:\n    name: physical-content\n';
+        detail.content.definition = { kind: 'stored', contentRevision: 1, document,
+            composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: [] };
+        const root = await mkdtemp(join(tmpdir(), 'happier-backup-default-preview-'));
+        const docker = await createOwnServerDockerBoundary(join(root, 'bin'));
+        vi.stubEnv('PATH', `${join(root, 'bin')}${delimiter}${process.env.PATH ?? ''}`);
+        const keys = tweetnacl.sign.keyPair();
+        vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+            installationId: 'installation-a', createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),
+            privateKey: Buffer.from(keys.secretKey).toString('base64url') });
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            const path = new URL(String(request.url)).pathname;
+            expect(request.method).toBe('GET');
+            if (path === `/v1/deployments/environments/${detail.environment.id}`) return { status: 200,
+                data: { ok: true, environment: detail.environment, targetLinks: [] } };
+            if (path === `/v1/projects/sources/${detail.environment.projectSourceId}`) return { status: 200,
+                data: { ok: true, canManage: true, source: { id: detail.environment.projectSourceId, revision: 6,
+                    name: 'App', owner: { kind: 'account', accountId: 'owner' }, audience: [], createdByAccountId: 'owner' } } };
+            if (path === `/v1/projects/${detail.environment.projectSourceId}/deployment-defaults`) return { status: 200,
+                data: { ok: true, projectSourceId: detail.environment.projectSourceId, sourceRevision: 6, revision: 0, content: null } };
+            throw new Error(`Unexpected backup preview transport ${path}`);
+        });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            expect(new URL(url).pathname).toBe(`/v1/artifacts/${detail.environment.contentArtifactId}`);
+            return { status: 200, data: { id: detail.environment.contentArtifactId, ownerAccountId: 'owner', access: 'owner',
+                publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                header: encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Backup preview' }),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(detail.content) }),
+                headerVersion: detail.environment.contentHeaderVersion, bodyVersion: detail.environment.contentBodyVersion,
+                seq: 1, createdAt: 1, updatedAt: 1 } };
+        });
+        const runtime = createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home', serverHttpBaseUrl,
+            machineId: 'machine-a', resolveRequesterIdentity: resolveOwnerRequesterIdentity,
+            async acquirePluginRuntimeRegistryLease() { throw new Error('Backup definition review must not acquire the runtime registry'); },
+            async readEnvironmentSecretLaunchAdmission() { throw new Error('Backup definition review must not acquire launch secrets'); } });
+        const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl,
+            machineId: 'machine-a', resolveRequesterIdentity: resolveOwnerRequesterIdentity,
+            savedSecretOperationContext: operation, runtime });
+        try {
+            const result = await deps.deploymentAction('deployments.environments.update', { serverId: 'home',
+                environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+                contentArtifactId: detail.environment.contentArtifactId, contentHeaderVersion: detail.environment.contentHeaderVersion,
+                contentBodyVersion: detail.environment.contentBodyVersion, mode: 'preview', defaultsFor: 'backups' }, ownerContext);
+            expect(result).toMatchObject({ ok: true, backupSourceChoices: [
+                { kind: 'volume', sourceId: expect.any(String), service: 'web', volume: 'content', consistency: 'stopDuringCopy' },
+            ] });
+            expect((await docker.readInvocations()).some(call => call.args.includes('config'))).toBe(true);
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
+
+    it('prepares first-configuration choices through the existing update Action without writing or opening Environment content', async () => {
+        const serverHttpBaseUrl = 'https://first-configure.test';
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const credentials: StoredCredentials = { token, encryption: null };
+        const operation = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createInvocationSavedSecretOperationContextV1({
+            credentials, serverHttpBaseUrl, isCurrent: async () => true,
+            snapshot: { source: 'network', settings: accountSettingsParse({ deploymentDefaultsV1: {
+                previewMachineId: 'preview-host', previewDatabase: 'branch', backupRetention: { kind: 'keep', daily: 14 },
+            } }), settingsVersion: 1, loadedAtMs: 1, scopeKey: resolveAccountSettingsScopeKey(credentials), settingsSecretsReadKeys: [] },
+        }));
+        const detail = createDeploymentEnvironmentDetailV1();
+        const link = detail.targetLinks[0]!.targetLink;
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            const path = new URL(String(request.url)).pathname;
+            expect(request.method).toBe('GET');
+            if (path === `/v1/deployments/environments/${detail.environment.id}`) return { status: 200,
+                data: { ok: true, environment: detail.environment, targetLinks: [link] } };
+            if (path === `/v1/projects/sources/${detail.environment.projectSourceId}`) return { status: 200,
+                data: { ok: true, canManage: true, source: { id: detail.environment.projectSourceId, revision: 6,
+                    name: 'App', owner: { kind: 'account', accountId: 'owner' }, audience: [], createdByAccountId: 'owner' } } };
+            if (path === `/v1/projects/${detail.environment.projectSourceId}/deployment-defaults`) return { status: 200,
+                data: { ok: true, projectSourceId: detail.environment.projectSourceId, sourceRevision: 6, revision: 0, content: null } };
+            throw new Error(`Unexpected first-configuration transport ${path}`);
+        });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            throw new Error(`First configuration must not open Environment content: ${String(url)}`);
+        });
+        const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl,
+            machineId: 'machine-a', resolveRequesterIdentity: resolveOwnerRequesterIdentity, savedSecretOperationContext: operation,
+            runtime: { async acquire() { throw new Error('Review cannot acquire native execution'); } } });
+        const input = { serverId: 'home', environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+            contentArtifactId: detail.environment.contentArtifactId, contentHeaderVersion: detail.environment.contentHeaderVersion,
+            contentBodyVersion: detail.environment.contentBodyVersion, mode: 'preview' as const, defaultsFor: 'previews' as const };
+        const result = await deps.deploymentAction('deployments.environments.update', input, ownerContext);
+        expect(result).toMatchObject({ ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
+            creationDefaults: { values: { previewMachineId: 'preview-host', previewDatabase: 'branch',
+                backupRetention: { kind: 'keep', daily: 14 } }, sources: { previewMachineId: 'account', previewDatabase: 'account',
+                backupRetention: 'account' } } });
+        expect(await deps.deploymentAction('deployments.environments.update', { ...input,
+            expectedRevision: input.expectedRevision + 1 }, ownerContext)).toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
+    });
+
     it('prepares Team creation with the admitted Source audience rather than personal Account defaults', async () => {
         const serverHttpBaseUrl = 'https://team-create.test';
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
@@ -2099,7 +2530,7 @@ describe('installed deployment storage and target composition', () => {
             .resolves.toMatchObject({ ok: false, errorCode: 'unsupported' });
         expect(canonicalReads).toBe(1);
     });
-    it.each(['review', 'member', 'queued member'] as const)('derives destination-owned promotion content before native child %s', async kind => {
+    it.each(['review', 'member', 'queued member', 'member wrong target', 'member wrong operation', 'member wrong installation'] as const)('validates promotion operands at review and consumes the admitted receipt for native child %s', async kind => {
         const member = kind !== 'review';
         const destination = createDeploymentEnvironmentDetailV1();
         const source = createDeploymentEnvironmentDetailV1();
@@ -2133,6 +2564,8 @@ describe('installed deployment storage and target composition', () => {
                 toolVersion: '2.39.4', services: ['app'], profiles: [], members: link.members.map(({ machineId, installationId }) => ({ machineId, installationId })),
                 bindings: [], images: content.images } } };
         }
+        if (kind === 'member wrong target') admitted.deployment.targetLinkId = 'another-target';
+        if (kind === 'member wrong operation') admitted.deployment.operation = 'deploy';
         const documents = new Map<string, Readonly<Record<string, unknown>>>();
         const put = (id: string, kind: string, value: unknown) => documents.set(id, { id, ownerAccountId: 'owner', access: 'owner',
             publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
@@ -2150,10 +2583,15 @@ describe('installed deployment storage and target composition', () => {
         if (member) documents.set('candidate', { ...documents.get('candidate')!, headerVersion: 2, bodyVersion: 2 });
         put('destination-candidate', DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
             { ...prepareStoredPromotionCandidate(receipt, destination), name: 'Controller-substituted destination' });
+        let sourceReceiptReads = 0;
         vi.spyOn(axios, 'request').mockImplementation(async request => {
             const path = new URL(request.url!).pathname;
             if (path.endsWith('/secret-launch-admission')) return { status: 200, data: { ok: true, grants: [] } };
-            if (path.endsWith('/source-release')) return { status: 200, data: { ok: true, deployment: receipt.deployment } };
+            if (path.endsWith('/source-release')) {
+                sourceReceiptReads++;
+                if (member) throw Object.assign(new Error('source_receipt_unavailable'), { code: 'source_receipt_unavailable' });
+                return { status: 200, data: { ok: true, deployment: receipt.deployment } };
+            }
             if (path.endsWith('/parent-release')) return { status: 200, data: { ok: true, deployment: admitted.deployment } };
             const environment = path.endsWith('/source') ? source : destination;
             return { status: 200, data: { ok: true, environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
@@ -2180,14 +2618,26 @@ describe('installed deployment storage and target composition', () => {
             resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' } as const),
             credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a', runtime });
         const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: member ? 'member' : 'review', actionId: 'deployments.promote',
-            machineId: 'machine-a', installationId: 'installation-a', input: { serverId: 'home', environmentId: destination.environment.id,
+            machineId: 'machine-a', installationId: kind === 'member wrong installation' ? 'another-installation' : 'installation-a',
+            input: { serverId: 'home', environmentId: destination.environment.id,
                 targetLinkId: link.id, expectedRevision: 1, expectedTargetLinkRevision: link.revision,
                 requestKey: 'promotion', contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1,
                 sourceEnvironmentId: source.environment.id, sourceDeploymentId: receipt.deployment.id,
                 artifact: 'image', destinationContent: { contentArtifactId: 'destination-candidate', contentHeaderVersion: 1, contentBodyVersion: 1 } },
             ...(member ? { phase: 'activate', selectedDeploymentId: admitted.deployment.id, deploymentId: admitted.deployment.id,
                 actionOperationId: admitted.deployment.actionOperationId} : {}) });
-        await expect(deps.deploymentChild(job, {})).resolves.toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+        const result = await deps.deploymentChild(job, {});
+        if (member) {
+            expect(sourceReceiptReads).toBe(0);
+            if (kind === 'member wrong target' || kind === 'member wrong operation') {
+                expect(result).toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
+            } else if (kind === 'member wrong installation') {
+                expect(result).toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+            } else expect(result).not.toMatchObject({ errorCode: 'source_receipt_unavailable' });
+        } else {
+            expect(result).toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+            expect(sourceReceiptReads).toBe(1);
+        }
     });
     it('reopens the canonical receipt before accepting a child operation reference', async () => {
         const environment = createDeploymentEnvironmentDetailV1();
@@ -2824,7 +3274,7 @@ describe('installed deployment storage and target composition', () => {
         expect(writes).toHaveLength(3);
         expect(acquisitions).toBe(0);
     });
-    it.each(['template install', 'template install artifact failure', 'template install native failure', 'template install docker access denied', 'template install preparation failure', 'template install failed receipt', 'template install pending receipt', 'stored preparation cost', 'stored preparation stale held', 'stored preparation failure reason', 'stored preparation missing tool', 'machine Use stored definition', 'machine Use Team receipt history', 'machine Use pending stored definition', 'configured ref', 'stale Team grant', 'approved exact SHA', 'compact exact SHA', 'pending exact SHA', 'retained rollback', 'retained rollback intent', 'retained rollback intent e2ee', 'trigger claim consent', 'missing native builder'] as const)('retains native review from %s and rechecks replay without rewriting either Artifact', async selection => {
+    it.each(['template install', 'template install artifact failure', 'template install native failure', 'template install docker access denied', 'template install preparation failure', 'template install failed receipt', 'template install pending receipt', 'stored preparation cost', 'stored preparation stale held', 'stored preparation failure reason', 'stored preparation missing tool', 'machine Use stored definition', 'machine Use Team receipt history', 'machine Use pending stored definition', 'configured ref', 'stale Team grant', 'approved exact SHA', 'native tool version changes', 'compact exact SHA', 'pending exact SHA', 'retained rollback', 'retained rollback intent', 'retained rollback intent e2ee', 'trigger claim consent', 'missing native builder'] as const)('retains native review from %s without rewriting either Artifact', async selection => {
         const storedPreparation = selection.startsWith('stored preparation');
         const teamReceiptHistory = selection === 'machine Use Team receipt history';
         const mode = selection === 'retained rollback intent e2ee' ? 'e2ee' : 'plain';
@@ -3966,7 +4416,8 @@ describe('installed deployment storage and target composition', () => {
                     originalActionEnvelope: envelope };
             }
             phase('before-candidate');
-            const candidate = selection === 'approved exact SHA' ? await deps.prepareDeployCandidate(candidateRequest) : undefined;
+            const candidate = selection === 'approved exact SHA' || selection === 'native tool version changes'
+                ? await deps.prepareDeployCandidate(candidateRequest) : undefined;
             phase('candidate-ready');
             if (candidate) {
                 expect(candidate).not.toHaveProperty('errorCode');
@@ -4007,7 +4458,7 @@ describe('installed deployment storage and target composition', () => {
             const prepared = await deps.prepareDeploymentAction({ ...preparation, context: preparationContext });
             await nativePhase('review-ready');
             expect(boundaryFailures).toEqual([]);
-            expect(prepared).not.toHaveProperty('errorCode');
+            expect(prepared, JSON.stringify(prepared)).not.toHaveProperty('errorCode');
             if (!('input' in prepared)) throw new Error('Expected prepared deployment');
             if (selection.startsWith('retained rollback intent')) {
                 const child = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'member', actionId: 'deployments.rollback',
@@ -4121,9 +4572,31 @@ describe('installed deployment storage and target composition', () => {
             if (selection !== 'stale Team grant') expect(grantedCandidates.size).toBe(selection === 'configured ref' ? creates : 0);
             if (selection === 'configured ref') expect(grantedCandidates.has(prepared.input.contentArtifactId)).toBe(true);
             pendingPhase = 'review-replay';
+            if (selection === 'native tool version changes') {
+                const executable = await readFile(docker.executablePath, 'utf8');
+                expect(executable).toContain('2.39.4');
+                // Docker is the OS boundary; retain the real native review and
+                // change only the installed tool's reported version.
+                await writeFile(docker.executablePath, executable.replace('2.39.4', '2.40.1'));
+            }
             const replay = await deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: ownerContext });
             await nativePhase('replay-ready');
             expect(replay).toMatchObject({ input: prepared.input });
+            if (selection === 'native tool version changes') {
+                expect(replay).toHaveProperty('preview.environment.id', environment.environment.id);
+                expect(reviewedContent.content).toHaveProperty('ownServer.approvedInputBasis.toolVersion', '2.39.4');
+                expect(documents.get(prepared.input.contentArtifactId)).toEqual(candidateDocument);
+                environment.environment.revision++;
+                await expect(deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: ownerContext }))
+                    .resolves.toMatchObject({ ok: false, errorCode: 'deployment_conflict', effectAttempted: false,
+                        details: { requiredFact: 'currentEnvironmentRevision' } });
+                environment.environment.revision--;
+                environment.targetLinks[0].targetLink.revision++;
+                await expect(deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: ownerContext }))
+                    .resolves.toMatchObject({ ok: false, errorCode: 'deployment_conflict', effectAttempted: false,
+                        details: { requiredFact: 'currentEnvironmentRevision' } });
+                environment.targetLinks[0].targetLink.revision--;
+            }
             expect(posts.mock.calls.filter(([url]) => url.endsWith('/v1/artifacts'))).toHaveLength(creates);
             if (mode === 'e2ee') {
                 // A valid ciphertext for another resource cannot open under the

@@ -1,6 +1,7 @@
 import { type ExternalActionHeaderRefusal, refuseExternalActionHeaders } from './externalActionHeaderRefusal';
 import type { ExternalActionIssuerRefusal } from './externalActionIssuerRefusal';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { deriveEd25519KeyPair, ED25519_PUBLIC_KEY_BYTES } from '@happier-dev/protocol/crypto/ed25519';
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
@@ -79,7 +80,7 @@ import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey'
 import { hasStoredSessionCredentialProvenance, type StoredCredentials } from '@/persistence';
 import { ExternalActionSignedAuthenticationV1Schema, type ExternalActionSignedAuthenticationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { AUTHORITY_CEILING_HEADER_V1, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
-import { isDeploymentObservationReadActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { z } from 'zod/mini';
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -277,7 +278,7 @@ export async function isReviewedSessionAgentReadinessChild(input: Readonly<{
     childInput = { machineId: input.machineId, ...agent, intent: request.data.intent,
       ...(root.agentInstallConsent === undefined ? {} : { consent: root.agentInstallConsent }) };
     if (!sameStrictJsonValue(input.params, { ...agent, intent: request.data.intent,
-      consent: root.agentInstallConsent ?? { vendorRecipe: false } })) return false;
+      consent: readRecord(getActionSpec(actionId).inputSchema.parse(childInput)).consent })) return false;
   } else {
     const request = DaemonAgentInstallReadRequestSchema.safeParse(input.params);
     if (!request.success || request.data.cursor !== 0) return false;
@@ -689,8 +690,7 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
     || actionId === 'deployments.deploy' || actionId === 'deployments.rollback'
     || actionId === 'deployments.promote' || actionId === 'deployments.teardown'
     || actionId === 'deployments.targets.link' && input !== null && typeof input === 'object' && !('contentArtifactId' in input)
-    || actionId === 'deployments.receipts.observe'
-    || isDeploymentObservationReadActionIdV1(actionId)
+    || isDeploymentReceiptObservationActionIdV1(actionId)
     || isDeploymentReadActionIdV1(actionId)
     || isDeploymentBackupActionIdV1(actionId) || isProjectReadinessActionIdV1(actionId)
     || actionId === 'deployments.templates.instantiate'

@@ -62,6 +62,14 @@ function receiptFailureContent(content: DeploymentPlatformContentV1, result: Act
     return { ...content, failure: projectDeploymentReceiptFailure(result, fallbackPhase) };
 }
 
+function observedReceiptContent(content: DeploymentPlatformContentV1,
+    observation: ReturnType<typeof DeploymentTargetRoleResultV1Schema.parse>): DeploymentPlatformContentV1 {
+    const uploadProvenance = content.platform.observation.uploadProvenance ?? observation.uploadProvenance;
+    return { ...content, steps: observation.steps ?? content.steps,
+        platform: { ...content.platform, observation: { ...observation,
+            ...(uploadProvenance ? { uploadProvenance } : {}) } } };
+}
+
 /** The deployment factory consumes declared Actions; their existing executor owns placement and policy. */
 export const deploymentTeardownDetachPreview = {
     summary: 'Detach this target link and keep any remote resources running. Their data and ongoing costs remain.',
@@ -86,8 +94,13 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             const descriptor = readDeploymentTargetV1(link.source, lease.registry.contributes.deploymentTargets);
             if (!descriptor || descriptor.role !== 'runtime' || descriptor.targetKind !== link.targetKind) return refuse('deployment_target_role_unavailable');
             const readAction = (role: Role) => {
-                const reference = role === 'logs.build' ? descriptor.actions.logs?.build
-                    : role === 'logs.runtime' ? descriptor.actions.logs?.runtime : descriptor.actions[role];
+                const [group, leaf] = role.split('.');
+                // The admitted runtime-role grammar owns which paths are leaves.
+                type Reference = typeof descriptor.actions.deploy;
+                const value = descriptor.actions[group as keyof typeof descriptor.actions];
+                const reference = leaf
+                    ? (value as Readonly<Record<string, Reference | undefined>> | undefined)?.[leaf]
+                    : value as Reference | undefined;
                 if (!reference || reference.kind !== 'plugin') return refuse('unsupported_action');
                 const action = parseQualifiedPluginActionId(reference.actionId);
                 if (!action) return refuse('deployment_target_role_unavailable');
@@ -100,7 +113,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             // A retry can observe the retained receipt instead of sending it again.
             // Both declarations come from this same selected target and registry lease.
             const children: HostReviewedChildrenPlanV1['children'] = [{ action, role },
-                ...(role !== 'observe' && !role.startsWith('logs.') && descriptor.actions.observe
+                ...(role !== 'observe' && !role.includes('.') && descriptor.actions.observe
                     ? [{ action: readAction('observe').action, role: 'observe' }] : [])];
             const principal = row.content?.credentialPrincipal;
             if (principal?.kind !== 'account' || principal.target.kind !== 'account') return refuse('deployment_target_role_unavailable');
@@ -117,11 +130,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             const requester = readRequesterAccountActionContext(request.context.externalActionExecutionAuthorization);
             if (request.context.externalActionExecutionAuthorization && !requester) return refuse('action_forbidden');
             const credentials = requester?.credentials ?? host.credentials;
-            const occurrence = lease.registry.readPluginOccurrenceId(action.pluginId);
-            const assertCurrent = async () => {
-                await host.assertCurrent(request.context);
-                if (!occurrence || !lease.registry.isPluginOccurrenceCurrent(action.pluginId, occurrence)) return refuse('deployment_target_role_unavailable');
-            };
+            const assertCurrent = () => host.assertCurrent(request.context);
             const admit = async (input: unknown, phase: 'preparation' | 'execution', receipt?: DeploymentReceiptDetailV1) => {
                 await admitDeploymentTargetRoleForHost({ ...action, role, phase, input, context: request.context,
                     executionTarget, bindings: declaration?.admittedTarget?.deploymentTargetRoles ?? [],
@@ -238,17 +247,17 @@ export function createContributedDeploymentTargetForHost(host: Host) {
     async function writeObservation(receipt: DeploymentReceiptDetailV1, content: DeploymentPlatformContentV1,
         observation: ReturnType<typeof DeploymentTargetRoleResultV1Schema.parse>, context: ActionExecutorContext,
         environmentRevision: number) {
+        const observed = observedReceiptContent(content, observation);
         // A provider's read timestamp is liveness, not new receipt content.
         if (receipt.deployment.state === observation.state && sameStrictJsonValue(
-            { ...content.platform.observation, observedAtMs: 0 }, { ...observation, observedAtMs: 0 })) {
+            { ...content.platform.observation, observedAtMs: 0 }, { ...observed.platform.observation, observedAtMs: 0 })) {
             return { ok: true as const, environmentId: receipt.deployment.environmentId, revision: environmentRevision,
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state };
         }
         const written = await host.writeTransition({ environmentId: receipt.deployment.environmentId,
             deploymentId: receipt.deployment.id, receiptHeader: receipt.deployment,
             expectedRevision: receipt.deployment.revision, state: observation.state,
-            content: { ...content, steps: observation.steps ?? content.steps,
-                platform: { ...content.platform, observation } }, context });
+            content: observed, context });
         return written.ok ? written : { ...failure('outcome_unknown'), effectAttempted: true };
     }
 
@@ -284,6 +293,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 const input = DeploymentTargetRoleInputSchemasV1.observe.parse({ ...scope.common,
                     deploymentId: receipt.deployment.id, expectedDeploymentRevision: receipt.deployment.revision,
                     actionOperationId: receipt.deployment.actionOperationId,
+                    operation: receipt.deployment.operation,
                     providerDeploymentId: content.platform.observation.providerDeploymentId });
                 await scope.admit(input, 'execution', receipt);
                 return { children: [{ action: scope.action, role: 'observe', input: normalizeStrictJsonValue(input) }],
@@ -355,6 +365,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                     ...(preparedPlatform.preparedNative ? { preparedNative: preparedPlatform.preparedNative } : {}),
                     deploymentId: receipt!.deployment.id, expectedDeploymentRevision: receipt!.deployment.revision,
                     actionOperationId: receipt!.deployment.actionOperationId,
+                    operation: receipt!.deployment.operation,
                     ...(content.platform.observation.providerDeploymentId ? { providerDeploymentId: content.platform.observation.providerDeploymentId } : {}),
                     ...(role === 'deploy' || role === 'uploadDeploy' ? deploymentSource : {}),
                     ...(role === 'rollback' || role === 'promote' ? { priorDeployment: { environmentId: previous!.deployment.environmentId,
@@ -392,8 +403,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                     return failure('outcome_unknown');
                 }
                 providerEffectObserved = true;
-                effectContent = { ...content, steps: observation.data.steps ?? content.steps,
-                    platform: { ...content.platform, observation: observation.data } };
+                effectContent = observedReceiptContent(content, observation.data);
                 transitionAttempted = true;
                 return writeObservation(receipt!, content, observation.data, request.context, environment.environment.revision);
             });
@@ -462,5 +472,5 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 remedy: 'Choose a log kind declared by this deployment target.' } } : failure(code, error);
         }
     }
-    return { prepareCandidate, prepareAction, prepareTeardownDetach, prepareTeardownChildren, prepareObservation, prepareLogs, execute };
+    return { withTargetRole: withRole, prepareCandidate, prepareAction, prepareTeardownDetach, prepareTeardownChildren, prepareObservation, prepareLogs, execute };
 }

@@ -13,7 +13,8 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { resolveCurrentAccountAdministrationMachine, resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { configuration } from '@/configuration';
@@ -773,6 +774,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   confidentialSecretFill?: ActionExecutorDeps['confidentialSecretFill'];
   confidentialActionInputs?: ActionExecutorDeps['confidentialActionInputs'];
   workflowAction?: ActionExecutorDeps['workflowAction'];
+  registerWorkflowTriggerList?: Parameters<typeof createCliActionDeps>[0]['registerWorkflowTriggerList'];
   managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
   machineRecipesRead?: ActionExecutorDeps['machineRecipesRead'];
   machineSetupPlan?: ActionExecutorDeps['machineSetupPlan'];
@@ -786,6 +788,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   deploymentRestore?: ActionExecutorDeps['deploymentRestore'];
   projectReadinessRead?: ActionExecutorDeps['projectReadinessRead'];
   deploymentTemplateInstantiate?: ActionExecutorDeps['deploymentTemplateInstantiate'];
+  deploymentMoveToRepository?: ActionExecutorDeps['deploymentMoveToRepository'];
   prepareDeploymentTemplateInstantiation?: ActionExecutorDeps['prepareDeploymentTemplateInstantiation'];
   resolveEnvironmentApprovalScope?: ActionExecutorDeps['resolveEnvironmentApprovalScope'];
   prepareDeploymentAction?: ActionExecutorDeps['prepareDeploymentAction'];
@@ -1080,6 +1083,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(params.deploymentRestore ? { deploymentRestore: params.deploymentRestore } : {}),
       ...(params.projectReadinessRead ? { projectReadinessRead: params.projectReadinessRead } : {}),
       ...(params.deploymentTemplateInstantiate ? { deploymentTemplateInstantiate: params.deploymentTemplateInstantiate } : {}),
+      ...(params.deploymentMoveToRepository ? { deploymentMoveToRepository: params.deploymentMoveToRepository } : {}),
       ...(params.prepareDeploymentTemplateInstantiation ? { prepareDeploymentTemplateInstantiation: params.prepareDeploymentTemplateInstantiation } : {}),
       ...(params.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope } : {}),
       ...(params.prepareDeploymentAction ? { prepareDeploymentAction: params.prepareDeploymentAction } : {}),
@@ -1184,6 +1188,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         : {}),
       ...(params.machineGuardAction ? { machineGuardAction: params.machineGuardAction } : {}),
       ...(params.workflowAction ? { workflowAction: params.workflowAction } : {}),
+      ...(params.registerWorkflowTriggerList ? { registerWorkflowTriggerList: params.registerWorkflowTriggerList } : {}),
       ...(params.workflowAcceptedAuthorizationCurrentness
         ? { workflowAcceptedAuthorizationCurrentness: params.workflowAcceptedAuthorizationCurrentness }
         : {}),
@@ -1300,9 +1305,13 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         const remoteClientReplay = executor.kind === 'app' && executor.placement === 'client'
           && !params.clientActionExecute && !getDaemonClientActionExecutor(approvalServerId);
         const origin = request.executionOriginV1;
-        // The strict origin owner already binds the private root to this target.
-        const clientReplayMachineId = remoteClientReplay && origin.externalActionExecutionAuthorization
-          && origin.target?.kind === 'machine' ? origin.target.machineId : undefined;
+        // Client delivery may have entered through local MCP control, without
+        // a signed external carrier. A Session target retains its admitting
+        // Machine separately; the target itself must remain the Session.
+        // This is placement only: the existing replay owner admits the decision.
+        const clientReplayMachineId = remoteClientReplay && origin.target
+          ? origin.target.kind === 'machine' ? origin.target.machineId : origin.machineId
+          : undefined;
         if (remoteClientReplay && !clientReplayMachineId) return actionFailure('approval_origin_unavailable');
         if (machineAdmissionTransport || params.machineActionDirectTargetTransport
           || params.pluginActionExecutionOwner === 'current_process'
@@ -1569,7 +1578,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       // Signed children already belong to their receiving execution owner.
       if (context.surface === 'plugin' && context.actionCaller?.kind === 'plugin'
         && !context.externalActionExecutionAuthorization && params.machineId
-        && params.pluginActionExecutionOwner !== 'current_process'
+        && (params.pluginActionExecutionOwner !== 'current_process' || isDeploymentReceiptObservationActionIdV1(actionId))
         && !isPluginActionExecutionDispatchId(actionId)
         && resolveActionExecutionPlacementForInput(getActionSpec(ActionIdSchema.parse(actionId)), input) === 'machine') {
         const invocation = readExternalActionRequesterInvocation(context);
@@ -1579,6 +1588,18 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           if (!invocation || !serverIdentityId) return actionFailure('admission_unavailable');
           const serverHttpBaseUrl = resolveActionServerApiUrl();
           let target = originalTarget;
+          const readRepositoryWorkspaceMachine = async (workspace: Parameters<typeof resolveAccountWorkspaceMachine>[0]['workspace']) => {
+            const resolved = await resolveAccountWorkspaceMachine({ credentials, workspace, serverId: approvalServerId,
+              serverIdentityId, serverApiUrl: serverHttpBaseUrl, ...(context.signal ? { signal: context.signal } : {}) });
+            return resolved.ok ? resolved : actionFailure(resolved.code);
+          };
+          if (actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1) {
+            const parsed = DeploymentMoveToRepositoryInputV1Schema.safeParse(input);
+            if (!parsed.success) return actionFailure('invalid_parameters');
+            const selected = await resolveDeploymentMoveToRepositoryExecutionMachineIdV1(parsed.data, readRepositoryWorkspaceMachine);
+            if (!selected.ok) return selected;
+            target = { kind: 'machine', machineId: selected.machineId };
+          }
           if (actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
             const parsed = DeploymentTemplateInstantiateInputV1Schema.safeParse(input);
             if (!parsed.success) return actionFailure('invalid_parameters');
@@ -1592,7 +1613,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               });
               const loaded = await deploymentAction!('deployments.environments.get', request, context);
               return 'errorCode' in loaded ? loaded : DeploymentEnvironmentGetResultV1Schema.parse(loaded);
-            });
+            }, request => readRepositoryWorkspaceMachine(request.workspace));
             if (!selected.ok) return selected;
             target = { kind: 'machine', machineId: selected.machineId };
           }
@@ -1655,6 +1676,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       // admitting preparation/Ask.
       if (!requireDaemonIngress && readControllerDeploymentDispatch({ credentials,
         deploymentAction: params.deploymentAction, deploymentTemplateInstantiate: params.deploymentTemplateInstantiate,
+        deploymentMoveToRepository: params.deploymentMoveToRepository,
         machineId: params.machineId }, actionId, input, context)?.caller === 'host') return {
           context: { ...context, actionRequestId: context.actionRequestId ?? randomUUID() },
         };
