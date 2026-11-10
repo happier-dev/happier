@@ -68,7 +68,7 @@ heavyweight_memory_floor_kib() {
     source-bundle) heavyweight_policy_floor='12582912' ;;
     source-web-export) heavyweight_policy_floor='33554432' ;;
     dependency-install) heavyweight_policy_floor='3145728' ;;
-    package-dist) heavyweight_policy_floor='6291456' ;;
+    package-dist) heavyweight_policy_floor='5242880' ;;
     runtime-build) heavyweight_policy_floor='18874368' ;;
     compilation) heavyweight_policy_floor='39845888' ;;
     compilation-ui) heavyweight_policy_floor='20971520' ;;
