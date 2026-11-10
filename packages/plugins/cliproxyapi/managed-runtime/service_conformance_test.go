@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,21 +30,30 @@ import (
 // Other HTTP traffic and real registry/executor behavior remain unchanged.
 func TestMain(m *testing.M) {
 	previous := http.DefaultTransport
-	http.DefaultTransport = embeddedCatalogTransport{next: previous}
+	// Keep the concrete transport type: SDK paths clone *http.Transport.
+	catalogProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	proxyURL, err := url.Parse(catalogProxy.URL)
+	if err != nil {
+		panic(err)
+	}
+	transport := previous.(*http.Transport).Clone()
+	transport.Proxy = func(request *http.Request) (*url.URL, error) {
+		if request.URL.Host == "raw.githubusercontent.com" || request.URL.Host == "models.router-for.me" {
+			return proxyURL, nil
+		}
+		if previous.(*http.Transport).Proxy != nil {
+			return previous.(*http.Transport).Proxy(request)
+		}
+		return nil, nil
+	}
+	http.DefaultTransport = transport
 	code := m.Run()
 	http.DefaultTransport = previous
+	transport.CloseIdleConnections()
+	catalogProxy.Close()
 	os.Exit(code)
-}
-
-type embeddedCatalogTransport struct{ next http.RoundTripper }
-
-func (transport embeddedCatalogTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	if request.URL.Host == "raw.githubusercontent.com" && request.URL.Path == "/router-for-me/models/refs/heads/main/models.json" ||
-		request.URL.Host == "models.router-for.me" && request.URL.Path == "/models.json" {
-		return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header),
-			Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
-	}
-	return transport.next.RoundTrip(request)
 }
 
 func TestPinnedSDKRequestAuthRefusalKeepsTypedStatusWithoutUpstreamOrReplay(t *testing.T) {
