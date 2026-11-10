@@ -14,6 +14,7 @@ import { SessionOrganizationPlacementV1Schema } from '@happier-dev/protocol/sess
 export interface SessionMetadataHttpBoundary {
     writes: string[];
     replaceSession(sessionId: string, record?: SessionCurrentProjectionRecordV1): void;
+    updateAgentState(sessionId: string, agentState: Session['agentState'], version: number): void;
     createSessionFromPost(sessionId: string, init: RequestInit): Response;
     rejectNextPatch(sessionId: string): void;
     handle(input: URL | RequestInfo, init?: RequestInit): Response | null;
@@ -30,6 +31,13 @@ export function createSessionMetadataHttpBoundary(readSessions: () => Readonly<R
         replaceSession(sessionId: string, record?: SessionCurrentProjectionRecordV1) {
             if (record) records.set(sessionId, SessionCurrentProjectionRecordV1Schema.parse(record));
             else records.delete(sessionId);
+        },
+        updateAgentState(sessionId, agentState, version) {
+            const current = records.get(sessionId);
+            // An unread Session is seeded from readSessions on its first HTTP read.
+            if (!current) return;
+            records.set(sessionId, SessionCurrentProjectionRecordV1Schema.parse({ ...current,
+                agentState: agentState ? JSON.stringify(agentState) : null, agentStateVersion: version }));
         },
         /** Mirror the current /v1/sessions hosted create/load transport contract. */
         createSessionFromPost(sessionId: string, init: RequestInit): Response {
