@@ -320,7 +320,7 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
             // Keep the admitted observation's date and any settled failure
             // while its replacement is in flight. Slice/Resource pending
             // still reports the actual work; it does not erase that result.
-            if (prior?.status === 'error') return prior;
+            if (prior?.status === 'error' || prior?.errorCode) return prior;
             return source.asOfMs === undefined && prior?.asOfMs !== undefined
                 ? { ...source, asOfMs: prior.asOfMs } : source;
         }) };

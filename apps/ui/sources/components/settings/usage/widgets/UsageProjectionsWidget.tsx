@@ -285,18 +285,17 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
     max: formatHappierDataExactShare(pace.empiricalRange.max, getPreferredLanguage()), count: pace.sampleCount,
   }) : null;
   const rangeInk = range ? <Text testID={`${props.testID}.range`} accessibilityLabel={range} style={[styles.quiet, text.detail]}>{range}</Text> : null;
-  const depletingNote = depleting ? (
+  const depletingStatement = depleting ? planWindowStatement(depleting.window, nowMs) : null;
+  const depletingNote = depleting && depletingStatement ? (
     <NoticeLine
       testID={`${props.testID}.ahead`}
       iconName="warning"
       iconColor={theme.colors.state.danger.foreground}
       subject={`${depleting.name.title} · ${depleting.window.label}`}
       title={[
-        t('usage.board.plans.projectionRunsOut', {
-          time: formatPlanMoment(depleting.window.pace!.depletesAtMs!, nowMs),
-        }),
-        t('usage.board.plans.projectionBeforeReset'),
-      ].join(' · ')}
+        depletingStatement.text,
+        depletingStatement.kind === 'depletes' ? t('usage.board.plans.projectionBeforeReset') : null,
+      ].filter(Boolean).join(' · ')}
     />
   ) : null;
   if (list) {
@@ -517,6 +516,13 @@ function ProjectionHeadline(props: Readonly<{ window: UsagePlanWindow; nowMs: nu
   const { theme } = useUnistyles();
   const chartTheme = useUsagePluginTheme();
   const text = usePlanText();
+  const statement = planWindowStatement(props.window, props.nowMs);
+  if (statement.kind === 'used_up') {
+    return <HappierDataMetric testID={props.testID} theme={chartTheme} size="stat"
+      label={t('usage.board.plans.cellUsedUp')} showLabel
+      value={props.window.resetAtMs === null ? t('usage.board.plans.cellUsedUp')
+        : t('usage.board.plans.excludedBack', { time: formatPlanMoment(props.window.resetAtMs, props.nowMs) })} />;
+  }
   const pace = props.window.pace!;
   const basis = [
     t('usage.board.plans.estimatedFrom', { count: pace.sampleCount }),

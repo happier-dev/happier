@@ -2,6 +2,8 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import * as strictJson from '@happier-dev/protocol/json/strictJsonValue';
 import { afterEach, expect, it, vi } from 'vitest';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createUsageSessionEvidenceHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { standardCleanup } from '@/dev/testkit';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -177,7 +179,7 @@ it('keeps completed source dates and a quiet header while the same query rereads
     let hold = false;
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-header-refresh.test', accountId: 'account-a' }],
         route: async request => {
-            if (request.path !== '/v2/usage/query') return undefined;
+            if (request.path !== '/v2/usage/query') return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
             if (hold) await held.promise;
             return Response.json({ v: 1, totals: { eventCount: 0,
                 tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
@@ -561,12 +563,14 @@ it('preserves an unchanged batched slice across Resource revisions without shari
         eventCount, tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 },
         cost: { reportedUsd: 1, estimatedUsd: 0, currency: 'USD' },
     } });
+    const sessionBoundary = createUsageSessionEvidenceHttpBoundary(request => {
+        if (request.path !== '/v2/usage/query') return undefined;
+        const query = UsageAnalyticsQueryRequestSchema.parse(request.body);
+        return Response.json(accounting(query.filters?.agentIds?.includes('claude') ? changedCount : 1));
+    }, () => []);
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-stability.test', accountId: 'account-a' }],
-        route: request => {
-            if (request.path !== '/v2/usage/query') return undefined;
-            const query = UsageAnalyticsQueryRequestSchema.parse(request.body);
-            return Response.json(accounting(query.filters?.agentIds?.includes('claude') ? changedCount : 1));
-        } });
+        route: async request => await sessionBoundary.handle(request)
+            ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
     publishAppliedActiveServerSnapshot({ serverId: home.homes.a!.id, serverUrl: home.homes.a!.serverUrl, generation: 0 });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;

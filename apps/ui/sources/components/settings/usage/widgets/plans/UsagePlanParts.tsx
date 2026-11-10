@@ -222,14 +222,23 @@ export function planPaceReasonText(reason: string): string {
   return key ? t(key) : t('usage.board.plans.endedUnusedInsufficient');
 }
 
-/** The one statement right of a window's meter: where this pace lands, or why there is no pace. */
+/** Observed exhaustion takes priority over a forecast, for every window presentation. */
 export function planWindowStatement(
   window: UsagePlanWindow,
   nowMs: number,
-): Readonly<{ text: string; tone: 'quiet' | 'warning' }> {
+): Readonly<{ kind: 'used_up' | 'depletes' | 'at_reset' | 'unavailable'; text: string; tone: 'quiet' | 'warning' }> {
+  if (window.remainingFraction !== null && window.remainingFraction <= 0) {
+    return {
+      kind: 'used_up',
+      text: [t('usage.board.plans.cellUsedUp'), window.resetAtMs === null ? null
+        : t('usage.board.plans.excludedBack', { time: formatPlanMoment(window.resetAtMs, nowMs) })].filter(Boolean).join(' · '),
+      tone: 'warning',
+    };
+  }
   if (window.pace) {
     if (window.pace.depletesAtMs !== null) {
       return {
+        kind: 'depletes',
         text: t('usage.board.plans.projectionRunsOut', {
           time: formatPlanMoment(window.pace.depletesAtMs, nowMs),
         }),
@@ -237,6 +246,7 @@ export function planWindowStatement(
       };
     }
     return {
+      kind: 'at_reset',
       text: t('usage.board.plans.projectionAtReset', {
         percent: formatPlanPercent(window.pace.projectedRemainingFraction),
       }),
@@ -244,6 +254,7 @@ export function planWindowStatement(
     };
   }
   return {
+    kind: 'unavailable',
     text: t(PACE_REASON_KEYS[window.paceUnavailable ?? 'not_derived']),
     tone: 'quiet',
   };

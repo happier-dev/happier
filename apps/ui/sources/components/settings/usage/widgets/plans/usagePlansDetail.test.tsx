@@ -295,6 +295,23 @@ async function invokePlanCommand(title: string, input?: string) {
   });
 }
 
+it('presents an already exhausted window as used up in chart and list projections', async () => {
+  const now = Date.now();
+  const read = quotaRead('spent', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 100,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]);
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  for (const style of ['chart', 'list'] as const) {
+    const screen = await renderScreen(wrap(<UsageProjectionsWidget {...bodyProps([read])} id="usage_projections"
+      presentation={{ style }} testID="spent" />));
+    expect(screen.getTextContent()).not.toContain(t('usage.board.plans.projectionRunsOutLabel'));
+    expect(screen.getTextContent()).not.toContain(t('usage.board.plans.projectionRunsOut', { time: formatPlanMoment(now, now) }));
+    expect(screen.getTextContent()).toContain(t('usage.board.plans.cellUsedUp'));
+    expect(screen.getTextContent()).toContain(formatPlanMoment(now + DAY, now));
+    expect(screen.findByTestId('spent.headline.beforeReset')).toBeNull();
+    await screen.unmount();
+  }
+});
+
 it('reveals exact projected percent points without rounding the admitted projection headline', async () => {
   const now = Date.now();
   const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30.125,
@@ -318,7 +335,9 @@ it('shows the canonical capacity weather and insufficient model/reset basis insi
   // once for the list (R9), never repeated on every row.
   expect(screen.getTextContent()).not.toContain('—');
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.planNoPriceShort'));
-  expect(String(screen.findByTestId('fit.once')!.props.children)).toBe(t('usage.board.plans.planNoPriceAll'));
+  const sharedPriceReason = t('usage.board.plans.planNoPriceAll');
+  expect(String(screen.findByTestId('fit.once')!.props.children)).toContain(sharedPriceReason);
+  expect(screen.getTextContent().split(sharedPriceReason), 'one shared cause across the accounts').toHaveLength(2);
   await screen.pressByTestIdAsync('fit.plan.work.details-header');
   expect(screen.findByTestId('fit.plan.work.weather.weekly')).toBeTruthy();
   // What no account has a basis for yet is one line for the whole widget, never one per account.

@@ -49,6 +49,18 @@ export function useEntrancesEnabled(): boolean {
     return React.useContext(EntranceContext);
 }
 
+/** The section guard also serves charts that have no entrance wrapper. Empty charts do not spend it. */
+export function useEntranceOnce(entranceId: string | undefined, ready = true): boolean {
+    const shouldPlay = React.useRef<boolean | null>(null);
+    if (ready && shouldPlay.current === null) {
+        shouldPlay.current = entranceId === undefined || !playedEntranceIds.has(entranceId);
+    }
+    React.useEffect(() => {
+        if (ready && shouldPlay.current && entranceId !== undefined) playedEntranceIds.add(entranceId);
+    }, [entranceId, ready]);
+    return ready && shouldPlay.current === true;
+}
+
 export type EntranceViewProps = Readonly<{
     /** Stable id — an entrance plays at most once per id per app session. */
     entranceId: string;
@@ -69,18 +81,13 @@ export const EntranceView = React.memo(function EntranceView(props: EntranceView
     // decision is frozen per instance so a mid-entrance re-render (the mount
     // effect records the id) can neither snap the wrapper to its static branch
     // nor flip the context under descendants mid-flight.
-    const shouldPlayRef = React.useRef<boolean | null>(null);
-    if (shouldPlayRef.current === null) {
-        shouldPlayRef.current = !playedEntranceIds.has(props.entranceId);
-    }
-    const shouldPlay = shouldPlayRef.current;
+    const shouldPlay = useEntranceOnce(props.entranceId);
 
     const opacity = useSharedValue(shouldPlay ? 0 : 1);
     const translateY = useSharedValue(shouldPlay && motion.entrance.kind === 'travel' ? (props.travel ?? DEFAULT_TRAVEL) : 0);
 
     React.useEffect(() => {
         if (!shouldPlay) return;
-        playedEntranceIds.add(props.entranceId);
         const delay = staggerDelayForIndex(props.index ?? 0);
         opacity.value = withDelay(delay, withTiming(1, { duration: motion.entrance.durationMs }));
         if (motion.entrance.kind === 'travel') {

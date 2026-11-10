@@ -1562,7 +1562,7 @@ export type UsageQueryResourceEntry = Omit<PluginUiResourceEntry, 'refresh'> & R
     /** Only the canonical Usage Action port calls this after admission. */
     acquire(callerContext: ActionExecutorContext): ReturnType<PluginUiResourceEntry['refresh']>;
     isAllowanceReadPending(): boolean;
-    /** New presentations wait for accounting admission; later refreshes retain their facts. */
+    /** Cold presentations wait for admission; revisits immediately retain their last-known facts. */
     isPresentationReady(): boolean;
 }>;
 type UsageQueryResourceStore = Omit<PluginUiResourceStore, 'getEntry'> & Readonly<{
@@ -2356,11 +2356,11 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             const matches = (admission: typeof initialAdmission) => !!admission
                 && admission.inputs.length === readInputs.length
                 && admission.inputs.every((identity, index) => identity === readInputs[index]);
-            // Exact admitted answers need no read. A superset projection stays
-            // with readAccounting, so a new presentation cannot traverse it
-            // before the required physical request. Pending sibling sources
-            // cannot hide unchanged accounting.
-            let ready = reusable || queries.every(query => !query.includeAccounting)
+            // A retained Resource value is already admitted to this Account.
+            // Present it immediately while its replacement is acquired, including
+            // before physical issuance. Cold/superset accounting still waits for
+            // its own admission; readiness never skips the replacement read.
+            let ready = initial.value !== undefined || reusable || queries.every(query => !query.includeAccounting)
                 || initial.subscription === 'live' && initial.pending !== 'idle' && matches(initialAdmission);
             if (!ready && sharedContext.readTransport && admittedAccounting?.answers.size) ready = queries.every(query => resolveUsagePageAccountingReads([query],
                 accountingInputs.get(getUsageQueryKey(query))?.nowMs ?? Date.now()).every(read => {

@@ -112,6 +112,22 @@ it('retains Coach as stale when a new finite read replaces its private evidence'
     expect(replacement.results[0]?.coach?.currentness).toBe('stale');
 });
 
+it('keeps the last failed source verdict while its background replacement is pending', async () => {
+    const f = await fixture();
+    const initial = f.run();
+    const previous = { ...initial, results: initial.results.map(slice => ({ ...slice,
+        sources: slice.sources.map(source => source.source === 'how_you_work'
+            ? { ...source, status: 'stale' as const, asOfMs: 2000, errorCode: 'usage_query_failed' } : source) })) };
+    const replacement = projectUsageQueryBatch({ ...f.input(), previous, admittedPrevious: undefined,
+        priorSlices: new Map(previous.results.map(slice => [slice.key, slice])) });
+    for (const slice of replacement.results) {
+        expect(slice.pending, 'the read itself remains visibly in flight').toBe(true);
+        expect(slice.sources.find(source => source.source === 'how_you_work')).toMatchObject({
+            status: 'stale', asOfMs: 2000, errorCode: 'usage_query_failed',
+        });
+    }
+});
+
 it('updates replacements, comparison, staged evidence, quota, labels and consumed settings like a fresh projection', async () => {
     const f = await fixture();
     f.run();

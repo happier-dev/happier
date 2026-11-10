@@ -16,7 +16,7 @@ import { formatTokenCount, formatTokenCountLong, formatUsageCost } from '@/utils
 import { useMotionPreferences } from '@/components/instrument';
 import { ChartInkFade } from '@/components/instrument/charts/LineFade';
 import { INSTRUMENT_DURATIONS } from '@/components/instrument/motion/motionTokens';
-import { useEntrancesEnabled } from './usageEntrance';
+import { useEntranceOnce, useEntrancesEnabled } from './usageEntrance';
 import { withUsageAccentAlpha } from './usageAccent';
 import { ScrubLens, type ScrubLensContent, type ScrubLensRow } from './UsageScrubLens';
 import { formatUsageCalendarDate, usageMissingBucketValue, type UsageCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
@@ -34,9 +34,11 @@ type UsageCalendarMix = Omit<UsageModelMix, 'buckets'> & Readonly<{ buckets: rea
  * `bucket` identity is the period morph (lab `kitstates` morph): the days that stay keep their marks
  * and re-interpolate in place, the days that join rise from the axis. Nothing remounts.
  */
-export function useUsageSeriesMotion(pointCount: number, identity: 'bucket' | 'slot' = 'slot') {
+export function useUsageSeriesMotion(pointCount: number, identity: 'bucket' | 'slot' = 'slot', entranceId?: string) {
     const motion = useMotionPreferences();
-    const entrancesEnabled = useEntrancesEnabled();
+    const sectionEntrancesEnabled = useEntrancesEnabled();
+    const firstData = useEntranceOnce(entranceId, pointCount > 0);
+    const entrancesEnabled = sectionEntrancesEnabled && firstData;
     const barMotion = useMemo<StackedSeriesChartProps['barMotion']>(() => ({
         identity,
         ...(motion.entrance.kind === 'travel' && entrancesEnabled ? { entrance: { durationMs: 350,

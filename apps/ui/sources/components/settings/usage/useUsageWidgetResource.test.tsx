@@ -15,7 +15,7 @@ import { UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } fr
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { useUsageWidgetResource, useUsageWidgetBodyModel, type UsageWidgetResource, type UsageWidgetBodyModel } from './useUsageWidgetResource';
 import type { UsageWidgetQueryPlan } from './usageWidgetQueries';
-import { usageAgentTitle, useUsageAnalyticsView } from './widgets/usageBodyKit';
+import { usageAgentTitle, useUsageAnalyticsView, describeUsagePagePendingSources } from './widgets/usageBodyKit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { WidgetFrameResourceActivityContext } from '@/components/widgets/frame/widgetFrameResourceActivity';
@@ -80,6 +80,62 @@ function BodyProbe(props: Readonly<{ resource: UsageWidgetResource; instanceId: 
 }
 
 describe('Usage widget shared Resource selection', () => {
+    it('shows last-known data immediately on a stale remount while one replacement read settles or fails', async () => {
+        let hold = false;
+        let fail = false;
+        const gate = createDeferred<void>();
+        const credentials = await mountHome(async request => {
+            if (request.path !== '/v2/usage/query') return undefined;
+            if (hold) await gate.promise;
+            return fail ? new Response('offline', { status: 503 })
+                : Response.json({ ...accounting, totals: { ...accounting.totals, eventCount: hold ? 2 : 1 } });
+        });
+        const query = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 }, includeQuota: false,
+            includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false, includeComparison: false });
+        const selectedPlan = plan(query);
+        const draws: UsageWidgetBodyModel[] = [];
+        const mount = () => renderHook(() => {
+            const resource = useUsageWidgetResource({ credentials, enabled: true, plan: selectedPlan });
+            const model = useUsageWidgetBodyModel(resource, 'first');
+            draws.push(model);
+            return model;
+        });
+        const first = await mount();
+        await expect.poll(() => first.getCurrent().pending).toBe(false);
+        const retained = first.getCurrent().slice!.accounting;
+        expect(retained?.totals.eventCount).toBe(1);
+        await first.unmount();
+        const reads = () => home!.requests.filter(request => request.path === '/v2/usage/query').length;
+        const before = reads();
+        hold = true;
+        const later = Date.now() + 5 * 60_000;
+        vi.spyOn(Date, 'now').mockReturnValue(later);
+        invalidateUsageQueryResources();
+        await flushHookEffects();
+        expect(reads(), 'closed views do not re-read').toBe(before);
+        draws.length = 0;
+        const revisit = await mount();
+        try {
+            expect(draws[0]?.slice?.accounting, 'the first remount draw keeps the admitted facts').toBe(retained);
+            // Readiness is observed at the real mounted consumer, before HTTP answers.
+            expect(revisit.getCurrent().slice?.accounting).toBe(retained);
+            await expect.poll(reads).toBe(before + 1);
+            expect(revisit.getCurrent().refreshing).toBe(true);
+            expect(describeUsagePagePendingSources([revisit.getCurrent().slice!]), 'retained observations keep the phone header quiet').toBeNull();
+            fail = true;
+            gate.resolve();
+            await expect.poll(() => revisit.getCurrent().pending).toBe(false);
+            expect(revisit.getCurrent().slice?.accounting).toBe(retained);
+            expect(revisit.getCurrent().error).not.toBeNull();
+            expect(revisit.getCurrent().freshness).toBe('stale');
+            fail = false;
+            await act(async () => { await revisit.getCurrent().refresh(); });
+            await expect.poll(() => revisit.getCurrent().slice?.accounting?.totals.eventCount).toBe(2);
+            expect(revisit.getCurrent().error).toBeNull();
+            expect(reads(), 'one failed revalidation and one explicit recovery').toBe(before + 2);
+        } finally { gate.resolve(); await revisit.unmount(); }
+    });
+
     it('keeps an actual held Daily Agent choice behind Usage Action policy while UI Retry reacquires accounting', async () => {
         const startMs = Date.parse('2024-04-22T00:00:00Z');
         const endMs = startMs + 86_400_000;
@@ -700,7 +756,7 @@ describe('Usage widget shared Resource selection', () => {
         await expect.poll(() => hook.getCurrent().requestedQuery?.query.period).toEqual({ startMs: 2000 });
         expect(secondReads).toBeGreaterThan(0);
     });
-    it('withholds newly mounted rich cached facts until changed accounting is physically issued', async () => {
+    it('shows admitted rich facts from the first remount draw while changed accounting is issued once', async () => {
         let amount = 1;
         let activityPosts = 0;
         let held: ReturnType<typeof createDeferred<Response>> | undefined;
@@ -751,7 +807,7 @@ describe('Usage widget shared Resource selection', () => {
             observing = true;
             await screen.update(<Page visible />);
             await expect.poll(() => activityPosts).toBe(beforeReopenPosts + 1);
-            expect(preIssueFactBodies, 'cached rich bodies must not run ahead of the required physical request').toBe(0);
+            expect(preIssueFactBodies, 'last-known facts are visible before the replacement request is issued').toBeGreaterThan(0);
             expect(values(), 'issuance releases retained facts without waiting for the held response').toEqual([1]);
             await flushHookEffects({ cycles: 20 });
             expect(activityPosts, 'fact presentation joins the already issued cohort').toBe(beforeReopenPosts + 1);
@@ -771,7 +827,7 @@ describe('Usage widget shared Resource selection', () => {
             preIssueFactBodies = 0;
             await screen.update(<Page visible />);
             await expect.poll(() => activityPosts).toBe(beforeReopenPosts + 1);
-            expect(preIssueFactBodies, 'cancelled progress cannot admit rich facts before the replacement request').toBe(0);
+            expect(preIssueFactBodies, 'cancelling a replacement does not hide the last-known facts on remount').toBeGreaterThan(0);
             expect(values(), 'replacement issuance releases the retained facts').toEqual([2]);
             await act(async () => { cancelled!.resolve(response()); });
             await flushHookEffects({ cycles: 20 });

@@ -15,8 +15,8 @@ vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
 
-import { formatPlanMoment, planAccountStatesMode, readPlanAccountsStatement } from './UsagePlanParts';
-import type { UsagePlanAccount } from './usagePlansModel';
+import { formatPlanMoment, planAccountStatesMode, readPlanAccountsStatement, planWindowStatement } from './UsagePlanParts';
+import type { UsagePlanAccount, UsagePlanWindow } from './usagePlansModel';
 
 const previousLanguage = getPreferredLanguage();
 beforeEach(async () => {
@@ -28,6 +28,20 @@ afterEach(() => setPreferredLanguageFromSettings(previousLanguage));
 const now = new Date(2026, 9, 10, 12).getTime();
 const date = (at: number, options: Intl.DateTimeFormatOptions) =>
   new Intl.DateTimeFormat(getPreferredLanguage(), options).format(at);
+
+describe('exhausted-window presentation', () => {
+  it('gives observed exhaustion priority over a depletion projection, preserving future and unknown cases', () => {
+    const window: UsagePlanWindow = { key: 'weekly', meterId: 'weekly', label: 'Weekly', remainingFraction: 0,
+      resetAtMs: now + 3600000, windowDurationMs: 7200000, tone: 'danger', estimated: false, comparable: true,
+      paceUnavailable: null, pace: { evenPaceRemainingFraction: 0.5, projectedRemainingFraction: 0,
+        projectedUsedFraction: 1.2, depletesAtMs: now, observedCurve: [], qualification: 'confirmed',
+        sampleCount: 2, empiricalRange: null, windowStartAtMs: now - 3600000 } };
+    expect(planWindowStatement(window, now)).toMatchObject({ kind: 'used_up', tone: 'warning' });
+    expect(planWindowStatement({ ...window, pace: null }, now)).toMatchObject({ kind: 'used_up' });
+    expect(planWindowStatement({ ...window, remainingFraction: 0.1 }, now)).toMatchObject({ kind: 'depletes' });
+    expect(planWindowStatement({ ...window, remainingFraction: null, pace: null }, now)).toMatchObject({ kind: 'unavailable' });
+  });
+});
 
 describe('formatPlanMoment', () => {
   it.each([

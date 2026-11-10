@@ -152,7 +152,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
   );
   const count = series[0]?.points.length ?? 0;
   // A period change morphs: the days that stay keep their bars, the days that join rise in.
-  const motion = useUsageSeriesMotion(count, 'bucket');
+  const motion = useUsageSeriesMotion(count, 'bucket', JSON.stringify(['usage_daily', props.serverId, props.model.shownQuery?.authority.accountId ?? null]));
   // Choosing an Agent in the lens or the legend narrows the page's one filter row to it.
   const drill = useUsageDrill(props.query);
   const drillable = byAgent && drill.available('agents');

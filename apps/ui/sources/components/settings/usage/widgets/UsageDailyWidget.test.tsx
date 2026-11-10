@@ -4,21 +4,21 @@ import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { t } from '@/text';
-import { WidgetFrameCellHeightContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { WidgetFrameBodyRowsContext } from '@/components/widgets/frame/widgetFrameBody';
 import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { resolveUsageDailyChartShape, UsageDailyWidget } from './UsageDailyWidget';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
+import { resetPlayedEntrancesForTests } from '../usageEntrance';
 import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 let controlsHome: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
-afterEach(async () => { standardCleanup(); await controlsHome?.dispose(); controlsHome = undefined; vi.restoreAllMocks(); });
+afterEach(async () => { standardCleanup(); resetPlayedEntrancesForTests(); await controlsHome?.dispose(); controlsHome = undefined; vi.restoreAllMocks(); });
 async function renderControls(children: React.ReactNode) {
   controlsHome = await serveActionHomes({ homes: [{ key: 'daily', serverUrl: 'https://usage-daily-controls.test', accountId: 'daily-account' }],
     route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
@@ -51,6 +51,17 @@ function fixture(values: readonly (number | null)[], endMs: number, byAgent = tr
 }
 
 describe('Daily period chart', () => {
+  it('rises on first data and draws retained bars immediately on a revisit, keeping change motion', async () => {
+    const props = fixture([10, 30], start + 2 * day);
+    const first = await renderScreen(<UsageDailyWidget {...props} />);
+    expect(first.findByType(StackedSeriesChart).props.barMotion.entrance).toBeDefined();
+    await first.unmount();
+    const revisit = await renderScreen(<UsageDailyWidget {...props} />);
+    const chart = revisit.findByType(StackedSeriesChart);
+    expect(chart.props.barMotion.entrance).toBeUndefined();
+    expect(chart.props.barMotion.change).toBeDefined();
+    expect(chart.props.series[0].points.map((point: { y: number }) => point.y)).toEqual([10, 30]);
+  });
   it('gives the plot the room a taller partner leaves in its cell', () => {
     const presentation = { size: 'tall', geometry: { width: 500, height: 368 } } as Parameters<typeof resolveUsageDailyChartShape>[0];
     expect(resolveUsageDailyChartShape(presentation, false).plotPx).toBe(252);
@@ -143,18 +154,18 @@ describe('Daily keeps its shape: declared plot height and a chart-shaped first r
     expect(plotOf(tall)).toBe(plotOf(own));
     expect(plotOf(own)).toBeGreaterThanOrEqual(200);
   });
-  it('gives the plot every pixel its stretched cell leaves under the drawn chart, even inside a declared room', async () => {
+  it('decides its plot before first paint from the room its frame declares, never from a box measured after mount (sweep 1110 #8)', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(start + 20 * day);
     const props = fixture([10, 30, 20], start + 3 * day);
-    // A grown cell declares a 500 px room and its band stretches it to 700; the capped chart draws 400 of it.
-    const screen = await renderScreen(<WidgetFrameCellHeightContext.Provider value={700}>
-      <WidgetPresentationProvider value={{ ...medium, geometry: { width: 560, height: 500 } }}><UsageDailyWidget {...props} /></WidgetPresentationProvider>
-    </WidgetFrameCellHeightContext.Provider>);
-    const before = plotOf(screen);
-    await act(async () => {
-      screen.findHostByTestId('daily.drawn')!.props.onLayout({ nativeEvent: { layout: { width: 560, height: 400 } } });
-    });
-    expect(plotOf(screen)).toBe(before + 300);
+    const inRoom = (geometry?: { width: number; height: number }) => <WidgetFrameBodyRowsContext.Provider value={4}>
+      <WidgetPresentationProvider value={{ ...medium, ...(geometry ? { geometry } : {}) }}><UsageDailyWidget {...props} /></WidgetPresentationProvider>
+    </WidgetFrameBodyRowsContext.Provider>;
+    // First paint (nothing measured yet), then the frame's measured box at its own height and at a stretched one.
+    const first = plotOf(await renderScreen(inRoom()));
+    const measured = plotOf(await renderScreen(inRoom({ width: 560, height: 300 })));
+    const stretched = plotOf(await renderScreen(inRoom({ width: 560, height: 700 })));
+    expect(measured).toBe(first);
+    expect(stretched).toBe(first);
   });
   it('holds the settled chart\'s room while its first read is pending, then says what it is still reading', async () => {
     vi.useFakeTimers();
