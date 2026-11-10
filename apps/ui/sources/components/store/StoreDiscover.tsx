@@ -44,7 +44,7 @@ export function StoreDiscover(props: Readonly<{
     React.useEffect(() => { retained.current = suggestions; });
     const complete = !curation.loading && !curation.error && curation.sourceFailures.length === 0;
     return <>
-        <PluginSurfaceProjectionDemand accountScope={lifetime?.scope ?? null} enabled={presented} presents="allInstallations" />
+        <PluginSurfaceProjectionDemand accountScope={lifetime?.scope ?? null} enabled={presented} />
         {props.children({ curation, suggestions, complete, presented })}
     </>;
 }

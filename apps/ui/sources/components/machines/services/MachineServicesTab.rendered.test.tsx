@@ -158,24 +158,28 @@ it.each([undefined, 'web'])('reads only the requested Environment services (comp
     const shown = composeService ? 1 : 3;
     try {
         await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().pending).toBe(false); });
+        expect(resource.reads).toBe(1);
         expect(resource.readValues.flatMap(value => value.kind === 'snapshot' ? value.services : [])).toHaveLength(shown);
         expect(hook.getCurrent().rows).toHaveLength(shown);
         const settled = hook.getCurrent().rows;
         publications.length = 0;
+        // This boundary deliberately emits an invalidation even for equal bytes.
+        // Hints require a canonical reread; the daemon owns suppressing unrelated changes.
         await resource.publish(initial);
         await flushHookEffects();
-        expect(resource.reads).toBe(1);
+        expect(resource.reads).toBe(2);
+        expect(resource.readValues.flatMap(value => value.kind === 'snapshot' ? value.services : [])).toHaveLength(shown * 2);
         expect(publications).toHaveLength(0);
         expect(hook.getCurrent().rows).toBe(settled);
         await resource.publish({ ...initial, services: initial.services.map(row => row.serviceId === 'instance/web'
             ? { ...row, state: 'stopped' } : row) });
         await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows?.[0]?.state).toBe('stopped'); });
-        expect(resource.readValues.flatMap(value => value.kind === 'snapshot' ? value.services : [])).toHaveLength(shown * 2);
+        expect(resource.readValues.flatMap(value => value.kind === 'snapshot' ? value.services : [])).toHaveLength(shown * 3);
         expect(publications).toHaveLength(1);
         if (!composeService) expect(hook.getCurrent().rows?.[1]).toBe(settled?.[1]);
         await hook.rerender({ ...input, composeService: 'worker' });
         await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows?.map(row => row.serviceId)).toEqual(['instance/worker']); });
-        expect(resource.readValues.flatMap(value => value.kind === 'snapshot' ? value.services : [])).toHaveLength(shown * 2 + 1);
+        expect(resource.readValues.flatMap(value => value.kind === 'snapshot' ? value.services : [])).toHaveLength(shown * 3 + 1);
     } finally { await hook.unmount(); }
 });
 

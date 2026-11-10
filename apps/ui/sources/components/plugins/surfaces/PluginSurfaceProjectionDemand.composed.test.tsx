@@ -3,10 +3,13 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema,
+    SessionConsumptionReplaceAckV1Schema } from '@happier-dev/protocol/sessions/sessionConsumptionV1';
 import { buildDeferredDaemonProjectionSections, demandedDaemonProjectionSections,
     DaemonContributionRegistryProjectionDescribeRequestSchema, PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema,
-    PluginAvailabilityIntentsListActionOutputV1Schema, PluginAccountAvailabilityIntentReadResponseV1Schema,
+    PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema,
+    PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE, PluginAccountAvailabilityIntentReadResponseV1Schema,
     PluginMachineMaterializationV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { createMachineFixture, flushHookEffects } from '@/dev/testkit';
 import { renderWithAppProviders } from '@/dev/testkit/render/renderWithAppProviders';
@@ -130,7 +133,10 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         configureConnectedServerSocketBoundary(socket);
         vi.spyOn(socket, 'timeout').mockReturnValue(socket);
         vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, packet) => {
-            if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
+            if (event === SESSION_CONSUMPTION_REPLACE_EVENT) return SessionConsumptionReplaceAckV1Schema.parse({
+                ok: true, ...SessionConsumptionReplaceV1Schema.parse(packet),
+            });
+            if (event !== 'rpc-call') throw new Error(`Unexpected fixture Socket event: ${event}`);
             if (!packet || typeof packet !== 'object' || !('method' in packet)
                 || typeof packet.method !== 'string' || !('params' in packet)) throw new Error('Invalid fixture RPC');
             expect(fleet.some(entry => packet.method === `${entry.id}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)).toBe(true);
@@ -153,11 +159,16 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             return Response.json(PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({ availabilityCursor,
                 snapshots: fleet.map((entry, index) => ({ serverIdentityId, machineId: entry.id,
                     materializations: index === 0 ? [materialization, ...fleetMaterializations[index]!.slice(1)] : fleetMaterializations[index]! })) }));
-        if (request.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'])
+        if (request.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
+            const input = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body);
+            const known = input.knownPluginIds ?? [];
+            const page = known.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE);
             return Response.json(PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor, pluginIds: [],
-                intentReads: [{ pluginId, response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor,
-                    hostingCapability: { enabled: false }, intent: null, release: null, packageAssets: [], uiArtifacts: [] }) }], failedPluginIds: [] }));
-        return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+                ...(known.length > page.length ? { nextCursor: page.at(-1) } : {}),
+                intentReads: page.map(id => ({ pluginId: id, response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor,
+                    hostingCapability: { enabled: false }, intent: null, release: null, packageAssets: [], uiArtifacts: [] }) })), failedPluginIds: [] }));
+        }
+        return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method, headers: request.headers }) ?? undefined;
     } });
     let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;
     try {
