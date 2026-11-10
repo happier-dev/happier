@@ -1,4 +1,5 @@
 import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import type { PluginDropTargetRuntime } from '@happier-dev/plugin-sdk';
 import { ListReorderOutputV1Schema } from '@happier-dev/protocol/actions/listReorderAction';
 import { entityReorderOutcome } from '@/components/ui/treeDragDrop/entityReorderOutcome';
 import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -20,6 +21,7 @@ export type PluginEntityDropTargetRegistration = Readonly<{
     descriptor: PluginDropTargetContributionV1;
     resolve: (context: Omit<EntityDropResolveContext, 'pointer'> & Readonly<{ targetInput: PluginUiJsonValueV1 | null }>) => EntityDropAdmissionV1;
     isCurrent: () => boolean;
+    settle?: PluginDropTargetRuntime['settle'];
 }>;
 export type PluginEntityDragSourceMount = Readonly<{ id: string; isCurrent: () => boolean; begin: (input?: 'pointer' | 'keyboard') => EntityDragCarry | null; dispose: () => void }>;
 export type PluginEntityDropTargetMount = Readonly<{ id: string; isCurrent: () => boolean; dispose: () => void }>;
@@ -47,11 +49,11 @@ export type CreatePluginEntityDragDropBindingInput = Readonly<{
     isSourceDeclared?: (id: string) => boolean;
     isTargetDeclared?: (id: string) => boolean;
     subscribeRegistrations?: (listener: () => void) => () => void;
-    executeAction: (action: string | Readonly<{ pluginId: string; localId: string }>, input: PluginUiJsonValueV1) => Promise<EntityDropOutcomeV1>;
+    executeAction: (action: string | Readonly<{ pluginId: string; localId: string }>, input: PluginUiJsonValueV1, settle?: PluginDropTargetRuntime['settle']) => Promise<EntityDropOutcomeV1>;
 }>;
 
 /** The Action front door's settlement, not callback-returned lookalike error bags. */
-export function settlePluginEntityDropActionResult(result: unknown, action: string | Readonly<{ pluginId: string; localId: string }>): EntityDropOutcomeV1 {
+export function settlePluginEntityDropActionResult(result: unknown, action: string | Readonly<{ pluginId: string; localId: string }>, settle?: PluginDropTargetRuntime['settle']): EntityDropOutcomeV1 {
     const failure = readPluginSurfaceHostApiErrorPayload(result);
     if (failure) return { status: failure.code === 'timeout' || failure.diagnostics.includes(PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE) ? 'unknown' : 'refused',
         reason: { code: failure.diagnostics[0] ?? failure.code, message: failure.diagnostics[0] ?? failure.code } };
@@ -62,7 +64,7 @@ export function settlePluginEntityDropActionResult(result: unknown, action: stri
         const parsed = ListReorderOutputV1Schema.safeParse(result);
         return entityReorderOutcome(parsed.success ? parsed.data : { status: 'unknown', reason: 'invalid_reorder_outcome' });
     }
-    return { status: 'applied' };
+    return settle ? settle(result) : { status: 'applied' };
 }
 
 /** Each completed physical drop is a new intent; only replay retains an issued request identity. */
@@ -70,10 +72,11 @@ export async function executeMountedPluginEntityDropAction(
     mounted: Readonly<{ hostApi: Pick<PluginSurfaceHostApiV1, 'handleRequest'>; surfaceContext: PluginUiSurfaceContextV1 }>,
     action: string | Readonly<{ pluginId: string; localId: string }>,
     input: PluginUiJsonValueV1,
+    settle?: PluginDropTargetRuntime['settle'],
 ): Promise<EntityDropOutcomeV1> {
     const result = await mounted.hostApi.handleRequest({ version: 1, requestId: randomUUID(),
         surface: mounted.surfaceContext, method: 'executeAction', payload: { action, input } });
-    return settlePluginEntityDropActionResult(result, action);
+    return settlePluginEntityDropActionResult(result, action, settle);
 }
 
 /** Mount/authority adapter only; E01 remains the source, target and carry decision owner. */
@@ -193,7 +196,7 @@ export function createPluginEntityDragDropBinding(input: CreatePluginEntityDragD
                     const action = effect.actionId.startsWith('plugin:')
                         ? parseQualifiedPluginContributionKey(effect.actionId.slice(7)) : effect.actionId;
                     if (!action) return { status: 'refused', reason: { code: 'plugin-drop-action-invalid', message: 'plugin-drop-action-invalid' } };
-                    return input.executeAction(action, effect.input);
+                    return input.executeAction(action, effect.input, registration.settle);
                 },
             });
             return Object.freeze({ id: targetId, isCurrent, dispose: ownRetirement(() => { mounted = false; retire(); }, mount.refreshBounds) });

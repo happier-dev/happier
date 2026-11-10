@@ -1,4 +1,4 @@
-import type { EntityDragItemV1, EntityDropAdmissionV1 } from '@happier-dev/protocol/plugins/ui/client';
+import type { EntityDragItemV1, EntityDropAdmissionV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { JsonValue } from './identity.js';
 import type { ComposerAttachmentAuthorValueV1 } from './ui/publicContract.js';
 
@@ -28,6 +28,10 @@ export interface PluginDragSourceRuntime {
 
 /** Hover admits an Action request; it cannot execute or grant the Action. */
 export interface PluginDropTargetRuntime {
+  /** Pure projection of the declared domain Action result. Never performs or retries a write.
+   * Omit only when successful Action execution itself establishes the effect (opaque result data).
+   * The host preserves transport, approval and built-in reorder failures before calling this. */
+  settle?(result: unknown): EntityDropOutcomeV1;
   resolve(context: Readonly<{
     item: EntityDragItemV1;
     destination: JsonValue | null;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { EntityDropAdmissionV1, PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import { EntityDropOutcomeV1Schema, type EntityDropAdmissionV1, type EntityDropOutcomeV1, type PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
-import { createPluginEntityDragDropBinding, settlePluginEntityDropActionResult, type PluginEntityDragSourceRegistration, type PluginEntityDropTargetRegistration } from './pluginEntityDragDropBinding';
+import { createPluginEntityDragDropBinding, executeMountedPluginEntityDropAction, settlePluginEntityDropActionResult, type PluginEntityDragSourceRegistration, type PluginEntityDropTargetRegistration } from './pluginEntityDragDropBinding';
 import { createPluginSurfaceHostApiError } from '../createPluginSurfaceHostApi';
 import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import { PluginDragSourceContributionV1Schema, PluginDropTargetContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/entityDragDrop';
@@ -31,6 +31,49 @@ function fixture() {
     return { runtime, binding, writes, setCurrent: (next: boolean) => { current = next; }, setAdmission: (next: EntityDropAdmissionV1) => { admission = next; } };
 }
 describe('mounted plugin entity bridge', () => {
+    it.each(['pointer', 'keyboard', 'chooser'] as const)('preserves the author-declared domain outcome through %s drop and one pending Action', async route => {
+        const runtime = createEntityDragDropRuntime();
+        const sourceRegistration: PluginEntityDragSourceRegistration = {
+            descriptor: { id: 'issue', title: 'Issue', client: { artifactId: 'ui', exportName: 'activate' }, platforms: ['web'], referenceSchema: { type: 'string' } },
+            describe: () => ({ title: 'Issue' }), isCurrent: () => true,
+        };
+        const targetRegistration: PluginEntityDropTargetRegistration = {
+            descriptor: { id: 'board', title: 'Board', client: { artifactId: 'ui', exportName: 'activate' }, platforms: ['web'], acceptedKinds: ['plugin:acme.board/issue'], actions: [{ kind: 'plugin', action: 'add' }] },
+            resolve: () => effect, isCurrent: () => true,
+            // A separately authored Action uses the public outcome schema as its domain result.
+            settle: result => EntityDropOutcomeV1Schema.parse(result),
+        };
+        const surface = { pluginId: 'acme.board', contributionId: 'review', surfaceId: 'board', placement: 'sessionPane' as const, platform: 'web' as const, channel: 'internal' as const, resourceScope: [], diagnostics: [] };
+        let writes = 0;
+        let complete!: (result: PluginUiJsonValueV1) => void;
+        const hostApi = createPluginSurfaceHostApi({ surfaceContext: surface, handlers: {
+            executeAction: async () => { writes++; return new Promise(resolve => { complete = resolve; }); },
+        } });
+        const binding = createPluginEntityDragDropBinding({ runtime, pluginId: 'acme.board', mountKey: 'settlement', scope, isCurrent: () => true,
+            readSource: () => sourceRegistration, readTarget: () => targetRegistration,
+            executeAction: (action, input, settle) => executeMountedPluginEntityDropAction({ hostApi, surfaceContext: surface }, action, input, settle) });
+        const source = binding.mountSource({ mountId: 'source', sourceId: 'issue', reference: 'issue-1' })!;
+        const target = binding.mountTarget({ mountId: 'target', targetId: 'board', getBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }) })!;
+        try {
+            for (const outcome of [
+                { status: 'refused', reason: { code: 'unsupportedOperation', message: 'Unsupported operation' } },
+                { status: 'unknown', reason: { code: 'responseLost', message: 'Check before trying again' } },
+                { status: 'applied' },
+            ] satisfies EntityDropOutcomeV1[]) {
+                const before = writes;
+                const carry = route === 'chooser' ? null : source.begin(route)!;
+                if (route === 'pointer') carry!.move({ x: 20, y: 20 });
+                else if (carry) carry.choose(target.id);
+                const pending = carry ? carry.release() : runtime.perform(source.id, target.id, undefined, 'chooser');
+                await Promise.resolve();
+                expect(runtime.getSnapshot().phase).toBe('pending');
+                complete(outcome);
+                expect(await pending).toEqual(outcome);
+                expect(runtime.getSnapshot().outcome).toEqual(outcome);
+                expect(writes - before).toBe(1);
+            }
+        } finally { binding.dispose(); }
+    });
     it('mounts external author callbacks and admits host Session, repository file and custom reference to their declared Action', async () => {
         const index = createPluginUiClientExecutableRegistrationIndex();
         const activation = index.createScope({ pluginId: authorPlugin.manifest.id, pluginVersion: authorPlugin.manifest.version, contributes: authorPlugin.manifest.contributes ?? {},

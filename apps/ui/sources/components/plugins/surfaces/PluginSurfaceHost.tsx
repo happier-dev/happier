@@ -3020,13 +3020,13 @@ function PluginSurfaceHostMount(props: Readonly<(
                 const target = mountedPluginUiProjectionRef.current?.dropTargetsById[`${mountedPluginId}/${localId}`];
                 if (!target) return null;
                 const resolved = resolvePluginUiClientDropTargetRegistration({ target, platform: resolvePluginUiClientExecutablePlatform() });
-                return resolved ? { descriptor: target.definition, resolve: resolved.runtime.resolve,
+                return resolved ? { descriptor: target.definition, resolve: resolved.runtime.resolve, settle: resolved.runtime.settle,
                     isCurrent: resolved.registration.lifecycle.isCurrent } : null;
             },
-            executeAction: async (action, actionInput) => {
+            executeAction: async (action, actionInput, settle) => {
                 const mounted = entityDragHostControllerRef.current;
                 if (!mounted || !input.isCurrent()) return { status: 'refused', reason: { code: 'plugin-drag-mount-retired', message: 'plugin-drag-mount-retired' } };
-                return executeMountedPluginEntityDropAction(mounted, action, actionInput);
+                return executeMountedPluginEntityDropAction(mounted, action, actionInput, settle);
             },
         }) : null;
         entityDragBindingRef.current = entityBinding;
