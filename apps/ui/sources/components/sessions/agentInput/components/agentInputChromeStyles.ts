@@ -4,6 +4,7 @@ import type { UnistylesThemes } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
+import { COMPOSER_PHONE_CARD_CONTENT_INSET } from '../composerContentInset';
 
 
 type Theme = UnistylesThemes[keyof UnistylesThemes];
@@ -79,6 +80,17 @@ export function resolveAgentInputPanelLayoutStyle(theme: Theme) {
     };
 }
 
+/** The field's and the chip rail's own leading inset inside the card: the typed line and an icon chip's glyph. */
+export const AGENT_INPUT_CARD_CONTENT_LEADING_INSET = 8;
+
+/**
+ * A phone composer's side padding, derived so its content lands `COMPOSER_PHONE_CARD_CONTENT_INSET` in from the
+ * card's outer edge (card on 16, content on 28): that inset less the edge and the field's own leading inset.
+ */
+export function resolveAgentInputPhonePanelPaddingX(theme: Theme): number {
+    return Math.max(0, COMPOSER_PHONE_CARD_CONTENT_INSET - resolveAgentInputPanelEdgeStyle(theme).borderWidth - AGENT_INPUT_CARD_CONTENT_LEADING_INSET);
+}
+
 export function resolveAgentInputPanelStyle(theme: Theme) {
     return {
         ...resolveAgentInputPanelLayoutStyle(theme),
@@ -105,7 +117,7 @@ export const AGENT_INPUT_ACTION_CHIP_PRESSED_STYLE = {
 
 /** A chip whose label is hidden (icon-only density). */
 export const AGENT_INPUT_ACTION_CHIP_ICON_ONLY_STYLE = {
-    paddingHorizontal: 8,
+    paddingHorizontal: AGENT_INPUT_CARD_CONTENT_LEADING_INSET,
     gap: 0,
 };
 

@@ -25,10 +25,12 @@ describe('Session route screen options', () => {
         expect(buildSessionRouteScreenOptions({ childRouteName: 'follow' })).toEqual({});
     });
 
-    it('names the Info page before its body hydrates instead of exposing the parent route pattern', () => {
-        expect(buildSessionRouteScreenOptions({ childRouteName: 'info' })).toMatchObject({
-            headerTitle: t('sessionInfo.title'),
-        });
+    it('shows no title over Session Info (its header block names the Session) and never the route pattern', () => {
+        const options = buildSessionRouteScreenOptions({ childRouteName: 'info' });
+        // An empty string, not a missing title: native-stack falls back to the route name (`session/[id]`).
+        expect(options).toMatchObject({ headerShown: true, headerTitle: '' });
+        // The screen keeps its name for assistive tech and the window title.
+        expect(options.title).toBe(t('sessionInfo.title'));
     });
 
     it.each([

@@ -211,8 +211,7 @@ describe('SessionInstrumentStrip', () => {
     });
 
     it('cross-fades the line when the guard moment changes, and simply shows the first line', () => {
-        const line = () => tree!.root.findAll((n) => n.props?.style === undefined ? false : n.props?.testID === undefined
-            && n.findAll((c) => c.props?.testID === 'agent-input-connection-status-text').length > 0 && 'entering' in n.props)[0]!;
+        const line = () => tree!.root.findAll((n) => n.props?.testID === 'agent-input-connection-line' && 'entering' in n.props)[0]!;
         act(() => { tree = create(<SessionInstrumentStrip connectionStatus={{ text: 'Stopping in', color: '#b60', dotColor: '#b60', transitionKey: 'warning' }} />); });
         expect(line().props.entering).toBeUndefined();
         act(() => { tree!.update(<SessionInstrumentStrip connectionStatus={{ text: 'Stopped to free memory', color: '#999', dotColor: '#999', transitionKey: 'stopped' }} />); });

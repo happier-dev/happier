@@ -226,11 +226,14 @@ import {
     AGENT_INPUT_PANEL_PADDING_BOTTOM,
     AGENT_INPUT_PANEL_PADDING_TOP,
     AGENT_INPUT_ACTION_CHIP_GAP_X,
+    AGENT_INPUT_CARD_CONTENT_LEADING_INSET,
+    resolveAgentInputPhonePanelPaddingX,
     NATIVE_ACTION_CHIP_GAP_Y,
     resolveAgentInputActionChipTextStyle,
     resolveAgentInputPanelBackedEdgeStyle,
     resolveAgentInputPanelLayoutStyle,
 } from './components/agentInputChromeStyles';
+import { COMPOSER_PHONE_CARD_CONTENT_INSET } from './composerContentInset';
 import { AgentInputChipRowReach, resolveAgentInputChipRailHitReach } from './definitions/agentInputChipRowReach';
 import { AgentInputReadOnlyChipRow } from './components/AgentInputReadOnlyChipRow';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
@@ -903,6 +906,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     // Default (non-glass) composer surface — the original styling: standard input
     // background + hairline surface border, no drop shadow.
     unifiedPanel: resolveAgentInputPanelLayoutStyle(theme),
+    // A phone's card puts its content on the composer's phone line (card on 16, content on 28).
+    unifiedPanelPhone: { paddingHorizontal: resolveAgentInputPhonePanelPaddingX(theme) },
     // Over a picture or the planet the composer's edge is the flat ink edge (light), never a white line.
     unifiedPanelBackedEdge: resolveAgentInputPanelBackedEdgeStyle(theme) ?? {},
     // The composer style changes its shadow; the Elements material owns its fill. The edge stays
@@ -927,8 +932,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flexDirection: 'row',
         alignItems: 'center',
         borderWidth: 0,
-        paddingLeft: theme.space.s8,
-        paddingRight: theme.space.s8,
+        paddingLeft: AGENT_INPUT_CARD_CONTENT_LEADING_INSET,
+        paddingRight: AGENT_INPUT_CARD_CONTENT_LEADING_INSET,
         paddingVertical: AGENT_INPUT_CONTAINER_VERTICAL_PADDING,
         minHeight: 40,
     },
@@ -4100,7 +4105,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             <AgentInputTextSync textSource={textSource} onText={onControlledText} />
             <TextSelectabilityScope selectable>
                 <View ref={overlayAnchorRef} testID="agent-input-composer" style={[styles.container, documentPanel ? styles.containerDocument : null, { paddingHorizontal: props.contentPaddingHorizontal ?? 0 }]}>
-                    <GlassSurface testID="agent-input-material-surface" {...panelMaterialProps} style={[styles.unifiedPanel, props.panelStyle, styles.readOnlyPanel]}>
+                    <GlassSurface testID="agent-input-material-surface" {...panelMaterialProps} style={[styles.unifiedPanel, isMobileLayoutWidth(screenWidth) ? styles.unifiedPanelPhone : null, props.panelStyle, styles.readOnlyPanel]}>
                         {composerPresentationFeedback}
                         <AgentInputAttachmentsRow items={attachmentRowItems} />
                         <View style={[styles.inputContainer, styles.readOnlyInputContent, documentPanel ? styles.readOnlyDocumentContent : null]}>
@@ -4330,6 +4335,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     onGitPress={props.onFileViewerPress}
                     // A compact composer has no Session to report on: an empty strip reserves no row above it.
                     collapseWhenEmpty={documentPanel || compactControls}
+                    contentInsetX={isMobileLayoutWidth(screenWidth) ? COMPOSER_PHONE_CARD_CONTENT_INSET : undefined}
                 />
 
                 {/* Box 2: Action Area (Input + Send) */}
@@ -4351,6 +4357,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     {...panelMaterialProps}
                     style={[
                         styles.unifiedPanel,
+                        isMobileLayoutWidth(screenWidth) ? styles.unifiedPanelPhone : null,
                         isGlassComposer ? styles.unifiedPanelGlass : null,
                         documentPanel ? styles.documentPanel : null,
                         props.panelStyle,

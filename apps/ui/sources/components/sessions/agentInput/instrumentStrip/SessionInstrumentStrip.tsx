@@ -116,6 +116,11 @@ export type SessionInstrumentStripProps = Readonly<{
      * keep the reserved row so status arriving later does not move the card.
      */
     collapseWhenEmpty?: boolean;
+    /**
+     * The card's content inset when the host draws its composer narrower than the strip's own (a phone's card puts
+     * its content on 28): the line keeps starting over the field's first letter and the chips' first glyph.
+     */
+    contentInsetX?: number;
 }>;
 
 /**
@@ -327,6 +332,8 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
     const lineChanged = React.useRef(false);
     if (lineKey !== firstLineKey.current) lineChanged.current = true;
     const reducedMotion = motion.reduceMotion;
+    const contentInsetStyle = React.useMemo(() => props.contentInsetX === undefined ? null : { paddingHorizontal: props.contentInsetX },
+        [props.contentInsetX]);
     const hasAnything = props.connectionStatus
         || collapsibleInstruments.length > 0
         || permissionChip !== null
@@ -335,16 +342,16 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
         // Keep a measuring host so overflow can resolve once content appears.
         return (
             <View
-                style={[instrumentStripStyles.root, props.collapseWhenEmpty ? instrumentStripStyles.rootCollapsed : null]}
+                style={[instrumentStripStyles.root, contentInsetStyle, props.collapseWhenEmpty ? instrumentStripStyles.rootCollapsed : null]}
                 onLayout={onLayout}
             />
         );
     }
 
     return (
-        <View style={instrumentStripStyles.root} onLayout={onLayout}>
+        <View style={[instrumentStripStyles.root, contentInsetStyle]} onLayout={onLayout}>
             {props.connectionStatus ? (
-                <Animated.View key={lineKey} style={instrumentStripStyles.connectionGroup}
+                <Animated.View key={lineKey} testID="agent-input-connection-line" style={instrumentStripStyles.connectionGroup}
                     entering={lineChanged.current && !reducedMotion ? FadeIn.duration(motionTokens.guardMoment.lineCrossFadeMs) : undefined}>
                     <StatusDot
                         color={props.connectionStatus.dotColor}
