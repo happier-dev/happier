@@ -126,6 +126,63 @@ describe('scoped bundled publication', () => {
     } finally { fixture.cleanup(); }
   });
 
+  it.each(['scoped', 'aggregate'] as const)('%s semantic publication refreshes locale resources and detects stale copy', async mode => {
+    const fixture = await createScopedPublicationFixture();
+    try {
+      for (const id of ['inspector', 'neighbor']) {
+        const packageRoot = join(fixture.repoRoot, `packages/plugins/${id}`);
+        const manifestPath = join(packageRoot, '.happier-plugin/plugin.json');
+        const current = ingestPluginManifestV2(readFileSync(manifestPath, 'utf8'));
+        if (!current.ok) throw new Error(JSON.stringify(current.diagnostics));
+        const locales = ['en', 'fr'];
+        const updated = ingestPluginManifestV2({ ...current.manifest, contributes: { ...current.manifest.contributes,
+          resources: [...(current.manifest.contributes.resources ?? []), ...locales.map(locale => ({
+            id: `locale-${locale}`, kind: 'asset', path: `assets/${locale}.json`, contentType: 'application/json',
+          }))],
+          ui: { translations: locales.map(locale => ({ locale, resourceId: `locale-${locale}` })) },
+        } });
+        if (!updated.ok) throw new Error(JSON.stringify(updated.diagnostics));
+        writeFileSync(manifestPath, serializeCanonicalPluginManifest(updated.manifest));
+        for (const locale of locales) writeFileSync(join(packageRoot, `assets/${locale}.json`),
+          JSON.stringify({ [`plugins.${id}.status`]: `${id} ${locale}` }));
+      }
+      await withWorkspaceBundleLock(lease => publishBundledPluginSemanticProjection(
+        parseGeneratorCliArgs(['--root', fixture.repoRoot, '--mode', 'write', '--aggregate']),
+        { protocol: { ingestPluginManifestV2 } }, lease,
+      ), { lockPath: join(fixture.repoRoot, 'publication.lock') });
+      writeFileSync(join(fixture.repoRoot, 'packages/plugins/inspector/assets/fr.json'),
+        JSON.stringify({ 'plugins.inspector.status': 'Ancien statut' }));
+      const publish = (operation: 'write' | 'check') => withWorkspaceBundleLock(lease => publishBundledPluginSemanticProjection(
+        parseGeneratorCliArgs(['--root', fixture.repoRoot, '--mode', operation, ...(mode === 'aggregate'
+          ? ['--aggregate'] : ['--workspace', 'plugins-inspector'])]),
+        { protocol: { ingestPluginManifestV2 } }, lease,
+      ), { lockPath: join(fixture.repoRoot, 'publication.lock') });
+      const textRoot = join(fixture.repoRoot, 'apps/ui/sources/text');
+      const readTranslations = (file: string) => {
+        const exports: Record<string, unknown> = {};
+        runInNewContext(transpileModule(readFileSync(join(textRoot, file), 'utf8'), {
+          compilerOptions: { module: ModuleKind.CommonJS },
+        }).outputText, { exports });
+        return exports.BUNDLED_PLUGIN_TRANSLATIONS;
+      };
+      await publish('write');
+      expect(readTranslations('bundledPluginTranslations/fr.generated.ts')).toEqual({
+        'plugins.inspector.status': 'Ancien statut', 'plugins.neighbor.status': 'neighbor fr',
+      });
+      expect(readTranslations('bundledPluginTranslations.generated.ts')).toEqual({
+        en: { 'plugins.inspector.status': 'inspector en', 'plugins.neighbor.status': 'neighbor en' },
+        fr: { 'plugins.inspector.status': 'Ancien statut', 'plugins.neighbor.status': 'neighbor fr' },
+      });
+      writeFileSync(join(fixture.repoRoot, 'packages/plugins/inspector/assets/fr.json'),
+        JSON.stringify({ 'plugins.inspector.status': 'Nouveau statut' }));
+      await expect(publish('check')).rejects.toThrow(/bundledPluginTranslations/);
+      await publish('write');
+      expect(readTranslations('bundledPluginTranslations/fr.generated.ts')).toEqual({
+        'plugins.inspector.status': 'Nouveau statut', 'plugins.neighbor.status': 'neighbor fr',
+      });
+    } finally { fixture.cleanup(); }
+  });
+
   it.each(['replace', 'remove', 'insert'] as const)('semantic publication updates embedded Agent manifest fields (%s)', async transition => {
     const fixture = await createScopedPublicationFixture();
     try {
