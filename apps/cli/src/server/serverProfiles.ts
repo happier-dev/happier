@@ -1,4 +1,4 @@
-import { copyServerAccountChangesCursors, readAccountChangesCursors, readSettings, readStoredCredentialsForServerId, updateSettings, type Settings } from '@/persistence';
+import { clearServerProfileObservations, copyServerAccountChangesCursors, readAccountChangesCursors, readServerProfileObservations, readSettings, readStoredCredentialsForServerId, updateSettings, writeServerProfileLastUsedAt, type Settings } from '@/persistence';
 import { deriveServerIdFromName, deriveServerIdFromUrl, sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
@@ -182,7 +182,6 @@ function coerceProfile(value: any): ServerProfile | null {
   const webappUrl = typeof value.webappUrl === 'string' ? value.webappUrl.trim() : '';
   const createdAt = Number.isFinite(value.createdAt) ? Number(value.createdAt) : 0;
   const updatedAt = Number.isFinite(value.updatedAt) ? Number(value.updatedAt) : 0;
-  const lastUsedAt = Number.isFinite(value.lastUsedAt) ? Number(value.lastUsedAt) : 0;
   const homeConnectionDescriptorResult = HomeConnectionDescriptorV1Schema.safeParse(value.homeConnectionDescriptor);
   const homeConnectionDescriptorAuthority = value.homeConnectionDescriptorAuthority === 'advisory'
     ? 'advisory'
@@ -217,7 +216,7 @@ function coerceProfile(value: any): ServerProfile | null {
     webappUrl,
     createdAt,
     updatedAt,
-    lastUsedAt,
+    lastUsedAt: 0,
     ...(homeConnectionDescriptorResult.success
       ? {
           homeConnectionDescriptor: homeConnectionDescriptorResult.data,
@@ -237,6 +236,13 @@ function assertValidStoredHomeDescriptors(servers: Record<string, any>): void {
   for (const value of Object.values(servers)) {
     coerceProfile(value);
   }
+}
+
+function retainUnchangedProfileTimestamp<T extends { updatedAt: number }>(next: T, existing: ServerProfile | null): T {
+  if (existing && isDeepStrictEqual(coerceProfile({ ...next, updatedAt: existing.updatedAt }), existing)) {
+    return { ...next, updatedAt: existing.updatedAt };
+  }
+  return next;
 }
 
 function findProfileIdByIdentifier(servers: Record<string, any>, identifierRaw: string): string | null {
@@ -383,7 +389,17 @@ export async function listServerProfiles(): Promise<ServerProfile[]> {
   const list = Object.values(servers)
     .map((s) => coerceProfile(s))
     .filter(Boolean) as ServerProfile[];
-  return list;
+  const observations = await readServerProfileObservations();
+  return list.map(profile => ({ ...profile, lastUsedAt: observations[profile.id] ?? 0 }));
+}
+
+async function withProfileUsage(profile: ServerProfile, usedAt?: number): Promise<ServerProfile> {
+  if (usedAt !== undefined) {
+    await writeServerProfileLastUsedAt(profile.id, usedAt);
+    return { ...profile, lastUsedAt: usedAt };
+  }
+  const observations = await readServerProfileObservations();
+  return { ...profile, lastUsedAt: observations[profile.id] ?? 0 };
 }
 
 export async function getServerProfile(identifierRaw: string): Promise<ServerProfile> {
@@ -398,7 +414,7 @@ export async function getServerProfile(identifierRaw: string): Promise<ServerPro
   if (!profile) {
     throw new Error(`Server profile is invalid: ${resolvedId}`);
   }
-  return profile;
+  return withProfileUsage(profile);
 }
 
 export async function getActiveServerProfile(): Promise<ServerProfile> {
@@ -410,7 +426,7 @@ export async function getActiveServerProfile(): Promise<ServerProfile> {
   if (!active) {
     throw new Error(`Active server profile not found: ${activeId}`);
   }
-  return active;
+  return withProfileUsage(active);
 }
 
 export async function useServerProfile(idRaw: string): Promise<ServerProfile> {
@@ -428,16 +444,11 @@ export async function useServerProfile(idRaw: string): Promise<ServerProfile> {
     if (!existing) {
       throw new Error(`Server profile not found: ${resolvedId}`);
     }
-    const nextProfile = { ...existing, lastUsedAt: now, updatedAt: now };
-    selectedProfile = requireProfileProjection(nextProfile, resolvedId);
+    selectedProfile = requireProfileProjection(existing, resolvedId);
     assertOrganizationPolicyEndpointAllowed(configuration.organizationPolicy, 'home', selectedProfile.serverUrl);
     return {
       ...current,
       activeServerId: resolvedId,
-      servers: {
-        ...servers,
-        [resolvedId]: nextProfile,
-      },
     };
   });
 
@@ -447,7 +458,7 @@ export async function useServerProfile(idRaw: string): Promise<ServerProfile> {
     ...(selectedProfile.localServerUrl ? { localServerUrl: selectedProfile.localServerUrl } : {}),
     hasObservedHomeIdentity: Boolean(selectedProfile.homeConnectionDescriptor?.homeServerIdentityId),
   }).catch(() => undefined);
-  return selectedProfile;
+  return withProfileUsage(selectedProfile, now);
 }
 
 export async function addServerProfile(opts: Readonly<{
@@ -494,7 +505,7 @@ export async function addServerProfile(opts: Readonly<{
     }
     const existing = (servers as any)[id];
     const createdAt = existing && Number.isFinite(existing.createdAt) ? Number(existing.createdAt) : now;
-    const next = {
+    const next = retainUnchangedProfileTimestamp({
       id,
       name,
       serverUrl,
@@ -502,11 +513,10 @@ export async function addServerProfile(opts: Readonly<{
       webappUrl,
       createdAt,
       updatedAt: now,
-      lastUsedAt: shouldUse ? now : (existing && Number.isFinite(existing.lastUsedAt) ? Number(existing.lastUsedAt) : 0),
       ...(existing?.homeConnectionDescriptor
         ? { homeConnectionDescriptor: existing.homeConnectionDescriptor }
         : {}),
-    };
+    }, coerceProfile(existing));
     createdProfile = requireProfileProjection(next, id);
     return {
       ...current,
@@ -523,7 +533,7 @@ export async function addServerProfile(opts: Readonly<{
     }).catch(() => undefined);
   }
 
-  return createdProfile;
+  return withProfileUsage(createdProfile, shouldUse ? now : undefined);
 }
 
 /**
@@ -655,7 +665,6 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
       webappUrl,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
-      lastUsedAt: opts.use === true ? now : (existing?.lastUsedAt ?? 0),
       homeConnectionDescriptor: descriptor,
       homeConnectionDescriptorAuthority: opts.observation,
     };
@@ -670,7 +679,7 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
     };
   });
 
-  return { profile: adoptedProfile, outcome };
+  return { profile: await withProfileUsage(adoptedProfile, opts.use === true ? Date.now() : undefined), outcome };
 }
 
 export async function findServerProfileIdentityConflicts(): Promise<ServerProfileIdentityConflict[]> {
@@ -729,8 +738,9 @@ export async function upsertServerProfileByUrl(opts: Readonly<{
     }
 
     resolvedId = matchedId;
-    const nextProfile = {
-      ...existing,
+    const { lastUsedAt: _lastUsedAt, ...profilePreferences } = existing;
+    const nextProfile = retainUnchangedProfileTimestamp({
+      ...profilePreferences,
       name: name || existing.name,
       serverUrl,
       // Omission preserves an existing split URL. Supplying a local URL
@@ -744,8 +754,7 @@ export async function upsertServerProfileByUrl(opts: Readonly<{
         : {}),
       webappUrl,
       updatedAt: now,
-      lastUsedAt: shouldUse ? now : existing.lastUsedAt,
-    };
+    }, existing);
     upsertedProfile = requireProfileProjection(nextProfile, matchedId);
     return {
       ...current,
@@ -770,7 +779,7 @@ export async function upsertServerProfileByUrl(opts: Readonly<{
     }).catch(() => undefined);
   }
 
-  return upsertedProfile!;
+  return withProfileUsage(upsertedProfile!, shouldUse ? now : undefined);
 }
 
 /**
@@ -842,7 +851,7 @@ export async function setServerProfileEndpointsById(opts: Readonly<{
     const existing = coerceProfile(rawExisting);
     const name = existing?.name || requestedName || id;
     const createdAt = existing?.createdAt || now;
-    const next = {
+    const next = retainUnchangedProfileTimestamp({
       ...rawExisting,
       id,
       name,
@@ -853,8 +862,7 @@ export async function setServerProfileEndpointsById(opts: Readonly<{
       webappUrl,
       createdAt,
       updatedAt: now,
-      lastUsedAt: shouldUse ? now : (existing?.lastUsedAt ?? 0),
-    };
+    }, existing);
     updatedProfile = requireProfileProjection(next, id);
     return {
       ...current,
@@ -863,7 +871,7 @@ export async function setServerProfileEndpointsById(opts: Readonly<{
     };
   });
 
-  return updatedProfile;
+  return withProfileUsage(updatedProfile, shouldUse ? now : undefined);
 }
 
 export async function removeServerProfile(
@@ -918,5 +926,7 @@ export async function removeServerProfile(
     return { ...current, activeServerId: nextActive, servers: rest };
   });
 
-  return { removed: removedProfile, active: activeProfileAfterRemoval };
+  const removed = await withProfileUsage(removedProfile);
+  await clearServerProfileObservations(removed.id);
+  return { removed, active: await withProfileUsage(activeProfileAfterRemoval) };
 }

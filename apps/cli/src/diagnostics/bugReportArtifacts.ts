@@ -10,7 +10,7 @@ import type { BugReportAttachmentArg } from './bugReportCommandArgs';
 import type { BugReportArtifactPayload, BugReportEnvironmentPayload } from '@happier-dev/protocol';
 
 import packageJson from '../../package.json';
-import { readAccountChangesCursors, readSettings, readStoredCredentials } from '@/persistence';
+import { readAccountChangesCursors, readServerProfileObservations, readSettings, readStoredCredentials } from '@/persistence';
 import { readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
 import { collectBugReportMachineDiagnosticsOnHost } from '@/diagnostics/bugReportMachineDiagnosticsLocalDaemon';
 import { normalizeBaseUrl, withAbortTimeout } from '@/diagnostics/httpClient';
@@ -126,6 +126,7 @@ export async function collectBugReportDiagnosticsArtifacts(
 
   try {
     const settings = await readSettings();
+    const observations = await readServerProfileObservations();
     settingsActiveServerId = settings.activeServerId ? String(settings.activeServerId).trim() : null;
 
     const byServer = await readAccountChangesCursors();
@@ -150,7 +151,7 @@ export async function collectBugReportDiagnosticsArtifacts(
           ? (sanitizeBugReportUrl(String(entry.localServerUrl).trim()) ?? String(entry.localServerUrl).trim())
           : undefined,
         webappUrl: sanitizeBugReportUrl(String(entry.webappUrl ?? '').trim()) ?? String(entry.webappUrl ?? '').trim(),
-        lastUsedAt: Number(entry.lastUsedAt ?? 0) || 0,
+        lastUsedAt: observations[entry.id] ?? 0,
       }))
       .filter((entry) => entry.id && entry.name && entry.serverUrl && entry.webappUrl)
       .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));

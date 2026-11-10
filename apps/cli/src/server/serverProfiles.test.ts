@@ -493,7 +493,6 @@ describe('server profiles', () => {
             webappUrl: serverUrl,
             createdAt: 1,
             updatedAt: 1,
-            lastUsedAt: 1,
             homeConnectionDescriptor: {
               v: 1,
               homeServerIdentityId: 'srv_corrupt_home',
@@ -842,7 +841,7 @@ describe('server profiles', () => {
       const targetId = deriveServerIdFromName(name);
       await updateSettings((current) => ({
         ...current,
-        ...(name === 'constructor' ? { servers: { ...current.servers, [targetId]: { id: targetId, name, serverUrl: 'http://localhost:33005', localServerUrl: 'http://127.0.0.1:3005', webappUrl: 'http://localhost:33005', createdAt: 0, updatedAt: 0, lastUsedAt: 0 } } } : {}),
+        ...(name === 'constructor' ? { servers: { ...current.servers, [targetId]: { id: targetId, name, serverUrl: 'http://localhost:33005', localServerUrl: 'http://127.0.0.1:3005', webappUrl: 'http://localhost:33005', createdAt: 0, updatedAt: 0 } } } : {}),
         machineIdByServerId: { [envDerivedServerId]: adoptedState.machineIdByServerId, ...(destinationHasState ? { [targetId]: 'machine-existing' } : {}) },
         machineIdByServerIdByAccountId: { [envDerivedServerId]: adoptedState.machineIdByServerIdByAccountId },
         lastTokenSubByServerId: { [envDerivedServerId]: adoptedState.lastTokenSubByServerId },

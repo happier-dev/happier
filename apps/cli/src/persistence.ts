@@ -149,7 +149,6 @@ export interface Settings {
     webappUrl: string
     createdAt: number
     updatedAt: number
-    lastUsedAt: number
     /** Exact protocol-owned descriptor observed from this authenticated Home. */
     homeConnectionDescriptor?: import('@happier-dev/protocol').HomeConnectionDescriptorV1
   }>
@@ -213,7 +212,6 @@ const defaultSettings: Settings = {
       webappUrl: resolveDefaultWebappUrl(defaultHome.url),
       createdAt: 0,
       updatedAt: 0,
-      lastUsedAt: 0,
     },
   } : {},
   machineIdByServerId: {},
@@ -264,7 +262,6 @@ function migrateSettings(raw: any, fromVersion: number): any {
         webappUrl: DEFAULT_WEBAPP_URL,
         createdAt: now,
         updatedAt: now,
-        lastUsedAt: now,
       },
     };
 
@@ -510,13 +507,21 @@ function serializeSettingsForDisk(settings: Settings): Settings {
     machineIdConfirmedByServer: _machineIdConfirmedByServer,
     ...rest
   } = withoutCursors;
-  return rest as Settings;
+  return {
+    ...rest,
+    ...(rest.servers ? { servers: Object.fromEntries(Object.entries(rest.servers).map(([id, profile]) => {
+      // 0.2 timestamps are imported before publication, never written back.
+      const { lastUsedAt: _lastUsedAt, ...preference } = profile as typeof profile & { lastUsedAt?: unknown };
+      return [id, preference];
+    })) } : {}),
+  };
 }
 
 export async function writeSettings(settings: Settings): Promise<void> {
   await ensureHappyHomeDirExists();
   // Import predecessor state before a settings publication can retire its source.
   await ensureAccountChangesCursorsImported();
+  await ensureServerProfileObservationsImported();
 
   // Ensure schema version is set before writing
   const settingsWithVersion = serializeSettingsForDisk({
@@ -647,6 +652,7 @@ export async function updateSettings(
     // Never turn a failed read or migration into a destructive defaults write.
     const { settings: current, needsMigration } = await readSettingsFromDisk();
     await ensureAccountChangesCursorsImported();
+    await ensureServerProfileObservationsImported();
 
     // Apply update
     const updated = await updater(current);
@@ -1165,6 +1171,78 @@ export async function clearMachineId(opts?: Readonly<{
       lastTokenSubByServerId: Object.keys(nextLastSub).length ? nextLastSub : {},
       machineIdConfirmedByServerByServerId: Object.keys(nextConfirmed).length ? nextConfirmed : {},
     };
+  });
+}
+
+/** Device-local usage observations, independent of deliberate Home preferences. */
+export type ServerProfileObservations = Readonly<Record<string, number>>;
+
+function readServerProfileObservationsFile(): ServerProfileObservations | null {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(join(configuration.happyHomeDir, 'server-profile-observations.json'), 'utf8'));
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid server profile observations');
+    return Object.fromEntries(Object.entries(raw).filter((entry): entry is [string, number] =>
+      typeof entry[1] === 'number' && Number.isFinite(entry[1]) && entry[1] >= 0));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function readLegacyServerProfileObservations(): ServerProfileObservations {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(configuration.settingsFile, 'utf8'));
+  } catch (error) {
+    if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw error;
+  }
+  if (!raw || typeof raw !== 'object' || !('servers' in raw)
+    || !raw.servers || typeof raw.servers !== 'object') return {};
+  return Object.fromEntries(Object.entries(raw.servers).flatMap(([id, profile]) => {
+    if (!profile || typeof profile !== 'object' || !('lastUsedAt' in profile)) return [];
+    const value = profile.lastUsedAt;
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? [[id, value] as const] : [];
+  }));
+}
+
+async function updateServerProfileObservations(
+  updater: (current: ServerProfileObservations) => ServerProfileObservations,
+): Promise<ServerProfileObservations> {
+  await ensureHappyHomeDirExists();
+  const path = join(configuration.happyHomeDir, 'server-profile-observations.json');
+  // Same persistence owner and multiprocess admission contract as checkpoints.
+  return withJsonOwnerFileLock({ lockPath: `${path}.lock`, timeoutMs: PERSISTENCE_LOCK_TIMEOUT_MS,
+    staleAfterMs: PERSISTENCE_STALE_LOCK_TIMEOUT_MS, errorCode: 'server_profile_observations_lock_timeout' }, async () => {
+    const stored = readServerProfileObservationsFile();
+    const current = stored ?? readLegacyServerProfileObservations();
+    const next = updater(current);
+    // An empty file also completes the one-way predecessor import.
+    if (!stored || !isDeepStrictEqual(current, next)) writeJsonAtomicSync(path, next);
+    return next;
+  });
+}
+
+export async function readServerProfileObservations(): Promise<ServerProfileObservations> {
+  return readServerProfileObservationsFile() ?? updateServerProfileObservations(current => current);
+}
+
+async function ensureServerProfileObservationsImported(): Promise<void> {
+  if (!existsSync(join(configuration.happyHomeDir, 'server-profile-observations.json'))) {
+    await readServerProfileObservations();
+  }
+}
+
+export async function writeServerProfileLastUsedAt(serverId: string, lastUsedAt: number): Promise<void> {
+  await updateServerProfileObservations(current => ({ ...current, [serverId]: lastUsedAt }));
+}
+
+export async function clearServerProfileObservations(serverId: string): Promise<void> {
+  await updateServerProfileObservations(current => {
+    if (!Object.prototype.hasOwnProperty.call(current, serverId)) return current;
+    const next = { ...current };
+    delete next[serverId];
+    return next;
   });
 }
 

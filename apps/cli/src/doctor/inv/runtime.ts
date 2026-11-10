@@ -1,5 +1,5 @@
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
-import { readAccountChangesCursors, readSettings, readStoredCredentials, type AccountChangesCursors } from '@/persistence';
+import { readAccountChangesCursors, readServerProfileObservations, readSettings, readStoredCredentials, type AccountChangesCursors, type ServerProfileObservations } from '@/persistence';
 import { daemonPost } from '@/daemon/controlHttp';
 import { DoctorSnapshotResourceVitalsSchema, type DoctorSnapshotResourceVitals } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
@@ -11,6 +11,7 @@ import { readDoctorWarnings } from './warnings';
 export type DoctorRuntimeInventory = Readonly<{
   settings: Awaited<ReturnType<typeof readSettings>>;
   accountChangesCursors?: AccountChangesCursors;
+  serverProfileObservations?: ServerProfileObservations;
   credentials: Awaited<ReturnType<typeof readStoredCredentials>>;
   daemonStatus: Awaited<ReturnType<typeof readDaemonStatusSnapshot>> | undefined;
   installations: Awaited<ReturnType<typeof readDoctorInstallations>>;
@@ -21,7 +22,7 @@ export type DoctorRuntimeInventory = Readonly<{
 }>;
 
 export async function readDoctorRuntimeInventory(): Promise<DoctorRuntimeInventory> {
-  const [settings, credentials, daemonStatus, installations, services, localRelays, accountChangesCursors] = await Promise.all([
+  const [settings, credentials, daemonStatus, installations, services, localRelays, accountChangesCursors, serverProfileObservations] = await Promise.all([
     readSettings(),
     readStoredCredentials(),
     readDaemonStatusSnapshot().catch(() => undefined),
@@ -29,6 +30,7 @@ export async function readDoctorRuntimeInventory(): Promise<DoctorRuntimeInvento
     readDoctorServices(),
     readDoctorRelays().catch(() => ({ relays: [] })),
     readAccountChangesCursors(),
+    readServerProfileObservations(),
   ]);
 
   const warnings = await readDoctorWarnings({
@@ -40,6 +42,7 @@ export async function readDoctorRuntimeInventory(): Promise<DoctorRuntimeInvento
   return {
     settings,
     accountChangesCursors,
+    serverProfileObservations,
     credentials,
     daemonStatus,
     installations,

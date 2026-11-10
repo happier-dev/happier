@@ -1,5 +1,5 @@
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
-import { updateSettings } from '@/persistence';
+import { updateSettings, writeServerProfileLastUsedAt } from '@/persistence';
 import type { ServerProfile } from '@/server/serverProfiles';
 
 /** Persist a valid exact Home at the settings boundary so target resolution stays real. */
@@ -19,6 +19,8 @@ export async function seedTestServerProfile(input: Readonly<{
       revision: 1, endpoints: [{ kind: 'https', url: input.serverUrl }],
     }),
   };
-  await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [profile.id]: profile } }));
+  const { lastUsedAt, ...storedProfile } = profile;
+  await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [profile.id]: storedProfile } }));
+  await writeServerProfileLastUsedAt(profile.id, lastUsedAt);
   return profile;
 }

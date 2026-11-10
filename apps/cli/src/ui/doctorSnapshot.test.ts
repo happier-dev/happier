@@ -42,19 +42,20 @@ describe('doctor snapshot projection', () => {
             serverUrl: 'https://api.happier.dev?token=abc',
             publicServerUrl: 'https://api.happier.dev?token=abc',
             webappUrl: 'https://app.happier.dev?token=abc',
-            createdAt: 0, updatedAt: 0, lastUsedAt: 0,
+            createdAt: 0, updatedAt: 0,
           },
           stack_main__id_default: {
             id: 'stack_main__id_default', name: 'Local stack',
             serverUrl: 'http://127.0.0.1:3005',
             publicServerUrl: 'https://relay.happier.dev?token=abc',
             webappUrl: 'https://app.happier.dev?token=abc',
-            createdAt: 0, updatedAt: 0, lastUsedAt: 0,
+            createdAt: 0, updatedAt: 0,
           },
         },
         lastChangesCursorByServerIdByAccountId: { cloud: { acct_old: 10 } },
       });
       writeFileSync(settingsPath, settingsBytes, 'utf8');
+      writeFileSync(join(homeDir, 'server-profile-observations.json'), JSON.stringify({ cloud: 10, stack_main__id_default: 20 }));
       const serverDir = join(homeDir, 'servers', 'stack_main__id_default');
       mkdirSync(serverDir, { recursive: true });
       const provenance = AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' });
@@ -65,7 +66,7 @@ describe('doctor snapshot projection', () => {
       writeFileSync(credentialPath, credentialBytes, 'utf8');
 
       vi.resetModules();
-      const { readAccountChangesCursors, readSettings, readStoredCredentials } = await import('@/persistence');
+      const { readAccountChangesCursors, readServerProfileObservations, readSettings, readStoredCredentials } = await import('@/persistence');
       const { buildDoctorRepairReport } = await import('@/diagnostics/doctorRepair/buildDoctorRepairReport');
       const { buildDoctorSnapshotFromInventory } = await import('@/doctor/inv/snapshot');
       const binaryPath = join(homeDir, 'cli-preview', 'current', 'happier');
@@ -74,6 +75,7 @@ describe('doctor snapshot projection', () => {
       const inventory = {
         settings: await readSettings(),
         accountChangesCursors: await readAccountChangesCursors(),
+        serverProfileObservations: await readServerProfileObservations(),
         credentials: await readStoredCredentials(),
         daemonStatus: {
           server: {
@@ -152,6 +154,9 @@ describe('doctor snapshot projection', () => {
       expect(snapshot.server.serverUrl).toBe('https://relay.happier.dev');
       expect(snapshot.settings.activeServerId).toBe('cloud');
       expect(snapshot.settings.servers.map((entry) => entry.id)).toContain('cloud');
+      expect(snapshot.settings.servers).toMatchObject([
+        { id: 'stack_main__id_default', lastUsedAt: 20 }, { id: 'cloud', lastUsedAt: 10 },
+      ]);
       expect(snapshot.settings.knownAccountIds).toEqual(['acct_123', 'acct_old']);
       expect(snapshot.accountId).toBe('acct_123');
       expect(snapshot.daemonStatus?.auth.needsAuth).toBe(true);

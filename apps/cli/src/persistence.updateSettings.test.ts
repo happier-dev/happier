@@ -104,7 +104,7 @@ describe('updateSettings', () => {
       };
     });
     const { configuration } = await import('@/configuration');
-    const { readSettings, updateSettings } = await import('@/persistence');
+    const { readSettings, readServerProfileObservations, updateSettings } = await import('@/persistence');
     const saved = {
       schemaVersion: 6,
       onboardingCompleted: true,
@@ -131,7 +131,9 @@ describe('updateSettings', () => {
     expect(await readFile(cursorPath, 'utf8')).toBe(cursorContent);
     failRead = false;
     await updateSettings((current) => ({ ...current, daemonAutoStartWhenRunningHappy: true }));
-    expect(await readSettings()).toMatchObject({ ...saved, daemonAutoStartWhenRunningHappy: true });
+    const { lastUsedAt, ...profilePreferences } = saved.servers.selfhost;
+    expect(await readSettings()).toMatchObject({ ...saved, servers: { selfhost: profilePreferences }, daemonAutoStartWhenRunningHappy: true });
+    expect(await readServerProfileObservations()).toEqual({ selfhost: lastUsedAt });
     expect(await readFile(cursorPath, 'utf8')).toBe(cursorContent);
   });
 

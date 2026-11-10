@@ -7,6 +7,7 @@ import { reloadConfiguration } from '@/configuration';
 import { addServerProfile, getActiveServerProfile, listServerProfiles } from '@/server/serverProfiles';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 import { commandRegistry } from '@/cli/commandRegistry';
 // Prepare the real lazy command owner during collection, before output capture.
@@ -182,6 +183,8 @@ describe('happier relay --json', () => {
             HAPPIER_WEBAPP_URL: undefined,
         });
         reloadConfiguration();
+        await seedTestServerProfile({ id: 'cloud', homeId: 'srv_relay_cloud_fixture',
+            serverUrl: 'https://api.happier.dev', webappUrl: 'https://cloud.happier.dev' });
     });
 
     afterEach(async () => {

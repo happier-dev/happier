@@ -563,6 +563,16 @@ succeeds; unrelated changes or settings reload cannot clear it. Searchable index
 still require retained-access and archive-policy qualification. Shutdown cancels
 and joins the worker's work before releasing its process and observations.
 
+In 0.3 development, `persistence.ts` also owns device-local Home usage in
+`server-profile-observations.json` beneath the CLI home, keyed by profile id.
+Profile APIs, server/relay commands, Doctor and bug-report diagnostics project
+`lastUsedAt` from this file. Selecting an already-selected Home updates usage
+without publishing settings or changing the profile's `updatedAt`. Deliberate
+profile edits and active selection remain in settings. Before settings can
+retire a predecessor timestamp, the persistence owner imports 0.2 profile
+`lastUsedAt` values once; the observations file's presence completes that import,
+including when empty. Removing a profile removes its usage observation.
+
 In 0.3 development, `persistence.ts` owns the local Account changes-feed
 checkpoint in `changes-cursors.json` beneath the CLI home, keyed by server and
 Account. Cursor acknowledgements atomically replace that file only when progress

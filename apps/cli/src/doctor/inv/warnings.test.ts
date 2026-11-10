@@ -31,7 +31,6 @@ describe('readDoctorWarnings', () => {
         webappUrl: serverUrl,
         createdAt: 1,
         updatedAt: 1,
-        lastUsedAt: 1,
         homeConnectionDescriptor: {
           ...descriptor,
           canonicalServerUrl: serverUrl,

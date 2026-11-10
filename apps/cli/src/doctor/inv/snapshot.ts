@@ -215,7 +215,7 @@ export function buildDoctorSnapshotFromInventory(params: Readonly<{
       webappUrl: String(entry.webappUrl ?? '').trim(),
       createdAt: Number(entry.createdAt ?? 0) || 0,
       updatedAt: Number(entry.updatedAt ?? 0) || 0,
-      lastUsedAt: Number(entry.lastUsedAt ?? 0) || 0,
+      lastUsedAt: params.inventory.serverProfileObservations?.[entry.id] ?? 0,
     }))
     .filter((entry) => entry.id && entry.name && entry.serverUrl && entry.webappUrl)
     .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));

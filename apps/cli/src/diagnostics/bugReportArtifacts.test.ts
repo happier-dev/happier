@@ -27,7 +27,6 @@ const {
         webappUrl: 'https://app.happier.dev',
         createdAt: 0,
         updatedAt: 0,
-        lastUsedAt: 0,
       },
       local: {
         id: 'local',
@@ -37,7 +36,6 @@ const {
         webappUrl: 'https://localhost:3005/app?token=abc',
         createdAt: 0,
         updatedAt: 0,
-        lastUsedAt: 0,
       },
     },
   })),
@@ -70,6 +68,7 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     vi.clearAllMocks();
     checkpointFixture.homeDir = await createTempDir('happier-bug-report-cursors-');
     writeFileSync(join(checkpointFixture.homeDir, 'changes-cursors.json'), JSON.stringify({ cloud: { acct_old: 10 } }));
+    writeFileSync(join(checkpointFixture.homeDir, 'server-profile-observations.json'), JSON.stringify({ cloud: 10, local: 20 }));
   });
 
   afterEach(async () => { await removeTempDir(checkpointFixture.homeDir); });
@@ -107,6 +106,7 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(stackContextArtifact).toBeUndefined();
 
     const cliContext = JSON.parse(String(cliContextArtifact?.content ?? '{}')) as Record<string, unknown>;
+    expect(cliContext.settingsServers).toMatchObject([{ id: 'local', lastUsedAt: 20 }, { id: 'cloud', lastUsedAt: 10 }]);
     expect(cliContext.invocationArgs).toBeUndefined();
     expect(cliContext.invocationSummary).toBeDefined();
     expect(JSON.stringify(cliContext)).not.toContain('super-secret-token');
