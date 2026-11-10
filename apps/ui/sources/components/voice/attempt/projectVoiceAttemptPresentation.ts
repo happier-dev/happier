@@ -53,8 +53,8 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
     const failureKind = input.errorCode ? resolveVoiceMachineErrorKind(input.errorCode) : null;
     const statusPresentation = resolveVoiceSurfaceStatusPresentation(control.surfaceState, input.errorMessage);
     const sessionCause = input.errorFailureCause && 'failureReason' in input.errorFailureCause ? input.errorFailureCause : undefined;
-    const startupMessage = sessionCause
-        ? presentSessionStartupFailureCause(sessionCause.code ?? input.errorMessage, undefined, sessionCause) : null;
+    const startupCode = sessionCause?.code ?? input.errorMessage;
+    const startupMessage = startupCode ? presentSessionStartupFailureCause(startupCode, undefined, sessionCause) : null;
     const failureMessage = provider ? t(provider.descriptionKey) : connectedService ? t(connectedService.bodyKey)
         : failureKind === 'authentication_required' && input.errorMessage === 'agent_signed_out' && agentTitle && agentMachineLabel
             ? t('settingsVoice.local.machineErrors.agent_signed_out', { agent: agentTitle, machine: agentMachineLabel })

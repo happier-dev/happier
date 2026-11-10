@@ -23,6 +23,7 @@ import { fileReviewNoteTranslations } from './fileReviewNoteTranslations.shared'
 import { composerReferenceTranslations } from './composerReferenceTranslations.shared';
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
 import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
+import { newAppTranslations } from './newAppTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
@@ -6755,6 +6756,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               agent_startup_invalid_state: "代理程式啟動時遇到無效的本機執行階段狀態。",
               agent_startup_model_reconciliation_failed: "啟動時無法套用所選模型。請檢查模型選擇，然後重試啟動工作階段。",
               agent_startup_failed: "代理程式啟動失敗。",
+              database_transaction_timeout: "伺服器在建立此工作階段時逾時。請嘗試重新啟動工作階段。",
               SOURCE_RUNTIME_RELOAD_REQUIRED: "需要在這台機器上重新載入 Happier，才能開始此步驟",
               AGENT_RESUME_PROVIDER_STATE_MISSING: "缺少繼續所需的代理程式原生狀態。",
               codex_refresh_free_auth_unsupported: "代理程式啟動所需的驗證無法使用。",
@@ -9173,8 +9175,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             copyAddress: '複製地址',
             publicLinkTitle: '公開連結',
             publicLinkScanHint: '掃描即可在手機上開啟。',
-            purpose: '此檢出的常駐服務：開啟、分享，並選擇在哪裡執行。',
-            purposeMachine: '此機器上的常駐服務：開啟、分享，並選擇在哪裡執行。',
+            purpose: '此檢出的常駐服務：啟動、開啟和分享。',
+            purposeMachine: '這台機器上的常駐服務：啟動、開啟和分享。',
             backToServices: '返回服務',
         },
         effectReview: {
@@ -9339,6 +9341,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             revokeConfirmCta: '撤銷連結',
             consequenceReach: '任何拿到連結的人都能開啟此服務，不需要登入。',
             consequenceReachPeople: '只有你選擇的人、團隊和群組登入 Happier 後才能開啟。',
+            peopleLinkTitle: '指定人員的連結',
+            consequenceReachNamed: ({ names }: { names: string }) => `只有 ${names} 登入 Happier 後才能開啟。`,
             audienceLabel: '誰可以開啟',
             canOpen: '可開啟',
             landing: { title: '服務預覽', signIn: '登入 Happier 以開啟此預覽。', signInCta: '登入', opening: '正在開啟預覽…', noAccess: '此預覽未與你共用。', ended: '此預覽連結已過期或已被撤銷。', unavailable: '預覽暫時無法存取。', openHappier: '開啟 Happier' },
@@ -9349,7 +9353,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             revealUrlA11y: '顯示完整連結',
             hideUrlA11y: '隱藏連結',
             expiresInClock: ({ clock }: { clock: string }) => `${clock} 後過期`,
-            groupFooter: '公開連結會記錄在此機器的稽核日誌中。',
+            groupFooter: '共用連結會記錄在這台機器的稽核日誌中。',
         },
         actions: {
             terminateDetectedA11y: '終止偵測到的本機服務',
@@ -15242,5 +15246,5 @@ settingsSession: {
 
 export function createZhHant(base: TranslationStructure): TranslationStructure {
     return deepMerge(base, { ...zhHantOverrides, botTemplates: botTemplateTranslations['zh-Hant'],
-  botTemplateRecipient: botTemplateRecipientTranslations['zh-Hant'], fileReviewNote: fileReviewNoteTranslations['zh-Hant'], hunkReview: hunkReviewTranslations['zh-Hant'], storeInstalled: storeInstalledTranslations['zh-Hant'], composerReferences: composerReferenceTranslations['zh-Hant'], screenCapture: screenCaptureCopy['zh-Hant'] });
+  botTemplateRecipient: botTemplateRecipientTranslations['zh-Hant'], fileReviewNote: fileReviewNoteTranslations['zh-Hant'], hunkReview: hunkReviewTranslations['zh-Hant'], storeInstalled: storeInstalledTranslations['zh-Hant'], newApp: newAppTranslations['zh-Hant'], composerReferences: composerReferenceTranslations['zh-Hant'], screenCapture: screenCaptureCopy['zh-Hant'] });
 }

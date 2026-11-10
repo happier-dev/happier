@@ -25,6 +25,7 @@ import { fileReviewNoteTranslations } from './fileReviewNoteTranslations.shared'
 import { composerReferenceTranslations } from './composerReferenceTranslations.shared';
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
 import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
+import { newAppTranslations } from './newAppTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
@@ -1295,7 +1296,7 @@ export const ca: TranslationStructure = {
     composerReferences: composerReferenceTranslations['ca'],
     screenCapture: screenCaptureCopy.ca,
     hunkReview: hunkReviewTranslations['ca'],
-    storeInstalled: storeInstalledTranslations['ca'],
+    storeInstalled: storeInstalledTranslations['ca'], newApp: newAppTranslations['ca'],
   panes: { mainColumn: paneMainColumnTranslations['ca'], emptyEditor: paneEmptyEditorTranslations['ca'], shortcutsSheet: paneShortcutsSheetTranslations['ca'] },
   sessionCoordinator: {
     make: {
@@ -7537,6 +7538,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             agent_startup_invalid_state: "L’inici de l’agent ha trobat un estat d’execució local no vàlid.",
             agent_startup_model_reconciliation_failed: "No s’ha pogut aplicar el model seleccionat en iniciar. Revisa el model triat i torna a iniciar la sessió.",
             agent_startup_failed: "L’inici de l’agent ha fallat.",
+            database_transaction_timeout: "El servidor ha esgotat el temps d’espera en crear aquesta sessió. Prova de tornar-la a iniciar.",
             SOURCE_RUNTIME_RELOAD_REQUIRED: "Cal tornar a carregar Happier en aquesta màquina abans de poder iniciar el pas",
             AGENT_RESUME_PROVIDER_STATE_MISSING: "Falta l’estat natiu de l’agent necessari per reprendre.",
             codex_refresh_free_auth_unsupported: "L’autenticació d’inici de l’agent no està disponible.",
@@ -10559,8 +10561,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             copyAddress: 'Copia l’adreça',
             publicLinkTitle: 'Enllaç públic',
             publicLinkScanHint: 'Escaneja’l per obrir-lo al telèfon.',
-            purpose: 'Serveis de llarga durada per a aquesta còpia: obre’ls, comparteix-los i tria on s’executen.',
-            purposeMachine: 'Serveis de llarga durada en aquesta màquina: obre’ls, comparteix-los i tria on s’executen.',
+            purpose: 'Serveis de llarga durada per a aquesta còpia: inicia’ls, obre’ls i comparteix-los.',
+            purposeMachine: 'Serveis de llarga durada en aquesta màquina: inicia’ls, obre’ls i comparteix-los.',
             backToServices: 'Torna als serveis',
         },
         effectReview: {
@@ -10725,6 +10727,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             revokeConfirmCta: 'Revoca l’enllaç',
             consequenceReach: 'Qualsevol persona que tingui l’enllaç pot obrir aquest servei. No cal iniciar sessió.',
             consequenceReachPeople: 'Només les persones, equips i grups que triïs el poden obrir, amb la sessió iniciada a Happier.',
+            peopleLinkTitle: 'Enllaç per a persones concretes',
+            consequenceReachNamed: ({ names }: { names: string }) => `Només per a ${names}, amb la sessió iniciada a Happier.`,
             audienceLabel: 'Qui el pot obrir',
             canOpen: 'Pot obrir',
             landing: { title: 'Previsualització del servei', signIn: 'Inicia la sessió a Happier per obrir aquesta previsualització.', signInCta: 'Inicia la sessió', opening: 'S’està obrint la previsualització…', noAccess: 'Aquesta previsualització no s’ha compartit amb tu.', ended: 'Aquest enllaç de previsualització ha caducat o s’ha revocat.', unavailable: 'Ara mateix no es pot accedir a la previsualització.', openHappier: 'Obre Happier' },
@@ -10735,7 +10739,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             revealUrlA11y: 'Mostra l’enllaç complet',
             hideUrlA11y: 'Amaga l’enllaç',
             expiresInClock: ({ clock }: { clock: string }) => `Caduca en ${clock}`,
-            groupFooter: 'Els enllaços públics es registren al registre d’auditoria d’aquesta màquina.',
+            groupFooter: 'Els enllaços compartits queden registrats al registre d’auditoria d’aquesta màquina.',
         },
         actions: {
             terminateDetectedA11y: 'Finalitza el servei local detectat',
@@ -16462,6 +16466,7 @@ La meva pregunta: `,
             modalHelpWithEnv: ({ env }: { env: string }) => `Aquest perfil necessita ${env}. Tria una opció a continuació.`,
             modalHelpGeneric: 'Aquest perfil necessita un secret. Tria una opció a continuació.',
             chooseOptionTitle: 'Tria una opció',
+            manageSavedSecrets: 'Gestiona els secrets desats',
             machineEnvStatus: {
                 theMachine: 'la màquina',
                 checkFor: ({ env }: { env: string }) => `Comprova ${env}`,
@@ -16715,6 +16720,7 @@ La meva pregunta: `,
         },
         addTitle: 'Nou secret',
         savedTitle: 'Secrets desats',
+        searchSaved: 'Cerca secrets',
         badgeReady: 'Secret',
         badgeRequired: 'Cal un secret',
         missingForProfile: ({ env }: { env: string | null }) =>

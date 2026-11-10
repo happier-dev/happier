@@ -25,6 +25,7 @@ import { fileReviewNoteTranslations } from './fileReviewNoteTranslations.shared'
 import { composerReferenceTranslations } from './composerReferenceTranslations.shared';
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
 import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
+import { newAppTranslations } from './newAppTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
@@ -1341,7 +1342,7 @@ export const pl: TranslationStructure = {
     composerReferences: composerReferenceTranslations['pl'],
     screenCapture: screenCaptureCopy.pl,
     hunkReview: hunkReviewTranslations['pl'],
-    storeInstalled: storeInstalledTranslations['pl'],
+    storeInstalled: storeInstalledTranslations['pl'], newApp: newAppTranslations['pl'],
   panes: { mainColumn: paneMainColumnTranslations['pl'], emptyEditor: paneEmptyEditorTranslations['pl'], shortcutsSheet: paneShortcutsSheetTranslations['pl'] },
   sessionCoordinator: {
     make: {
@@ -8068,6 +8069,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         agent_startup_invalid_state: "Podczas uruchamiania agent napotkał nieprawidłowy lokalny stan środowiska uruchomieniowego.",
         agent_startup_model_reconciliation_failed: "Nie udało się zastosować wybranego modelu podczas uruchamiania. Sprawdź wybór modelu i ponownie uruchom sesję.",
         agent_startup_failed: "Nie udało się uruchomić agenta.",
+        database_transaction_timeout: "Serwer przekroczył limit czasu podczas tworzenia tej sesji. Spróbuj uruchomić ją ponownie.",
         SOURCE_RUNTIME_RELOAD_REQUIRED: "Happier na tym komputerze wymaga ponownego załadowania, zanim krok będzie mógł się rozpocząć",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "Brakuje natywnego stanu agenta potrzebnego do wznowienia.",
         codex_refresh_free_auth_unsupported: "Uwierzytelnianie uruchamiania agenta jest niedostępne.",
@@ -11204,8 +11206,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       copyAddress: 'Kopiuj adres',
       publicLinkTitle: 'Link publiczny',
       publicLinkScanHint: 'Zeskanuj, aby otworzyć na telefonie.',
-      purpose: 'Długo działające usługi tej kopii: otwieraj je, udostępniaj i wybieraj, gdzie działają.',
-      purposeMachine: 'Długo działające usługi na tej maszynie: otwieraj je, udostępniaj i wybieraj, gdzie działają.',
+      purpose: 'Długo działające usługi tej kopii: uruchamiaj, otwieraj i udostępniaj.',
+      purposeMachine: 'Długo działające usługi na tej maszynie: uruchamiaj, otwieraj i udostępniaj.',
       backToServices: 'Wróć do usług',
     },
     effectReview: {
@@ -11370,6 +11372,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
             revokeConfirmCta: 'Cofnij link',
             consequenceReach: 'Każdy, kto ma ten link, może otworzyć tę usługę. Logowanie nie jest wymagane.',
             consequenceReachPeople: 'Otworzyć mogą tylko wybrane osoby, zespoły i grupy zalogowane w Happier.',
+            peopleLinkTitle: 'Link dla wybranych osób',
+            consequenceReachNamed: ({ names }: { names: string }) => `Tylko dla: ${names}, po zalogowaniu w Happier.`,
             audienceLabel: 'Kto może otworzyć',
             canOpen: 'Może otworzyć',
             landing: { title: 'Podgląd usługi', signIn: 'Zaloguj się w Happier, aby otworzyć ten podgląd.', signInCta: 'Zaloguj się', opening: 'Otwieranie podglądu…', noAccess: 'Ten podgląd nie został Ci udostępniony.', ended: 'Ten link do podglądu wygasł lub został unieważniony.', unavailable: 'Podgląd jest teraz niedostępny.', openHappier: 'Otwórz Happier' },
@@ -11380,7 +11384,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
             revealUrlA11y: 'Pokaż pełny link',
             hideUrlA11y: 'Ukryj link',
             expiresInClock: ({ clock }: { clock: string }) => `Wygasa za ${clock}`,
-            groupFooter: 'Linki publiczne są zapisywane w dzienniku audytu tej maszyny.',
+            groupFooter: 'Udostępnione linki są zapisywane w dzienniku audytu tej maszyny.',
     },
     actions: {
       terminateDetectedA11y: 'Zakończ wykrytą usługę lokalną',
@@ -17373,6 +17377,7 @@ settingsSession: {
     },
     addTitle: "Nowy sekret",
     savedTitle: "Zapisane sekrety",
+    searchSaved: 'Szukaj sekretów',
     badgeReady: "Sekret",
     badgeRequired: "Wymagany sekret",
     missingForProfile: ({ env }: { env: string | null }) =>
@@ -17548,6 +17553,7 @@ settingsSession: {
       modalHelpGeneric:
         "Ten profil wymaga sekretu. Wybierz jedną z opcji poniżej.",
       chooseOptionTitle: "Wybierz opcję",
+      manageSavedSecrets: 'Zarządzaj zapisanymi sekretami',
       machineEnvStatus: {
         theMachine: "maszynie",
         checkFor: ({ env }: { env: string }) => `Sprawdź ${env}`,

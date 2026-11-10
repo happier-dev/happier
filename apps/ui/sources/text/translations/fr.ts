@@ -25,6 +25,7 @@ import { fileReviewNoteTranslations } from './fileReviewNoteTranslations.shared'
 import { composerReferenceTranslations } from './composerReferenceTranslations.shared';
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
 import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
+import { newAppTranslations } from './newAppTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
@@ -1285,7 +1286,7 @@ export const fr: TranslationStructure = {
     composerReferences: composerReferenceTranslations['fr'],
     screenCapture: screenCaptureCopy.fr,
     hunkReview: hunkReviewTranslations['fr'],
-    storeInstalled: storeInstalledTranslations['fr'],
+    storeInstalled: storeInstalledTranslations['fr'], newApp: newAppTranslations['fr'],
   panes: { mainColumn: paneMainColumnTranslations['fr'], emptyEditor: paneEmptyEditorTranslations['fr'], shortcutsSheet: paneShortcutsSheetTranslations['fr'] },
   sessionCoordinator: {
     make: {
@@ -8072,6 +8073,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
         agent_startup_invalid_state: "Le démarrage de l’agent a rencontré un état d’exécution local non valide.",
         agent_startup_model_reconciliation_failed: "Le modèle sélectionné n’a pas pu être appliqué au démarrage. Vérifiez le choix du modèle, puis réessayez de démarrer la session.",
         agent_startup_failed: "Le démarrage de l’agent a échoué.",
+        database_transaction_timeout: "Le serveur a dépassé le délai lors de la création de cette session. Essayez de la démarrer à nouveau.",
         SOURCE_RUNTIME_RELOAD_REQUIRED: "Happier doit être rechargé sur cette machine avant que l’étape puisse démarrer",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "L’état natif de l’agent nécessaire à la reprise est introuvable.",
         codex_refresh_free_auth_unsupported: "L’authentification de démarrage de l’agent est indisponible.",
@@ -11213,8 +11215,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       copyAddress: 'Copier l’adresse',
       publicLinkTitle: 'Lien public',
       publicLinkScanHint: 'Scanne-le pour l’ouvrir sur ton téléphone.',
-      purpose: 'Les services longue durée de cette copie : ouvre-les, partage-les, choisis où ils tournent.',
-      purposeMachine: 'Les services longue durée de cette machine : ouvre-les, partage-les, choisis où ils tournent.',
+      purpose: 'Services de longue durée de cette copie : démarre-les, ouvre-les et partage-les.',
+      purposeMachine: 'Services de longue durée sur cette machine : démarre-les, ouvre-les et partage-les.',
       backToServices: 'Retour aux services',
     },
     effectReview: {
@@ -11379,6 +11381,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
             revokeConfirmCta: 'Révoquer le lien',
             consequenceReach: 'Toute personne qui a le lien peut ouvrir ce service. Aucune connexion n’est requise.',
             consequenceReachPeople: 'Seuls les personnes, équipes et groupes que tu choisis peuvent l’ouvrir, connectés à Happier.',
+            peopleLinkTitle: 'Lien pour des personnes précises',
+            consequenceReachNamed: ({ names }: { names: string }) => `Réservé à ${names}, avec un compte Happier.`,
             audienceLabel: 'Qui peut l’ouvrir',
             canOpen: 'Peut ouvrir',
             landing: { title: 'Aperçu du service', signIn: 'Connecte-toi à Happier pour ouvrir cet aperçu.', signInCta: 'Se connecter', opening: 'Ouverture de l’aperçu…', noAccess: 'Cet aperçu n’a pas été partagé avec toi.', ended: 'Ce lien d’aperçu a expiré ou a été révoqué.', unavailable: 'L’aperçu n’est pas joignable pour le moment.', openHappier: 'Ouvrir Happier' },
@@ -11389,7 +11393,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
             revealUrlA11y: 'Afficher le lien complet',
             hideUrlA11y: 'Masquer le lien',
             expiresInClock: ({ clock }: { clock: string }) => `Expire dans ${clock}`,
-            groupFooter: 'Les liens publics sont enregistrés dans le journal d’audit de cette machine.',
+            groupFooter: 'Les liens partagés sont enregistrés dans le journal d’audit de cette machine.',
     },
     actions: {
       terminateDetectedA11y: 'Terminer le service local détecté',
@@ -17420,6 +17424,7 @@ settingsSession: {
     },
     addTitle: "Nouveau secret",
     savedTitle: "Secrets enregistrés",
+    searchSaved: 'Rechercher des secrets',
     badgeReady: "Secrets",
     badgeRequired: "Secret requis",
     missingForProfile: ({ env }: { env: string | null }) =>
@@ -17586,6 +17591,7 @@ settingsSession: {
       modalHelpGeneric:
         "Ce profil a besoin d’un secret. Choisis une option ci-dessous.",
       chooseOptionTitle: "Choisis une option",
+      manageSavedSecrets: 'Gérer les secrets enregistrés',
       machineEnvStatus: {
         theMachine: "la machine",
         checkFor: ({ env }: { env: string }) => `Vérifier ${env}`,

@@ -25,6 +25,7 @@ import { fileReviewNoteTranslations } from './fileReviewNoteTranslations.shared'
 import { composerReferenceTranslations } from './composerReferenceTranslations.shared';
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
 import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
+import { newAppTranslations } from './newAppTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
@@ -1328,7 +1329,7 @@ export const es: TranslationStructure = {
     composerReferences: composerReferenceTranslations['es'],
     screenCapture: screenCaptureCopy.es,
     hunkReview: hunkReviewTranslations['es'],
-    storeInstalled: storeInstalledTranslations['es'],
+    storeInstalled: storeInstalledTranslations['es'], newApp: newAppTranslations['es'],
   panes: { mainColumn: paneMainColumnTranslations['es'], emptyEditor: paneEmptyEditorTranslations['es'], shortcutsSheet: paneShortcutsSheetTranslations['es'] },
   sessionCoordinator: {
     make: {
@@ -8232,6 +8233,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
         agent_startup_invalid_state: "El inicio del agente encontró un estado de ejecución local no válido.",
         agent_startup_model_reconciliation_failed: "No se pudo aplicar el modelo seleccionado al iniciar. Revisa la selección del modelo y vuelve a iniciar la sesión.",
         agent_startup_failed: "Falló el inicio del agente.",
+        database_transaction_timeout: "El servidor agotó el tiempo de espera al crear esta sesión. Intenta iniciarla de nuevo.",
         SOURCE_RUNTIME_RELOAD_REQUIRED: "Es necesario volver a cargar Happier en esta máquina antes de iniciar el paso",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "Falta el estado nativo del agente necesario para reanudar.",
         codex_refresh_free_auth_unsupported: "La autenticación de inicio del agente no está disponible.",
@@ -11375,8 +11377,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       copyAddress: 'Copiar dirección',
       publicLinkTitle: 'Enlace público',
       publicLinkScanHint: 'Escanéalo para abrirlo en tu teléfono.',
-      purpose: 'Servicios de larga duración de esta copia: ábrelos, compártelos y elige dónde se ejecutan.',
-      purposeMachine: 'Servicios de larga duración en esta máquina: ábrelos, compártelos y elige dónde se ejecutan.',
+      purpose: 'Servicios de larga duración de esta copia: inícialos, ábrelos y compártelos.',
+      purposeMachine: 'Servicios de larga duración en esta máquina: inícialos, ábrelos y compártelos.',
       backToServices: 'Volver a servicios',
     },
     effectReview: {
@@ -11541,6 +11543,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
             revokeConfirmCta: 'Revocar enlace',
             consequenceReach: 'Cualquiera que tenga el enlace puede abrir este servicio. No hace falta iniciar sesión.',
             consequenceReachPeople: 'Solo las personas, equipos y grupos que elijas pueden abrirlo, con sesión iniciada en Happier.',
+            peopleLinkTitle: 'Enlace para personas concretas',
+            consequenceReachNamed: ({ names }: { names: string }) => `Solo para ${names}, con sesión iniciada en Happier.`,
             audienceLabel: 'Quién puede abrirlo',
             canOpen: 'Puede abrir',
             landing: { title: 'Vista previa del servicio', signIn: 'Inicia sesión en Happier para abrir esta vista previa.', signInCta: 'Iniciar sesión', opening: 'Abriendo la vista previa…', noAccess: 'Esta vista previa no se compartió contigo.', ended: 'Este enlace de vista previa caducó o se revocó.', unavailable: 'La vista previa no está disponible ahora mismo.', openHappier: 'Abrir Happier' },
@@ -11551,7 +11555,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
             revealUrlA11y: 'Mostrar el enlace completo',
             hideUrlA11y: 'Ocultar el enlace',
             expiresInClock: ({ clock }: { clock: string }) => `Caduca en ${clock}`,
-            groupFooter: 'Los enlaces públicos quedan registrados en el registro de auditoría de esta máquina.',
+            groupFooter: 'Los enlaces compartidos quedan registrados en el registro de auditoría de esta máquina.',
     },
     actions: {
       terminateDetectedA11y: 'Terminar servicio local detectado',
@@ -17546,6 +17550,7 @@ settingsSession: {
     },
     addTitle: "Nuevo secreto",
     savedTitle: "Secretos guardados",
+    searchSaved: 'Buscar secretos',
     badgeReady: "Secreto",
     badgeRequired: "Se requiere secreto",
     missingForProfile: ({ env }: { env: string | null }) =>
@@ -17723,6 +17728,7 @@ settingsSession: {
       modalHelpGeneric:
         "Este perfil necesita un secreto. Elige una opción abajo.",
       chooseOptionTitle: "Elige una opción",
+      manageSavedSecrets: 'Gestionar secretos guardados',
       machineEnvStatus: {
         theMachine: "la máquina",
         checkFor: ({ env }: { env: string }) => `Comprobar ${env}`,

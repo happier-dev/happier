@@ -791,21 +791,25 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     voiceConversationRuntimeMachine.reset();
   });
 
-  it('presents the safe launch cause from the real Home spawn Action without exposing diagnostic prose', async () => {
-    const failureCause = { phase: 'client_start' as const, failureReason: 'model_selection_required' as const,
-      code: 'agent_startup_model_reconciliation_failed' };
+  it.each([
+    { launchCode: 'SPAWN_FAILED', failureCause: { phase: 'client_start' as const,
+      failureReason: 'model_selection_required' as const, code: 'agent_startup_model_reconciliation_failed' } },
+    { launchCode: 'database_transaction_timeout', failureCause: undefined },
+  ])('presents the safe launch cause from the real Home spawn Action without exposing diagnostic prose ($launchCode)', async ({ launchCode, failureCause }) => {
     spawnResponse.mockResolvedValue({ type: 'error', code: 'spawn_failed', retryable: true,
-      launchError: { kind: 'launch_error', code: 'SPAWN_FAILED', message: 'PRIVATE_LAUNCH_BODY',
-        failureCause: { ...failureCause, providerErrorMessage: 'PRIVATE_PROVIDER_BODY' } } });
+      launchError: { kind: 'launch_error', code: launchCode, message: 'PRIVATE_LAUNCH_BODY',
+        ...(failureCause ? { failureCause: { ...failureCause, providerErrorMessage: 'PRIVATE_PROVIDER_BODY' } } : {}) } });
     const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
     const error = await ensureVoiceConversationSessionForVoiceHome().then(() => null, (cause: unknown) => cause);
-    expect(error).toMatchObject({ code: 'SPAWN_FAILED', failureCause });
+    expect(error).toMatchObject({ code: launchCode });
+    if (failureCause) expect(error).toHaveProperty('failureCause', failureCause);
+    else expect(error).not.toHaveProperty('failureCause');
     const { transitionVoiceRuntimeToIdle } = await import('@/voice/runtime/machine/voiceConversationRuntimeHelpers');
     const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
     const { deriveLocalVoiceSessionSnapshot } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
     const { projectVoiceAttemptPresentation } = await import('@/components/voice/attempt/projectVoiceAttemptPresentation');
     const { presentSessionStartupFailureCause } = await import('@/components/sessions/presentation/sessionRuntimeIssuePresentation');
-    transitionVoiceRuntimeToIdle({ controlSessionId: '__voice_agent__', reason: 'SPAWN_FAILED', cause: error });
+    transitionVoiceRuntimeToIdle({ controlSessionId: '__voice_agent__', reason: launchCode, cause: error });
     const snapshot = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot());
     expect(snapshot.errorFailureCause).toEqual(failureCause);
     const presentation = projectVoiceAttemptPresentation({
@@ -817,7 +821,9 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
         attemptSessionId: '__voice_agent__', startSessionId: null, globalStartAuthorized: true },
       serviceTitle: 'Voice', agentTitle: 'Codex', agentMachineLabel: 'Computer',
     });
-    expect(presentation.failureMessage).toBe(presentSessionStartupFailureCause(failureCause.code, undefined, failureCause));
+    const expectedMessage = presentSessionStartupFailureCause(failureCause?.code ?? launchCode, undefined, failureCause);
+    expect(expectedMessage).not.toBeNull();
+    expect(presentation.failureMessage).toBe(expectedMessage);
     expect(JSON.stringify({ error, snapshot, presentation })).not.toMatch(/PRIVATE_LAUNCH_BODY|PRIVATE_PROVIDER_BODY/);
     voiceConversationRuntimeMachine.reset();
   });

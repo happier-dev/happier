@@ -25,6 +25,7 @@ import { fileReviewNoteTranslations } from './fileReviewNoteTranslations.shared'
 import { composerReferenceTranslations } from './composerReferenceTranslations.shared';
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
 import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
+import { newAppTranslations } from './newAppTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
@@ -1328,7 +1329,7 @@ export const zhHans: TranslationStructure = {
     composerReferences: composerReferenceTranslations['zh-Hans'],
     screenCapture: screenCaptureCopy['zh-Hans'],
     hunkReview: hunkReviewTranslations['zh-Hans'],
-    storeInstalled: storeInstalledTranslations['zh-Hans'],
+    storeInstalled: storeInstalledTranslations['zh-Hans'], newApp: newAppTranslations['zh-Hans'],
   panes: { mainColumn: paneMainColumnTranslations['zh-Hans'], emptyEditor: paneEmptyEditorTranslations['zh-Hans'], shortcutsSheet: paneShortcutsSheetTranslations['zh-Hans'] },
   sessionCoordinator: {
     make: {
@@ -7919,6 +7920,7 @@ export const zhHans: TranslationStructure = {
         agent_startup_invalid_state: "智能体启动时遇到无效的本地运行时状态。",
         agent_startup_model_reconciliation_failed: "启动时无法应用所选模型。请检查模型选择，然后重试启动会话。",
         agent_startup_failed: "智能体启动失败。",
+        database_transaction_timeout: "服务器在创建此会话时超时。请尝试重新启动会话。",
         SOURCE_RUNTIME_RELOAD_REQUIRED: "需要在这台机器上重新加载 Happier，才能开始此步骤",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "缺少恢复所需的智能体原生状态。",
         codex_refresh_free_auth_unsupported: "智能体启动所需的身份验证不可用。",
@@ -11009,8 +11011,8 @@ export const zhHans: TranslationStructure = {
       copyAddress: '复制地址',
       publicLinkTitle: '公开链接',
       publicLinkScanHint: '扫描即可在手机上打开。',
-      purpose: '此检出的常驻服务：打开、分享，并选择在哪里运行。',
-      purposeMachine: '此机器上的常驻服务：打开、分享，并选择在哪里运行。',
+      purpose: '此检出的常驻服务：启动、打开和分享。',
+      purposeMachine: '这台机器上的常驻服务：启动、打开和分享。',
       backToServices: '返回服务',
     },
     effectReview: {
@@ -11175,6 +11177,8 @@ export const zhHans: TranslationStructure = {
             revokeConfirmCta: '撤销链接',
             consequenceReach: '任何拿到链接的人都能打开此服务，无需登录。',
             consequenceReachPeople: '只有你选择的人、团队和群组登录 Happier 后才能打开。',
+            peopleLinkTitle: '指定人员的链接',
+            consequenceReachNamed: ({ names }: { names: string }) => `只有 ${names} 登录 Happier 后才能打开。`,
             audienceLabel: '谁可以打开',
             canOpen: '可打开',
             landing: { title: '服务预览', signIn: '登录 Happier 以打开此预览。', signInCta: '登录', opening: '正在打开预览…', noAccess: '此预览未与你共享。', ended: '此预览链接已过期或已被撤销。', unavailable: '预览暂时无法访问。', openHappier: '打开 Happier' },
@@ -11185,7 +11189,7 @@ export const zhHans: TranslationStructure = {
             revealUrlA11y: '显示完整链接',
             hideUrlA11y: '隐藏链接',
             expiresInClock: ({ clock }: { clock: string }) => `${clock} 后过期`,
-            groupFooter: '公开链接会记录在此机器的审计日志中。',
+            groupFooter: '共享链接会记录在这台机器的审计日志中。',
     },
     actions: {
       terminateDetectedA11y: '终止检测到的本地服务',
@@ -17234,6 +17238,7 @@ settingsSession: {
         `此配置需要 ${env}。请选择下面的一个选项。`,
       modalHelpGeneric: "此配置需要机密。请选择下面的一个选项。",
       chooseOptionTitle: "选择一个选项",
+      manageSavedSecrets: '管理已保存的机密',
       machineEnvStatus: {
         theMachine: "机器",
         checkFor: ({ env }: { env: string }) => `检查 ${env}`,
@@ -17522,6 +17527,7 @@ settingsSession: {
     },
     addTitle: "新的机密",
     savedTitle: "已保存的机密",
+    searchSaved: '搜索机密',
     badgeReady: "机密",
     badgeRequired: "需要机密",
     missingForProfile: ({ env }: { env: string | null }) =>

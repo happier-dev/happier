@@ -2297,12 +2297,18 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
     await hook.unmount();
   });
 
-  it('presents a producer-authored spawn cause through the public Voice hook', async () => {
+  it.each([
+    { reason: 'SPAWN_FAILED', copy: 'newSession.selectModelTitle', failureCause: {
+      phase: 'client_start', failureReason: 'model_selection_required', code: 'agent_startup_model_reconciliation_failed' } },
+    { reason: 'database_transaction_timeout', copy: 'session.startFailure.cause.database_transaction_timeout' },
+    { reason: 'provider_response_invalid', copy: 'settingsVoice.local.machineErrors.provider_response_invalid' },
+    { reason: 'runtime_refusal', copy: 'settingsVoice.local.machineErrors.provider_error' },
+  ] as const)('presents the producer failure through the public Voice hook ($reason)', async (failure) => {
     const hook = await renderControl({ adapterId: 'local_conversation', sessionId: 'control-1',
-      status: 'error', mode: 'idle', canStop: false, errorCode: 'provider_error', errorMessage: 'SPAWN_FAILED',
-      errorFailureCause: { phase: 'client_start', failureReason: 'model_selection_required',
-        code: 'agent_startup_model_reconciliation_failed' }, errorRecoveryAction: 'retry' });
-    expect(hook.getCurrent().captionLabel).toBe(t('newSession.selectModelTitle'));
+      status: 'error', mode: 'idle', canStop: false, errorCode: 'provider_error', errorMessage: failure.reason,
+      ...('failureCause' in failure ? { errorFailureCause: failure.failureCause } : {}), errorRecoveryAction: 'retry' });
+    expect(hook.getCurrent().captionLabel).toBe(t(failure.copy));
+    await hook.unmount();
   });
 
   it('names why a failed attempt failed and offers its short recovery verb', async () => {

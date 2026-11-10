@@ -25,6 +25,7 @@ import { fileReviewNoteTranslations } from './fileReviewNoteTranslations.shared'
 import { composerReferenceTranslations } from './composerReferenceTranslations.shared';
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
 import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
+import { newAppTranslations } from './newAppTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
@@ -1312,7 +1313,7 @@ export const ja: TranslationStructure = {
     composerReferences: composerReferenceTranslations['ja'],
     screenCapture: screenCaptureCopy.ja,
     hunkReview: hunkReviewTranslations['ja'],
-    storeInstalled: storeInstalledTranslations['ja'],
+    storeInstalled: storeInstalledTranslations['ja'], newApp: newAppTranslations['ja'],
   panes: { mainColumn: paneMainColumnTranslations['ja'], emptyEditor: paneEmptyEditorTranslations['ja'], shortcutsSheet: paneShortcutsSheetTranslations['ja'] },
   sessionCoordinator: {
     make: {
@@ -3212,6 +3213,7 @@ export const ja: TranslationStructure = {
       modalHelpGeneric:
         "このプロファイルにはシークレットが必要です。以下から1つ選択してください。",
       chooseOptionTitle: "選択してください",
+      manageSavedSecrets: '保存済みシークレットを管理',
       machineEnvStatus: {
         theMachine: "マシン",
         checkFor: ({ env }: { env: string }) => `${env} を確認`,
@@ -8536,6 +8538,7 @@ localTailscale: {
         agent_startup_invalid_state: "エージェントの起動中に、無効なローカルランタイム状態が見つかりました。",
         agent_startup_model_reconciliation_failed: "起動時に選択したモデルを適用できませんでした。モデルの選択を確認してから、セッションの開始をもう一度お試しください。",
         agent_startup_failed: "エージェントを起動できませんでした。",
+        database_transaction_timeout: "このセッションの作成中にサーバーがタイムアウトしました。もう一度開始してください。",
         SOURCE_RUNTIME_RELOAD_REQUIRED: "このステップを開始するには、このマシンで Happier を再読み込みする必要があります",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "再開に必要なエージェントのネイティブ状態が見つかりません。",
         codex_refresh_free_auth_unsupported: "エージェントの起動認証を利用できません。",
@@ -11670,8 +11673,8 @@ localTailscale: {
       copyAddress: 'アドレスをコピー',
       publicLinkTitle: '公開リンク',
       publicLinkScanHint: 'スキャンしてスマートフォンで開きます。',
-      purpose: 'このチェックアウトの常駐サービス。開く、共有する、実行場所を選ぶ。',
-      purposeMachine: 'このマシンの常駐サービス。開く、共有する、実行場所を選ぶ。',
+      purpose: 'このチェックアウトの常駐サービス：起動、表示、共有ができます。',
+      purposeMachine: 'このマシンの常駐サービス：起動、表示、共有ができます。',
       backToServices: 'サービスに戻る',
     },
     effectReview: {
@@ -11836,6 +11839,8 @@ localTailscale: {
             revokeConfirmCta: 'リンクを取り消す',
             consequenceReach: 'リンクを知っている人は誰でもこのサービスを開けます。サインインは不要です。',
             consequenceReachPeople: '選んだユーザー、チーム、グループだけが Happier にサインインして開けます。',
+            peopleLinkTitle: '特定のユーザー向けリンク',
+            consequenceReachNamed: ({ names }: { names: string }) => `${names} だけが Happier にサインインして開けます。`,
             audienceLabel: '開ける人',
             canOpen: '開ける',
             landing: { title: 'サービスのプレビュー', signIn: 'このプレビューを開くには Happier にサインインしてください。', signInCta: 'サインイン', opening: 'プレビューを開いています…', noAccess: 'このプレビューはあなたと共有されていません。', ended: 'このプレビューリンクは期限切れか、取り消されました。', unavailable: '現在プレビューにアクセスできません。', openHappier: 'Happier を開く' },
@@ -11846,7 +11851,7 @@ localTailscale: {
             revealUrlA11y: 'リンク全体を表示',
             hideUrlA11y: 'リンクを非表示',
             expiresInClock: ({ clock }: { clock: string }) => `あと${clock}で期限切れ`,
-            groupFooter: '公開リンクはこのマシンの監査ログに記録されます。',
+            groupFooter: '共有リンクはこのマシンの監査ログに記録されます。',
     },
     actions: {
       terminateDetectedA11y: '検出されたローカルサービスを終了',
@@ -17814,6 +17819,7 @@ settingsSession: {
     },
     addTitle: "新しいシークレット",
     savedTitle: "保存済みシークレット",
+    searchSaved: 'シークレットを検索',
     badgeReady: "シークレット",
     badgeRequired: "シークレットが必要",
     missingForProfile: ({ env }: { env: string | null }) =>

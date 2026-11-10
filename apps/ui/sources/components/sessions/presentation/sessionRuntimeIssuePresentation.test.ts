@@ -10,7 +10,7 @@ import { resolveSessionStartFailureNotice } from '@/components/sessions/startFai
 import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnNewAction';
 import { SUPPORTED_LANGUAGE_CODES, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 
-import { presentSessionActivationFailure, presentSessionRuntimeIssue } from './sessionRuntimeIssuePresentation';
+import { presentSessionActivationFailure, presentSessionRuntimeIssue, presentSessionStartupFailureCause } from './sessionRuntimeIssuePresentation';
 import { getPendingMessageVisualState, resolvePendingMessageHeightBearingChrome, resolveSessionDeliveryFailure } from '@/components/sessions/pending/pendingMessageVisualState';
 import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
 import { shouldShowAbortButtonForSessionState } from '@/utils/sessions/sessionUtils';
@@ -45,6 +45,24 @@ async function useLanguage(language: string): Promise<void> {
 }
 
 describe('closed startup-failure recovery copy', () => {
+    it('explains a server transaction timeout without startup phase facts in every locale', async () => {
+        const code = 'database_transaction_timeout';
+        for (const unrelatedCode of ['provider_response_invalid', 'runtime_refusal']) {
+            expect(presentSessionStartupFailureCause(unrelatedCode)).toBeNull();
+        }
+        for (const language of SUPPORTED_LANGUAGE_CODES) {
+            await useLanguage(language);
+            const message = t('session.startFailure.cause.database_transaction_timeout');
+            expect(message, language).not.toContain('session.startFailure.');
+            const failure = issue({ code, sanitizedPreview: undefined });
+            expect(presentSessionRuntimeIssue(failure).message, language).toBe(message);
+            expect(resolveSessionStartFailureNotice({ issue: failure, sessionActive: false })?.message, language).toBe(message);
+            const outcome = resolveSessionSpawnNewResultFailureMessage({ type: 'error', code: 'spawn_failed', retryable: true,
+                launchError: { kind: 'launch_error', code, message: 'PRIVATE_LAUNCH_BODY' } });
+            expect(outcome, language).toContain(message);
+            expect(outcome, language).not.toContain('PRIVATE_LAUNCH_BODY');
+        }
+    });
     it('asks for a model through both durable status and the launch Action, preserving ordinary reconciliation failures', async () => {
         await useLanguage('en');
         const code = 'agent_startup_model_reconciliation_failed';

@@ -27,6 +27,7 @@ import { fileReviewNoteTranslations } from './fileReviewNoteTranslations.shared'
 import { composerReferenceTranslations } from './composerReferenceTranslations.shared';
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
 import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
+import { newAppTranslations } from './newAppTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
 import { sessionListSpacesKeyboardTranslations } from './sessionListSpacesKeyboardTranslations.shared';
@@ -9689,6 +9690,7 @@ const enSession = {
       agent_startup_invalid_state: 'Agent startup encountered invalid local runtime state.',
       agent_startup_model_reconciliation_failed: 'The selected model could not be applied during startup. Review the model selection, then retry the session.',
       agent_startup_failed: 'Agent startup failed.',
+      database_transaction_timeout: "The server timed out while creating this session. Try starting it again.",
       SOURCE_RUNTIME_RELOAD_REQUIRED: 'This machine needs a Happier reload before the step can start',
       AGENT_RESUME_PROVIDER_STATE_MISSING: 'The native agent state needed to resume is missing.',
       codex_refresh_free_auth_unsupported: 'Agent startup authentication is unavailable.',
@@ -13156,8 +13158,8 @@ const enLocalServices = {
     copyAddress: 'Copy address',
     publicLinkTitle: 'Public link',
     publicLinkScanHint: 'Scan it to open it on your phone.',
-    purpose: 'Long-running services for this checkout: open them, share them, choose where they run.',
-    purposeMachine: 'Long-running services on this machine: open them, share them, choose where they run.',
+    purpose: 'Long-running services for this checkout: start them, open them and share them.',
+    purposeMachine: 'Long-running services on this machine: start them, open them and share them.',
     backToServices: 'Back to services',
   },
   effectReview: {
@@ -13335,6 +13337,8 @@ const enLocalServices = {
     consequenceReach:
       'Anyone who has the link can open this service. No sign-in is required.',
     consequenceReachPeople: 'Only the people, Teams and Groups you choose can open it, signed in to Happier.',
+    peopleLinkTitle: 'Link for specific people',
+    consequenceReachNamed: ({ names }: { names: string }) => `Only ${names} can open it, signed in to Happier.`,
     audienceLabel: 'Who can open it',
     canOpen: 'Can open',
     landing: { title: 'Service preview', signIn: 'Sign in to Happier to open this preview.', signInCta: 'Sign in', opening: 'Opening the preview…', noAccess: 'This preview wasn’t shared with you.', ended: 'This preview link expired or was revoked.', unavailable: 'The preview isn’t reachable right now.', openHappier: 'Open Happier' },
@@ -13346,7 +13350,7 @@ const enLocalServices = {
     revealUrlA11y: 'Show the full link',
     hideUrlA11y: 'Hide the link',
     expiresInClock: ({ clock }: { clock: string }) => `Expires in ${clock}`,
-    groupFooter: 'Public links are recorded in this machine’s audit log.',
+    groupFooter: 'Shared links are recorded in this machine’s audit log.',
   },
   actions: {
     terminateDetectedA11y: 'Terminate detected local service',
@@ -20983,6 +20987,7 @@ const enSecrets = {
   },
   addTitle: 'New secret',
   savedTitle: 'Saved secrets',
+  searchSaved: 'Search secrets',
   badgeReady: 'Secrets',
   badgeRequired: 'Secret required',
   missingForProfile: ({ env }: { env: string | null }) =>
@@ -21144,6 +21149,7 @@ const enProfiles = {
       `This profile needs ${env}. Choose one option below.`,
     modalHelpGeneric: 'This profile needs a secret. Choose one option below.',
     chooseOptionTitle: 'Choose an option',
+    manageSavedSecrets: 'Manage saved secrets',
     machineEnvStatus: {
       theMachine: 'the machine',
       checkFor: ({ env }: { env: string }) => `Check for ${env}`,
@@ -23754,7 +23760,7 @@ export const en: TranslationStructure = {
     composerReferences: composerReferenceTranslations.en,
     screenCapture: screenCaptureCopy.en,
     hunkReview: hunkReviewTranslations['en'],
-    storeInstalled: storeInstalledTranslations['en'],
+    storeInstalled: storeInstalledTranslations['en'], newApp: newAppTranslations['en'],
   panes: { mainColumn: paneMainColumnTranslations['en'], emptyEditor: paneEmptyEditorTranslations['en'], shortcutsSheet: paneShortcutsSheetTranslations['en'] },
     sessionCoordinator: {
         make: {
@@ -24915,7 +24921,7 @@ type EnglishNamespaces30 = TranslationOverlay<
   typeof publicIdentity
 >;
 
-export type TranslationsEn = EnglishNamespaces30 & Readonly<{ botTemplates: typeof botTemplateTranslations.en; botTemplateRecipient: typeof botTemplateRecipientTranslations.en; projectStarters: { staticWebsite: { title: string; summary: string } }; fileReviewNote: typeof fileReviewNoteTranslations.en; hunkReview: typeof hunkReviewTranslations.en; storeInstalled: typeof storeInstalledTranslations.en; composerReferences: typeof composerReferenceTranslations.en; screenCapture: typeof screenCaptureCopy.en }>;
+export type TranslationsEn = EnglishNamespaces30 & Readonly<{ botTemplates: typeof botTemplateTranslations.en; botTemplateRecipient: typeof botTemplateRecipientTranslations.en; projectStarters: { staticWebsite: { title: string; summary: string } }; fileReviewNote: typeof fileReviewNoteTranslations.en; hunkReview: typeof hunkReviewTranslations.en; storeInstalled: typeof storeInstalledTranslations.en; newApp: typeof newAppTranslations.en; composerReferences: typeof composerReferenceTranslations.en; screenCapture: typeof screenCaptureCopy.en }>;
 
 // Shape contract for all locales: enforce identical key structure without requiring English literal
 // string values. Functions are preserved so parameter lists remain typechecked.

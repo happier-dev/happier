@@ -25,6 +25,7 @@ import { fileReviewNoteTranslations } from './fileReviewNoteTranslations.shared'
 import { composerReferenceTranslations } from './composerReferenceTranslations.shared';
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
 import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
+import { newAppTranslations } from './newAppTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
@@ -1120,7 +1121,7 @@ export const de: TranslationStructure = {
     composerReferences: composerReferenceTranslations.de,
     screenCapture: screenCaptureCopy.de,
     hunkReview: hunkReviewTranslations['de'],
-    storeInstalled: storeInstalledTranslations['de'],
+    storeInstalled: storeInstalledTranslations['de'], newApp: newAppTranslations['de'],
   panes: { mainColumn: paneMainColumnTranslations['de'], emptyEditor: paneEmptyEditorTranslations['de'], shortcutsSheet: paneShortcutsSheetTranslations['de'] },
   sessionCoordinator: {
     make: {
@@ -8244,6 +8245,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             agent_startup_invalid_state: "Beim Start des Agents wurde ein ungültiger lokaler Laufzeitzustand festgestellt.",
             agent_startup_model_reconciliation_failed: "Das ausgewählte Modell konnte beim Start nicht angewendet werden. Prüfe die Modellauswahl und starte die Sitzung erneut.",
             agent_startup_failed: "Der Start des Agents ist fehlgeschlagen.",
+            database_transaction_timeout: "Beim Erstellen dieser Sitzung hat der Server das Zeitlimit überschritten. Versuche, sie erneut zu starten.",
             SOURCE_RUNTIME_RELOAD_REQUIRED: "Happier muss auf diesem Rechner neu geladen werden, bevor der Schritt starten kann",
             AGENT_RESUME_PROVIDER_STATE_MISSING: "Der native Agent-Zustand, der zum Fortsetzen nötig ist, fehlt.",
             codex_refresh_free_auth_unsupported: "Die Authentifizierung für den Agent-Start ist nicht verfügbar.",
@@ -11243,8 +11245,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             copyAddress: 'Adresse kopieren',
             publicLinkTitle: 'Öffentlicher Link',
             publicLinkScanHint: 'Scanne ihn, um ihn auf deinem Telefon zu öffnen.',
-            purpose: 'Dauerhaft laufende Dienste dieses Checkouts: öffnen, teilen und wählen, wo sie laufen.',
-            purposeMachine: 'Dauerhaft laufende Dienste auf diesem Rechner: öffnen, teilen und wählen, wo sie laufen.',
+            purpose: 'Dauerhaft laufende Dienste dieses Checkouts: starten, öffnen und teilen.',
+            purposeMachine: 'Dauerhaft laufende Dienste auf diesem Rechner: starten, öffnen und teilen.',
             backToServices: 'Zurück zu den Diensten',
         },
         effectReview: {
@@ -11409,6 +11411,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             revokeConfirmCta: 'Link widerrufen',
             consequenceReach: 'Alle, die den Link haben, können diesen Dienst öffnen. Eine Anmeldung ist nicht nötig.',
             consequenceReachPeople: 'Nur die Personen, Teams und Gruppen, die du auswählst, können es öffnen – angemeldet bei Happier.',
+            peopleLinkTitle: 'Link für bestimmte Personen',
+            consequenceReachNamed: ({ names }: { names: string }) => `Nur für ${names}, angemeldet bei Happier.`,
             audienceLabel: 'Wer es öffnen kann',
             canOpen: 'Kann öffnen',
             landing: { title: 'Dienstvorschau', signIn: 'Melde dich bei Happier an, um diese Vorschau zu öffnen.', signInCta: 'Anmelden', opening: 'Vorschau wird geöffnet…', noAccess: 'Diese Vorschau wurde nicht mit dir geteilt.', ended: 'Dieser Vorschaulink ist abgelaufen oder wurde widerrufen.', unavailable: 'Die Vorschau ist gerade nicht erreichbar.', openHappier: 'Happier öffnen' },
@@ -11419,7 +11423,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             revealUrlA11y: 'Vollständigen Link anzeigen',
             hideUrlA11y: 'Link ausblenden',
             expiresInClock: ({ clock }: { clock: string }) => `Läuft in ${clock} ab`,
-            groupFooter: 'Öffentliche Links werden im Audit-Log dieses Rechners protokolliert.',
+            groupFooter: 'Geteilte Links werden im Audit-Log dieses Rechners festgehalten.',
         },
         actions: {
             terminateDetectedA11y: 'Erkannten lokalen Dienst beenden',
@@ -17708,6 +17712,7 @@ settingsSession: {
         },
         addTitle: 'Neues Secret',
         savedTitle: 'Gespeicherte Secrets',
+        searchSaved: 'Secrets suchen',
         badgeReady: 'Secrets',
         badgeRequired: 'Secret erforderlich',
         missingForProfile: ({ env }: { env: string | null }) =>
@@ -17856,6 +17861,7 @@ settingsSession: {
             modalHelpWithEnv: ({ env }: { env: string }) => `Dieses Profil braucht ${env}. Wähl unten eine Möglichkeit.`,
             modalHelpGeneric: 'Dieses Profil braucht ein Secret. Wähl unten eine Möglichkeit.',
             chooseOptionTitle: 'Wähl eine Möglichkeit',
+            manageSavedSecrets: 'Gespeicherte Secrets verwalten',
             machineEnvStatus: {
                 theMachine: 'der Rechner',
                 checkFor: ({ env }: { env: string }) => `Prüfen auf ${env}`,

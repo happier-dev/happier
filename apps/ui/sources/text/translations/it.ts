@@ -25,6 +25,7 @@ import { fileReviewNoteTranslations } from './fileReviewNoteTranslations.shared'
 import { composerReferenceTranslations } from './composerReferenceTranslations.shared';
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
 import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
+import { newAppTranslations } from './newAppTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
@@ -1327,7 +1328,7 @@ export const it: TranslationStructure = {
     composerReferences: composerReferenceTranslations['it'],
     screenCapture: screenCaptureCopy.it,
     hunkReview: hunkReviewTranslations['it'],
-    storeInstalled: storeInstalledTranslations['it'],
+    storeInstalled: storeInstalledTranslations['it'], newApp: newAppTranslations['it'],
   panes: { mainColumn: paneMainColumnTranslations['it'], emptyEditor: paneEmptyEditorTranslations['it'], shortcutsSheet: paneShortcutsSheetTranslations['it'] },
   sessionCoordinator: {
     make: {
@@ -3046,6 +3047,7 @@ export const it: TranslationStructure = {
       modalHelpGeneric:
         "Questo profilo richiede un segreto. Scegli un’opzione qui sotto.",
       chooseOptionTitle: "Scegli un’opzione",
+      manageSavedSecrets: 'Gestisci i segreti salvati',
       machineEnvStatus: {
         theMachine: "la macchina",
         checkFor: ({ env }: { env: string }) => `Controlla ${env}`,
@@ -8455,6 +8457,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
         agent_startup_invalid_state: "L’avvio dell’agente ha rilevato uno stato di runtime locale non valido.",
         agent_startup_model_reconciliation_failed: "Non è stato possibile applicare il modello selezionato all’avvio. Controlla il modello scelto e riprova ad avviare la sessione.",
         agent_startup_failed: "L’avvio dell’agente non è riuscito.",
+        database_transaction_timeout: "Il server ha superato il tempo limite durante la creazione di questa sessione. Prova ad avviarla di nuovo.",
         SOURCE_RUNTIME_RELOAD_REQUIRED: "Occorre ricaricare Happier su questa macchina prima di avviare il passaggio",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "Manca lo stato nativo dell’agente necessario per riprendere.",
         codex_refresh_free_auth_unsupported: "L’autenticazione di avvio dell’agente non è disponibile.",
@@ -11594,8 +11597,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       copyAddress: 'Copia indirizzo',
       publicLinkTitle: 'Link pubblico',
       publicLinkScanHint: 'Scansionalo per aprirlo sul telefono.',
-      purpose: 'Servizi di lunga durata di questa copia: aprili, condividili e scegli dove girano.',
-      purposeMachine: 'Servizi di lunga durata su questa macchina: aprili, condividili e scegli dove girano.',
+      purpose: 'Servizi di lunga durata di questa copia: avviali, aprili e condividili.',
+      purposeMachine: 'Servizi di lunga durata su questa macchina: avviali, aprili e condividili.',
       backToServices: 'Torna ai servizi',
     },
     effectReview: {
@@ -11760,6 +11763,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
             revokeConfirmCta: 'Revoca link',
             consequenceReach: 'Chiunque abbia il link può aprire questo servizio. Non serve accedere.',
             consequenceReachPeople: 'Solo le persone, i team e i gruppi che scegli possono aprirlo, con l’accesso a Happier.',
+            peopleLinkTitle: 'Link per persone specifiche',
+            consequenceReachNamed: ({ names }: { names: string }) => `Solo per ${names}, con l’accesso a Happier.`,
             audienceLabel: 'Chi può aprirlo',
             canOpen: 'Può aprire',
             landing: { title: 'Anteprima del servizio', signIn: 'Accedi a Happier per aprire questa anteprima.', signInCta: 'Accedi', opening: 'Apertura dell’anteprima…', noAccess: 'Questa anteprima non è stata condivisa con te.', ended: 'Questo link di anteprima è scaduto o è stato revocato.', unavailable: 'L’anteprima non è raggiungibile in questo momento.', openHappier: 'Apri Happier' },
@@ -11770,7 +11775,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
             revealUrlA11y: 'Mostra il link completo',
             hideUrlA11y: 'Nascondi il link',
             expiresInClock: ({ clock }: { clock: string }) => `Scade tra ${clock}`,
-            groupFooter: 'I link pubblici vengono registrati nel log di audit di questa macchina.',
+            groupFooter: 'I link condivisi vengono registrati nel log di audit di questa macchina.',
     },
     actions: {
       terminateDetectedA11y: 'Termina servizio locale rilevato',
@@ -17905,6 +17910,7 @@ settingsSession: {
     },
     addTitle: "Nuovo segreto",
     savedTitle: "Segreti salvati",
+    searchSaved: 'Cerca segreti',
     badgeReady: "Segreto",
     badgeRequired: "Segreto richiesto",
     missingForProfile: ({ env }: { env: string | null }) =>

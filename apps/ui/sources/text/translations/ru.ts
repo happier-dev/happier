@@ -25,6 +25,7 @@ import { fileReviewNoteTranslations } from './fileReviewNoteTranslations.shared'
 import { composerReferenceTranslations } from './composerReferenceTranslations.shared';
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
 import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
+import { newAppTranslations } from './newAppTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
@@ -1342,7 +1343,7 @@ export const ru: TranslationStructure = {
     composerReferences: composerReferenceTranslations['ru'],
     screenCapture: screenCaptureCopy.ru,
     hunkReview: hunkReviewTranslations['ru'],
-    storeInstalled: storeInstalledTranslations['ru'],
+    storeInstalled: storeInstalledTranslations['ru'], newApp: newAppTranslations['ru'],
   panes: { mainColumn: paneMainColumnTranslations['ru'], emptyEditor: paneEmptyEditorTranslations['ru'], shortcutsSheet: paneShortcutsSheetTranslations['ru'] },
   sessionCoordinator: {
     make: {
@@ -8683,6 +8684,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         agent_startup_invalid_state: "При запуске агент обнаружил недопустимое локальное состояние среды выполнения.",
         agent_startup_model_reconciliation_failed: "Не удалось применить выбранную модель при запуске. Проверьте выбор модели и повторите запуск сессии.",
         agent_startup_failed: "Не удалось запустить агента.",
+        database_transaction_timeout: "Сервер превысил время ожидания при создании этой сессии. Попробуйте запустить её снова.",
         SOURCE_RUNTIME_RELOAD_REQUIRED: "Перед запуском шага нужно перезагрузить Happier на этом компьютере",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "Отсутствует нативное состояние агента, необходимое для возобновления.",
         codex_refresh_free_auth_unsupported: "Аутентификация для запуска агента недоступна.",
@@ -11226,8 +11228,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       copyAddress: 'Копировать адрес',
       publicLinkTitle: 'Публичная ссылка',
       publicLinkScanHint: 'Отсканируйте, чтобы открыть на телефоне.',
-      purpose: 'Долгоживущие сервисы этой копии: открывайте, делитесь и выбирайте, где они работают.',
-      purposeMachine: 'Долгоживущие сервисы на этой машине: открывайте, делитесь и выбирайте, где они работают.',
+      purpose: 'Долгоживущие сервисы этой копии: запускайте, открывайте и делитесь ими.',
+      purposeMachine: 'Долгоживущие сервисы на этой машине: запускайте, открывайте и делитесь ими.',
       backToServices: 'Назад к сервисам',
     },
     effectReview: {
@@ -11392,6 +11394,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
             revokeConfirmCta: 'Отозвать ссылку',
             consequenceReach: 'Любой, у кого есть ссылка, может открыть этот сервис. Вход в аккаунт не требуется.',
             consequenceReachPeople: 'Открыть смогут только выбранные вами люди, команды и группы, вошедшие в Happier.',
+            peopleLinkTitle: 'Ссылка для выбранных людей',
+            consequenceReachNamed: ({ names }: { names: string }) => `Только для: ${names}, после входа в Happier.`,
             audienceLabel: 'Кто может открыть',
             canOpen: 'Может открыть',
             landing: { title: 'Предпросмотр сервиса', signIn: 'Войдите в Happier, чтобы открыть этот предпросмотр.', signInCta: 'Войти', opening: 'Открываем предпросмотр…', noAccess: 'Этим предпросмотром с вами не поделились.', ended: 'Срок действия ссылки истёк или она отозвана.', unavailable: 'Предпросмотр сейчас недоступен.', openHappier: 'Открыть Happier' },
@@ -11402,7 +11406,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
             revealUrlA11y: 'Показать ссылку целиком',
             hideUrlA11y: 'Скрыть ссылку',
             expiresInClock: ({ clock }: { clock: string }) => `Истекает через ${clock}`,
-            groupFooter: 'Публичные ссылки записываются в журнал аудита этой машины.',
+            groupFooter: 'Общие ссылки записываются в журнал аудита этой машины.',
     },
     actions: {
       terminateDetectedA11y: 'Завершить обнаруженный локальный сервис',
@@ -17498,6 +17502,7 @@ settingsSession: {
     },
     addTitle: "Новый секрет",
     savedTitle: "Сохранённые секреты",
+    searchSaved: 'Поиск секретов',
     badgeReady: "Секреты",
     badgeRequired: "Требуется секрет",
     missingForProfile: ({ env }: { env: string | null }) =>
@@ -17674,6 +17679,7 @@ settingsSession: {
       modalHelpGeneric:
         "Для этого профиля требуется секрет. Выберите один вариант ниже.",
       chooseOptionTitle: "Выберите вариант",
+      manageSavedSecrets: 'Управление сохранёнными секретами',
       machineEnvStatus: {
         theMachine: "машине",
         checkFor: ({ env }: { env: string }) => `Проверить ${env}`,
