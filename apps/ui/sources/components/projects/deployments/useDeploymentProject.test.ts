@@ -146,6 +146,32 @@ describe('deployment ProjectSource scope', () => {
         } finally { await hook.unmount(); account.dispose(); }
     });
 
+    it('adds a newly created Environment to a mounted empty Account-wide hub on its typed publication', async () => {
+        const serverId = await homes.addHome({ name: 'New Environment', serverUrl: 'https://new-environment.test', accountId: 'alice' });
+        const account = await captureLazyActionAccountContext(serverId);
+        const environment = createDeploymentEnvironmentHeaderV1({ serverId, owner: { kind: 'account', accountId: 'alice' } });
+        await account.createArtifactDocument({ artifactId: environment.contentArtifactId,
+            header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Production' }, body: '{}' });
+        let created = false;
+        homes.answer(serverId, '/v1/deployments/environments', { select: () => ({ body: {
+            ok: true, items: created ? [environment] : [], nextCursor: null,
+        } }) });
+        const demand = { mounted: true, visible: true, focused: true };
+        const hook = await renderHook(() => useDeploymentInventory(account.accountLifetime, demand));
+        const listReads = () => homes.requests.filter(request => request.path.split('?')[0] === '/v1/deployments/environments');
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().snapshot.status).toBe('ready'));
+            expect(hook.getCurrent().snapshot.value?.items).toEqual([]);
+            expect(listReads()).toHaveLength(1);
+            created = true;
+            await act(async () => publishHomeAccountChange(serverId, [buildDeploymentAccountChangeV1({
+                projectSourceId: environment.projectSourceId, environmentId: environment.id, revision: environment.revision,
+            }).entityId], { changeKinds: ['account'] }));
+            await vi.waitFor(() => expect(hook.getCurrent().snapshot.value?.items[0]?.environment.id).toBe(environment.id));
+            expect(listReads()).toHaveLength(2);
+        } finally { await hook.unmount(); account.dispose(); }
+    });
+
     it.each(['socket', 'feed-page'] as const)('refreshes demanded Environments on a linked-identity change (%s)', async (source) => {
         const serverId = await homes.addHome({ name: 'Deployment Identity', serverUrl: 'https://deployment-identity.test', accountId: 'alice' });
         const account = await captureLazyActionAccountContext(serverId);
