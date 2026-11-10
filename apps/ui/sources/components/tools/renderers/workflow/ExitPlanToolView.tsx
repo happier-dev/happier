@@ -19,8 +19,9 @@ import { usePendingPromptPrimaryFocus, markTranscriptPromptAnswered } from '@/co
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { useToolFindState } from '../core/ToolFindText';
 import { useTranscriptFindActive } from '@/components/sessions/transcript/find/TranscriptFindContext';
-import { resolveSessionPermissionChoices } from '@/sync/ops/sessionPermissionChoices';
+import { getSessionPermissionChoiceKind, resolveSessionPermissionChoices } from '@/sync/ops/sessionPermissionChoices';
 import { answerSessionPermission } from '@/sync/ops/sessionPermissionAnswers';
+import { recordPermissionActionFailure } from '@/components/tools/shell/permissions/permissionActionFailure';
 import { PermissionFooterOfferedChoices } from '@/components/tools/shell/permissions/PermissionFooterOfferedChoices';
 import { PermissionFeedbackInput } from '@/components/tools/shell/permissions/PermissionFeedbackInput';
 import { isOfferedPermissionChoice, selectPrimaryOfferedChoice } from '@/components/tools/shell/permissions/offeredChoiceLayout';
@@ -177,7 +178,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
         if (!canInteract || isApproving || isRejecting || !permissionRequestId || !actions || !hasLivePlanRequest()) return;
         const choice = nativePermissionChoices.find(candidate => candidate.id === choiceId);
         const answer = choice?.response.nativeChoice;
-        if (!answer) return;
+        if (!choice || !answer) return;
         setIsApproving(true);
         try {
             await answerSessionPermission({ requestId: permissionRequestId,
@@ -186,6 +187,9 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
                 respondToPermission: actions.respondToPermission });
             markTranscriptPromptAnswered(source, permissionRequestId);
             setIsResponded(true);
+        } catch (error) {
+            recordPermissionActionFailure(getSessionPermissionChoiceKind(choice), error, null);
+            if (hasLivePlanRequest()) Modal.alert(t('common.error'), `${t('errors.operationFailed')} ${t('errors.tryAgain')}`);
         } finally {
             setIsApproving(false);
         }

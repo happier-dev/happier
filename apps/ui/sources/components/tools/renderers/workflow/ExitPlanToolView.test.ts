@@ -145,6 +145,22 @@ describe('ExitPlanToolView', () => {
         expect(collectHostText(tree)).not.toContain('tools.exitPlanMode.responded');
     });
 
+    it('reports a rejected native answer and permits an explicit retry', async () => {
+        liveRequests = { perm1: { tool: 'ExitPlanMode', arguments: { plan: 'plan' }, createdAt: 1,
+            nativeChoices: { requirementId: 'retry-plan', source: 'native-test', choices: [
+                { id: 'retry', label: 'Approve', decision: 'approved', scope: 'once', response: { approved: true } },
+            ] } } } as never;
+        sessionDeny.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(undefined);
+        const tree = await renderView(makeRunningTool());
+        await tree.pressByTestIdAsync('permission-footer.choice.retry');
+        expectAlert(tree, 'errors.operationFailed errors.tryAgain');
+        expect(collectHostText(tree)).not.toContain('tools.exitPlanMode.responded');
+        await pressAlertChoice(tree, 'common.ok');
+        await tree.pressByTestIdAsync('permission-footer.choice.retry');
+        expect(sessionDeny).toHaveBeenCalledTimes(2);
+        expect(collectHostText(tree)).toContain('tools.exitPlanMode.responded');
+    });
+
     it('offers a native occurrence\'s own choices word for word instead of the plan controls', async () => {
         liveRequests = { perm1: { tool: 'ExitPlanMode', arguments: { plan: 'plan' }, createdAt: 1, nativeChoices: {
             requirementId: 'plan-7', source: 'native-test', choices: [
