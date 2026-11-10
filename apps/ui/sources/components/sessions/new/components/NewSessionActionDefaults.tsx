@@ -40,6 +40,7 @@ export function NewSessionActionDefaults(props: Readonly<{
     }, [address, scope]);
     const save = React.useCallback(async () => {
         setFeedback(null);
+        const notAppliedMessage = t('newSession.actionDefault.failed');
         try {
             const actionDefault = getSnapshot();
             if (!actionDefault) throw new Error(t('newSession.actionDefault.failed'));
@@ -68,10 +69,10 @@ export function NewSessionActionDefaults(props: Readonly<{
             } else {
                 const reason = result && typeof result === 'object' && 'reason' in result && typeof result.reason === 'string' ? result.reason : null;
                 setFeedback(reason === TRIAGE_SAVE_ACTION_DEFAULTS_WORKSPACE_MODE_REASON_V1 ? t('newSession.actionDefault.workspaceMode')
-                    : resolveActionExecutionErrorMessage({ code: reason }, t('newSession.actionDefault.failed')));
+                    : resolveActionExecutionErrorMessage({ code: reason }, notAppliedMessage, { notAppliedMessage }));
             }
         } catch (error) {
-            setFeedback(resolveActionExecutionErrorMessage(error, t('newSession.actionDefault.failed')));
+            setFeedback(resolveActionExecutionErrorMessage(error, notAppliedMessage, { notAppliedMessage }));
         }
     }, [execute, getCurrentDraft, getSnapshot, onProfileSaved]);
     // The save capability belongs to the Triage protocol; other seed producers remain ordinary drafts.

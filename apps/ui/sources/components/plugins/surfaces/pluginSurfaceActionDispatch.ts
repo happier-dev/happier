@@ -17,7 +17,7 @@ import { projectMarkdownFindText } from '@/components/markdown/rendering/markdow
 import { readActionSessionTargetField, readActionSessionTargetOperands, validateActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { normalizeSessionTargetV1, type ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
+import { isPresentUserHostInvocation, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import type { ActionEnvironmentApprovalScopeAdmissionV1 } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -1575,12 +1575,15 @@ async function executeClientContributedAction(
                 if (current.action.execution.target === 'account' && (!accountOrigin || !accountLifetime)) {
                     throw new PluginError({ code: 'plugin_surface_account_action_unavailable' });
                 }
-                const nestedHostAction = accountOrigin && confirmedInvocation && input.hostAction ? {
+                const hostContext = { ...input.hostAction?.context, surface: invocationSurface, authority: invocationAuthority };
+                const reviewedInput = confirmedInvocation?.input ?? (invocationSurface === 'ui' && isPresentUserHostInvocation(hostContext)
+                    ? { action: identity, input: actionInput } : undefined);
+                const nestedHostAction = accountOrigin && reviewedInput && input.hostAction ? {
                     ...input.hostAction,
                     context: { ...input.hostAction.context,
                         hostReviewedChild: createHostReviewedChildPortV1({
-                            actionId: 'action.invoke', input: confirmedInvocation.input,
-                            context: { ...input.hostAction.context, surface: invocationSurface, authority: invocationAuthority },
+                            actionId: 'action.invoke', input: reviewedInput,
+                            context: hostContext,
                             reviewAdmitted: true,
                         }) },
                 } : input.hostAction;

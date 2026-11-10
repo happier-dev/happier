@@ -147,6 +147,9 @@ describe('NewSessionActionDefaults', () => {
     it.each([
         { code: 'plugin_action_input_schema_invalid', feedback: 'common.requestFailed', outer: false },
         { code: 'plugin_action_unavailable', feedback: 'ui.pluginUi.actionUnavailable', outer: false },
+        { code: 'approval_required', feedback: 'newSession.actionDefault.failed', outer: true },
+        { code: 'approval_canceled', feedback: 'newSession.actionDefault.failed', outer: true },
+        { code: 'plugin_action_current_intent_rejected', feedback: 'newSession.actionDefault.failed', outer: false },
         { code: 'unrecognized_action_failure', feedback: 'newSession.actionDefault.failed', outer: true },
     ])('presents thrown $code without losing the task and allows another save', async ({ code, feedback, outer }) => {
         const { NewSessionActionDefaults } = await import('./NewSessionActionDefaults');

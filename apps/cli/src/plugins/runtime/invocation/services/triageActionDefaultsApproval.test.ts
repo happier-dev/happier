@@ -27,9 +27,10 @@ import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SESSION_LINKS_COLLECTION_
 
 describe('Triage Save defaults approval through the Account host', () => {
     it.each([
-        { label: 'default native confirmation', ask: false, confirm: true },
-        { label: 'explicit Ask confirmed', ask: true, confirm: true },
-        { label: 'explicit Ask without consent', ask: true, confirm: false },
+        { label: 'own present-user UI Save click', ask: false, confirm: false, direct: true },
+        { label: 'automation without UI consent', ask: false, confirm: false, direct: false },
+        { label: 'explicit Ask confirmed', ask: true, confirm: true, direct: false },
+        { label: 'explicit Ask without consent', ask: true, confirm: false, direct: false },
     ])('saves only reviewed Profile and prompt effects: $label', async scenario => {
         const declaration = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === TRIAGE_SAVE_ACTION_DEFAULTS_ACTION_REF_V1.localId)!;
         const action = { pluginId: PLUGIN_MANIFEST.id, localId: declaration.id };
@@ -90,7 +91,10 @@ describe('Triage Save defaults approval through the Account host', () => {
                 readCatalog: async () => ({ catalog: { status: 'ready', rows: [{ record: invocationRecord, revision: 0 }], tombstones: [], diagnostics: [] } }),
                 writeRecord: async ({ record }) => { invocationRecord = record; return { status: 'updated', revision: 1, cursor: 1 }; },
             },
-            approvalsCreate: async () => ({ artifactId: 'nested-approval' }),
+            approvalsCreate: async () => {
+                if (scenario.direct) throw new Error('An admitted UI Save must not create a second Ask');
+                return { artifactId: 'nested-approval' };
+            },
         });
         const owners = createProductionPluginInvocationServiceOwners({ actionExecutor: {
             execute: (id, value, context) => { nestedActions.push(id); return executor.execute(id, value, context); },
@@ -125,9 +129,9 @@ describe('Triage Save defaults approval through the Account host', () => {
         } as unknown as ResolvedExecutablePluginRuntimeRegistry;
         const target = { kind: 'machine' as const, machineId: 'account-host' };
         const envelope = { v: 1 as const, requestId: 'save-defaults', target, input };
-        // The mounted UI reviewed a present person's input. Its Account relay
-        // retains the immediate plugin caller and automation authority ceiling.
-        const context: ActionExecutorContext = { surface: 'ui', authority: 'account_automation', actionCaller: {
+        // The Account relay retains the real caller: an own host UI press, or
+        // a plugin's automation ceiling with separately reviewed intent.
+        const context: ActionExecutorContext = { surface: 'ui', authority: scenario.direct ? 'present_user' : 'account_automation', actionCaller: scenario.direct ? { kind: 'host' } : {
             kind: 'plugin', pluginId: action.pluginId, contributionLocalId: action.localId,
             occurrenceId, sourceCustody, originSurface: 'ui',
         },
@@ -154,7 +158,7 @@ describe('Triage Save defaults approval through the Account host', () => {
         }
         try {
             const result = await executor.execute('action.invoke', input, context);
-            if (!scenario.confirm) {
+            if (!scenario.confirm && !scenario.direct) {
                 expect(result.ok).toBe(false);
                 expect(profiles).toEqual([]);
                 expect(documents.size).toBe(0);

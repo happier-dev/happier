@@ -56,9 +56,10 @@ describe('Triage plugin manifest', () => {
           authorization: { generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
             resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } },
       }) });
-      expect(await gate().admit({ surface: 'ui', invocationSurface: 'ui', invocationAuthority: 'present_user', input: {} }), id)
+      const input = id === TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1 ? { kind: 'saveDefaults' } : {};
+      expect(await gate().admit({ surface: 'ui', invocationSurface: 'ui', invocationAuthority: 'present_user', input }), id)
         .toMatchObject({ status: 'admitted' });
-      expect(await gate(true).admit({ surface: 'ui', invocationSurface: 'ui', invocationAuthority: 'present_user', input: {} }), `${id} explicit Ask`)
+      expect(await gate(true).admit({ surface: 'ui', invocationSurface: 'ui', invocationAuthority: 'present_user', input }), `${id} explicit Ask`)
         .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
       for (const surface of ['agent', 'mcp']) {
         expect(await gate().admit({ surface, invocationSurface: surface, input: {} }), `${id} ${surface}`)

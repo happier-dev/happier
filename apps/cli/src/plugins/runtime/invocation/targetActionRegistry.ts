@@ -37,7 +37,8 @@ import {
 } from '@happier-dev/plugin-sdk';
 import type { PluginActionReadObserver } from '@happier-dev/plugin-sdk/actions';
 import { readActionSessionTargetOperands } from '@happier-dev/protocol/actions/executor/sessionTargets';
-import { readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createHostReviewedChildPortV1, readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { normalizeSessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import {
     type ActionHandler,
@@ -608,7 +609,19 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     retireObservedRead();
                     lifetime.settleContext();
                 };
-                const reviewedParent = readHostReviewedParentV1(invocation.approvalContext);
+                const context = invocation.approvalContext;
+                // The policy gate has admitted this exact handler input. The
+                // person's own app press supplies intent for its nested effects;
+                // relaying to the Account host must not create another Ask.
+                const ownUiPress = context?.surface === 'ui'
+                    && (isPresentUserHostInvocation(context)
+                        || isHomeAdmittedPresentUserHostInvocation(context, 'action.invoke'));
+                const reviewedParent = readHostReviewedParentV1(context)
+                    ?? (ownUiPress ? createHostReviewedChildPortV1({
+                        actionId: 'action.invoke',
+                        input: { action: { pluginId: registration.pluginId, localId: registration.localId }, input },
+                        context, reviewAdmitted: true,
+                    }).parent : null);
                 const operationAcceptance = invocation.operationAcceptance ?? invocation.approvalContext?.operationAcceptance;
                 const operationOwnerUpdate = invocation.operationOwnerUpdate ?? invocation.approvalContext?.operationOwnerUpdate;
                 const seed = Object.freeze({

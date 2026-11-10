@@ -581,6 +581,7 @@ function createClientActionActivation(input: Readonly<{
             ...(action.approvalScope ? { approvalScope: action.approvalScope } : {}),
             execution: action.execution, dangerLevel: action.dangerLevel, placementBindings: action.placementBindings,
             ...(action.confirmation ? { confirmation: action.confirmation } : {}), inputSchema: input.inputSchema ?? {},
+            ...(action.confirmationWhen ? { confirmationWhen: action.confirmationWhen } : {}),
             ...(input.accountAvailability ? { availability: input.accountAvailability } : {}),
             ...(input.readOnly === undefined ? {} : { readOnly: input.readOnly }),
             ...(input.outputSchema ? { resultSchema: input.outputSchema } : {}) }] },
@@ -2656,24 +2657,38 @@ describe('Account Action placement through the executable dispatcher', () => {
     });
 
     it.each([
-        { capability: 'services', confirmed: true },
-        { capability: 'ui', confirmed: true },
-        { capability: 'services', confirmed: false },
-        { capability: 'ui', confirmed: false },
-    ] as const)('carries native Account review to nested Profile writes through $capability: confirmed=$confirmed', async ({ capability, confirmed }) => {
-        const [{ createProfileOperations }, { createProfileActionExecuteV1 }, { LaunchProfileV2Schema }] = await Promise.all([
+        { capability: 'services', confirmed: true, direct: false },
+        { capability: 'ui', confirmed: true, direct: false },
+        { capability: 'services', confirmed: false, direct: false },
+        { capability: 'ui', confirmed: false, direct: false },
+        { capability: 'services', confirmed: true, direct: true },
+        { capability: 'ui', confirmed: true, direct: true },
+    ] as const)('carries admitted Account intent to nested writes through $capability: confirmed=$confirmed direct=$direct', async ({ capability, confirmed, direct }) => {
+        const [{ createProfileOperations }, { createProfileActionExecuteV1 }, { LaunchProfileV2Schema }, { createPromptDocInLibrary }] = await Promise.all([
             import('@happier-dev/protocol/profiles/profileOperations'),
             import('@happier-dev/protocol/profiles/profileActionsV1'),
             import('@happier-dev/protocol/profiles/v2/schema'),
+            import('@happier-dev/protocol/prompts/library/promptLibraryActionOperations'),
         ]);
         const accountLifetime = clientAccountLifetime();
         const profiles: import('@happier-dev/protocol/profiles/profileRecordV1').ProfileRecordV1[] = [];
         const contexts: ActionExecutorContext[] = [];
+        const documents = new Map<string, import('@happier-dev/protocol/prompts/library/promptLibraryActionOperations').PromptLibraryStoredArtifact>();
+        const store: import('@happier-dev/protocol/prompts/library/promptLibraryActionOperations').PromptLibraryArtifactStore = {
+            read: async id => documents.get(id) ?? null,
+            update: async ({ artifactId, header, body }) => { documents.set(artifactId, { id: artifactId, header, body,
+                revision: { headerVersion: 1, bodyVersion: 2 } }); },
+            create: async ({ header, body }) => {
+                const artifactId = 'saved-prompt';
+                documents.set(artifactId, { id: artifactId, header, body, revision: { headerVersion: 1, bodyVersion: 1 } });
+                return artifactId;
+            },
+        };
         let confirmations = 0;
         let approvals = 0;
         const actionsSettings = normalizeActionsSettingsV1({ v: 1,
             actions: { 'launch_profiles.create': { approvalRequiredSurfaces: ['plugin'] },
-                [formatQualifiedPluginActionId({ pluginId: CALLER_PLUGIN_ID, localId: 'refresh-index' })]: { approvalRequiredSurfaces: ['plugin'] } } });
+                [formatQualifiedPluginActionId({ pluginId: CALLER_PLUGIN_ID, localId: 'refresh-index' })]: { approvalRequiredSurfaces: direct ? ['plugin'] : ['plugin', 'ui'] } } });
         // Only persistent Profile/approval storage and the native dialog are
         // substituted; registration, nested dispatch and Profile policy stay real.
         const operations = createProfileOperations({
@@ -2690,6 +2705,10 @@ describe('Account Action placement through the executable dispatcher', () => {
                 contexts.push(context);
                 return createProfileActionExecuteV1({ operations })(request, context);
             },
+            promptDocCreate: async (request, context) => {
+                if (context) contexts.push(context);
+                return createPromptDocInLibrary({ store, request });
+            },
             approvalsCreate: async () => { approvals++; return { artifactId: 'nested-profile-approval' }; },
         }));
         const profileInput = { expectedRevision: 'absent', profile: LaunchProfileV2Schema.parse({ v: 2, id: 'reviewed-default', name: 'Reviewed default',
@@ -2697,9 +2716,15 @@ describe('Account Action placement through the executable dispatcher', () => {
             compatibilityByTargetKey: {}, createdAt: 1, updatedAt: 1 }) };
         const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
             dangerLevel: 'writesRemote', surfaces: ['ui', 'plugin'],
-            accountHandler: async (_input, context) => capability === 'services'
-                ? context.services.actions.execute('launch_profiles.create', profileInput)
-                : context.ui!.executeAction('launch_profiles.create', profileInput),
+            confirmationWhen: { presentUserUi: false },
+            accountHandler: async (_input, context) => {
+                if (capability === 'services') {
+                    await context.services.actions.execute('launch_profiles.create', profileInput);
+                    return context.services.actions.execute('prompt_doc.create', { title: 'Saved default', markdown: 'Fix it carefully.' });
+                }
+                await context.ui!.executeAction('launch_profiles.create', profileInput);
+                return context.ui!.executeAction('prompt_doc.create', { title: 'Saved default', markdown: 'Fix it carefully.' });
+            },
         });
         nestedActionConfirmation.onShow = approve => { confirmations++; approve(); };
         await activation.composition.unload();
@@ -2718,17 +2743,20 @@ describe('Account Action placement through the executable dispatcher', () => {
                 } },
             });
             if (confirmed) {
-                expect(outcome, JSON.stringify({ outcome, confirmations, approvals })).toMatchObject({ ok: true, result: { status: 'updated', id: 'reviewed-default' } });
+                expect(outcome, JSON.stringify({ outcome, confirmations, approvals })).toMatchObject({ ok: true, result: { ok: true, artifactId: 'saved-prompt' } });
                 expect(profiles.map(record => record.id)).toEqual(['reviewed-default']);
-                expect(contexts).toEqual([expect.objectContaining({ surface: 'plugin', authority: 'account_automation',
+                expect(documents.get('saved-prompt')?.body).toContain('Fix it carefully.');
+                expect(contexts).toHaveLength(2);
+                for (const context of contexts) expect(context).toEqual(expect.objectContaining({ surface: 'plugin', authority: 'account_automation',
                     actionCaller: expect.objectContaining({ kind: 'plugin', pluginId: activation.action.pluginId,
-                        contributionLocalId: activation.action.id, occurrenceId: activation.action.occurrenceId }) })]);
+                        contributionLocalId: activation.action.id, occurrenceId: activation.action.occurrenceId }) }));
             } else {
                 expect(outcome).toMatchObject({ ok: false, reason: 'action_interactive_review_required' });
                 expect(profiles).toEqual([]);
                 expect(contexts).toEqual([]);
+                expect(documents.size).toBe(0);
             }
-            expect(confirmations).toBe(confirmed ? 1 : 0);
+            expect(confirmations).toBe(confirmed && !direct ? 1 : 0);
             expect(approvals).toBe(0);
         } finally { nestedActionConfirmation.onShow = null; await activation.composition.unload(); accountLifetime.retire(); }
     });

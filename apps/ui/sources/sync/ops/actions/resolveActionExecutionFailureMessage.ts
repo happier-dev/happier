@@ -67,7 +67,7 @@ export function describeMachineNativeFailureCode(code: unknown): string | null {
     }
 }
 
-type FailurePresentationOptions = Readonly<{ safeToRetry?: boolean }>;
+type FailurePresentationOptions = Readonly<{ safeToRetry?: boolean; notAppliedMessage?: string }>;
 
 function readFailureMessage(value: unknown, options?: FailurePresentationOptions): string | null {
     const record = asRecord(value);
@@ -94,7 +94,10 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     if (code === 'server_unreachable' || code === 'home_unreachable') return t('settingsPlugins.targetSelection.unreachableThisHome');
     if (code === 'plugin_action_input_schema_invalid') return t('common.requestFailed');
     if (code === 'plugin_action_unavailable') return t('ui.pluginUi.actionUnavailable');
-    if (code === 'approval_required') return t('notifications.activity.permissionFallbackBody');
+    if (code === 'approval_required') return options?.notAppliedMessage ?? t('notifications.activity.permissionFallbackBody');
+    if (code === 'approval_canceled' || code === 'plugin_action_current_intent_rejected') {
+        return options?.notAppliedMessage ?? t('errors.actionCanceled');
+    }
     if (isActionTurnedOffErrorCode(code)) return t('actionConfirmations.turnedOffUnnamedMessage');
     // Sent, with no answer back: it may or may not have landed.
     if (code === 'outcome_unknown' || code === 'outcome_uncertain' || code === 'approval_execution_outcome_unknown') return t(options?.safeToRetry ? 'errors.tryAgain' : 'entityDragDrop.preview.unknownDetail');

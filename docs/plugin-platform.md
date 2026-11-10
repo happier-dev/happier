@@ -1805,6 +1805,14 @@ authority; placement does not ask the person again. This does not confer host
 authority or consent to another Action or changed input. Native execution and
 mounted daemon Actions retain their existing confirmation paths.
 
+An own host UI press admitted by the canonical Action policy also retains that
+private parent intent without requiring a separate confirmation. The UI dispatcher
+and receiving Account host use the existing reviewed-child port for exact nested
+effects; the plugin caller keeps its automation authority. For example, Triage's
+Save defaults click admits its Profile and Prompt writes without a second Apply
+dialog. Explicit per-Action Ask settings still require their normal consent;
+automated callers do not inherit this direct UI intent.
+
 Raw host repair controls retain their already-confirmed target occurrence through
 the same Account carrier. The canonical `action.invoke` operand carries optional
 `expectedContributorOccurrenceId` to the target's existing occurrence admission;

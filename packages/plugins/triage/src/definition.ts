@@ -883,7 +883,7 @@ function createTriagePlugin(): TriagePlugin {
         // It writes durable Account state, and the exact inverse is one press
         // away; nothing outside Happier is touched.
         dangerLevel: 'writesLocal',
-        confirmationWhen: { presentUserUi: { op: 'eq', path: 'kind', value: 'saveDefaults' } },
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Apply this configured-action change?',
           body: 'This adds, changes, removes, enables, disables, reorders, or restores the default entry actions in this Happier Account.',
