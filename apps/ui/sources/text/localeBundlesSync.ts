@@ -9,7 +9,6 @@ export type LocaleBundle = Readonly<{
 }>;
 
 // Platform adapters supply bytes; this owner retains locale choice, caching and retries.
-// Native selects the synchronous .native.ts adapter.
 const bundles = new Map<SupportedLanguage, LocaleBundle>([['en', { host: en, plugins: englishPlugins }]]);
 const pending = new Map<SupportedLanguage, Promise<void>>();
 export function readLocaleBundle(language: SupportedLanguage): LocaleBundle | undefined {

@@ -9,8 +9,7 @@ import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHe
 import { resolvePluginSessionHeaderActionPresentations } from '@/components/sessions/actions/pluginHeaderActions';
 import { SessionHeaderIconWithCount } from '@/components/sessions/actions/SessionHeaderIconWithCount';
 import { SessionHeaderInfoButton } from '@/components/sessions/actions/SessionHeaderInfoButton';
-import { SessionHeaderActionButton } from '@/components/sessions/actions/SessionHeaderActionButton';
-import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
+import { SessionHeaderActionButton, SessionHeaderActionsRow, SessionHeaderGlyph } from '@/components/sessions/actions/SessionHeaderActionButton';
 import { SessionHeaderRoleChip } from '@/components/roles/session/SessionHeaderRoleChip';
 import { PendingNavigationPill } from '@/components/sessions/pendingNavigation/PendingNavigationPill';
 import type { WorkSummary } from '@/components/sessions/work/workProjection';
@@ -167,16 +166,6 @@ const LOADING_HEADER_PROPS: SessionViewHeaderProps = {
     flavor: null,
 };
 
-const DELETED_HEADER_PROPS: SessionViewHeaderProps = {
-    title: t('errors.sessionDeleted'),
-    subtitle: undefined,
-    avatarId: undefined,
-    rightElement: undefined,
-    isConnected: false,
-    flavor: null,
-};
-
-
 export function shouldFoldSessionHeaderIconActions(windowWidth: number): boolean {
     return windowWidth < 520;
 }
@@ -204,7 +193,14 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     }
 
     if (!input.session) {
-        return DELETED_HEADER_PROPS;
+        return {
+            title: t('errors.sessionDeleted'),
+            subtitle: undefined,
+            avatarId: undefined,
+            rightElement: undefined,
+            isConnected: false,
+            flavor: null,
+        };
     }
 
     const session = input.session;
@@ -356,7 +352,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         botActivity,
         agentId,
         rightElement: (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <SessionHeaderActionsRow>
                 <PendingNavigationPill address={normalizeSessionAddress(session.serverId, input.sessionId)} presentation="header" />
                 {/* No current evidence about the external Agent shows nothing rather than an "unknown" chip. */}
                 {input.externalSessionRuntime && input.externalSessionRuntime.externalAgent.state !== 'unknown' ? (
@@ -403,7 +399,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                             count={workspaceSyncAttentionBadgeCount}
                             badgeColor={input.statusErrorColor}
                         >
-                            <Icon name="warning" size={SESSION_HEADER_ICON_SIZE_PX} color={input.headerTintColor} />
+                            <SessionHeaderGlyph name="warning" color={input.headerTintColor} />
                         </SessionHeaderIconWithCount>
                     </SessionHeaderActionButton>
                 ) : null}
@@ -427,7 +423,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                     // Session details live in the rail's Info tab; without a visible rail the header keeps (i), before ⋯.
                     beforeMenu={destinationsInMenu ? <SessionHeaderInfoButton onPress={openSessionInfo} /> : null}
                 />
-            </View>
+            </SessionHeaderActionsRow>
         ),
         badges: resolvedBadges,
         isConnected,

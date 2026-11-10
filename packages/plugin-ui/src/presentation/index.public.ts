@@ -430,6 +430,7 @@ export {
   type HappierPageBackPlacement,
   type HappierCollectionRailWidth,
 } from './layout/pageMetrics.js';
+export { HappierShellTitleRowContext, resolveHappierTitleRowInsetPx } from './layout/shellTitleRow.js';
 export {
   HAPPIER_VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX,
   resolveHappierViewportClass,
@@ -612,6 +613,10 @@ export {
   type HappierChangedFile,
   type HappierChangedFileDiff,
 } from './content/ChangedFilesReview.js';
+export {
+  resolveHappierMarkdownEditorRequest,
+  type HappierMarkdownEditorRequest,
+} from './content/MarkdownEditor.js';
 export {
   HAPPIER_TONE_COLOR_TOKEN,
   resolveHappierMarkColor,

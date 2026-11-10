@@ -1,0 +1,1 @@
+export { loadLocaleBundle } from './localeBundleAssets';

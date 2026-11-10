@@ -9,6 +9,7 @@ import { SessionHeaderInfoButton } from '@/components/sessions/actions/SessionHe
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import { SESSION_BOARD_DESTINATION } from '@/components/sessions/board/sessionBoardDestination';
 import { t } from '@/text';
+import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings } from '@/text/i18n';
 import { LruMap } from '@/utils/cache/lruMap';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -150,6 +151,36 @@ function createManyPluginHeaderProjection(actionCount: number) {
 }
 
 describe('resolveSessionViewHeaderProps owner metadata', () => {
+    it('resolves a deleted-session title in the current language after locale activation', async () => {
+        const previousLanguage = getPreferredLanguage();
+        const input: Parameters<typeof resolveSessionViewHeaderProps>[0] = {
+            isDataReady: true, session: null, sessionId: 'deleted-header',
+            sessionInfoHref: '/session/deleted-header/info',
+            sessionRunsHref: '/session/deleted-header/runs',
+            sessionAutomationsHref: '/session/deleted-header/automations',
+            paneScopeId: 'deleted-header', windowWidth: 1400,
+            sessionAutomationsEnabledCount: 0, sessionExecutionRunsSupported: true,
+            showAutomations: true, shouldShowSubagentsButton: false, subagentActiveCount: 0,
+            navigateWithBlurOnWeb: action => action(), handleHeaderExtraItemSelect: () => false,
+            router: { push: () => {}, navigate: () => {} },
+            actionIconColor: '#000', headerTintColor: '#000', statusErrorColor: '#f00',
+            externalSessionRuntime: null,
+        };
+        try {
+            setPreferredLanguageFromSettings('en');
+            const englishHeader = resolveSessionViewHeaderProps(input);
+            expect(englishHeader.title).toBe(t('errors.sessionDeleted'));
+
+            await preloadTranslations('fr');
+            setPreferredLanguageFromSettings('fr');
+            const frenchHeader = resolveSessionViewHeaderProps(input);
+            expect(frenchHeader.title).toBe(t('errors.sessionDeleted'));
+            expect(frenchHeader.title).not.toBe(englishHeader.title);
+        } finally {
+            setPreferredLanguageFromSettings(previousLanguage);
+        }
+    });
+
     it('leaves pane-bound header elements with their caller rather than process-global retention', () => {
         const writes = vi.spyOn(LruMap.prototype, 'set');
         try {
