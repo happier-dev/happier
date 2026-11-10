@@ -5433,7 +5433,7 @@ export function useSessionComposerController({
             setModelTransitionFailure(null);
             try {
                 // Ask the same transition owner to apply at Send. Live model changes
-                // settle here; only its actual restart refusal enters runner restart.
+                // settle here; a restart refusal or a still-armed result needs runner restart.
                 const requested = effectiveModelTransitionActionRequired?.requestedSelection;
                 if (requested && !isTeamCredentialProviderModelPickerValue(requested)) {
                     const result = await actionExecutor.execute('session.model.set', {
@@ -5441,13 +5441,21 @@ export function useSessionComposerController({
                         applyTiming: 'immediate',
                     }, { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId, signal: sessionViewCaller.signal });
                     if (sessionViewCaller.signal.aborted) return false;
-                    if (result.ok) { setModelTransitionActionRequired(null); return true; }
-                    const transition = SessionModelTransitionResultV1Schema.safeParse({ ok: false,
-                        ...(result.details && typeof result.details === 'object' ? result.details : {}) });
-                    if (!transition.success || transition.data.status !== 'restart_required') {
-                        if (presentUnavailableModelTransition(result)) return false;
-                        alertComposerActionResultFailure(result);
-                        return false;
+                    if (result.ok) {
+                        // An arm is pending application, so empty Continue still needs the restart.
+                        if (!(typeof result.result === 'object' && result.result !== null
+                            && 'status' in result.result && result.result.status === 'armed')) {
+                            setModelTransitionActionRequired(null);
+                            return true;
+                        }
+                    } else {
+                        const transition = SessionModelTransitionResultV1Schema.safeParse({ ok: false,
+                            ...(result.details && typeof result.details === 'object' ? result.details : {}) });
+                        if (!transition.success || transition.data.status !== 'restart_required') {
+                            if (presentUnavailableModelTransition(result)) return false;
+                            alertComposerActionResultFailure(result);
+                            return false;
+                        }
                     }
                 }
                 const restartMachineId = typeof staleSessionRunnerMachineId === 'string'
@@ -6763,6 +6771,55 @@ export function useSessionComposerController({
                             return;
                         }
 
+                        const presentRefusedArmedSend = (
+                            refused: Extract<SessionComposerSendDestination, { kind: 'refused' }>,
+                        ): ComposerSubmissionAdmissionOutcome => {
+                            // A refusal is a rejection before any effect: the draft and
+                            // the armed row both survive, and the ordinary send is the
+                            // retry once the reader has resolved the conflict. It reaches
+                            // the same composer banner as every other outcome instead of
+                            // a modal the reader has to dismiss before they can act on it.
+                            if (refused.reason !== 'unreconciledTransitionOutcome') {
+                                setArmedContinuationOutcome({
+                                    kind: 'refusal',
+                                    scopeKey: sessionAccountScopeKey,
+                                    message: refused.reason === 'conflictingDestination'
+                                        ? t('session.agentContinuation.transition.conflictingDestination', {
+                                            agent: armedContinuationTargetLabel,
+                                        })
+                                        : refused.reason === 'sourceNotIdle'
+                                            // Applying an armed route restarts the running Agent.
+                                            ? t('session.agentContinuation.transition.rejected.sourceNotIdle', {
+                                                agent: currentAgentLabel,
+                                            })
+                                            : t('session.agentContinuation.transition.rejected.targetUnavailable', {
+                                                agent: armedContinuationTargetLabel,
+                                            }),
+                                });
+                            }
+                            // `unreconciledTransitionOutcome` is the banner already on
+                            // screen saying the previous outcome is unestablished.
+                            // Overwriting it would replace a live fact with a
+                            // restatement — but a refused send has to be visible, so a
+                            // collapsed banner is re-expanded through the same collapse
+                            // owner rather than given a second announcement channel.
+                            if (
+                                refused.reason === 'unreconciledTransitionOutcome'
+                                && agentTransitionOutcomeBanner.collapsed
+                            ) {
+                                agentTransitionOutcomeBanner.toggle();
+                            }
+                            return { status: 'rejected' };
+                        };
+                        // Empty Continue applies the same destination decision and refusal UI,
+                        // then stops before admitting a user message.
+                        if (!trimmedText && !hasAttachments && !hasComposerAttachments && !shouldSendReviewComments
+                            && armedRouteContinuation && !armedContinuationTarget) {
+                            if (outboundDestination.kind === 'refused') presentRefusedArmedSend(outboundDestination);
+                            else if (outboundDestination.kind === 'armedRouteContinuation') await restartSessionRunnerOnRequestedRoute();
+                            return;
+                        }
+
                         if (
                             outboundBase.kind === 'plain'
                             && trimmedText.length === 0
@@ -7017,46 +7074,6 @@ export function useSessionComposerController({
                         // The armed value is produced only behind the
                         // `sessions.agentSwitching` gate, so this inherits that decision
                         // rather than re-deriving it.
-                        const presentRefusedArmedSend = (
-                            refused: Extract<SessionComposerSendDestination, { kind: 'refused' }>,
-                        ): ComposerSubmissionAdmissionOutcome => {
-                            // A refusal is a rejection before any effect: the draft and
-                            // the armed row both survive, and the ordinary send is the
-                            // retry once the reader has resolved the conflict. It reaches
-                            // the same composer banner as every other outcome instead of
-                            // a modal the reader has to dismiss before they can act on it.
-                            if (refused.reason !== 'unreconciledTransitionOutcome') {
-                                setArmedContinuationOutcome({
-                                    kind: 'refusal',
-                                    scopeKey: sessionAccountScopeKey,
-                                    message: refused.reason === 'conflictingDestination'
-                                        ? t('session.agentContinuation.transition.conflictingDestination', {
-                                            agent: armedContinuationTargetLabel,
-                                        })
-                                        : refused.reason === 'sourceNotIdle'
-                                            // Applying an armed route restarts the running Agent.
-                                            ? t('session.agentContinuation.transition.rejected.sourceNotIdle', {
-                                                agent: currentAgentLabel,
-                                            })
-                                            : t('session.agentContinuation.transition.rejected.targetUnavailable', {
-                                                agent: armedContinuationTargetLabel,
-                                            }),
-                                });
-                            }
-                            // `unreconciledTransitionOutcome` is the banner already on
-                            // screen saying the previous outcome is unestablished.
-                            // Overwriting it would replace a live fact with a
-                            // restatement — but a refused send has to be visible, so a
-                            // collapsed banner is re-expanded through the same collapse
-                            // owner rather than given a second announcement channel.
-                            if (
-                                refused.reason === 'unreconciledTransitionOutcome'
-                                && agentTransitionOutcomeBanner.collapsed
-                            ) {
-                                agentTransitionOutcomeBanner.toggle();
-                            }
-                            return { status: 'rejected' };
-                        };
                         const dispatchArmedContinuation = async (
                             destination: Extract<
                                 SessionComposerSendDestination,
@@ -7701,6 +7718,12 @@ export function useSessionComposerController({
                         await sendComposerText(messageForResolution, composerMessage, sendOptions);
                         return;
                     }
+                    if (!messageForResolution.trim() && armedContinuationTarget === null && armedRouteContinuation !== null
+                        && getAttachmentDraftsSnapshot().length === 0
+                        && composerForResolution.attachments.length === 0 && !hasIncludedReviewCommentDrafts) {
+                        await sendComposerText(messageForResolution, composerMessage, sendOptions);
+                        return;
+                    }
                     const invocationScope = selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), sessionRouteServerId);
                     if (invocationScope) await refreshPromptLibraryCatalog(invocationScope);
                     if (invocationScope && !areServerAccountScopesEqual(invocationScope, getActiveServerAccountScope())) return;
@@ -7708,7 +7731,7 @@ export function useSessionComposerController({
                     const promptInvocationsV1 = invocationCatalog.status === 'ready' && !invocationCatalog.stale ? invocationCatalog.value : null;
                     const resolved = resolveSessionComposerSend({
                         input: messageForResolution,
-                        emptyInputFallback: (armedContinuationTarget !== null || armedRouteContinuation !== null)
+                        emptyInputFallback: armedContinuationTarget !== null
                             && getAttachmentDraftsSnapshot().length === 0
                             && composerForResolution.attachments.length === 0 && !hasIncludedReviewCommentDrafts
                             ? t('common.continue') : undefined,

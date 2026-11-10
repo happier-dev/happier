@@ -5844,9 +5844,11 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it.each([
-    'restart_required',
-    'reconciliation_required',
-  ] as const)('arms %s and applies on send through the existing Provider runner recovery', async (status) => {
+    ['restart_required', false],
+    ['restart_required', true],
+    ['armed', true],
+    ['reconciliation_required', false],
+  ] as const)('arms %s and applies through Provider runner recovery (empty Continue: %s)', async (status, emptyContinue) => {
     const { directSessionV1: _direct, ...metadata } = storageState.sessions.s1.metadata;
     storageState.sessions.s1 = { ...storageState.sessions.s1, metadata: {
       ...metadata,
@@ -5860,19 +5862,19 @@ describe('SessionView (direct sessions)', () => {
     const requestedSelection = {
       agentTargetKey: 'agent:happier.agent.codex/codex',
       providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
-      modelId: 'provider-model',
+      modelId: 'gpt-5.6-luna',
     };
     modelTransitionReply = async (request) => {
       const immediate = request.applyTiming === 'immediate';
-      const transitionStatus = immediate ? 'restart_required' : status;
-      return SessionModelTransitionResultV1Schema.parse({ ok: false, ...{
+      const transitionStatus = immediate && status !== 'armed' ? 'restart_required' : status;
+      return SessionModelTransitionResultV1Schema.parse({ ok: transitionStatus === 'armed', ...{
           status: transitionStatus,
           activeSelection: transitionStatus === 'reconciliation_required'
             ? null
             : {
                 agentTargetKey: 'agent:happier.agent.codex/codex',
-                providerConnectionId: null,
-                modelId: 'default',
+                providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+                modelId: 'gpt-6-luna',
               },
           requestedSelection,
         } });
@@ -5916,7 +5918,7 @@ describe('SessionView (direct sessions)', () => {
 
     expect(findAgentInput(screen).props.armedRouteContinuation).toBeTruthy();
     expect(findProviderBindingLine(screen)).toBeNull();
-    await act(async () => { findAgentInput(screen).props.onChangeText('Continue on this route'); });
+    if (!emptyContinue) await act(async () => { findAgentInput(screen).props.onChangeText('Continue on this route'); });
     await act(async () => { await findAgentInput(screen).props.onSend(); });
     expect(restartProviderBindingSessionRunnerSpy).toHaveBeenCalledWith({
       signal: expect.any(AbortSignal),
@@ -5927,6 +5929,12 @@ describe('SessionView (direct sessions)', () => {
       runnerProcessIdentity: { pid: 123, processStartTimeMs: 1_000 },
       serverId: 'server-route-1',
     });
+    expect(restartProviderBindingSessionRunnerSpy).toHaveBeenCalledTimes(1);
+    expect(actionExecuteSpy).toHaveBeenCalledWith('session.model.set', expect.objectContaining({
+      modelId: 'gpt-5.6-luna', providerConnectionId: 'pc_work', applyTiming: 'immediate',
+    }), expect.anything());
+    if (emptyContinue) expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+    else expect(syncSubmitMessageSpy).toHaveBeenCalled();
   });
 
   function installBlockedProviderBindingFixture(latestTurnStatus: 'failed' | 'in_progress') {
