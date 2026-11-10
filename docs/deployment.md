@@ -2664,6 +2664,10 @@ The supervisor's real desired Stop reaches these same rows and P40 evidence as
 stops do not contribute to actionable outage counts, and Stop never proves
 authoritative recovery. C1 presents the expected condition as an Update on its
 existing identity; a genuine later failure or recovery retains its normal policy.
+In 0.3 development source, a fresh native transition back to running clears that
+stop intent, including an external restart. The systemd adapter treats an
+inactive, unloaded (`LoadState=not-found`) unit as stopped; a confirmed Stop
+settles its operation rather than retaining an uncertain receipt.
 
 In 0.3 development source, the mounted Inbox explains an existing service-health
 condition from an already-readable running stop, restart, deployment or reboot operation.

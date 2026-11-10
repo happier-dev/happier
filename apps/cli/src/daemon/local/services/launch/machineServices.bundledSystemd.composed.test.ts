@@ -7,6 +7,10 @@ import { MachineServicesDiscoveryResultV1Schema, MachineServicesListResultV1Sche
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createMachineServicesRuntime } from './machineServices';
+import { controlNativeServiceForHost } from './nativeServiceControl';
+import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import { getActionSpec } from '@happier-dev/protocol/actions';
 
 describe('bundled systemd Machine services', () => {
     it.skipIf(process.platform !== 'linux')('activates the actual bundle, watches passively and controls only its daemon-user unit', async () => {
@@ -35,8 +39,8 @@ const facts = JSON.parse(fs.readFileSync(${JSON.stringify(factsPath)}, 'utf8'));
 if (!user && fs.existsSync(${JSON.stringify(denySystemPath)})) process.exit(5);
 if (args.includes('list-units')) process.stdout.write(unit+' loaded '+(user?fs.readFileSync(${JSON.stringify(statePath)},'utf8'):'active')+' running Worker\\n');
 else if (args.includes('show')) process.stdout.write('LoadState='+fs.readFileSync(${JSON.stringify(loadPath)},'utf8')+'\\nActiveState='+(user?fs.readFileSync(${JSON.stringify(statePath)},'utf8'):'active')+'\\nSubState='+fs.readFileSync(${JSON.stringify(subPath)},'utf8')+'\\nMemoryCurrent='+(facts.memoryBytes??'[not set]')+'\\nExecMainStartTimestamp='+(facts.startedAt??'')+'\\nActiveEnterTimestamp='+(facts.activeSince??'')+'\\n');
-else if (user && args.includes('stop')) fs.writeFileSync(${JSON.stringify(statePath)},'inactive');
-else if (user && (args.includes('start') || args.includes('restart'))) fs.writeFileSync(${JSON.stringify(statePath)},'active');
+else if (user && args.includes('stop')) { fs.writeFileSync(${JSON.stringify(statePath)},'inactive'); fs.writeFileSync(${JSON.stringify(loadPath)},'not-found'); fs.writeFileSync(${JSON.stringify(subPath)},'dead'); }
+else if (user && (args.includes('start') || args.includes('restart'))) { fs.writeFileSync(${JSON.stringify(statePath)},'active'); fs.writeFileSync(${JSON.stringify(loadPath)},'loaded'); fs.writeFileSync(${JSON.stringify(subPath)},'running'); }
 else process.exitCode=17;
 `, { mode: 0o700 });
         await chmod(executablePath, 0o700);
@@ -109,10 +113,31 @@ else process.exitCode=17;
             const captured = selected.lease.captureNativeServiceLifecycle(candidate, { machine: target });
             if (captured.kind !== 'ready') throw new Error('Bundled lifecycle did not capture');
             try {
-                expect(await adopted.controlNative('stop', { operation: { operationId: 'fixture-stop', kind: 'machine-services-control' } }))
-                    .toMatchObject({ kind: 'observed' });
+                const store = createActionOperationStore();
+                const spec = getActionSpec('machines.services.control');
+                const scope = { accountId: 'account', machineId: target.machineId };
+                const runner = createActionOperationRunner({ store, generateOperationId: () => 'fixture-stop',
+                    resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }) });
+                expect(await runner.observe({ actionId: spec.id, scope, requestId: 'native-stop',
+                    input: { ...target, serviceId: adopted.serviceId, expectedGeneration: adopted.instanceId, operation: 'stop' },
+                    async execute(execution) {
+                        return { ok: true, result: await controlNativeServiceForHost({ handle: adopted, operation: 'stop',
+                            operationId: execution.operationAcceptance!.operationId,
+                            context: { ...context, operationOwnerUpdate: { update: execution.publishOwnerUpdate } }, signal: execution.signal }) };
+                    },
+                })).toMatchObject({ ok: true, result: { kind: 'observed', state: 'stopped' } });
+                expect(store.get(scope, 'fixture-stop')).toMatchObject({ state: 'succeeded' });
                 expect(await readFile(statePath, 'utf8')).toBe('inactive');
                 expect(adopted.readNativeRuntimeFacts()).toEqual({ configuration: null, freshness: 'current', observedAt: expect.any(Number) });
+                expect(await runtime.execute({ actionId: 'machines.services.list', input: target, context }))
+                    .toMatchObject({ kind: 'snapshot', services: [{ state: 'stopped', health: { expectedDown: 'stop' } }] });
+                // External restart: no managed Start/Restart clears intent for us.
+                await Promise.all([writeFile(loadPath, 'loaded'), writeFile(statePath, 'active'), writeFile(subPath, 'running')]);
+                await adopted.inspectCurrentOccurrence();
+                const recovered = MachineServicesListResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.list', input: target, context }));
+                expect(recovered).toMatchObject({ kind: 'snapshot', services: [{ state: 'running' }] });
+                if (recovered.kind !== 'snapshot') throw new Error('Expected recovered service');
+                expect(recovered.services[0]!.health).not.toHaveProperty('expectedDown');
                 expect(await adopted.controlNative('start', { operation: { operationId: 'fixture-start', kind: 'machine-services-control' } }))
                     .toMatchObject({ kind: 'observed' });
                 expect(adopted.readNativeRuntimeFacts()).toMatchObject({ accounting: { memoryBytes: 0 }, healthSince: Date.parse(changedFacts.activeSince) });

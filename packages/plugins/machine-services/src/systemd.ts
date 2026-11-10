@@ -19,6 +19,9 @@ function parseInstance(instance: ManagedServiceNativeInstanceV1): Readonly<{ sco
 
 /** Native liveness is not application readiness. Unknown platform states stay unknown. */
 function observation(load: string | undefined, active: string | undefined, sub: string | undefined, displayName: string): ManagedServiceNativeObservationV1 {
+    // Stopped transient units can be unloaded by the manager. Its explicit
+    // inactive observation still proves Stop, unlike an unavailable read.
+    if (load === 'not-found' && active === 'inactive') return { phase: 'stopped', readiness: 'not_ready', endpoint: null, displayName };
     if (load !== 'loaded') return { phase: 'unknown', readiness: 'not_ready', endpoint: null, displayName };
     if (active === 'inactive' || active === 'failed') return { phase: 'stopped', readiness: 'not_ready', endpoint: null, displayName };
     if (active === 'active' && (sub === 'running' || sub === 'exited')) {

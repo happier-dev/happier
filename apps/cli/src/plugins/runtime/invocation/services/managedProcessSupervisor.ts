@@ -1869,7 +1869,10 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         ? { lastHealthyAtMs: now() }
                         : {}),
                 } satisfies ManagedServiceProcessSnapshot;
-                if (clearExpectedDown) delete next.expectedDown;
+                // An external start retires the old stop intent at the same
+                // owner that publishes native liveness. Equal running reads
+                // during an admitted Stop must keep its pending intent.
+                if (clearExpectedDown || observation.phase === 'running' && snapshot.nativePhase !== 'running') delete next.expectedDown;
                 if (snapshot.state !== next.state
                     || snapshot.readiness !== next.readiness
                     || snapshot.nativePhase !== next.nativePhase

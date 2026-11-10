@@ -1024,6 +1024,30 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         expect(handle.snapshot().state).toBe('stopped');
     });
 
+    it('clears desired stop when the native service is observed running again outside managed control', async () => {
+        const { servers } = createHarness([]);
+        let phase: ManagedServiceNativeObservationV1['phase'] = 'running';
+        const handle = await servers.supervise(managedSpec('external-native-start', {
+            mode: { kind: 'native', observationOnly: true, builtinLifecycle: {
+                async inspect() { return { phase, readiness: 'not_reported', endpoint: null }; },
+                async stop() { phase = 'stopped'; return { status: 'stopped' }; },
+            } },
+        }));
+        const facts: import('./managedProcessSupervisor').ManagedServiceProcessHealthSnapshot[] = [];
+        const subscription = handle.observeHealth!(value => facts.push(value));
+        try {
+            expect(await handle.controlNative!('stop')).toEqual({ kind: 'observed', state: 'stopped' });
+            expect(facts.at(-1)).toMatchObject({ state: 'stopped', expectedDown: 'stop' });
+            phase = 'running';
+            await handle.inspectCurrentOccurrence!();
+            expect(facts.at(-1)).toMatchObject({ state: 'running', nativePhase: 'running' });
+            expect(facts.at(-1)).not.toHaveProperty('expectedDown');
+            phase = 'stopped';
+            await handle.inspectCurrentOccurrence!();
+            expect(facts.at(-1)).not.toHaveProperty('expectedDown');
+        } finally { subscription.dispose(); await handle.dispose(); }
+    });
+
     it('retains admitted desired stop in health facts until start changes it', async () => {
         const { servers } = createHarness([]);
         let phase: ManagedServiceNativeObservationV1['phase'] = 'running';
