@@ -1176,6 +1176,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const managedSessionDefaults = useManagedSessionDefaults({
         serverId: targetServerId ?? '',
         teamId: accessDraftState.primaryTeamId,
+        access: accessDraftState.access,
         agentTargetKey: resolveBackendTargetKeyV2(routeBackendTarget ?? hydratedTempBackendTarget
             ?? hydratedPersistedBackendTarget ?? { kind: 'backend', backendId: DEFAULT_AGENT_ID }),
     });

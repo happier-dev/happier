@@ -370,7 +370,9 @@ In 0.3 development source, one nullable JSON column stores the strict `ManagedDe
 document `{ team, groups: { [teamGroupId]: defaults } }`. The shared schema and per-field
 precedence owner are `packages/protocol/src/teams/managedDefaults.ts`. Values cover placement,
 Agent permission intent, model selection, and qualified connected-service purposes. New
-Session reads the member-qualified context through `useManagedSessionDefaults`; its placement,
+Session reads the member-qualified context through `useManagedSessionDefaults`. Without a primary
+Team context, a draft shared with one Team (directly or through its Groups) reads that Team's
+defaults; sharing with several Teams does not choose one by grant order. Its placement,
 permission, model, and connected-service owners submit deliberate choices to the shared resolver
 at decision time. Defaults update from the existing Team push subscription. A Team model retains
 its full V2 selection when the personal V1 carrier cannot represent it; that projection does not
