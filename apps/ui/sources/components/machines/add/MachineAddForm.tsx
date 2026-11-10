@@ -103,6 +103,8 @@ type MachineAddFormProps = Readonly<{
     onNewPool?: (() => void) | null;
     /** `page` only: this Home's Account allows Create one (the page reads it once, for its header too). */
     canCreate?: boolean;
+    /** An addressed Create entry can use another Home without retargeting a retained connection task. */
+    creationServerId?: string;
     /** Once, when a machine joins (first-run onboarding advances on it). */
     onArrived?: (machine: Readonly<{ machineId: string; serverId: string }>) => void;
     onSelectProvisioner?: (selection: ManagedProvisionerSelection) => void;
@@ -142,7 +144,7 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
     // Ways in follow the lab and spec order: the connection paths, then Create one (P-M7). A phone or a
     // browser still opens on Create one (58d §D2); only its place in the order is fixed.
     const offerCreate = props.layout === 'page' && props.canCreate === true;
-    const showCreate = offerCreate && (creating || paths.length === 0 || active === null);
+    const showCreate = offerCreate && (props.openedWay === 'create' || creating || paths.length === 0 || active === null);
     // A phone lists the ways in and pushes the chosen one full height; nothing stacks under the list.
     const { onOpenWay } = props;
     const pushes = useMachineAddPushesWays() && props.layout === 'page' && Boolean(onOpenWay);
@@ -169,7 +171,7 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
     // The bar names ways in only (lab af-add): which computer runs a computer-created VM is the picker's
     // to say, on that section, and Account-created machines name none.
     const pane = showCreate || active === null
-        ? <MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer} onSelectProvisioner={props.onSelectProvisioner} />
+        ? <MachineProvisionerPicker serverId={props.creationServerId ?? flow.serverId} onSetUpThisComputer={setUpThisComputer} onSelectProvisioner={props.onSelectProvisioner} />
         : <MachineAddPane flow={flow} pathId={active} onPage={props.layout === 'page'} testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />;
     const poolFoot = props.onNewPool ? (
         <Text style={styles.foot}>
@@ -198,7 +200,7 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
     if (pushes) {
         const opened = props.openedWay === 'create' ? (offerCreate ? 'create' : null)
             : props.openedWay && paths.some((path) => path.id === props.openedWay) ? props.openedWay : null;
-        if (opened === 'create') return <View testID={props.testID}><MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer} onSelectProvisioner={props.onSelectProvisioner} /></View>;
+        if (opened === 'create') return <View testID={props.testID}><MachineProvisionerPicker serverId={props.creationServerId ?? flow.serverId} onSetUpThisComputer={setUpThisComputer} onSelectProvisioner={props.onSelectProvisioner} /></View>;
         if (opened) {
             return (
                 <View testID={props.testID}>
@@ -280,7 +282,7 @@ function MachineAddPane(props: Readonly<{
     // Over SSH in the app, the command is the "Run it yourself" fallback beside Connect and install.
     const [runYourself, setRunYourself] = React.useState(false);
     // A command's machine can only announce itself: shown means watching. An SSH form shows no command until it can run one.
-    const commandShown = (runsCommand || (pathId === 'ssh' && runYourself)) && (pathId !== 'ssh' || flow.ssh.ready);
+    const commandShown = Boolean(flow.commands) && (runsCommand || (pathId === 'ssh' && runYourself)) && (pathId !== 'ssh' || flow.ssh.ready);
     React.useEffect(() => {
         if (commandShown && flow.watch.status === 'idle') startWatching();
     }, [flow.watch.status, commandShown, startWatching]);
@@ -306,6 +308,12 @@ function MachineAddPane(props: Readonly<{
         );
     }
     if (!path) return null;
+    if (flow.remoteHomeUnavailable && !flow.run) {
+        return <PaneSection onPage={onPage}>
+            <AttentionBanner testID={`${testID}.homeUnavailable`} tone="warning"
+                title={t('managedMachines.creation.homeNotGuestReachable')} />
+        </PaneSection>;
+    }
 
     // The pairing panel already says it is waiting; a second line only belongs beside the terminal command.
     const watching = flow.watch.status === 'watching' ? (

@@ -41,7 +41,7 @@ import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import { resolveLocalDeviceLabel } from '@/utils/platform/resolveLocalDeviceLabel';
 import { resolveMachineAddInitialPath, type MachineAddPathId } from './machineAddPaths';
 import { useMachineAddPaths } from './useMachineAddPaths';
-import { buildMachineAddCommand, detectClientCommandOs, MACHINE_ADD_COMMAND_OS, type MachineAddCommandOs } from './machineAddCommand';
+import { buildMachineAddCommand, detectClientCommandOs, MACHINE_ADD_COMMAND_OS, resolveWebDesktopSetupHandoffTarget, type MachineAddCommandOs } from './machineAddCommand';
 import { discardMachineAddFlowDraft, readMachineAddFlowDraft, updateMachineAddFlowDraft, useMachineAddFlowDraft, useMachineAddFlowDraftSelector, type MachineAddTaskHandle, type MachineAddSshDraft } from './machineAddFlowStore';
 import { beginMachineAddWatch, hasRunningMachineAddTask as hasRunningTask } from './machineAddTaskLifetime';
 import { getMachineAddSshSupportedAuthModes } from './machineAddSshTask';
@@ -156,6 +156,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     detectedOs: MachineAddCommandOs | null;
     setOs: (os: MachineAddCommandOs) => void;
     commands: Record<MachineAddCommandOs, string> | null;
+    remoteHomeUnavailable: boolean;
     ssh: {
         draft: ReturnType<typeof readMachineAddFlowDraft>['sshDraft'];
         setDraft: (draft: MachineAddSshDraft) => void;
@@ -218,6 +219,9 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         });
     }, [detectedOs, options.initialPath, options.initialCreating, paths, runner.mode, serverId, update]);
     const descriptor = React.useMemo(() => profile ? buildHomeConnectionDescriptorForProfile(profile) : null, [profile]);
+    const commandTarget = React.useMemo(() => resolveWebDesktopSetupHandoffTarget({ descriptor, profileSource: profile?.source ?? null,
+        fallbackHomeUrl: profile?.serverUrl ?? null, remote: draft.path !== 'thisComputer' }), [descriptor, draft.path, profile]);
+    const remoteHomeUnavailable = commandTarget.kind === 'unavailable';
     const localTask = useThisComputerSetupTask({ runner, taskId: draft.thisComputerTask?.taskId ?? null,
         onTaskIdChange: (id) => replaceTaskId('thisComputer', draft.thisComputerTask?.taskId ?? null, id),
         ...(profile ? { authRequestApproval: { expectedRelayUrl: profile.serverUrl, serverId } } : {}),
@@ -264,9 +268,10 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         update({ ...readMachineAddFlowDraft(), serverId, path: id, os: current.os, sshDraft: current.sshDraft });
     }, [paths, serverId, update]);
     const startWatching = React.useCallback(() => {
+        if (remoteHomeUnavailable) return;
         const current = readMachineAddFlowDraft();
         if (current.path && current.serverId && paths.some((candidate) => candidate.id === current.path && candidate.runs === 'command')) beginMachineAddWatch(current.serverId, current.path);
-    }, [paths, draft.path, draft.serverId]);
+    }, [paths, draft.path, draft.serverId, remoteHomeUnavailable]);
     const startThisComputer = React.useCallback(() => {
         if (chosen?.id !== 'thisComputer' || chosen.runs !== 'task' || chosen.connectedMachineId || !profile || !isActiveHome
             || !sshActions.ready || hasRunningTask() || sshActions.approval.approvalPending) return;
@@ -324,11 +329,12 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     } : null;
     const run = handle ? { kind: draft.path === 'ssh' ? 'ssh' as const : 'thisComputer' as const, running: handle.starting || Boolean(snapshot && !snapshot.result), steps, failure, prompt: draft.path === 'ssh' ? sshPrompt : localPrompt } : null;
     // Over SSH the command is also the app's "Run it yourself" fallback beside Connect and install.
-    const commands = React.useMemo(() => (chosen?.runs === 'command' || chosen?.id === 'ssh') && profile ? Object.fromEntries(
+    const commands = React.useMemo(() => !remoteHomeUnavailable && (chosen?.runs === 'command' || chosen?.id === 'ssh') && profile ? Object.fromEntries(
         MACHINE_ADD_COMMAND_OS.map((os) => [os, buildMachineAddCommand({ os, descriptor, profileSource: profile.source ?? null, fallbackHomeUrl: profile.serverUrl,
+            remote: chosen.id !== 'thisComputer',
             ...(chosen.id === 'ssh' ? { kind: 'sshMachine' as const, sshDraft: draft.sshDraft } : { kind: 'joinHome' as const }),
-        })]),
-    ) as Record<MachineAddCommandOs, string> : null, [chosen, descriptor, draft.sshDraft, profile]);
+        }, commandTarget)]),
+    ) as Record<MachineAddCommandOs, string> : null, [chosen, commandTarget, descriptor, draft.sshDraft, profile, remoteHomeUnavailable]);
     const arrived = progress.machine ? { machineId: progress.machine.id, name: getMachineDisplayName(progress.machine),
         facts: [formatOSPlatform(progress.machine.metadata?.platform), progress.machine.metadata?.arch].filter(Boolean).join(' · '),
     } : null;
@@ -361,7 +367,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     }, [respondSsh, sshPrompt]);
     return {
         serverId, homeName: resolveHomeDisplayName(profile) ?? t('settingsAccount.thisHomeTitle'), paths, path: draft.path,
-        choosePath, os: draft.os, detectedOs, setOs: (os: MachineAddCommandOs) => update((current) => ({ ...current, os })), commands,
+        choosePath, os: draft.os, detectedOs, setOs: (os: MachineAddCommandOs) => update((current) => ({ ...current, os })), commands, remoteHomeUnavailable,
         ssh: { draft: draft.sshDraft, setDraft, ready: isSshCredentialsDraftReady(draft.sshDraft) && sshActions.ready,
             hostError: taskError && ['connection-failed', 'network-captive-portal'].includes(taskError.code) ? t('machineAdd.cannotReachHost') : null,
             suggestions, supportedAuthModes: getMachineAddSshSupportedAuthModes(runner),

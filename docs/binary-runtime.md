@@ -154,6 +154,17 @@ non-loopback application endpoint. Existing controllers need refreshed CLI
 code for qualification and refusal; endpoint-order selection also needs the
 updated guest CLI. No SSH tunnel or public ingress is created automatically.
 
+In 0.3 development, Add Machine's remote command and SSH admission consume the
+shared Home carrier policy. Another computer uses a declared non-loopback HTTPS
+application endpoint or the Home's Iroh descriptor; a controller-only Home
+reports `home_not_guest_reachable` before installation. Same-computer setup can
+still use its loopback endpoint. SSH tasks that create a Home on the target and
+managed enrollment with a provider-owned local bridge retain their existing
+topology and qualification behavior.
+Copied commands for an Iroh descriptor provision a public temporary descriptor
+file on POSIX or PowerShell and pass it through `--home-descriptor-file`; they
+require no separately downloaded file and leave installer stdin available.
+
 In 0.3 development, SSH bootstrap command failures retain their closed command
 phase, exit status and stdout/stderr presence through the task and Action error
 message. Process facts that were not observed are reported as unknown. The

@@ -1,4 +1,4 @@
-import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import type { HomeConnectionDescriptorV1, IrohEndpointDescriptorV1 } from '@happier-dev/protocol';
 
 type HomeIrohEndpointDescriptorV1 = Extract<
@@ -117,7 +117,10 @@ export async function drainRetainedHomeCarrierReleases(): Promise<void> {
  * for a Home that publishes no independent ingress. Loopback membership is the shared
  * predicate's call, so a plaintext origin on any other host stays refused outright.
  */
-export function resolveDescriptorApplicationOrigin(descriptor: HomeConnectionDescriptorV1): string | null {
+export function resolveDescriptorApplicationOrigin(
+  descriptor: Pick<HomeConnectionDescriptorV1, 'endpoints'>,
+  placement: 'local' | 'remote' = 'local',
+): string | null {
   let loopbackOrigin: string | null = null;
   for (const endpoint of descriptor.endpoints) {
     if (endpoint.kind !== 'https') continue;
@@ -131,6 +134,7 @@ export function resolveDescriptorApplicationOrigin(descriptor: HomeConnectionDes
     }
     if (parsed.username || parsed.password) continue;
     const loopback = isLoopbackHostname(parsed.hostname);
+    if (placement === 'remote' && (loopback || normalizeHostnameForLoopbackCheck(parsed.hostname) === '0.0.0.0')) continue;
     if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) continue;
     parsed.search = '';
     parsed.hash = '';
@@ -141,14 +145,28 @@ export function resolveDescriptorApplicationOrigin(descriptor: HomeConnectionDes
   return loopbackOrigin;
 }
 
+export type RemoteHomeApplicationCarrier =
+  | Readonly<{ kind: 'https'; url: string }>
+  | Readonly<{ kind: 'iroh' }>
+  | Readonly<{ kind: 'unavailable'; code: 'home_not_guest_reachable' }>;
+
+/** Declared routes usable from another machine; actual network availability is not probed. */
+export function resolveRemoteHomeApplicationCarrier(
+  descriptor: Pick<HomeConnectionDescriptorV1, 'endpoints'>,
+  applicationCarrierEligibility: HomeApplicationCarrierEligibility = 'automatic',
+): RemoteHomeApplicationCarrier {
+  const url = resolveDescriptorApplicationOrigin(descriptor, 'remote');
+  if (url) return { kind: 'https', url };
+  if (applicationCarrierEligibility === 'automatic' && descriptor.endpoints.some(endpoint => endpoint.kind === 'iroh')) return { kind: 'iroh' };
+  return { kind: 'unavailable', code: 'home_not_guest_reachable' };
+}
+
 /** A possible guest route, not a probe of DNS, firewall, TLS or Iroh readiness. */
 export function hasRemoteHomeApplicationCarrier(
   descriptor: HomeConnectionDescriptorV1,
   applicationCarrierEligibility: HomeApplicationCarrierEligibility = 'automatic',
 ): boolean {
-  if (applicationCarrierEligibility === 'automatic' && descriptor.endpoints.some(endpoint => endpoint.kind === 'iroh')) return true;
-  const origin = resolveDescriptorApplicationOrigin(descriptor);
-  return origin !== null && !isLoopbackHostname(new URL(origin).hostname);
+  return resolveRemoteHomeApplicationCarrier(descriptor, applicationCarrierEligibility).kind !== 'unavailable';
 }
 
 /**

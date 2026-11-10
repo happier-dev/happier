@@ -1,14 +1,52 @@
 import { describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // App configuration is the environment adapter; retain the real command and release-ring owners.
 vi.mock('@/config', () => ({ config: { variant: 'production', identityVariant: 'stable' } }));
-import { buildMachineAddCommand, detectClientCommandOs, MACHINE_ADD_COMMAND_OS } from './machineAddCommand';
+import { buildMachineAddCommand, detectClientCommandOs, MACHINE_ADD_COMMAND_OS, resolveWebDesktopSetupHandoffTarget } from './machineAddCommand';
 import { createDefaultSshCredentialsDraft } from '@/components/ssh/sshCredentialsDraft';
 import { MachineAddCommandInputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
 import { ManagedMachineEnrollmentIdentityV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 
 const home = { descriptor: null, profileSource: null, fallbackHomeUrl: 'https://home.example.test' };
 describe('machine add commands', () => {
+    it.each(['http://happier-agent-qa-unified-work-dev.localhost:3009', 'http://127.0.0.1:3009', 'https://[::1]:3009'])(
+        'refuses controller-only setup on another computer while preserving same-computer setup (%s)', url => {
+            const target = { ...home, fallbackHomeUrl: url, descriptor: { v: 1 as const, homeServerIdentityId: 'srv_home',
+                canonicalServerUrl: url, revision: 1, endpoints: [{ kind: 'https' as const, url }] } };
+            expect(resolveWebDesktopSetupHandoffTarget({ ...target, remote: true })).toEqual({ kind: 'unavailable', code: 'home_not_guest_reachable' });
+            expect(buildMachineAddCommand({ ...target, remote: true, os: 'linux', kind: 'joinHome' })).toBeNull();
+            expect(buildMachineAddCommand({ ...target, os: 'linux', kind: 'joinHome' })).toContain(url);
+        },
+    );
+    it('uses the remote HTTPS route after a controller-only endpoint, or carries Iroh by descriptor', () => {
+        const descriptor = { v: 1 as const, homeServerIdentityId: 'srv_home', canonicalServerUrl: 'http://qa.localhost:3009', revision: 1,
+            endpoints: [{ kind: 'https' as const, url: 'http://qa.localhost:3009' }, { kind: 'https' as const, url: 'https://home.tailnet.example' }] };
+        expect(buildMachineAddCommand({ ...home, descriptor, remote: true, os: 'linux', kind: 'joinHome' }))
+            .toContain('--home-url https://home.tailnet.example');
+        expect(buildMachineAddCommand({ ...home, descriptor: { ...descriptor, endpoints: [descriptor.endpoints[0]!, { kind: 'iroh', endpointId: 'a'.repeat(64) }] },
+            remote: true, os: 'windows', kind: 'joinHome' })).toContain('--home-descriptor-file $happierHomeDescriptor');
+        expect(buildMachineAddCommand({ ...home, fallbackHomeUrl: 'http://qa.localhost:3009', remote: true, os: 'windows', kind: 'sshMachine',
+            sshDraft: { ...createDefaultSshCredentialsDraft(), host: 'nl1' } })).toBeNull();
+    });
+    it.skipIf(process.platform === 'win32')('hands the exact Iroh descriptor to setup without requiring an existing file', () => {
+        const descriptor = HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_home', canonicalServerUrl: 'http://qa.localhost:3009', revision: 1,
+            endpoints: [{ kind: 'iroh', endpointId: 'a'.repeat(64), relayUrls: ['https://relay.example.test/it\'s'] }] });
+        const root = mkdtempSync(join(tmpdir(), 'machine-add-command-'));
+        try {
+            // Installer download and the installed CLI are process boundaries. Run the generated shell unchanged.
+            writeFileSync(join(root, 'curl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+            writeFileSync(join(root, 'happier'), '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "--home-descriptor-file" ]; then cat "$2"; rm "$2"; exit; fi\n  shift\ndone\nexit 2\n', { mode: 0o755 });
+            const command = buildMachineAddCommand({ ...home, descriptor, remote: true, os: 'linux', kind: 'joinHome' });
+            if (!command) throw new Error('No remote command');
+            const received = execFileSync('/bin/sh', ['-c', command], { cwd: root, encoding: 'utf8', env: { ...process.env, PATH: `${root}:${process.env.PATH}` } });
+            expect(HomeConnectionDescriptorV1Schema.parse(JSON.parse(received))).toEqual(descriptor);
+        } finally { rmSync(root, { recursive: true, force: true }); }
+    });
     it('admits reviewed SSH identity at the public command request boundary', () => {
         const enrollmentIdentity = ManagedMachineEnrollmentIdentityV1Schema.parse({ kind: 'dedicatedDaemonUser', username: 'happier',
             serviceMode: 'user', role: 'server', adminAccessAtCreation: 'ask', administrator: { username: 'operator' } });
@@ -51,7 +89,7 @@ describe('machine add commands', () => {
         expect(buildMachineAddCommand({ ...home, os: 'linux', kind: 'joinHome', descriptor: {
             v: 1, homeServerIdentityId: 'srv_home', canonicalServerUrl: 'http://127.0.0.1:3005', revision: 1,
             endpoints: [{ kind: 'iroh', endpointId: 'endpoint-1', relayUrls: [] }],
-        } })).toContain('--home-descriptor-file ./happier-home.json');
+        } })).toContain('--home-descriptor-file "$happier_home_descriptor"');
     });
     it('builds one SSH install-and-run command, preserving target, port and keyfile on all OSes', () => {
         for (const os of MACHINE_ADD_COMMAND_OS) {

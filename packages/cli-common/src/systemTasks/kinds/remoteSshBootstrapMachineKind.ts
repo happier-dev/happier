@@ -6,6 +6,7 @@ import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines
 import { ManagedMachineEnrollmentIdentityV1Schema, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
+import { resolveRemoteHomeApplicationCarrier } from '../../homeEnrollment/homeCarrierPolicy.js';
 import {
   assertResolvedHomeTargetIdentity,
   createTransferableHomeTargetInput,
@@ -418,15 +419,22 @@ export function createRemoteSshBootstrapMachineTaskKind(
         let parsedLocalForApproval = parsedRaw;
 
         const relayRuntimeEnabled = parsedRemote.relayRuntime?.enabled === true;
-        if (
-          isLoopbackRelayUrl(parsedRemote.relay.relayUrl)
-          && !relayRuntimeEnabled
-          && !parsedRemote.homeTarget?.descriptor
-        ) {
-          throw new SystemTaskExecutionError(
-            'relay_url_unreachable',
-            'Remote setup cannot use a loopback Relay URL. Provide relay.publicRelayUrl.',
-          );
+        // Creating a Home on this host, and managed guests with provider-owned local
+        // bridges, retain their existing topology. Ordinary SSH guests need a route
+        // from the admitted Home descriptor before any SSH contact or installation.
+        if (!relayRuntimeEnabled && !parsedRemote.managedEnrollment) {
+          const descriptor = parsedRemote.homeTarget?.descriptor;
+          const carrier = resolveRemoteHomeApplicationCarrier(descriptor ?? {
+            endpoints: [{ kind: 'https', url: parsedRemote.relay.relayUrl }],
+          });
+          if (carrier.kind === 'unavailable') {
+            throw new SystemTaskExecutionError(
+              descriptor ? carrier.code : 'relay_url_unreachable',
+              descriptor
+                ? 'This Home is not reachable from other machines. Add a public HTTPS, tailnet, or Iroh endpoint.'
+                : 'Remote setup cannot use a loopback Relay URL. Provide relay.publicRelayUrl.',
+            );
+          }
         }
         const knownHostsMode = parsedRemote.knownHostsMode ?? 'app';
         const authResolution = await resolveRemoteSshAuth({

@@ -647,6 +647,13 @@ describe('UI machine connection Actions', () => {
         expect(result.result.command).toContain('--home-url https://setup.example');
         expect(boundary.rpc).not.toHaveBeenCalled();
     });
+    it.each(['another_computer', 'ssh'] as const)('refuses a controller-only Home at the public %s command entry', async method => {
+        const serverId = await harness.addHome({ name: 'Local Home', serverUrl: 'http://happier-agent-qa-unified-work-dev.localhost:3009', accountId: 'alice' });
+        const result = await makeExecutor().execute('machines.add.command', {
+            serverId, os: 'linux', ...(method === 'ssh' ? { method, host: 'nl1' } : { method }),
+        }, { surface: 'ui', authority: 'present_user', serverId });
+        expect(result).toMatchObject({ ok: false, errorCode: 'home_not_guest_reachable' });
+    });
     it('prepares reviewed dedicated SSH administrator identity through the public command Action', async () => {
         const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://setup.example', accountId: 'alice' });
         const { ManagedMachineEnrollmentIdentityV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');

@@ -75,6 +75,18 @@ async function typeHost(name: string) {
 }
 
 describe('Over SSH', () => {
+  it.each(['anotherComputer', 'ssh'] as const)('explains a controller-only Home before offering the %s journey', async initialPath => {
+    await harness.addHome({ name: 'Local Home', serverUrl: 'http://happier-agent-qa-unified-work-dev.localhost:3009',
+      serverIdentityId: 'srv_local_home', accountId: 'owner' });
+    const { MachineAddForm } = await import('./MachineAddForm');
+    const screen = await renderScreen(<MachineAddForm layout="page" initialPath={initialPath} testID="form"
+      onClose={() => {}} onStartSession={() => {}} />);
+    await waitForHomeGovernance(() => expect(byId(screen, `${PANE}.homeUnavailable`).length).toBeGreaterThan(0));
+    expect(byId(screen, `${PANE}.command`)).toHaveLength(0);
+    expect(byId(screen, `${PANE}.start`)).toHaveLength(0);
+    expect(byId(screen, `${PANE}.pairing`)).toHaveLength(0);
+    await screen.unmount();
+  });
   it('in the app, connects and installs directly, names where it connects from and what runs on the server, and keeps the command as a fallback', async () => {
     host.desktop = true;
     const screen = await renderSsh();

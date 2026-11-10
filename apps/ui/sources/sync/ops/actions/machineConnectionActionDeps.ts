@@ -164,12 +164,14 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
             if (input.method === 'ssh' ? !policy.allowRemoteSshMachineSetup : !policy.allowLocalMachineSetup) {
                 return { ok: false, errorCode: 'machine_enroll_unavailable', error: 'Machine enrollment is unavailable' };
             }
-            const target = { descriptor: buildHomeConnectionDescriptorForProfile(profile), profileSource: profile.source ?? null, fallbackHomeUrl: profile.serverUrl };
+            const target = { descriptor: buildHomeConnectionDescriptorForProfile(profile), profileSource: profile.source ?? null, fallbackHomeUrl: profile.serverUrl, remote: true };
+            const handoff = resolveWebDesktopSetupHandoffTarget(target);
+            if (handoff.kind === 'unavailable') return { ok: false, errorCode: handoff.code, error: 'This Home is not reachable from other machines. Add a public HTTPS, tailnet, or Iroh endpoint.' };
             const command = buildMachineAddCommand({ ...target, os: input.os, ...(input.method === 'ssh' ? {
                 kind: 'sshMachine', enrollmentIdentity: input.enrollmentIdentity, sshDraft: { ...createDefaultSshCredentialsDraft(input.authMode), host: input.host,
                     username: input.username ?? '', port: input.port === undefined ? '' : String(input.port), identityFilePath: input.identityFilePath ?? '' },
-            } : { kind: 'joinHome' }) });
-            return { command, descriptorFileRequired: resolveWebDesktopSetupHandoffTarget(target).kind === 'descriptor_file_required' };
+            } : { kind: 'joinHome' }) }, handoff);
+            return { command, descriptorFileRequired: handoff.kind === 'descriptor_file_required' };
         },
         machinePairingCreate: async (input, context) => {
             if (context.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, input.serverId)) {

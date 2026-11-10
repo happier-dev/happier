@@ -1,5 +1,6 @@
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveRemoteHomeApplicationCarrier } from '@happier-dev/cli-common/homeEnrollment';
 import type { ServerProfileSource } from '@/sync/domains/server/serverProfiles';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { config } from '@/config';
@@ -15,15 +16,25 @@ export type MachineAddCommandOs = typeof MACHINE_ADD_COMMAND_OS[number];
 export type WebDesktopSetupHandoffTarget =
     | Readonly<{ kind: 'https'; homeUrl: string }>
     | Readonly<{ kind: 'account_service' }>
-    | Readonly<{ kind: 'descriptor_file_required' }>;
+    | Readonly<{ kind: 'descriptor_file_required' }>
+    | Readonly<{ kind: 'unavailable'; code: 'home_not_guest_reachable' }>;
 export type MachineAddHomeTarget = Readonly<{
     descriptor: HomeConnectionDescriptorV1 | null;
     profileSource: ServerProfileSource | null;
     fallbackHomeUrl: string | null;
+    /** Another computer and SSH targets cannot use this computer's loopback route. */
+    remote?: boolean;
 }>;
 
 /** A descriptor without HTTPS needs a file; the installer's stdin cannot carry it. */
 export function resolveWebDesktopSetupHandoffTarget(params: MachineAddHomeTarget): WebDesktopSetupHandoffTarget {
+    if (params.remote) {
+        const remote = resolveRemoteHomeApplicationCarrier(params.descriptor ?? {
+            endpoints: params.fallbackHomeUrl ? [{ kind: 'https', url: params.fallbackHomeUrl }] : [],
+        });
+        return remote.kind === 'iroh' ? { kind: 'descriptor_file_required' }
+            : remote.kind === 'https' ? { kind: 'https', homeUrl: remote.url } : remote;
+    }
     if (params.descriptor) {
         const https = params.descriptor.endpoints.find((endpoint) => endpoint.kind === 'https');
         return https ? { kind: 'https', homeUrl: https.url } : { kind: 'descriptor_file_required' };
@@ -50,8 +61,11 @@ function quoteShellValue(value: string, os: MachineAddCommandOs): string {
     return os === 'windows' ? `'${value.replace(/'/g, "''")}'` : `'${value.replace(/'/g, "'\"'\"'")}'`;
 }
 
-export function buildMachineAddCommand(input: MachineAddCommandInput): string {
-    const target = resolveWebDesktopSetupHandoffTarget(input);
+export function buildMachineAddCommand(input: MachineAddCommandInput & { remote?: false }): string;
+export function buildMachineAddCommand(input: MachineAddCommandInput, target: Exclude<WebDesktopSetupHandoffTarget, { kind: 'unavailable' }>): string;
+export function buildMachineAddCommand(input: MachineAddCommandInput, target?: WebDesktopSetupHandoffTarget): string | null;
+export function buildMachineAddCommand(input: MachineAddCommandInput, target = resolveWebDesktopSetupHandoffTarget(input)): string | null {
+    if (target.kind === 'unavailable') return null;
     const args = target.kind === 'https' ? ['--home-url', target.homeUrl]
         : target.kind === 'descriptor_file_required' ? ['--home-descriptor-file', './happier-home.json'] : [];
     if (input.kind === 'joinHome') {
@@ -79,8 +93,17 @@ export function buildMachineAddCommand(input: MachineAddCommandInput): string {
         distTagOverride: config.cliNpmDistTag,
         publicReleaseRingOverride: resolvePreferredPublicReleaseRingIdForCurrentApp(),
     };
-    return (input.os === 'windows' ? buildHappierCliInstallAndRunPowershellCommand : buildHappierCliInstallAndRunCommand)(options, {
+    const descriptorJson = target.kind === 'descriptor_file_required' && input.descriptor ? JSON.stringify(input.descriptor) : null;
+    const descriptorPath = input.os === 'windows' ? '$happierHomeDescriptor' : '"$happier_home_descriptor"';
+    const command = (input.os === 'windows' ? buildHappierCliInstallAndRunPowershellCommand : buildHappierCliInstallAndRunCommand)(options, {
         action: input.kind === 'joinHome' ? 'setup' : 'machine-enroll',
-        args: args.map((arg) => quoteShellValue(arg, input.os)),
+        args: args.map((arg, index) => descriptorJson && index === 1 ? descriptorPath : quoteShellValue(arg, input.os)),
     });
+    if (!descriptorJson) return command;
+    // The installer consumes stdin; provision the public descriptor before invoking
+    // the existing --home-descriptor-file grammar on either supported shell.
+    const contents = quoteShellValue(descriptorJson, input.os);
+    return input.os === 'windows'
+        ? `$happierHomeDescriptor = [System.IO.Path]::GetTempFileName(); [System.IO.File]::WriteAllText($happierHomeDescriptor, ${contents}); if ($?) { ${command} }`
+        : `happier_home_descriptor=$(mktemp) && printf '%s' ${contents} > "$happier_home_descriptor" && ${command}`;
 }

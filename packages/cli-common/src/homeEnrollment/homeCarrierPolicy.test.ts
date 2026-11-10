@@ -5,6 +5,7 @@ import {
   drainRetainedHomeCarrierReleases,
   readHomeApplicationCarrierEligibilityFromEnv,
   hasRemoteHomeApplicationCarrier,
+  resolveRemoteHomeApplicationCarrier,
 } from './homeCarrierPolicy';
 import { enrollmentPollingBackoffMs } from './index';
 
@@ -21,7 +22,15 @@ const descriptor = {
 };
 
 describe('client-local Home carrier selection', () => {
-  it.each(['http://localhost:3039', 'http://qa.localhost:3039', 'http://127.0.0.1:3039', 'https://[::1]:3039'])(
+  it('selects a remote route without reusing a controller-local application origin', () => {
+    const local = { ...descriptor, endpoints: [{ kind: 'https' as const, url: 'http://happier-agent-qa-unified-work-dev.localhost:3009' }] };
+    expect(resolveRemoteHomeApplicationCarrier(local)).toEqual({ kind: 'unavailable', code: 'home_not_guest_reachable' });
+    expect(resolveRemoteHomeApplicationCarrier({ ...local, endpoints: [...local.endpoints, descriptor.endpoints[0]!] }))
+      .toEqual({ kind: 'https', url: 'https://ingress.example.test/path' });
+    expect(resolveRemoteHomeApplicationCarrier({ ...local, endpoints: [...local.endpoints, descriptor.endpoints[1]!] }))
+      .toEqual({ kind: 'iroh' });
+  });
+  it.each(['http://localhost:3039', 'http://qa.localhost:3039', 'http://127.0.0.1:3039', 'https://[::1]:3039', 'https://0.0.0.0:3039'])(
     'distinguishes a local-only Home from routes usable by a separate guest (%s)', (url) => {
       const local = { ...descriptor, endpoints: [{ kind: 'https' as const, url }] };
       expect(hasRemoteHomeApplicationCarrier(local)).toBe(false);

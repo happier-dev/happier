@@ -24,6 +24,23 @@ type RemoteEnrollmentExecutorParams = Parameters<
   NonNullable<RemoteSshBootstrapMachineDeps['createRemoteEnrollmentExecutor']>
 >[0];
 
+it('refuses a controller-only descriptor before contacting an SSH machine', async () => {
+  // SSH host trust is the first external contact; refuse there if admission leaks through.
+  const resolveHostTrust = vi.fn(async () => { throw new SystemTaskExecutionError('ssh_contacted', 'SSH was contacted'); });
+  const installRemoteCli = vi.fn(async () => {});
+  const task = createProductionRemoteSshBootstrapMachineTaskKind({ resolveHostTrust, installRemoteCli,
+    approveLocalAuthRequest: async () => {}, runRemoteCommand: async () => { throw new Error('No remote command expected'); } });
+  const homeTarget = resolveHomeTargetFromDescriptor({ authority: 'trusted_enrollment', descriptor: {
+    v: 1, homeServerIdentityId: 'srv_local', revision: 1, canonicalServerUrl: 'http://qa.localhost:3009',
+    endpoints: [{ kind: 'https', url: 'http://qa.localhost:3009' }],
+  } });
+  await expect(task.run({ params: { ssh: { target: 'operator@nl1', auth: 'agent' }, homeTarget,
+    relay: { relayUrl: 'http://qa.localhost:3009' } }, emit() {}, prompt: async () => ({}) }))
+    .rejects.toMatchObject({ code: 'home_not_guest_reachable' });
+  expect(resolveHostTrust).not.toHaveBeenCalled();
+  expect(installRemoteCli).not.toHaveBeenCalled();
+});
+
 describe('native transport through the remote bootstrap task', () => {
   it.each([
     ['native', 'absent'], ['ssh', 'absent'], ['configured-native', 'absent'],
