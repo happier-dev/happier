@@ -9346,7 +9346,11 @@ only leaves applicable to its credential mode. Empty environment or file results
 make that use inapplicable. The generic materializer requires usable credentials
 for each selected purpose across its uses; another purpose's credentials cannot
 satisfy it. A native home is prepared only when native file leaves are returned
-or the admitted Provider/member launch explicitly requires that home.
+or the admitted Provider/member launch explicitly requires that home. An Agent
+may also name `nativeHome.purposes` for selected purposes whose native serializer
+writes configuration into its home despite receiving credentials through
+environment or request auth. Those purposes use the same account/group root,
+state sharing and cleanup lifecycle as file materialization.
 
 Claude reconciles user, email and organization into that home's `.claude.json`,
 invalidates account caches, and preserves workspace approvals, project trust and

@@ -61,7 +61,7 @@ import {
 } from '../connectedServiceChildEnvironment';
 import { resolveConnectedServiceMaterializedRootDir } from './resolveConnectedServiceMaterializedRootDir';
 import { resolveConnectedServiceTargetMaterializedRoot } from './resolveConnectedServiceTargetMaterializedRoot';
-import { resolveConnectedServiceNativeHomeTarget } from './resolveConnectedServiceNativeHomeTarget';
+import { resolveConnectedServiceNativeHomeTarget, resolveConnectedServiceNativeHomePurposeSelection } from './resolveConnectedServiceNativeHomeTarget';
 import { observeConnectedServiceMaterializationPhase, startConnectedServiceMaterializationPhase } from './materializationPhase';
 import { ensurePrivateConnectedServiceMaterializedRoot, isCanonicalConnectedServiceMaterializedRoot } from './privateMaterializedRoot';
 import { assertQualifiedConnectedAccountLaunchUsesProduced, materializeQualifiedConnectedAccountLaunchUses } from './materializeQualifiedConnectedAccountLaunchUses';
@@ -277,13 +277,13 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           : []
       )),
     );
+    const nativeHomeSelection = stateSharingDescriptor?.nativeHome
+      ? resolveConnectedServiceNativeHomePurposeSelection({ nativeHome: stateSharingDescriptor.nativeHome, snapshot })
+      : { purposes: [], prepareWithoutFiles: false };
     if (!projectionOnly && stateSharingDescriptor?.providerSupportStatus === 'supported'
       && stateSharingDescriptor.nativeHome) {
-      const capturedPurposes = new Set<string>();
-      for (const scope of snapshot?.fileMaterializationPurposes ?? []) {
+      for (const scope of nativeHomeSelection.purposes) {
         const purposeKey = qualifiedPurposeKey(scope.purpose);
-        if (capturedPurposes.has(purposeKey) || !snapshot?.bindings.some(binding =>
-          qualifiedPurposeKey(binding.purpose) === purposeKey)) continue;
         if (!connectedAccountsOwner) throw new Error('Connected Account launch authority is unavailable');
         const binding = await observeConnectedServiceMaterializationPhase(params, 'binding_read', () => readRequesterHomeWithinActionLifetime(() => connectedAccountsOwner.getBinding({
           purpose: scope.purpose,
@@ -311,7 +311,6 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         expectedAccountsByPurposeKey.set(purposeKey, Object.freeze({
           service: Object.freeze({ ...binding.account.service }), accountId: binding.account.accountId,
         }));
-        capturedPurposes.add(purposeKey);
       }
     }
     let memberAccountSettingsApplication: import('@/daemon/agentIsolation/agentLaunchFrame').AgentLaunchAccountSettingsApplication | undefined;
@@ -630,7 +629,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         const nativePurposes = (projectionOnly ? [] : snapshot?.fileMaterializationPurposes ?? [])
           .filter(scope => snapshot?.bindings.some(binding =>
             qualifiedPurposeKey(binding.purpose) === qualifiedPurposeKey(scope.purpose)));
-        if (nativePurposes.length === 0 && !params.nativeHomeOnly && !params.legacyV021 && !projectionOnly) return;
+        if (nativePurposes.length === 0 && !nativeHomeSelection.prepareWithoutFiles && !params.nativeHomeOnly && !params.legacyV021 && !projectionOnly) return;
         const existingHome = await lstat(nativeRoot).catch((error: unknown) => {
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
           throw error;
@@ -727,7 +726,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           if (snapshot && !projectionOnly) assertQualifiedConnectedAccountLaunchUsesProduced({
             snapshot, producedPurposeKeys, includeNativeHomeUses: true,
           });
-          if (Object.keys(nativeHomeFiles).length === 0 && !params.nativeHomeOnly
+          if (Object.keys(nativeHomeFiles).length === 0 && !nativeHomeSelection.prepareWithoutFiles && !params.nativeHomeOnly
             && !params.legacyV021 && !projectionOnly) {
             await restoreCredentials();
             for (const key of Object.keys(env)) delete env[key];

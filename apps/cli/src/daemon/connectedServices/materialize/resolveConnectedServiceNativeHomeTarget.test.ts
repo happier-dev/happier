@@ -37,3 +37,16 @@ it.each([
     snapshot,
   })).toBeNull();
 });
+
+
+it('selects an explicitly declared environment-only purpose through the same native account home layout', () => {
+  const purpose = { consumer: { pluginId: 'acme.agent', localId: 'agent' }, purpose: 'selected-key' };
+  const account = { service: { pluginId: 'acme.accounts', localId: 'key' }, accountId: 'work' };
+  const nativeHome = { environmentKey: 'HOME', defaultRelativePath: '.', materializedDirectoryName: 'agent-home', purposes: ['selected-key'] };
+  const snapshot: AgentSpawnQualifiedPurposeBindingSnapshot = { purposes: [purpose],
+    authorizedPurposes: [{ purpose, serviceRefs: [account.service] }], fileMaterializationPurposes: [],
+    bindings: [{ purpose, target: { kind: 'account', account } }],
+  };
+  expect(resolveConnectedServiceNativeHomeTarget({ agentId: 'acme.agent/agent', activeServerDir: '/fixture/server', nativeHome, snapshot }))
+    .toMatch(/agent-home$/);
+});

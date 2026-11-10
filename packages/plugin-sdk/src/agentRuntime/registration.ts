@@ -412,6 +412,8 @@ export type AgentConnectedAccountNativeHomeV1 = Readonly<{
   /** Preserve the original native home when the active environment selects a materialized home. */
   sourceEnvironmentKey?: string;
   defaultRelativePath: string;
+  /** Selected purpose IDs that need a private home even when credentials arrive through environment or request auth. */
+  purposes?: readonly string[];
   /** Opts native credential-bound account/group launches into the host's durable home lifecycle. */
   materializedDirectoryName?: string;
   /** Link existing top-level native entries into the private root, except Agent-owned entries. */

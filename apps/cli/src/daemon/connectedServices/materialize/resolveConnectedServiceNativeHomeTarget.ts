@@ -34,6 +34,25 @@ export function resolveConnectedServiceNativeHomeTargetRoot(input: Readonly<{
     }), directoryName);
 }
 
+/** Native-home selection is independent of whether a service emits credential files. */
+export function resolveConnectedServiceNativeHomePurposeSelection(input: Readonly<{
+  nativeHome: AgentConnectedAccountNativeHomeV1;
+  snapshot: AgentSpawnQualifiedPurposeBindingSnapshot | null;
+}>): Readonly<{
+  purposes: NonNullable<AgentSpawnQualifiedPurposeBindingSnapshot['authorizedPurposes']>;
+  prepareWithoutFiles: boolean;
+}> {
+  const boundKeys = new Set((input.snapshot?.bindings ?? []).map(binding => qualifiedPurposeKey(binding.purpose)));
+  const explicitScopes = (input.snapshot?.authorizedPurposes ?? [])
+    .filter(scope => input.nativeHome.purposes?.includes(scope.purpose.purpose));
+  const scopes = new Map([...(input.snapshot?.fileMaterializationPurposes ?? []), ...explicitScopes]
+    .map(scope => [qualifiedPurposeKey(scope.purpose), scope] as const));
+  return {
+    purposes: [...scopes.values()].filter(scope => boundKeys.has(qualifiedPurposeKey(scope.purpose))),
+    prepareWithoutFiles: explicitScopes.some(scope => boundKeys.has(qualifiedPurposeKey(scope.purpose))),
+  };
+}
+
 /** Read-only layout decision shared by launch preparation and runtime preflight. */
 export function resolveConnectedServiceNativeHomeTarget(input: Readonly<{
   agentId: CatalogAgentId;
@@ -45,9 +64,9 @@ export function resolveConnectedServiceNativeHomeTarget(input: Readonly<{
 }>): string | null {
   const directoryName = input.nativeHome.materializedDirectoryName;
   if (!directoryName || input.probePurpose === 'probe') return null;
-  const nativeBindings = (input.snapshot?.bindings ?? []).filter(binding =>
-    input.snapshot?.fileMaterializationPurposes?.some(scope =>
-      qualifiedPurposeKey(scope.purpose) === qualifiedPurposeKey(binding.purpose)));
+  const selection = resolveConnectedServiceNativeHomePurposeSelection(input);
+  const selectedKeys = new Set(selection.purposes.map(scope => qualifiedPurposeKey(scope.purpose)));
+  const nativeBindings = (input.snapshot?.bindings ?? []).filter(binding => selectedKeys.has(qualifiedPurposeKey(binding.purpose)));
   if (nativeBindings.length === 0) return null;
   const roots = new Set(nativeBindings.map(binding => {
     const selectedAccount = binding.target.kind === 'group' && input.nativeHome.groupHome === 'selectedAccount'
