@@ -90,7 +90,7 @@ describe('workflow input materialization', () => {
       }, resolveWorkspace: async () => { throw new WorkflowInputResolutionError('invalid_reference_scope'); } };
     await expect(resolveWorkflowActionFieldBinding(binding, inputs)).resolves.toEqual({ credentialPrincipal, ...native });
     await expect(resolveWorkflowActionFieldBinding({ kind: 'object', fields: {
-      missing: { kind: 'result', producer: { blockId: 'missing' }, path: [] },
+      missing: { kind: 'result', producer: { blockId: 'missing', scope: { kind: 'current' } }, path: [] },
     } }, inputs)).rejects.toMatchObject({ code: 'missing_reference' });
   });
 

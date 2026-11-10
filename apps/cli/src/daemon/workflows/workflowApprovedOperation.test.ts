@@ -29,7 +29,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1, AutomationTriggerIdSchema, AutomationSourceSelectorIdV1Schema, PluginJsonValueV2Schema } from '@happier-dev/protocol';
-import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createPromptDocInLibrary, type PromptLibraryArtifactStore, type PromptLibraryStoredArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import type { PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { createActionExecutorBoundaryFixture } from '../../../../../packages/tests/src/testkit/actionExecutorBoundary';
@@ -133,7 +133,7 @@ describe('Workflow approved operation private custody', () => {
     // Persisted consent, accepted Run and invocation rows are storage boundary
     // fixtures. Their real private readers, crypto, binding and approval route run.
     const operation: WorkflowApprovedOperationV1 = { parent: { actionId: 'workflow.trigger.add', input: {
-      target: { kind: 'inline', definition: currentDefinition }, project: { machineId: 'host', directory: '/repo' },
+      target: { kind: 'inline', definition: StrictJsonValueSchema.parse(currentDefinition) }, project: { machineId: 'host', directory: '/repo' },
       trigger: { kind: 'schedule', enabled: true, schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } },
       inputs: { backupEnvironment: address, backupPolicy: policy }, actionApproval: 'automatic',
     } }, approvedBy: { accountId }, steps: [
@@ -328,11 +328,12 @@ describe('Workflow approved operation private custody', () => {
       rootInvocation: { id: 'root', contentEnvelope: seal('root', '0', null, '0', {
         kind: 'happier.workflow-progress.v1', blockKind: 'root', invocationPath: { blockId: '$root', scope: [] },
         attempt: '0', logicalInvocationRecordId: 'root' }) } });
+    const producerResult = DeploymentActionOutputSchemasV1['deployments.templates.instantiate'].parse({ kind: 'applied', environmentId: concrete.environmentId,
+      targetLinkId: concrete.targetLinkId, revision: concrete.expectedRevision,
+      definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, savedSecrets: [] });
+    if (producerResult.kind !== 'applied') throw new Error('Expected an applied deployment fixture');
     const producerProgress = { kind: 'happier.workflow-progress.v1' as const, blockKind: 'action' as const,
-      invocationPath: { blockId: 'instantiate', scope: [] }, attempt: '0', logicalInvocationRecordId: 'producer',
-      result: DeploymentActionOutputSchemasV1['deployments.templates.instantiate'].parse({ kind: 'applied', environmentId: concrete.environmentId,
-        targetLinkId: concrete.targetLinkId, revision: concrete.expectedRevision,
-        definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, savedSecrets: [] }) };
+      invocationPath: { blockId: 'instantiate', scope: [] }, attempt: '0', logicalInvocationRecordId: 'producer', result: producerResult };
     const childProgress = { kind: 'happier.workflow-progress.v1' as const, blockKind: 'action' as const,
       invocationPath: { blockId: 'apply', scope: [] }, attempt: '0', logicalInvocationRecordId: invocationId };
     await storage.execute({ operation: 'invocations.admit', runId, expectedRevision: 1, parentAttempt: 0, checkpointEnvelope: '{}', invocations: [

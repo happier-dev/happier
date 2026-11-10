@@ -35,7 +35,7 @@ async function publicationRun(stub: ReturnType<typeof previewStatusTransport>, i
     const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: workflow.definition,
         context: { source: { kind: 'inline' }, inputs: { publication: defineProtocolJsonValue().parse(input) },
             machineId: workspace.machineId, workspaceTarget: { project: workspace }, executionTarget: { kind: 'session' },
-            origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } },
+            origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
         admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true,
             readActionContract: async id => id === actionId ? freezeWorkflowActionContractV1(definition)
                 : freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } });

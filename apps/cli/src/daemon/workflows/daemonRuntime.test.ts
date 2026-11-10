@@ -849,7 +849,7 @@ describe('production daemon detached Workflow admission', () => {
     } };
     const plugin = definePlugin({ id: pluginId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' }, agents: {
       default: { declaration: { title: 'Detached Workflow fixture', runtime: { kind: 'custom' }, primary: 'sessions',
-        connectedAccounts: [{ purpose: 'subscription', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }],
+        connectedAccounts: [{ purpose: 'subscription', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, credentialKinds: ['oauth'] }],
         capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true,
           workspaceWrites: 'deny', executionRunContext: { versions: [1] } } } },
         factory: async () => agentRuntime,
@@ -904,7 +904,7 @@ describe('production daemon detached Workflow admission', () => {
       context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
         workspaceTarget: { project: { machineId, directory, checkoutRootPath: directory } },
         origin: { kind: 'direct', authenticatedStarterV1: { requestRef: 'detached-starter', requester: { serverId, accountId } } },
-        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } },
+        authorization: { principal: { kind: 'host' } } },
       admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
     if (!materialized.ok) throw new Error(materialized.error.code);
     expect(materialized.snapshot.materializedLeaves).toMatchObject([{ executionTarget: { kind: 'session' } }, { executionTarget: { kind: 'detached_run' },
@@ -1019,7 +1019,7 @@ describe('production daemon detached Workflow admission', () => {
         resolveCustodianAccountId: async () => accountId, resolveInstallationId: () => 'detached-installation',
         resolveHomeServerIdentityId: async () => homeId, verifyMachineAdmission: async () => true }) });
     const executor = createExecutionRunRpcActionExecutor({ manager: bridge,
-      context: { sessionId: null, cwd: directory, machineId, serverId, runtimeAccountId: accountId },
+      context: { sessionId: null, cwd: directory, serverId },
       policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
         reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true });
     registerExecutionRunActionRpcHandlers(receiver, { executor, defaultSessionId: null, machineId, serverId, runtimeAccountId: accountId });
@@ -1331,7 +1331,7 @@ describe('production daemon Workflow policy-only context preparation', () => {
         resolveCustodianAccountId: async () => accountId, resolveInstallationId: () => 'installation',
         resolveHomeServerIdentityId: async () => 'srv_workflow_home', verifyMachineAdmission: async () => scenario !== 'wrong-home' }) });
     registerCapabilitiesHandlers(manager, { filesystemEffectAdmission: createFilesystemEffectAdmission({
-      readAgentIsolation: () => machineClient.getAgentIsolationSnapshot(),
+      readAgentIsolation: () => ({ ...machineClient.getAgentIsolationSnapshot(), workspaceRoots: [] }),
       resolveHomeServerIdentityId: async () => 'srv_workflow_home' }) });
     registerDaemonContributionRegistryProjectionHandler(manager);
     const machineAdmission = { actorAccountId: scenario === 'member' ? 'member' : accountId, custodianAccountId: accountId,

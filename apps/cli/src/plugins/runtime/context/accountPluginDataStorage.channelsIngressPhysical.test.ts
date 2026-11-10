@@ -438,7 +438,7 @@ describe('Channels C3 physical E2EE ingress batches', () => {
         // Fanout fills each deployment-sized batch without a census fence.
         const preparationRequests = ingressRequests.filter((request) => (
             request.operations.length > 2
-            && request.operations.every((operation) => operation.kind === 'put' && jsonRecord(operation.value)['record-kind'] === 'ingress-obligation')
+            && request.operations.every((operation) => operation.kind === 'put' && jsonRecord(operation.projection)['record-kind'] === 'ingress-obligation')
         ));
         expect(preparationRequests.map((request) => request.operations.length))
             .toEqual([100, 100, 56]);

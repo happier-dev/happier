@@ -15,7 +15,7 @@ import { readWorkflowInvocationMembersV1 } from '@happier-dev/protocol/workflows
 import type { WorkflowRunReadEncryptionV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
 import type { createWorkflowRunStorageClient } from './workflowRunStorageClient';
 import { createWorkflowProducerBinding } from './workflowScopeBinding';
-import { resolveWorkflowValueReference, WorkflowInputResolutionError } from './input';
+import { resolveWorkflowActionFieldBinding, resolveWorkflowValueReference, WorkflowInputResolutionError } from './input';
 import { createWorkflowActionAdmissionReader } from './workflowActionAdmission';
 import { readDeploymentBackupOccurrenceV1 } from '@happier-dev/protocol/workflows/builtins/backupExamples';
 import { DeploymentBackupPolicyV1Schema, DeploymentBackupRunInputV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
@@ -171,7 +171,7 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
           || index.lifecycle === 'pending' && execution !== undefined) return null;
         if (occurrence) {
           const fixed = Object.fromEntries(await Promise.all(Object.entries(occurrence.producer.input).map(async ([field, reference]) =>
-            [field, await resolveWorkflowValueReference(reference, { inputs: structure.inputs,
+            [field, await resolveWorkflowActionFieldBinding(reference, { inputs: structure.inputs,
               resolveResult: async () => { throw new WorkflowInputResolutionError('invalid_reference_scope'); },
               resolveWorkspace: async () => { throw new WorkflowInputResolutionError('invalid_reference_scope'); } })])));
           const anchor = operation.steps.find(step => !step.binding && step.actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1

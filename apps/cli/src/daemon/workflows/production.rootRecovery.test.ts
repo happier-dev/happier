@@ -175,7 +175,7 @@ describe('Workflow root recovery', () => {
         return response;
       } } });
     const revision = h.storage.run().revision;
-    await expect(store.confirmReviewHolds({ recordIds: [rootId] })).resolves.toMatchObject({
+    await expect(store.confirmReviewHolds({ runId, recordIds: [rootId] })).resolves.toMatchObject({
       revision, control: 'running', rows: [{ recordId: rootId, lifecycle: 'pending' }],
     });
     expect(reads).toEqual([{ request: { operation: 'get', runId, projection: 'revision' },

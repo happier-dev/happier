@@ -2354,7 +2354,7 @@ describe('composed Workflow front door and claimed execution', () => {
         const produced = createSessionMetadata({ flavor: 'claude', machineId, directory, startedBy: 'daemon',
           permissionMode: 'default', runtimeDescriptorV1,
           launchControlMetadata: captureSessionLaunchControlMetadata({ processEnvironment:
-            buildSpawnChildProcessEnv({ processEnv: { NODE_ENV: 'test' }, extraEnv: launch.extraEnvForChild }) }),
+            { NODE_ENV: 'test', ...buildSpawnChildProcessEnv({ processEnv: { NODE_ENV: 'test' }, extraEnv: launch.extraEnvForChild }) } }),
         }).metadata;
         expect(produced.profileId).toBeUndefined();
         // Historical Sessions predate launch-control/profile fields. Keep the

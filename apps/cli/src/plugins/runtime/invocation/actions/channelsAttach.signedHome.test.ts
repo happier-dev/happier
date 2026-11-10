@@ -188,7 +188,7 @@ async function fixture(options: Readonly<{ signingBinding?: boolean }> = {}) {
     await runtime.registry.activateContributionsOnDemand([{ pluginId: CHANNELS_PLUGIN.manifest.id,
         family: 'actions', localId,
     }]);
-    function admit(input: unknown, requesterAccountId: string, requestId: string) {
+    function admit(input: Parameters<typeof computeExternalActionRequestEnvelopeDigestV1>[0]['input'], requesterAccountId: string, requestId: string) {
         const target = { kind: 'machine' as const, machineId };
         authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1,
             token: 'synthetic-home-admission-proof', binding: {

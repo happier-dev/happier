@@ -234,8 +234,10 @@ describe('createCliActionDeps workflow boundary', () => {
             installationId: identity.installationId } } });
       if (!authorization) throw new Error('session_custody_projection_required');
     }
-    const result = deps.workflowAction!({ actionId, input: readInvocation ? { runId, invocationId: recordId } : { runId, includeUsage: false },
-      context: { surface: 'cli', externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization } });
+    const context = { surface: 'cli' as const, externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization };
+    const result = readInvocation
+      ? deps.workflowAction!({ actionId: 'workflow.run.invocations.get', input: { runId, invocationId: recordId }, context })
+      : deps.workflowAction!({ actionId: 'workflow.run.get', input: { runId, includeUsage: false }, context });
     await expect(result).resolves.toMatchObject(mode === 'plain' || custody === 'session'
       ? readInvocation ? { invocation: { index, progress } } : { run: { id: runId, ownerAccountId: 'requester' }, definition }
       : { ok: false, errorCode: 'content_unavailable' });

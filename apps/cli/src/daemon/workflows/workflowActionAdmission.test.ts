@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import nacl from 'tweetnacl';
@@ -58,12 +59,12 @@ async function pausedWorkflow(encrypted = false, dispatch = false, originalAutho
     contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material.contentPublicKeyFingerprint) }, material };
   const preparedKey = encrypted ? prepareWorkflowRunDataKeyV1({ accountId, encryption: accountEncryption,
     randomBytes: length => new Uint8Array(length).fill(3) }) : null;
-  const mode = preparedKey ? preparedKey.runCrypto : { mode: 'plain' as const };
+  const mode = preparedKey ? { ...preparedKey.runCrypto, randomBytes } : { mode: 'plain' as const };
   const encryption: WorkflowRunReadEncryptionV1 = encrypted ? accountEncryption : { witness: { mode: 'plain' } };
   const keyCensus = createPlainWorkflowRunKeyCensusFixture({ runId, accountId });
   const keyEnvelope = preparedKey?.recipientKeyEnvelopes[0]?.encryptedDataKey ?? null;
   const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
-    ...mode, randomBytes: length => new Uint8Array(length).fill(5),
+    ...mode,
     binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: accepted }));
   const storage = createWorkflowRunStorageTestkit({ runId, machineId: 'host', accountId,
     state: 'running', origin: { kind: 'direct' }, acceptedEnvelope,
@@ -71,7 +72,6 @@ async function pausedWorkflow(encrypted = false, dispatch = false, originalAutho
       dataEncryptionKey: keyEnvelope, callerDataEncryptionKey: keyEnvelope } : keyCensus });
   if (dispatch) {
     const rootEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ ...mode,
-      randomBytes: length => new Uint8Array(length).fill(6),
       binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: 'root', sequence: '0',
         parentRecordId: null, memberOrdinal: '0', attempt: '0' },
       progress: { kind: 'happier.workflow-progress.v1', blockKind: 'root',
@@ -83,7 +83,6 @@ async function pausedWorkflow(encrypted = false, dispatch = false, originalAutho
     invocationPath: { blockId: 'teardown', scope: [] }, attempt: '0', logicalInvocationRecordId: invocationId,
     execution: { kind: 'action' as const, actionId, actionRequestId: requestId, localInputId: 'local', input: actionInput } };
   const contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ ...mode,
-    randomBytes: length => new Uint8Array(length).fill(6),
     binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: invocationId, sequence: '1',
       parentRecordId: 'root', memberOrdinal: '0', attempt: '0' }, progress }));
   await storage.execute({ operation: 'invocations.admit', runId, parentAttempt: 0, expectedRevision: storage.run().revision,

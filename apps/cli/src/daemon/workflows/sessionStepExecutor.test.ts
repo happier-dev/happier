@@ -22,7 +22,6 @@ import { join } from 'node:path';
 import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol/discussions/participants';
 import { createTestWorkflowCoordinator, createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
-import { createCoordinatorWorkspaceResolver } from './resolveWorkflowWorkspace';
 import { createGitWorkflowWorkspaceTestDependencies } from './workflowWorkspace.testkit';
 import { statSync } from 'node:fs';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
@@ -60,7 +59,6 @@ import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { createWorkflowCoordinator } from './coordinator';
 import { buildWorkflowActionContext } from './daemonRuntime';
-import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
 import type { WorkflowActionExecutor } from './coordinator';
 import { createCoordinatorWorkspaceResolver, verifyWorkflowWorkspaceCurrentness } from './resolveWorkflowWorkspace';
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
