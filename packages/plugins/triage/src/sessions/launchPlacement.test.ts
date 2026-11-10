@@ -81,6 +81,21 @@ function project(
 }
 
 describe('launch placement', () => {
+    it('uses the admitted workspace location without requiring a project-row id', () => {
+        const workspace = { serverId: 'server-1', machineId: 'machine-1', rootPath: '/repos/selected' };
+        const candidate = project({ projectId: 'registry-row', rootPath: workspace.rootPath });
+        expect(resolveTriageLaunchPlacementV1({ workspace, projects: [candidate] }))
+            .toMatchObject({ kind: 'launch', candidate: { projectKey: { id: 'registry-row' } } });
+        for (const other of [
+            { ...candidate, serverId: 'other-server' },
+            { ...candidate, machineId: 'other-machine' },
+            { ...candidate, rootPath: '/repos/other' },
+        ]) {
+            expect(resolveTriageLaunchPlacementV1({ workspace, projects: [other] }))
+                .toEqual({ kind: 'prefill', reason: 'noMatch', candidates: [] });
+        }
+    });
+
     it('joins an external custom-forge scan and exact read without folding repository case', async () => {
         const source = await createPluginTestkit({ manifest, module: { activate } });
         const instance = {

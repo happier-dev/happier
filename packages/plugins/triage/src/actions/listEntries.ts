@@ -419,7 +419,7 @@ export async function assembleTriageListPass(
             if (!refKeys.has(keyOf(entryRef))) { refs.push(entryRef); refKeys.add(keyOf(entryRef)); }
         }
         const selectedIds = new Set(refs.filter(ref => ref.collisionScope === 'personal').map(ref => ref.entryId));
-        const linksByEntry = new Map<string, InternalTaskListProjection['entries'][number]['result']['links']>();
+        const linksByEntry = new Map<string, Array<InternalTaskListProjection['entries'][number]['result']['links'][number]>>();
         if (relation.kind !== 'failed') for (const { localRef, ...link } of relation.links) {
             const entryRef = { source: taskLane.source, ...localRef };
             const key = keyOf(entryRef);

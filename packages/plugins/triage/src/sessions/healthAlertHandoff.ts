@@ -5,6 +5,7 @@ import type { PluginActionInputById, PluginActionResultById, PluginClientActionU
 import type { TriageActionResolutionHostV1 } from './actionResolution.js';
 import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
 import { deploymentRevisionShortLabelV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol/v1';
 import {
     ProtocolArtifactGetOutputV1Schema,
     ProtocolServiceHealthNoticeSourceV1Schema, ProtocolServiceHealthNoticePageV1Schema,
@@ -119,7 +120,7 @@ async function readFailureSubject(
         && (context.workspace.serverId !== selected.serverId || context.workspace.machineId !== selected.machineId))) return null;
     // The host Action dispatcher admits and validates these DTOs. These are
     // authenticated read results, not caller-authored evidence or authority.
-    const read = async <K extends 'deployments.receipts.get' | 'deployments.environments.get' | 'deployments.domains.get' | 'action.operations.get' | 'workflow.run.get'>(
+    const read = async <K extends 'artifact.get' | 'deployments.receipts.get' | 'deployments.environments.get' | 'deployments.domains.get' | 'action.operations.get' | 'workflow.run.get'>(
         id: K, value: PluginActionInputById[K],
     ) => await host.executeAction(id, value as JsonReadInput, { signal }) as PluginActionResultById[K];
     let affected: { serverId: string; machineId: string } | undefined;
@@ -159,7 +160,12 @@ async function readFailureSubject(
             if (controller) affected = { serverId, machineId: controller.machineId };
             if (!selected && !await environmentPlacement(subject.environmentId)) return null;
             const receipt = result.deployment;
-            const source = result.content?.sourceIntent;
+            const { artifact } = await read('artifact.get', {
+                artifactId: receipt.contentArtifactId,
+            });
+            if (signal.aborted) return null;
+            const opened = readDeploymentReceiptArtifactV1(receipt, artifact);
+            const source = opened.ok ? opened.content.sourceIntent : undefined;
             receiptTitle = failedReceiptTitle(receipt.operation, receipt.state, source ? deploymentRevisionShortLabelV1(source) : undefined);
             reference = { actionId: 'deployments.receipts.get', input: address, retained: {
                 state: receipt.state, receiptRevision: receipt.revision, actionOperationId: receipt.actionOperationId,

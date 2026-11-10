@@ -65,7 +65,7 @@ describe('where a pressed action runs', () => {
         const selected = project({ projectId: 'selected', forge: undefined, reachable });
         const placement = resolveTriageActionPlacementV1({ workspaceMode: 'reference_only',
             workspace: { serverId: selected.serverId, machineId: selected.machineId,
-                workspaceId: 'selected', rootPath: selected.rootPath },
+                rootPath: selected.rootPath },
             projects: [selected, project({ projectId: 'other', forge: undefined })] });
         expect(placement).toMatchObject(reachable
             ? { kind: 'launch', candidate: { projectKey: { id: 'selected' } } }

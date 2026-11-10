@@ -218,8 +218,7 @@ export function resolveTriageLaunchCandidatesV1(input: Readonly<{
     if (input.forge === undefined && input.workspace === undefined) return [];
     return input.projects
         .filter((project) => input.workspace !== undefined
-            ? 'id' in project.projectKey && project.projectKey.id === input.workspace.workspaceId
-                && project.serverId === input.workspace.serverId && project.machineId === input.workspace.machineId
+            ? project.serverId === input.workspace.serverId && project.machineId === input.workspace.machineId
                 && project.rootPath === input.workspace.rootPath
             : sameScmHostingRepositoryIdentity(project.forge, input.forge))
         .map(candidateFor)

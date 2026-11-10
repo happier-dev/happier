@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PluginError, type JsonValue, type PluginServices } from '@happier-dev/plugin-sdk';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { testkitEntryRef, testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
 import type { PluginAccountActionContext, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
@@ -259,8 +260,12 @@ describe('configured action execution through the shared Session owner', () => {
                     nativeLinks.push(admitted.input);
                     return { v: 1, status: 'linked' };
                 }
-                if (id === 'deployments.receipts.get') return { ok: true, deployment: { id: subject.deploymentId, environmentId: subject.environmentId,
-                    ...(state === 'noController' ? {} : { acceptedExecution: { v: 1, controller: { machineId: controllerMachineId, installationId: 'installed' } } }) } };
+                if (id === 'deployments.receipts.get') return { ok: true, deployment: createDeploymentReceiptHeaderV1({
+                    id: subject.deploymentId, environmentId: subject.environmentId,
+                    acceptedExecution: state === 'noController' ? undefined
+                        : { v: 1, controller: { machineId: controllerMachineId, installationId: 'installed' } },
+                }) };
+                if (id === 'artifact.get') return { artifact: null };
                 if (id === 'deployments.environments.get') return { ok: true, environment: { id: subject.environmentId,
                     projectSourceId: 'project-source', ...(state === 'noController' ? {} : { controllerMachineId }) } };
                 if (id === 'localServices.launcher.snapshot') {
@@ -334,7 +339,9 @@ describe('configured action execution through the shared Session owner', () => {
                 if (triageBoundaryActionId(id) === 'actions/read-v1') return { ...catalog, actions: [
                     { ...action, actionId: 'investigate', target: { ...action.target, delivery: 'compose' } },
                 ] };
-                if (id === 'deployments.receipts.get') return { ok: true, deployment: { id: 'receipt', environmentId: 'environment' } };
+                if (id === 'deployments.receipts.get') return { ok: true,
+                    deployment: createDeploymentReceiptHeaderV1({ id: 'receipt', environmentId: 'environment' }) };
+                if (id === 'artifact.get') return { artifact: null };
                 if (id === 'localServices.launcher.snapshot') return { v: 1, machineId: 'chosen', updatedAt: 1, targets: [] };
                 if (id === 'projects.list') return { items: [], truncated: false };
                 throw new Error(`Unexpected host Action ${id}`);
@@ -370,7 +377,9 @@ describe('configured action execution through the shared Session owner', () => {
                     { ...action, actionId: 'fix-deploy', label: 'Fix this deploy', workspaceMode: 'repository',
                         target: { ...action.target, delivery } },
                 ] };
-                if (id === 'deployments.receipts.get') return { ok: true, deployment: { id: 'receipt', environmentId: 'environment' } };
+                if (id === 'deployments.receipts.get') return { ok: true,
+                    deployment: createDeploymentReceiptHeaderV1({ id: 'receipt', environmentId: 'environment' }) };
+                if (id === 'artifact.get') return { artifact: null };
                 if (id === 'localServices.launcher.snapshot') return { v: 1, machineId: 'chosen', updatedAt: 1, targets: [] };
                 if (id === 'projects.list') return { items: [], truncated: false };
                 if (id === 'agents.backends.list') return { items: [] };
@@ -418,7 +427,9 @@ describe('configured action execution through the shared Session owner', () => {
                 ] };
                 if (id === 'deployments.environments.get') return { ok: true, environment: { id: 'environment',
                     projectSourceId: 'project-source', ...(placement === 'noController' ? {} : { controllerMachineId: 'chosen' }) } };
-                if (id === 'deployments.receipts.get') return { ok: true, deployment: { id: 'receipt', environmentId: 'environment' } };
+                if (id === 'deployments.receipts.get') return { ok: true,
+                    deployment: createDeploymentReceiptHeaderV1({ id: 'receipt', environmentId: 'environment' }) };
+                if (id === 'artifact.get') return { artifact: null };
                 if (id === 'projects.list') {
                     if (placement === 'unavailable') throw new PluginError({ code: 'action_unavailable' });
                     return { items: placement === 'ambiguous' ? [project, { ...project, projectKey: { id: 'workspace-b' },

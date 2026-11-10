@@ -1,14 +1,14 @@
-import type { PluginUiHostApi, PluginUiSessionPlacementCandidateV1, PluginUiNewSessionSeedV1 } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiHostApi, PluginUiSessionPlacementCandidateV1 } from '@happier-dev/plugin-sdk/ui';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import { readTriageActionLaunchModeV1, type TriageActionV1 } from '../settings/actions.js';
 import { planTriageActionDeliveryV1 } from './actionDelivery.js';
 import type { TriageActionCheckoutResolutionV1, TriageActionExecutionPlacementV1 } from './actionLaunch.js';
 import type { TriageEntrySessionStartRequestV1 } from './entrySessionStartController.js';
 import { projectTriagePreparedWorkspaceSelectionInputV1 } from '../ui/header/newSessionDestination.js';
-import { projectTriageNewSessionFailureV1, requestTriageNewSessionSeed, type TriageNewSessionSeedHostV1, type TriageNewSessionSeedResultV1 } from '../ui/header/newSessionSeedCommand.js';
+import { projectTriageNewSessionFailureV1, requestTriageNewSessionSeed, type TriageNewSessionSeedV1, type TriageNewSessionSeedHostV1, type TriageNewSessionSeedResultV1 } from '../ui/header/newSessionSeedCommand.js';
 import type { TriageEntryAttachmentDraftV1 } from '../composer/mutationPlan.js';
 
-export function triageActionDefaultSeedV1(action: TriageActionV1): NonNullable<PluginUiNewSessionSeedV1['actionDefault']> {
+export function triageActionDefaultSeedV1(action: TriageActionV1): NonNullable<TriageNewSessionSeedV1['actionDefault']> {
     return { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, configuredActionId: action.actionId,
         label: action.label, launchMode: readTriageActionLaunchModeV1(action) };
 }
@@ -25,7 +25,7 @@ export async function requestTriageNewSessionAuthoringV1(
     host: TriageNewSessionSeedHostV1 & Pick<PluginUiHostApi, 'selectActionInput'>,
     input: Readonly<{
         entries: readonly AuthoringEntry[];
-        actionDefault?: PluginUiNewSessionSeedV1['actionDefault'];
+        actionDefault?: TriageNewSessionSeedV1['actionDefault'];
         attachments?: readonly TriageEntryAttachmentDraftV1[];
         promptText: string | null;
         profileId: string | null;
