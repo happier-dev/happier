@@ -12,7 +12,7 @@ import { createGeneratedPluginWebhookCredentialMaterialV1 } from "./credentialMa
 import { isContributionSetupCompatibleWithRoutingKindV1 } from "./routingKind";
 import { projectPluginWebhookEndpointReadinessV1 } from "./endpointReadiness";
 import { markPluginWebhookAccountChangedInTxV1 } from "./accountChange";
-import type { PluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
+import type { PluginWebhookVerifierV1 } from '@happier-dev/protocol/plugins/contributions/webhooks';
 
 export class PluginWebhookEndpointStoreError extends Error {
     constructor(readonly code:
@@ -32,7 +32,7 @@ export type ResolvedPluginWebhookContributionV1 = Readonly<{
     localId: string;
     routingKind: "accountEndpoint" | "providerInstallation";
     handlerActionLocalId: string;
-    verifierKind: PluginWebhookSignedVerifierKindV1;
+    verifierKind: PluginWebhookVerifierV1['kind'];
 }> | Readonly<{
     pluginId: string;
     localId: string;
@@ -585,7 +585,7 @@ export async function isCurrentPluginWebhookEndpointTargetTxV1(params: Readonly<
 async function readOperationV1(tx: Tx, params: Readonly<{
     accountId: string;
     endpointId: string;
-    operationKind: "revoke" | "retarget";
+    operationKind: "revoke" | "retarget" | "rotateUrl";
     idempotencyKey: string;
     expectedRevision: number;
     target?: Readonly<{ machineId: string; materializationId: string; pluginId: string }>;
@@ -613,6 +613,7 @@ async function readOperationV1(tx: Tx, params: Readonly<{
 }
 
 export async function revokePluginWebhookEndpointV1(params: Readonly<{
+    tx?: Tx;
     accountId: string;
     webhookEndpointId: string;
     expectedRevision: number;
@@ -620,7 +621,7 @@ export async function revokePluginWebhookEndpointV1(params: Readonly<{
     now?: Date;
 }>): Promise<PluginWebhookEndpointRevokeResultV1> {
     const now = params.now ?? new Date();
-    return await inTx(async (tx) => {
+    const persist = async (tx: Tx): Promise<PluginWebhookEndpointRevokeResultV1> => {
         const prior = await readOperationV1(tx, {
             accountId: params.accountId,
             endpointId: params.webhookEndpointId,
@@ -651,10 +652,7 @@ export async function revokePluginWebhookEndpointV1(params: Readonly<{
             });
             if (updated.count !== 1) throw new PluginWebhookEndpointStoreError("idempotency_conflict");
             if (endpoint.routingKind === "accountEndpoint") {
-                await tx.pluginWebhookRoute.updateMany({
-                    where: { id: endpoint.routeId, accountEndpointId: params.webhookEndpointId },
-                    data: { enabled: false, revokedAt: now },
-                });
+                await revokePluginWebhookAccountEndpointRouteV1(tx, endpoint.routeId, params.webhookEndpointId, now);
             }
         }
         const result = PluginWebhookEndpointRevokeResultV1Schema.parse({
@@ -680,7 +678,42 @@ export async function revokePluginWebhookEndpointV1(params: Readonly<{
             });
         }
         return result;
-    }, { isolationLevel: "ReadCommitted" });
+    };
+    return params.tx ? persist(params.tx) : inTx(persist, { isolationLevel: "ReadCommitted" });
+}
+
+/** Shared retirement for endpoint revocation and capability-address replacement. */
+async function revokePluginWebhookAccountEndpointRouteV1(tx: Tx, routeId: string, endpointId: string, now: Date, releaseBinding = false): Promise<void> {
+    await tx.pluginWebhookRoute.updateMany({ where: { id: routeId, accountEndpointId: endpointId },
+        data: { enabled: false, revokedAt: now, ...(releaseBinding ? { accountEndpointId: null } : {}) } });
+}
+
+/** Replace only the URL capability. The stable check keeps its latest admitted receipt. */
+export async function rotatePluginWebhookHeartbeatEndpointV1(params: Readonly<{
+    tx: Tx; accountId: string; webhookEndpointId: string; expectedRevision: number; idempotencyKey: string;
+}>): Promise<Readonly<{ kind: 'rotated'; webhookEndpointId: string; revision: number }>> {
+    const { tx } = params;
+    const prior = await readOperationV1(tx, { accountId: params.accountId, endpointId: params.webhookEndpointId,
+        operationKind: 'rotateUrl', expectedRevision: params.expectedRevision, idempotencyKey: params.idempotencyKey });
+    if (prior) return { kind: 'rotated', webhookEndpointId: params.webhookEndpointId, revision: prior.resultRevision };
+    const endpoint = await tx.pluginWebhookEndpoint.findFirst({ where: { id: params.webhookEndpointId, accountId: params.accountId,
+        setupKind: 'capabilityUrlV1', handlerActionId: null, enabled: true, revokedAt: null },
+        select: { revision: true, routeId: true, pluginId: true } });
+    if (!endpoint) throw new PluginWebhookEndpointStoreError('endpoint_unavailable');
+    if (endpoint.revision !== params.expectedRevision) throw new PluginWebhookEndpointStoreError('idempotency_conflict');
+    const route = await tx.pluginWebhookRoute.create({ data: { opaqueRouteId: `wh_route_${nodeRandomBytes(16).toString('base64url')}`,
+        verifierKind: 'capabilityUrl_v1', routingKind: 'accountEndpoint' } });
+    await revokePluginWebhookAccountEndpointRouteV1(tx, endpoint.routeId, params.webhookEndpointId, new Date(), true);
+    const updated = await tx.pluginWebhookEndpoint.updateMany({ where: { id: params.webhookEndpointId, accountId: params.accountId,
+        revision: params.expectedRevision, enabled: true, revokedAt: null }, data: { routeId: route.id, revision: { increment: 1 } } });
+    if (updated.count !== 1) throw new PluginWebhookEndpointStoreError('idempotency_conflict');
+    await tx.pluginWebhookRoute.update({ where: { id: route.id }, data: { accountEndpointId: params.webhookEndpointId } });
+    const revision = endpoint.revision + 1;
+    await tx.pluginWebhookEndpointOperation.create({ data: { endpointId: params.webhookEndpointId, accountId: params.accountId,
+        operationKind: 'rotateUrl', idempotencyKey: params.idempotencyKey, expectedRevision: params.expectedRevision,
+        resultKind: 'rotated', resultRevision: revision } });
+    if (endpoint.pluginId) await markPluginWebhookAccountChangedInTxV1(tx, { accountId: params.accountId, pluginId: endpoint.pluginId });
+    return { kind: 'rotated', webhookEndpointId: params.webhookEndpointId, revision };
 }
 
 export async function retargetPluginWebhookEndpointV1(params: Readonly<{

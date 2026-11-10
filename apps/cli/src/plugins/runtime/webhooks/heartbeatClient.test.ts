@@ -30,7 +30,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { createPluginWebhookHeartbeatClient } from './heartbeatClient';
 
-const caller = { machineId: 'heartbeat-machine', materializationId: 'health-materialization', pluginId: 'happier.deployments' };
+const caller = { machineId: 'heartbeat-machine', materializationId: 'health-materialization', pluginId: 'happier.machine.services' };
 const endpointId = 'wh_ep_AAECAwQFBgcICQoLDA0ODw';
 const enrollRequest = { caller, sourceInstanceId: 'health-source', checkId: '检查'.repeat(1000), heartbeatContributionId: 'heartbeat' };
 const readRequest = { caller, sourceInstanceId: enrollRequest.sourceInstanceId, checkId: enrollRequest.checkId, webhookEndpointId: endpointId };
@@ -79,7 +79,31 @@ describe('finite heartbeat Home client', () => {
     await removeTempDir(home);
   });
 
+  it('enrolls another capability contribution for a saved check without aliasing its previous endpoint request', async () => {
+    const client = createPluginWebhookHeartbeatClient({ readCredentials: async () => credentials, serverHttpBaseUrl });
+    await client.enroll(enrollRequest);
+    await client.enroll({ ...enrollRequest, heartbeatContributionId: 'health-uptime-kuma' });
+    const first = PluginWebhookEndpointEnsureInputV1Schema.parse(requests[0]?.body &&
+      (requests[0].body as { input: unknown }).input);
+    const second = PluginWebhookEndpointEnsureInputV1Schema.parse(requests[1]?.body &&
+      (requests[1].body as { input: unknown }).input);
+    expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+    expect(second.webhookContribution.localId).toBe('health-uptime-kuma');
+  });
+
   const client = () => createPluginWebhookHeartbeatClient({ readCredentials: async () => credentials, serverHttpBaseUrl });
+
+  it('sends exact lifecycle requests with installation proof and keeps URL-bearing responses out of the service result', async () => {
+    const input = { operation: 'rotate' as const, webhookEndpointId: endpointId, sourceInstanceId: enrollRequest.sourceInstanceId,
+      checkId: enrollRequest.checkId, expectedRevision: 1, idempotencyKey: 'heartbeat-rotate-0001' };
+    reply = (_request, response) => response.end(JSON.stringify({ kind: 'rotated', webhookEndpointId: endpointId, revision: 2 }));
+    expect(await client().manage({ caller, input })).toEqual({ kind: 'rotated', webhookEndpointId: endpointId, revision: 2 });
+    expect(requests).toEqual([expect.objectContaining({ path: '/v1/daemon/plugins/webhooks/heartbeat/manage',
+      authorization: 'Bearer synthetic-heartbeat-account', body: { caller, input }, proof: expect.any(String) })]);
+    reply = (_request, response) => response.end(JSON.stringify({ kind: 'rotated', webhookEndpointId: endpointId,
+      revision: 3, publicUrl: `${serverHttpBaseUrl}/secret-ping-url` }));
+    expect(await client().manage({ caller, input })).toEqual({ kind: 'unavailable', code: 'endpoint_unavailable' });
+  });
 
   it('enrolls and reads at the supplied Home with exact installation-signed bodies and current Account credentials', async () => {
     const transport = client();

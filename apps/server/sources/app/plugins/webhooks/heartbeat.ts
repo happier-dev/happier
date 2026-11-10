@@ -10,13 +10,14 @@ import { resolveCurrentPluginWebhookTargetTxV1 } from './currentTarget';
 import { createPluginWebhookCheckIdDigestV1 } from './checkIdDigest';
 
 /** Current capability endpoint admission shared by receipt ingress and the host's finite read. */
-async function resolveHeartbeatEndpointTxV1(params: Readonly<{
+export async function resolveHeartbeatEndpointTxV1(params: Readonly<{
     tx: Tx;
     serverIdentityId: string;
     routeId?: string;
     accountId?: string;
     caller?: PluginMachineMaterializationRefV1;
     input?: PluginWebhookHeartbeatReadInputV1;
+    includeRevoked?: boolean;
 }>) {
     const endpoint = await params.tx.pluginWebhookEndpoint.findFirst({
         where: {
@@ -27,12 +28,15 @@ async function resolveHeartbeatEndpointTxV1(params: Readonly<{
             ...(params.caller ? { pluginId: params.caller.pluginId, targetMachineId: params.caller.machineId,
                 targetMaterializationId: params.caller.materializationId } : {}),
             setupKind: 'capabilityUrlV1', routingKind: 'accountEndpoint', handlerActionId: null,
-            enabled: true, revokedAt: null, releasedAt: null,
-            route: { enabled: true, revokedAt: null, verifierKind: 'capabilityUrl_v1' },
+            releasedAt: null,
+            ...(params.includeRevoked ? { OR: [
+                { enabled: true, revokedAt: null, route: { enabled: true, revokedAt: null, verifierKind: 'capabilityUrl_v1' } },
+                { enabled: false, revokedAt: { not: null }, route: { verifierKind: 'capabilityUrl_v1' } },
+            ] } : { enabled: true, revokedAt: null, route: { enabled: true, revokedAt: null, verifierKind: 'capabilityUrl_v1' } }),
         },
         select: { id: true, accountId: true, pluginId: true, webhookContributionId: true, sourceInstanceId: true,
             checkId: true, lastAcceptedAt: true, targetMachineId: true, targetMachineInstallationId: true,
-            targetMaterializationId: true, targetPluginVersion: true },
+            targetMaterializationId: true, targetPluginVersion: true, revision: true, revokedAt: true },
     });
     if (!endpoint?.accountId || !endpoint.pluginId || !endpoint.webhookContributionId || !endpoint.sourceInstanceId
         || !endpoint.checkId || !endpoint.targetMachineId || !endpoint.targetMachineInstallationId
