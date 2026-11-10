@@ -7,6 +7,7 @@ import {
   formatSessionOffline,
   formatSessionOnline,
   summarizeMessagesForVoiceHuman,
+  summarizeAssistantMessagesForVoiceHuman,
   summarizeAgentRequestForVoiceHuman,
 } from './contextFormatters';
 import type { Message } from "@happier-dev/session-core/messages";
@@ -250,16 +251,15 @@ function filterMessagesForVoiceUpdate(messages: Message[], policy: VoiceSessionU
     .slice(-policy.snippetsMaxMessages);
 }
 
-function shouldInterruptForAssistantReply(
+function canInterruptForAssistantReply(
   address: SessionAddress,
-  messages: Message[],
   policy: VoiceSessionUpdatePolicy,
   shareRecentMessages: boolean,
 ): boolean {
   if (!shareRecentMessages) return false;
   if (!isPrimaryActionSession(address)) return false;
   if (policy.level !== 'summaries' && policy.level !== 'snippets') return false;
-  return summarizeMessagesForVoiceHuman(Array.isArray(messages) ? messages : [], getVoiceContextPrefs(address)) !== null;
+  return true;
 }
 
 export const voiceHooks = {
@@ -381,6 +381,13 @@ export const voiceHooks = {
     const level = policy.level;
     if (level === 'none') return;
 
+    // Local speech has one assistant-text delivery point: the native Ready
+    // observation. Tool-result announcements keep their immediate path.
+    if (sink.announceAssistantText) {
+      messages = messages.filter(message => message.kind !== 'agent-text');
+      if (messages.length === 0) return;
+    }
+
     // "shareRecentMessages" gates transcript/snippet sharing; activity updates remain allowed.
     const shareRecentMessages = readVoicePrivacySettings(storage.getState().settings).shareRecentMessages;
 
@@ -390,10 +397,11 @@ export const voiceHooks = {
     }
 
     reportSession(sink, address);
-    if (shouldInterruptForAssistantReply(address, messages, policy, shareRecentMessages)) {
+    if (canInterruptForAssistantReply(address, policy, shareRecentMessages)) {
       const filtered = filterMessagesForVoiceUpdate(messages, policy);
-      if (filtered.length > 0) {
-        announceAssistantText(sink, sessionId, summarizeMessagesForVoiceHuman(filtered, getVoiceContextPrefs(address)));
+      const summary = summarizeMessagesForVoiceHuman(filtered, getVoiceContextPrefs(address));
+      if (summary) {
+        announceAssistantText(sink, sessionId, summary);
         reportAnnouncedSessionUpdate(sink, sessionId, formatNewMessages(address, filtered, getVoiceContextPrefs(address)));
         return;
       }
@@ -445,13 +453,22 @@ export const voiceHooks = {
     if (!sink || !sinkAcceptsHostAuthoredContext(sink, 'session_context')) return;
 
     reportSession(sink, address);
-    const recentMessages = Array.isArray(messages) && messages.length > 0
-      ? messages
-      : readStoredSessionMessagesForAddress(storage.getState(), address, {
-        activeServerId: address.serverId,
-      });
+    const storedMessages = readStoredSessionMessagesForAddress(storage.getState(), address, {
+      activeServerId: address.serverId,
+    });
+    const recentMessages = Array.isArray(messages) && messages.length > 0 ? messages : storedMessages;
     const formatterPrefs = getVoiceContextPrefs(address);
     const privacy = readVoicePrivacySettings(storage.getState().settings);
+    if (sink.announceAssistantText) {
+      if (!canInterruptForAssistantReply(address, resolvePolicy(address), privacy.shareRecentMessages)) return;
+      // Ready may carry only its event, with the completed response already
+      // materialized by an earlier Messages batch. Speak that known response;
+      // never ask the target to execute a confirmation check.
+      const completion = summarizeAssistantMessagesForVoiceHuman(
+        [...storedMessages, ...(messages ?? [])], formatterPrefs);
+      announceAssistantText(sink, sessionId, completion);
+      return;
+    }
     reportAnnouncedSessionUpdate(sink, sessionId, formatReadyEvent(address, recentMessages, {
       ...formatterPrefs,
       // Ready announcements are not snippet serialization. Preserve the raw

@@ -417,8 +417,9 @@ describe('voiceHooks sink routing', () => {
       text: 'The coding assistant finished the review.',
       createdAt: 1,
     } as any]);
-    // Ready catch-up stays with daemon turn admission, including after selection changes.
-    expect(announcementTexts('voice-conversation-1')).toEqual([]);
+    // The connected owner's completion is spoken without another Agent turn,
+    // including after the selected provider changes.
+    expect(announcementTexts('voice-conversation-1')).toEqual(['The coding assistant finished the review.']);
     expect(sendTextMessage).not.toHaveBeenCalled();
     expect(sendContextualUpdate).not.toHaveBeenCalled();
   });
@@ -449,7 +450,10 @@ describe('voiceHooks sink routing', () => {
       updatedAt: 1,
     });
 
-    voiceHooks.onReady({ serverId: TEST_SERVER_ID, sessionId: 's2' });
+    voiceHooks.onReady({ serverId: TEST_SERVER_ID, sessionId: 's2' }, [{
+      kind: 'agent-text', id: 'other-completion', localId: null, createdAt: 2, text: 'Unrelated background result.',
+    }]);
+    expect(announcementTexts('voice-conversation-1')).toEqual([]);
     expect(localProviderTurns).not.toHaveBeenCalled();
   });
 
@@ -501,11 +505,14 @@ describe('voiceHooks sink routing', () => {
       updatedAt: 1,
     });
 
-    voiceHooks.onMessages({ serverId: TEST_SERVER_ID, sessionId: 's1' }, [{
+    const completion = [{
       kind: 'agent-text',
       text: 'The coding assistant needs approval.',
       createdAt: 1,
-    } as any]);
+    } as any];
+    voiceHooks.onMessages({ serverId: TEST_SERVER_ID, sessionId: 's1' }, completion);
+    expect(announcementTexts('voice-conversation-1')).toEqual([]);
+    voiceHooks.onReady({ serverId: TEST_SERVER_ID, sessionId: 's1' }, completion);
 
     expect(announcementTexts('voice-conversation-1')).toEqual(expect.arrayContaining([expect.stringContaining('The coding assistant needs approval.')]));
     expect(localProviderTurns).not.toHaveBeenCalled();
@@ -558,7 +565,7 @@ describe('voiceHooks sink routing', () => {
       updatedAt: 1,
     });
 
-    voiceHooks.onMessages({ serverId: TEST_SERVER_ID, sessionId: 's1' }, [{
+    voiceHooks.onReady({ serverId: TEST_SERVER_ID, sessionId: 's1' }, [{
       kind: 'agent-text',
       text: 'What do you want handled in this workspace?',
       createdAt: 1,
@@ -581,7 +588,7 @@ describe('voiceHooks sink routing', () => {
       updatedAt: 1,
     });
 
-    voiceHooks.onMessages({ serverId: TEST_SERVER_ID, sessionId: 's1' }, [{
+    voiceHooks.onReady({ serverId: TEST_SERVER_ID, sessionId: 's1' }, [{
       kind: 'agent-text',
       text: 'Choose one of the onboarding options.',
       createdAt: 1,

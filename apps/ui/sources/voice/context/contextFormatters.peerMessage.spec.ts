@@ -34,4 +34,14 @@ describe('voice context (peer deliveries)', () => {
     it('never summarizes a delivered report as the latest assistant reply', () => {
         expect(summarizeAssistantMessagesForVoiceHuman([reply, report])).toBe('The fix is ready.');
     });
+
+    it('does not present pre-command progress as a completed response after Stop', () => {
+        const stopped: Message = { kind: 'tool-call', id: 'command', localId: null, createdAt: 2, children: [],
+            tool: { name: 'Bash', state: 'completed', input: {}, createdAt: 2, startedAt: 2,
+                completedAt: 3, description: null,
+                permission: { id: 'request', status: 'denied', decision: 'abort' } } };
+        expect(summarizeAssistantMessagesForVoiceHuman([reply, stopped])).toBeNull();
+        expect(summarizeAssistantMessagesForVoiceHuman([reply, stopped, { ...reply, id: 'outcome',
+            createdAt: 4, text: 'The command was stopped.' }])).toBe('The command was stopped.');
+    });
 });

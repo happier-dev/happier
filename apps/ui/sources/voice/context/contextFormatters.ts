@@ -227,6 +227,13 @@ export function summarizeAssistantMessagesForVoiceHuman(
         .at(-1);
 
     if (!latestAssistantMessage) return null;
+    // A Ready observation can contain no new text (for example after Stop).
+    // Earlier progress is not an outcome of the later command or user turn.
+    const hasLaterWork = messages.some(message => isAgentThreadTextConversationTurnMeta(message.meta)
+        && (message.kind === 'user-text' ? message.createdAt > latestAssistantMessage.createdAt
+            : message.kind === 'tool-call'
+                && Math.max(message.createdAt, message.tool.completedAt ?? message.createdAt) > latestAssistantMessage.createdAt));
+    if (hasLaterWork) return null;
     return resolved.voiceShareFilePaths
         ? latestAssistantMessage.text
         : redactVoicePathLikeString(latestAssistantMessage.text);
