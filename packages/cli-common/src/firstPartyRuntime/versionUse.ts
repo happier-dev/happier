@@ -11,8 +11,10 @@
 export const FIRST_PARTY_VERSION_USE_SHELL_FUNCTIONS = `observe_version_use() {
   if ! version_commands="$(ps -A -ww -o args= 2>&1)"; then return 1; fi
   [ -n "$version_commands" ] || return 1
-  if version_usage="$(lsof -Fn +D "$1" 2>&1)"; then
-    [ -n "$version_usage" ] || return 1
+  # +D expands to individual search terms; unused files are expected, not
+  # observation failures. -Q ignores those misses while preserving real errors.
+  if version_usage="$(lsof -Q -Fn +D "$1" 2>&1)"; then
+    [ -z "$version_usage" ] && return 0
     printf '%s\\n' "$version_usage" | while IFS= read -r line; do
       case "$line" in
         p*) case "\${line#p}" in ''|*[!0-9]*) exit 1;; esac;;

@@ -9,7 +9,7 @@ import { pruneRetainedVersions } from './pruneRetainedVersions.js';
 describe('installed payload retention', () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it.skipIf(process.platform === 'win32').each(['support.so', ''])('takes one native census per prune while protecting scripts and open payload paths: %s', async (openRelativePath) => {
+  it.skipIf(process.platform === 'win32').each(['support.so', '', null])('takes one native census per prune while protecting scripts and open payload paths: %s', async (openRelativePath) => {
     const home = await mkdtemp(join(tmpdir(), 'happier-version-census-'));
     const versions = join(home, 'cli', 'versions');
     const ids = ['6.0.0', '5.0.0', '4.0.0', '3.0.0', '2.0.0', '1.0.0'];
@@ -19,11 +19,11 @@ describe('installed payload retention', () => {
       await mkdir(tools);
       // Native commands are the OS boundary; the shell, policy and removals stay real.
       await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf "ps\\n" >> "$census_log"\nprintf "%s\\n" "external-node $script_path"\n', { mode: 0o755 });
-      await writeFile(join(tools, 'lsof'), '#!/bin/sh\nprintf "lsof\\n" >> "$census_log"\nprintf "p1234\\nn%s\\n" "$open_path"\n', { mode: 0o755 });
+      await writeFile(join(tools, 'lsof'), '#!/bin/sh\nprintf "lsof\\n" >> "$census_log"\nif [ -n "$open_path" ]; then printf "p1234\\nn%s\\n" "$open_path"; fi\n# +D includes unused files: lsof reports a failed search unless -Q is selected.\ncase " $* " in *" -Q "*) exit 0;; *) exit 1;; esac\n', { mode: 0o755 });
       vi.stubEnv('PATH', tools);
       vi.stubEnv('census_log', censusLog);
       vi.stubEnv('script_path', join(versions, '1.0.0', 'entry.mjs'));
-      vi.stubEnv('open_path', join(versions, '2.0.0', openRelativePath));
+      vi.stubEnv('open_path', openRelativePath === null ? '' : join(versions, '2.0.0', openRelativePath));
       for (const id of ids) await mkdir(join(versions, id), { recursive: true });
       await writeFile(join(versions, '1.0.0', 'entry.mjs'), 'export {};');
       if (openRelativePath) await writeFile(join(versions, '2.0.0', openRelativePath), 'support');
@@ -34,8 +34,8 @@ describe('installed payload retention', () => {
         onWarning: message => { warnings.push(message); },
       });
       expect((await readFile(censusLog, 'utf8')).trim().split('\n')).toEqual(['ps', 'lsof']);
-      expect(result).toEqual({ keptVersionIds: ['6.0.0', '5.0.0'], prunedVersionIds: ['4.0.0', '3.0.0'], skippedVersionIds: ['2.0.0', '1.0.0'] });
-      expect((await readdir(versions)).sort()).toEqual(['1.0.0', '2.0.0', '5.0.0', '6.0.0']);
+      expect(result).toEqual({ keptVersionIds: ['6.0.0', '5.0.0'], prunedVersionIds: openRelativePath === null ? ['4.0.0', '3.0.0', '2.0.0'] : ['4.0.0', '3.0.0'], skippedVersionIds: openRelativePath === null ? ['1.0.0'] : ['2.0.0', '1.0.0'] });
+      expect((await readdir(versions)).sort()).toEqual(openRelativePath === null ? ['1.0.0', '5.0.0', '6.0.0'] : ['1.0.0', '2.0.0', '5.0.0', '6.0.0']);
       expect(warnings).toEqual([]);
     } finally { await rm(home, { recursive: true, force: true }); }
   });
