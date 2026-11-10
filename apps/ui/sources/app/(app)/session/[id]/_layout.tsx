@@ -13,8 +13,23 @@ import { useSessionRouteQualification } from '@/hooks/session/useSessionRouteQua
 import { SessionViewerDestinationScope } from '@/components/sessions/viewer/SessionViewerDestinationScope';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 
+type SessionLayoutParams = Record<string, string | string[] | undefined>;
+
+/**
+ * A route's query as strings only. Expo also hands a layout navigator values (a native deep link's nested
+ * `params` object), which are not query and cannot be written back into a URL.
+ */
+function readStringRouteParams(params: Readonly<Record<string, unknown>> | undefined, into: SessionLayoutParams = {}): SessionLayoutParams {
+    for (const [key, value] of Object.entries(params ?? {})) {
+        if (typeof value === 'string' || (Array.isArray(value) && value.every(part => typeof part === 'string'))) {
+            into[key] = value;
+        }
+    }
+    return into;
+}
+
 function useSessionLayoutParams() {
-    const layoutParams = useLocalSearchParams<Record<string, string | string[] | undefined>>();
+    const layoutParams = readStringRouteParams(useLocalSearchParams<Record<string, unknown>>());
     const hosted = useDestinationInstanceKey() !== null;
     // The retained destination already supplies its leaf's exact params. Expo's
     // outer branch describes another mounted route and must not lend its Home.
@@ -25,15 +40,11 @@ function useSessionLayoutParams() {
     // Read only this layout's branch: a retained sibling must never lend its Home.
     // eslint-disable-next-line react-hooks/rules-of-hooks -- only Expo layouts have a native route branch.
     const childNavigationState = useNavigationState((state) => state.routes.find((candidate) => candidate.key === route.key)?.state);
-    const childParams: Record<string, string | string[] | undefined> = {};
+    const childParams: SessionLayoutParams = {};
     let childState = childNavigationState;
     while (childState?.routes.length) {
         const child = childState.routes[childState.index ?? childState.routes.length - 1];
-        for (const [key, value] of Object.entries(child.params ?? {})) {
-            if (typeof value === 'string' || (Array.isArray(value) && value.every(part => typeof part === 'string'))) {
-                childParams[key] = value;
-            }
-        }
+        readStringRouteParams(child.params as Readonly<Record<string, unknown>> | undefined, childParams);
         childState = child.state;
     }
     return { ...layoutParams, ...childParams, serverId: readSessionRouteServerId(childParams) ?? layoutParams.serverId };

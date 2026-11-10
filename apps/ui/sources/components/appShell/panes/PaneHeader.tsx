@@ -3,7 +3,7 @@ import { useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurfa
 import * as React from 'react';
 import { Platform, View, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1, happierPageTextMetrics, useHappierMaterialColorResolver, useHappierTextPresentation } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PAGE_METRICS, HAPPIER_PRESS_FEEDBACK_V1, happierPageTextMetrics, useHappierMaterialColorResolver, useHappierTextPresentation } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiDetailsPanePresentation } from '@happier-dev/plugin-ui/advanced';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -420,7 +420,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 0,
         position: 'relative',
         zIndex: 1,
-        paddingHorizontal: HEADER_BAND_HORIZONTAL_PADDING_PX,
+        // A phone's large title is page text, not the band's chrome: it stands on the page text line (18), with
+        // the page's title, purpose and section labels (phone lab: bare text on 18).
+        paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
         paddingTop: theme.space.s12,
         paddingBottom: theme.space.s12,
         gap: theme.space.s8,

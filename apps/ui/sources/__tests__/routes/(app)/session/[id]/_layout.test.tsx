@@ -167,6 +167,16 @@ describe('ordinary session route layout', () => {
         });
     });
 
+    it('qualifies a native deep link whose route params carry a navigator object, keeping only its query strings', async () => {
+        // A native deep link hands the layout expo-router's nested navigator params as an object beside the query.
+        routeParams.value = { ...routeParams.value, params: { screen: 'info' } as unknown as string, tab: 'runs' };
+        seedHomes(['home-b']);
+        const { default: Layout } = await import('@/app/(app)/session/[id]/_layout');
+        const screen = await renderScreen(layoutTree(Layout));
+        expect(screen.findAllByType(SessionInvalidLinkFallback)).toHaveLength(0);
+        expect(routeRuntime.replace).toHaveBeenCalledWith('/session/session-1?serverId=home-b&tab=runs');
+    });
+
     it('qualifies a fresh direct route on its sole Home before mounting child hydration', async () => {
         seedHomes(['home-b']);
         const { default: Layout } = await import('@/app/(app)/session/[id]/_layout');
