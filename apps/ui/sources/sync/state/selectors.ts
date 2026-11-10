@@ -3,6 +3,7 @@ import type { Message } from '@happier-dev/session-core/messages';
 import { prepareTranscriptMessageBody, readableMessageText } from '@/components/sessions/transcript/messageDisplayText';
 import { projectMarkdownFindText } from '@/components/markdown/rendering/markdownFindProjection';
 import { t } from '@/text';
+import { readConversationTurnOriginV1FromMessageMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 
 type SessionMetadataCarrier = Readonly<{
     metadata?: unknown;
@@ -21,12 +22,19 @@ function normalizeTransientTitleText(value: unknown): string | null {
     return normalized.length > 0 ? normalized : null;
 }
 
+export function formatSessionFirstMessageTitle(text: string, voice: boolean): string | null {
+    const title = normalizeTransientTitleText(projectMarkdownFindText(text).text);
+    if (!title || !voice || title !== title.toLocaleUpperCase() || title === title.toLocaleLowerCase()) return title;
+    return title.charAt(0).toLocaleUpperCase() + title.slice(1).toLocaleLowerCase();
+}
+
 function readFirstUserMessageTitle(messages: ReadonlyArray<Message> | undefined): string | null {
     if (!messages) return null;
     for (const message of messages) {
         if (message.kind !== 'user-text') continue;
         const text = prepareTranscriptMessageBody(message).text;
-        return normalizeTransientTitleText(text === null ? null : projectMarkdownFindText(text).text);
+        return text === null ? null : formatSessionFirstMessageTitle(text,
+            readConversationTurnOriginV1FromMessageMeta(message.meta)?.channel === 'realtime_conversation');
     }
     return null;
 }

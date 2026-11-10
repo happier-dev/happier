@@ -1,3 +1,4 @@
+import type { VoiceAgentSelectionObserver } from '@/voice/binding/voiceConversationBindingTypes';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { createAttemptGuard } from '@/utils/timing/attemptGuard';
 import { storage } from '@/sync/domains/state/storage';
@@ -64,7 +65,7 @@ import {
 } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
 import { voiceSessionBindingManager } from '@/voice/binding/voiceConversationBindingRuntime';
-import { appendVoiceConversationAssistantText } from '@/voice/transcript/voiceConversationTranscript';
+import { persistVoiceConversationSpokenAssistantText } from '@/voice/transcript/voiceConversationTranscript';
 import { markVoiceConversationAssistantTurnInterrupted } from '@/voice/transcript/voiceTurnInterruption';
 import { createTtsPlaybackClock } from '@/voice/output/ttsPlaybackTiming';
 import { warmDaemonVoiceInferenceOnVoiceHomeAttach } from '@/voice/runtime/daemonInference/warmDaemonVoiceInferenceOnVoiceHomeAttach';
@@ -517,6 +518,7 @@ async function ensureLocalConversationBindingForSession(
   requestedTargetSessionAddress?: SessionAddress | null,
   conversationSelection?: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection,
   onConversationSelection?: (selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection) => void,
+  onAgentSelection?: VoiceAgentSelectionObserver,
 ): Promise<boolean> {
   const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
   if (adapterId !== 'local_conversation' || (config?.conversationMode ?? 'direct_session') !== 'agent') {
@@ -562,6 +564,7 @@ async function ensureLocalConversationBindingForSession(
       requestedTargetServerId: requestedTargetSessionAddress?.serverId,
       conversationSelection,
       onConversationSelection,
+      onAgentSelection,
       signal: preparationController.signal,
     });
     await voiceAgentSessions.prepareAgentSelection(controlSessionId, preparationController.signal);
@@ -843,7 +846,15 @@ async function readNativeTurnMessage(
   const sessionId = captureAttempt.controlSessionId;
   const isCurrent = () => isPromptCurrent() && isCaptureAttemptCurrent(admission, captureAttempt);
   if (!isCurrent()) return;
-  const assistantEntryId = projectLocalVoiceAgentAssistantText(sessionId, text);
+  let assistantEntryId: string | null;
+  try {
+    assistantEntryId = await persistLocalVoiceAgentAssistantText(sessionId, text);
+  } catch (error) {
+    if (isCurrent()) await surfaceLocalVoiceTurnFailure(sessionId,
+      new VoiceTextTurnError('provider_error', 'voice_transcript_persist_failed', error), admission, captureAttempt);
+    return;
+  }
+  if (!isCurrent()) return;
   const { config } = resolveLocalVoiceAdapterSettings(captureAttempt.settings);
   if (config?.tts?.autoSpeakReplies === false) return;
   // Stop duplex recognition during readout, so its own speech cannot
@@ -1263,7 +1274,7 @@ export function appendLocalVoiceAgentAutomaticUiContextUpdate(sessionId: string,
   voiceAgentSessions.appendAutomaticUiContextUpdate(resolvedSessionId, update);
 }
 
-function projectLocalVoiceAgentAssistantText(sessionId: string, text: string): string | null {
+async function persistLocalVoiceAgentAssistantText(sessionId: string, text: string): Promise<string | null> {
   const trimmed = String(text ?? '').trim();
   if (!trimmed) return null;
 
@@ -1274,7 +1285,7 @@ function projectLocalVoiceAgentAssistantText(sessionId: string, text: string): s
   const conversationSessionId = typeof binding?.conversationSessionId === 'string' ? binding.conversationSessionId.trim() : '';
   if (!conversationSessionId) return null;
 
-  return appendVoiceConversationAssistantText({
+  return await persistVoiceConversationSpokenAssistantText({
     conversationSessionId,
     text: trimmed,
   });
@@ -1286,7 +1297,7 @@ export function announceLocalVoiceAgentAssistantText(sessionId: string, text: st
   const admission = readCaptureAdmission(controlSessionId);
   const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId });
   if (!admission || binding?.transcriptMode !== 'native_session') {
-    projectLocalVoiceAgentAssistantText(sessionId, text);
+    fireAndForget(persistLocalVoiceAgentAssistantText(sessionId, text), { tag: 'voice.assistantAnnouncement.persist' });
     return;
   }
   const captureAttempt = admission.captureAttempt;
@@ -1455,6 +1466,7 @@ export async function toggleLocalVoiceTurn(
   requestedTargetSessionAddress?: SessionAddress | null,
   conversationSelection?: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection,
   onConversationSelection?: (selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection) => void,
+  onAgentSelection?: VoiceAgentSelectionObserver,
 ): Promise<void> {
   const initialSettings = storage.getState().settings as any;
   if (!isLocalVoiceProviderSelected(initialSettings)) {
@@ -1534,7 +1546,8 @@ export async function toggleLocalVoiceTurn(
           beginAutomaticCurrentUiContextUpdates(controlSessionId);
           const text = typeof assistantText === 'string' ? assistantText.trim() : '';
           if (text && !await activeNativePermissionInput?.waitForPendingReadout()) {
-            const assistantEntryId = projectLocalVoiceAgentAssistantText(controlSessionId, text);
+            const assistantEntryId = await persistLocalVoiceAgentAssistantText(controlSessionId, text);
+            if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
             await speakAssistantText({
               sessionId,
               text,
@@ -1626,7 +1639,7 @@ export async function toggleLocalVoiceTurn(
       await inFlight.catch(() => {});
     }
 
-    if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress, conversationSelection, onConversationSelection)) {
+    if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress, conversationSelection, onConversationSelection, onAgentSelection)) {
       return;
     }
     prewarmDaemonVoiceInferenceOnConnect({ settings });
@@ -1648,7 +1661,7 @@ export async function toggleLocalVoiceTurn(
     const precedingTurn = inFlight;
     const settings = storage.getState().settings as any;
     const { config } = resolveLocalVoiceAdapterSettings(settings);
-    if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress, conversationSelection, onConversationSelection)) {
+    if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress, conversationSelection, onConversationSelection, onAgentSelection)) {
       return;
     }
     prewarmDaemonVoiceInferenceOnConnect({ settings });

@@ -359,6 +359,7 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
         continuation?: VoiceContinuationProvenance;
         localId?: string;
         createdAt?: number;
+        persistBeforeProjection?: boolean;
     }>): NormalizedMessage | null => {
         const conversationSessionId = normalizeNonEmptyString(params.conversationSessionId);
         // The ordinary transcript format requires a text body. Its non-relative
@@ -384,7 +385,7 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
         if (!turn) lastLocalProjectionCreatedAt = createdAt;
         const localSequence = turn ? null : ++localProjectionSequence;
         const canonicalItem = params.canonicalItem ?? null;
-        const id = params.continuation ? params.localId ?? `voice-note:${randomUUID()}` : canonicalItem && params.role !== 'note'
+        const id = params.localId ?? (params.continuation ? `voice-note:${randomUUID()}` : canonicalItem && params.role !== 'note'
             ? deriveCanonicalVoiceTranscriptEntryId({
                 attemptIdentity: canonicalItem.attemptIdentity,
                 itemId: canonicalItem.itemId,
@@ -396,7 +397,7 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 text,
                 turn,
                 localSequence,
-            });
+            }));
         const message: NormalizedMessage = params.role === 'user'
             ? {
                 id,
@@ -422,8 +423,8 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                         ? buildVoiceTranscriptNoteMeta(params.continuation ? { continuation: params.continuation } : undefined)
                         : buildVoiceTurnMeta(turn),
         };
-        if (params.continuation) {
-            // No optimistic control note: the other device reacts only to its ordinary
+        if (params.continuation || params.persistBeforeProjection) {
+            // Durable host text enters the timeline only through its ordinary
             // acknowledged, Account-encrypted transcript row from the sync owner.
             return message;
         }
@@ -593,6 +594,29 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
     }
 
     return {
+        persistSpokenAssistantText: async (params: Readonly<{ conversationSessionId: string; text: string }>): Promise<NormalizedMessage | null> => {
+            const conversationSessionId = normalizeNonEmptyString(params.conversationSessionId);
+            if (!conversationSessionId) return null;
+            const text = params.text.trim();
+            const message = projectTextMessage({ conversationSessionId, text, role: 'assistant',
+                localId: `voice-spoken:${randomUUID()}`, persistBeforeProjection: true });
+            if (!message) return null;
+            try {
+                if (!deps.persistFinal || !message.localId) throw new Error('voice_transcript_persist_failed');
+                await deps.persistFinal({
+                    sessionId: conversationSessionId,
+                    localId: message.localId,
+                    createdAt: message.createdAt,
+                    messageRole: 'agent',
+                    rawRecord: buildRealtimeConversationRawRecord({ id: message.id, role: 'assistant', text }),
+                });
+                return message;
+            } catch (error) {
+                nameCanonicalTranscriptDrop(conversationSessionId, 'transcript_persist_failed',
+                    readSafeVoiceRuntimeFailureCode(error) ?? 'voice_transcript_persist_failed');
+                throw error;
+            }
+        },
         projectUserText: (params: Readonly<{ conversationSessionId: string; text: string; turn?: VoiceTranscriptTurn | null }>) =>
             projectTextMessage({ ...params, role: 'user' }),
         projectAssistantText: (params: Readonly<{ conversationSessionId: string; text: string; turn?: VoiceTranscriptTurn | null }>) =>
@@ -779,6 +803,12 @@ export const voiceTranscriptProjector = createVoiceTranscriptProjector({
         return import('@/sync/sync').then(({ sync }) => {
             assertContinuationHome();
             return sync.persistSessionTranscriptMessage(input);
-        }).then(() => undefined);
+        }).then(() => {
+            if (input.rawRecord.role === 'user' && input.rawRecord.content.type === 'text') {
+                const text = input.rawRecord.content.text;
+                fireAndForget(import('@/voice/persistence/voiceConversationTitle').then(({ publishVoiceConversationFirstHumanTitle }) =>
+                    publishVoiceConversationFirstHumanTitle(input.sessionId, text)), { tag: 'voice.firstHumanTitle' });
+            }
+        });
     },
 });

@@ -10,6 +10,7 @@ import {
   registerLocalVoiceEngineHarnessHooks, sessionRpcWithServerScope,
   waitForLocalVoiceBoundaryEvent, warmLocalVoiceEngineHarnessGraph,
   applyLocalVoiceSessionAgentState,
+  readLocalVoiceHttpRequests,
 } from './localVoiceEngine.testHarness';
 
 const restoreLoader = await warmLocalVoiceEngineHarnessGraph();
@@ -108,7 +109,8 @@ describe('native Voice permission input', () => {
     } } });
     const asrStarted = createDeferred<void>();
     const asrHeld = createDeferred<string>();
-    localVoiceSpeechTranscription.mockResolvedValueOnce('Write the requested file.');
+    localVoiceSpeechTranscription.mockResolvedValueOnce(label === 'RUN111 short refusal transcript'
+      ? 'WRITE THE REQUESTED FILE.' : 'Write the requested file.');
     if (label !== 'an ordinary turn' && !emptyFollowUp && !providerFailure && !uiAnswer) {
       localVoiceSpeechTranscription.mockImplementationOnce(async () => {
         asrStarted.resolve();
@@ -216,6 +218,25 @@ describe('native Voice permission input', () => {
       if (!binding) throw new Error('Expected native Voice conversation');
       expect(binding.transcriptMode).toBe('native_session');
       expect(lifecycle.getSnapshot()).toMatchObject({ mode: 'thinking' });
+      if (label === 'RUN111 short refusal transcript') {
+        const { readSessionOwnerMetadataView } = await import('@/sync/domains/session/readSessionOwnerMetadataView');
+        const { getSessionName } = await import('@/utils/sessions/sessionUtils');
+        await vi.waitFor(() => expect(readSessionOwnerMetadataView(storage.getState().sessions[binding.conversationSessionId]!))
+          .toMatchObject({ summary: { text: 'Write the requested file.' } }));
+        expect(getSessionName(storage.getState().sessions[binding.conversationSessionId]!, localVoiceHomeId)).toBe('Write the requested file.');
+        const { publishVoiceConversationFirstHumanTitle } = await import('@/voice/persistence/voiceConversationTitle');
+        const titleWrites = () => readLocalVoiceHttpRequests().filter(request => request.method === 'PATCH'
+          && request.path === `/v2/sessions/${binding.conversationSessionId}`).length;
+        const writesBeforeNextTurn = titleWrites();
+        await publishVoiceConversationFirstHumanTitle(binding.conversationSessionId, 'A DIFFERENT FOLLOW-UP.');
+        expect(titleWrites()).toBe(writesBeforeNextTurn);
+        const { sync } = await import('@/sync/sync');
+        const { publishDisplayTitleMetadataMutation } = await import('@/sync/state/displayTitlePublish');
+        await publishDisplayTitleMetadataMutation({ sessionId: binding.conversationSessionId, title: 'My chosen call name',
+          updateSessionMetadataWithRetry: (id, updater) => sync.patchSessionMetadataWithRetry(id, updater, { serverId: localVoiceHomeId }) });
+        await publishVoiceConversationFirstHumanTitle(binding.conversationSessionId, 'DO NOT REPLACE MY NAME.');
+        expect(getSessionName(storage.getState().sessions[binding.conversationSessionId]!, localVoiceHomeId)).toBe('My chosen call name');
+      }
       expect(await executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} }))
         .toMatchObject({ status: 'unavailable', code: 'voice_commit_unavailable' });
       if (label === 'an ordinary turn' || emptyFollowUp) {
@@ -334,6 +355,14 @@ describe('native Voice permission input', () => {
         'A permission in the live target must be read aloud').toContain('permission'));
       await waitForLocalVoiceBoundaryEvent('speech', precedingSpeechCount + 1);
       expect(expoSpeechSpeak.mock.calls[precedingSpeechCount]?.[0]).toContain('permission');
+      if (label === 'RUN111 command refusal') {
+        const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
+        const spoken = expoSpeechSpeak.mock.calls[precedingSpeechCount]?.[0];
+        const transcript = readStoredSessionMessages(storage.getState(), binding.conversationSessionId);
+        expect(transcript.find(message => message.kind === 'agent-text' && message.text === spoken),
+          'A spoken permission question must be an acknowledged saved conversation row')
+          .toMatchObject({ seq: expect.any(Number) });
+      }
       if (readoutFailure) {
         await vi.waitFor(() => expect(lifecycle.getSnapshot()).toMatchObject({
           status: 'disconnected', errorCode: 'tts_failed', errorRecoveryAction: 'retry',

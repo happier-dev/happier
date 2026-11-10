@@ -45,12 +45,12 @@ export function appendVoiceConversationUserText(params: Readonly<{
     projector.projectUserText(params);
 }
 
-export function appendVoiceConversationAssistantText(params: Readonly<{
+/** Host-spoken finals share the acknowledged Session timeline with native Agent turns. */
+export async function persistVoiceConversationSpokenAssistantText(params: Readonly<{
     conversationSessionId: string;
     text: string;
-    turn?: VoiceTranscriptTurn | null;
-}>): string | null {
-    const message = projector.projectAssistantText(params);
+}>): Promise<string | null> {
+    const message = await projector.persistSpokenAssistantText(params);
     return message?.id ?? message?.localId ?? null;
 }
 

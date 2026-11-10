@@ -6,7 +6,7 @@ import { toSpeechText } from '@happier-dev/protocol/voice/speechText';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
 import { captureAssistantTextMessageBaseline, waitForNextAssistantTextMessageEntry } from '@/voice/runtime/waitForNextAssistantTextMessage';
 import {
-  appendVoiceConversationAssistantText,
+  persistVoiceConversationSpokenAssistantText,
   appendVoiceConversationNoteText,
   appendVoiceConversationUserText,
 } from '@/voice/transcript/voiceConversationTranscript';
@@ -33,6 +33,8 @@ import type {
 import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 import { resolveSessionAddressFromLocalState } from '@/sync/domains/session/resolveSessionAddressFromLocalState';
 import { registerSessionRealtimeTranscriptConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
+import { publishVoiceConversationFirstHumanTitle } from '@/voice/persistence/voiceConversationTitle';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type VoicePlaybackControllerLike = Readonly<{
   registerStopper: VoicePlaybackStopperRegistrar;
@@ -444,7 +446,14 @@ export async function sendVoiceTextTurn(params: {
         ...(params.currentUiContext ? { currentUiContext: params.currentUiContext } : {}),
         voiceAgentSessions: params.voiceAgentSessions,
         signal: params.signal,
-        onUserTranscriptAccepted: params.onUserTranscriptAccepted,
+        onUserTranscriptAccepted: async () => {
+          await params.onUserTranscriptAccepted?.();
+          if (projectedConversationSessionId && params.turnOrigin !== 'synthetic') {
+            fireAndForget(publishVoiceConversationFirstHumanTitle(projectedConversationSessionId, userText), {
+              tag: 'voice.firstHumanTitle',
+            });
+          }
+        },
         onOutputEvent: consumeCanonicalOutputEvent,
         onPreparedInstructionsFor: preparedInstructionsFor => {
           if (params.signal?.aborted || !params.playbackController.isEpochCurrent(playbackEpoch)) return;
@@ -454,7 +463,7 @@ export async function sendVoiceTextTurn(params: {
           throwIfAborted();
           let assistantEntryId: string | null = null;
           if (projectedConversationSessionId && uiOwnsTranscriptProjection) {
-            assistantEntryId = appendVoiceConversationAssistantText({
+            assistantEntryId = await persistVoiceConversationSpokenAssistantText({
               conversationSessionId: projectedConversationSessionId,
               text: assistantText,
             });

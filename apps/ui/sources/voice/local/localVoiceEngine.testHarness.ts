@@ -531,6 +531,7 @@ export async function publishLocalVoiceSubmittedUserMessage(request: Parameters<
 
 export async function publishLocalVoiceTranscriptMessage(input: Readonly<{
     sessionId: string; id: string; localId: string | null; messageRole: 'user' | 'agent'; content: unknown;
+    settlesTurn?: boolean;
 }>) {
     if (!speechAccount) throw new Error('Expected admitted Voice Account transcript transport');
     const remoteKey = JSON.stringify([speechAccount.credentials.token, input.sessionId]);
@@ -551,7 +552,7 @@ export async function publishLocalVoiceTranscriptMessage(input: Readonly<{
     }
     localVoiceRemoteMessages.set(remoteKey, [...messages, update.body.message]);
     await publishLocalVoiceSocketUpdate(update);
-    if (input.messageRole === 'agent') {
+    if (input.messageRole === 'agent' && input.settlesTurn !== false) {
         const user = messages.findLast(message => message.messageRole === 'user');
         // Tests may also seed retained history before submitting any input.
         if (!user) return update.body.message;
@@ -763,6 +764,20 @@ async function createLocalVoiceAccountHarness() {
                     // Durable streamed turns settle or block their claimed input;
                     // both HTTP mutations acknowledge before the pending reread.
                     if (/^\/v2\/sessions\/[^/]+\/pending\/[^/]+\/delivery\/(handled|block)$/.test(path) && init?.method === 'POST') return Response.json({});
+                    const transcriptWrite = /^\/v2\/sessions\/([^/]+)\/messages$/.exec(path);
+                    if (transcriptWrite && init?.method === 'POST') {
+                        const { RawRecordSchema } = await import('@happier-dev/session-core/raw');
+                        const { UsageTimingBoundsV1Schema } = await import('@happier-dev/protocol/usage/usageTimingV1');
+                        const { z } = await import('zod/mini');
+                        const body = z.strictObject({ content: z.strictObject({ t: z.literal('plain'), v: RawRecordSchema }),
+                            localId: z.string(), messageRole: z.literal('agent'),
+                            usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)) }).parse(JSON.parse(String(init.body)));
+                        const message = await publishLocalVoiceTranscriptMessage({
+                            sessionId: decodeURIComponent(transcriptWrite[1]), id: `spoken-${body.localId}`,
+                            localId: body.localId, messageRole: 'agent', content: body.content, settlesTurn: false,
+                        });
+                        return Response.json({ didWrite: true, message });
+                    }
                     const messagesPage = /^\/v1\/sessions\/([^/]+)\/messages$/.exec(path);
                     if (messagesPage) return Response.json(SessionMessagesPageV1Schema.parse({
                         messages: localVoiceRemoteMessages.get(JSON.stringify([

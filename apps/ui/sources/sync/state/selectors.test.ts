@@ -3,8 +3,20 @@ import { describe, expect, it } from 'vitest';
 import { readSessionDisplayTitleField } from './selectors';
 import type { Message } from '@happier-dev/session-core/messages';
 import { t } from '@/text';
+import { buildRealtimeConversationTurnMeta } from '@/voice/transcript/VoiceTranscriptProjector';
 
 describe('session state selectors', () => {
+    it('formats an all-caps dictated first-message title without rewriting authored titles or ordinary messages', () => {
+        const message: Message = { id: 'dictation', kind: 'user-text', localId: null, createdAt: 1,
+            text: 'PLEASE CREATE THE REQUESTED FILE', meta: buildRealtimeConversationTurnMeta() };
+        expect(readSessionDisplayTitleField({ metadata: {} }, { messages: [message] }).value)
+            .toBe('Please create the requested file');
+        expect(readSessionDisplayTitleField({ metadata: {} }, { messages: [{ ...message, meta: undefined }] }).value)
+            .toBe(message.text);
+        expect(readSessionDisplayTitleField({ metadata: { summary: { text: message.text } } }, { messages: [message] }).value)
+            .toBe(message.text);
+        expect(message.text).toBe('PLEASE CREATE THE REQUESTED FILE');
+    });
     it('presents retained Voice system titles as a conversation while preserving authored titles', () => {
         for (const metadata of [
             { summary: { text: 'Voice conversation (system)', updatedAt: 2 } },

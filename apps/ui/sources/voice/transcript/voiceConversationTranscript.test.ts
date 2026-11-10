@@ -3,16 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
 import { RawRecordSchema } from '@happier-dev/session-core/raw';
 import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageTimingV1';
 import { z } from 'zod/mini';
 import { createSessionFixture, standardCleanup } from '@/dev/testkit';
+import { createSessionMetadataHttpBoundary, type SessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { storage } from '@/sync/domains/state/storage';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { selectVoiceTranscriptEntriesForConversationSession } from './voiceTranscriptSelectors';
 import {
-    appendVoiceConversationAssistantText, appendVoiceConversationNoteText, appendVoiceConversationUserText,
+    appendVoiceConversationNoteText, appendVoiceConversationUserText,
     beginCanonicalVoiceTranscriptAttempt, projectCanonicalVoiceTranscriptEvent,
     readCanonicalVoiceTranscriptSnapshot, releaseCanonicalVoiceTranscriptConversation,
     settleAdmittedCanonicalVoiceTranscriptPersistence,
+    persistVoiceConversationSpokenAssistantText,
 } from './voiceConversationTranscript';
 
 vi.mock('socket.io-client', async original =>
@@ -20,8 +24,11 @@ vi.mock('socket.io-client', async original =>
 
 let account: Awaited<ReturnType<typeof import('@/voice/settings/panels/voiceSettingsAccountTestHarness').createVoiceSettingsAccountTestHarness>>;
 const writes: Array<{ sessionId: string; localId: string; messageRole: string; rawRecord: ReturnType<typeof RawRecordSchema.parse> }> = [];
+let failTranscriptWrites = false;
+let sessionMetadata: SessionMetadataHttpBoundary;
 const writeSchema = z.strictObject({ content: z.strictObject({ t: z.literal('plain'), v: RawRecordSchema }),
-    localId: z.string().check(z.minLength(1)), messageRole: SessionMessageRoleSchema });
+    localId: z.string().check(z.minLength(1)), messageRole: SessionMessageRoleSchema,
+    usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)) });
 
 beforeEach(async () => {
     const { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
@@ -29,13 +36,18 @@ beforeEach(async () => {
     const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
     account = await createVoiceSettingsAccountTestHarness(settingsParse({}));
     writes.length = 0;
+    failTranscriptWrites = false;
+    sessionMetadata = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
     const fallback = account.request.getMockImplementation();
     if (!fallback) throw new Error('Expected Account HTTP boundary');
     account.request.mockImplementation(async (input, init) => {
+        const metadataResponse = sessionMetadata.handle(input, init);
+        if (metadataResponse) return metadataResponse;
         const match = /^\/v2\/sessions\/([^/]+)\/messages$/.exec(new URL(String(input)).pathname);
         if (!match) return fallback(input, init);
         if (init?.method !== 'POST') return Response.json({ messages: [], hasMore: false });
         const body = writeSchema.parse(JSON.parse(String(init.body)));
+        if (failTranscriptWrites) return Response.json({ error: 'temporary_unavailable' }, { status: 503 });
         writes.push({ sessionId: decodeURIComponent(match[1]), localId: body.localId,
             messageRole: body.messageRole, rawRecord: body.content.v });
         // Only the Home acknowledgement is substituted; the real writer,
@@ -57,6 +69,47 @@ function entries(sessionId: string) {
 }
 
 describe('voiceConversationTranscript', () => {
+    it('rejects a failed host-spoken final write without claiming a saved or provisional row', async () => {
+        failTranscriptWrites = true;
+        await expect(persistVoiceConversationSpokenAssistantText({ conversationSessionId: 'carrier-s1',
+            text: 'Should I allow it?' })).rejects.toThrow();
+        expect(entries('carrier-s1')).toEqual([]);
+        expect(writes).toEqual([]);
+    });
+    it('saves host-spoken finals in the ordinary acknowledged turn chronology and retains them after rehydration', async () => {
+        const { normalizeRawMessage } = await import('@happier-dev/session-core/raw');
+        const sessionId = 'carrier-canonical';
+        const attempt = beginCanonicalVoiceTranscriptAttempt({ conversationSessionId: sessionId });
+        if (!attempt) throw new Error('Expected transcript attempt');
+        const final = (itemId: string, sequence: number, role: 'user' | 'assistant', text: string) =>
+            projectCanonicalVoiceTranscriptEvent({ conversationSessionId: sessionId, event: {
+                v: 1, type: 'voice.transcript.final', epoch: attempt.epoch, sequence, revision: 1,
+                eventId: itemId, itemId, role, text, provenance: 'live',
+            } });
+        final('first-question', 1, 'user', 'MAKE THE FILE');
+        await settleAdmittedCanonicalVoiceTranscriptPersistence({ conversationSessionId: sessionId, attemptIdentity: attempt.attemptIdentity });
+        await vi.waitFor(() => expect(readSessionOwnerMetadataView(storage.getState().sessions[sessionId]!))
+            .toMatchObject({ summary: { text: 'Make the file' } }));
+        await persistVoiceConversationSpokenAssistantText({ conversationSessionId: sessionId, text: 'Should I allow it?' });
+        final('second-question', 2, 'user', 'What is two plus three?');
+        final('answer', 3, 'assistant', 'Five.');
+        await settleAdmittedCanonicalVoiceTranscriptPersistence({ conversationSessionId: sessionId, attemptIdentity: attempt.attemptIdentity });
+        const expected = ['MAKE THE FILE', 'Should I allow it?', 'What is two plus three?', 'Five.'];
+        expect(entries(sessionId).map(entry => entry.text)).toEqual(expected);
+        expect(writes).toHaveLength(4);
+        expect(sessionMetadata.writes).toEqual([sessionId]);
+        const loaded = writes.map((write, index) => {
+            const normalized = normalizeRawMessage(`ack-${index + 1}`, write.localId, 101 + index, write.rawRecord);
+            if (!normalized) throw new Error('Expected stored transcript');
+            return { ...normalized, seq: index + 1 };
+        });
+        storage.setState({ sessionMessages: {} });
+        storage.getState().applyMessagesLoaded(sessionId);
+        storage.getState().applyMessages(sessionId, loaded);
+        expect(entries(sessionId).map(entry => entry.text)).toEqual(expected);
+        expect(readStoredSessionMessages(storage.getState(), sessionId).map(message => message.seq)).toEqual([1, 2, 3, 4]);
+        await releaseCanonicalVoiceTranscriptConversation({ conversationSessionId: sessionId, attemptIdentity: attempt.attemptIdentity });
+    });
     it('appends a user-text transcript message through the real store', () => {
         appendVoiceConversationUserText({ conversationSessionId: 'carrier-s1', text: 'hello from voice' });
         expect(entries('carrier-s1')).toEqual([expect.objectContaining({ kind: 'user', text: 'hello from voice' })]);
@@ -71,8 +124,8 @@ describe('voiceConversationTranscript', () => {
         expect(entries('carrier-s1')).toEqual([expect.objectContaining({ kind: 'user', text: 'hello from voice' })]);
         expect(storage.getState().sessionMessages).not.toHaveProperty('  carrier-s1  ');
     });
-    it('projects assistant text and plain notes as distinct transcript kinds', () => {
-        appendVoiceConversationAssistantText({ conversationSessionId: 'carrier-s1', text: 'I checked the workspace.' });
+    it('saves assistant text and projects plain notes as distinct transcript kinds', async () => {
+        await persistVoiceConversationSpokenAssistantText({ conversationSessionId: 'carrier-s1', text: 'I checked the workspace.' });
         appendVoiceConversationNoteText({ conversationSessionId: 'carrier-s1', text: 'Target session changed to s2' });
         expect(entries('carrier-s1')).toEqual([
             expect.objectContaining({ kind: 'assistant', text: 'I checked the workspace.' }),
@@ -112,7 +165,7 @@ describe('voiceConversationTranscript', () => {
             attemptIdentity: attempt.attemptIdentity });
     });
     it('releases attempt projections while retaining canonical Voice and unrelated Agent rows', async () => {
-        appendVoiceConversationAssistantText({ conversationSessionId: 'direct-agent-session', text: 'canonical coding result' });
+        await persistVoiceConversationSpokenAssistantText({ conversationSessionId: 'direct-agent-session', text: 'canonical coding result' });
         const before = entries('direct-agent-session')[0];
         const attempt = beginCanonicalVoiceTranscriptAttempt({ conversationSessionId: 'direct-agent-session' });
         if (!attempt) throw new Error('Expected transcript attempt');

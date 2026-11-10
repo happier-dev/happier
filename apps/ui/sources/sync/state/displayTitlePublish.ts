@@ -45,6 +45,7 @@ export async function publishDisplayTitleMetadataMutation(params: Readonly<{
     updatedAt?: number;
     staleBehavior?: TimestampedFieldStaleBehavior;
     resolveTitle?: (metadata: Metadata) => string;
+    preserveExistingValue?: boolean;
     transformAfterTitle?: (metadata: Metadata) => Metadata;
     updateSessionMetadataWithRetry: UpdateSessionMetadataWithRetry;
 }>): Promise<void> {
@@ -52,7 +53,7 @@ export async function publishDisplayTitleMetadataMutation(params: Readonly<{
         title: params.title,
         ...(typeof params.updatedAt === 'number' ? { updatedAt: params.updatedAt } : {}),
         staleBehavior: params.staleBehavior ?? 'drop',
-        ...(params.resolveTitle
+        ...(params.resolveTitle || params.preserveExistingValue
             ? {
                 preserveExistingValue: true,
             }
