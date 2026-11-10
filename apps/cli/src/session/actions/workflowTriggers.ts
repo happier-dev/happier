@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
+import { createAccountHealthCheckSourceReaderV1, createAccountHealthCheckSourceSnapshotReaderV1,
+  createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { resolveValidatedAutomationAccountEncryptionV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import type { WorkflowTriggerActionsDependencies } from '@happier-dev/protocol';
 
@@ -14,6 +15,51 @@ import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { resolveAutomationTemplateRetainedSession } from '@/daemon/automation/automationRetainedSession';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
+
+/** Shared authenticated Account-mode adapter for retained trigger reads and writes. */
+export function createCliAutomationEncryptionResolver(params: Readonly<{
+  credentials: StoredCredentials; serverHttpBaseUrl?: string; signal?: AbortSignal;
+}>) {
+  const token = params.credentials.token;
+  return async () => {
+      const resolved = await resolveValidatedAutomationAccountEncryptionV1({
+        signal: params.signal ?? new AbortController().signal,
+        resolveAccountEncryptionCurrentness: (signal) => fetchAccountEncryptionCurrentness({
+          token, signal,
+          ...(params.serverHttpBaseUrl ? { serverBaseUrl: params.serverHttpBaseUrl } : {}),
+        }),
+        resolveAccountEncryptionMaterial: async () => createAutomationAccountEncryptionMaterialSnapshotV1(params.credentials),
+      });
+      if (resolved.kind === 'unavailable' && 'cause' in resolved
+        && classifyServerEndpointError(resolved.cause).retryable) throw resolved.cause;
+      if (resolved.kind !== 'available') throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
+      return resolved;
+  };
+}
+
+/** The receiving controller shares the retained Event reader without constructing Workflow execution dependencies. */
+export function createCliHealthCheckSourceReader(params: Readonly<{
+  credentials: StoredCredentials; serverHttpBaseUrl: string; signal?: AbortSignal;
+}>) {
+  return createAccountHealthCheckSourceReaderV1({
+    automations: { listDetails: input => runWithServerHttpBaseUrl(params.serverHttpBaseUrl,
+      () => listAutomationDefinitionDetails({ token: params.credentials.token, ...input,
+        ...(params.signal ? { signal: params.signal } : {}) })) },
+    resolveEncryption: createCliAutomationEncryptionResolver(params),
+  });
+}
+
+/** The existing automation assembly borrows the complete typed source projection. */
+export function createCliHealthCheckSourceSnapshotReader(params: Readonly<{
+  credentials: StoredCredentials; serverHttpBaseUrl: string; signal?: AbortSignal;
+}>) {
+  return createAccountHealthCheckSourceSnapshotReaderV1({
+    automations: { listDetails: input => runWithServerHttpBaseUrl(params.serverHttpBaseUrl,
+      () => listAutomationDefinitionDetails({ token: params.credentials.token, ...input,
+        ...(params.signal ? { signal: params.signal } : {}) })) },
+    resolveEncryption: createCliAutomationEncryptionResolver(params),
+  });
+}
 
 /** CLI adapts canonical Account currentness/crypto and Automation transport, not trigger semantics. */
 export function createCliWorkflowTriggerActions(params: Readonly<{
@@ -50,20 +96,7 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
         ...(caller?.signal ? { signal: caller.signal } : {}),
       })),
     },
-    resolveEncryption: async () => {
-      const resolved = await resolveValidatedAutomationAccountEncryptionV1({
-        signal: new AbortController().signal,
-        resolveAccountEncryptionCurrentness: (signal) => fetchAccountEncryptionCurrentness({
-          token, signal,
-          ...(params.serverHttpBaseUrl ? { serverBaseUrl: params.serverHttpBaseUrl } : {}),
-        }),
-        resolveAccountEncryptionMaterial: async () => createAutomationAccountEncryptionMaterialSnapshotV1(params.credentials),
-      });
-      if (resolved.kind === 'unavailable' && 'cause' in resolved
-        && classifyServerEndpointError(resolved.cause).retryable) throw resolved.cause;
-      if (resolved.kind !== 'available') throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
-      return resolved;
-    },
+    resolveEncryption: createCliAutomationEncryptionResolver(params),
     resolveRetainedSession: (sessionId) => onServer(() => resolveAutomationTemplateRetainedSession({
       credentials: params.credentials, sessionId,
     })),

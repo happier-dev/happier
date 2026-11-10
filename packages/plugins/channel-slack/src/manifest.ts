@@ -1,3 +1,4 @@
+import { setupSlackNotificationDestination, sendSlackNotification } from './slackActions.js';
 import { definePlugin, type DefinedPlugin } from '@happier-dev/plugin-sdk';
 import type { ActionContract } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -72,7 +73,17 @@ function createSlackPlugin() {
         }, runtime: slackConnectedAccountRuntime,
       },
     },
+    notificationChannels: { alerts: { declaration: { title: 'Slack', kind: 'plugin', metadata: { destinationSetup: { pluginId: SLACK_PLUGIN_ID, localId: SLACK_CHANNEL_ACTION_IDS.notificationSetup } } }, sender: sendSlackNotification } },
     actions: {
+      [SLACK_CHANNEL_ACTION_IDS.notificationSetup]: {
+        title: 'Choose Slack notification destination',
+        surfaces: roles.notificationDestinationSetup.declaration.surfaces,
+        dangerLevel: roles.notificationDestinationSetup.declaration.dangerLevel,
+        inputSchema: roles.notificationDestinationSetup.declaration.input.schema.jsonSchema,
+        resultSchema: roles.notificationDestinationSetup.declaration.resultSchema.jsonSchema,
+        hostAccess: webAccess,
+        run: setupSlackNotificationDestination,
+      },
       [SLACK_CHANNEL_ACTION_IDS.attachmentFetch]: {
         title: 'Fetch Slack attachments', description: 'Download referenced Slack files for Session materialization.',
         surfaces: roles.attachmentFetch.declaration.surfaces, dangerLevel: roles.attachmentFetch.declaration.dangerLevel,
@@ -131,7 +142,8 @@ function createSlackPlugin() {
     },
     backgroundServices: [{ declaration: { id: SLACK_SOCKET_BACKGROUND_SERVICE_ID, title: 'Slack Socket Mode supervisor' }, runner: context => current().run(context) }],
     contributesTo: { 'happier.channels': { providers: { [SLACK_CHANNEL_PROVIDER_CONTRIBUTION_ID]: protocol.contribute({ descriptor: { v: 1, displayName: 'Slack' }, operations: {
-      setup: roles.setup.bind(SLACK_CHANNEL_ACTION_IDS.setup), connectionTest: roles.connectionTest.bind(SLACK_CHANNEL_ACTION_IDS.connectionTest),
+      setup: roles.setup.bind(SLACK_CHANNEL_ACTION_IDS.setup), notificationDestinationSetup: roles.notificationDestinationSetup.bind(SLACK_CHANNEL_ACTION_IDS.notificationSetup),
+      connectionTest: roles.connectionTest.bind(SLACK_CHANNEL_ACTION_IDS.connectionTest),
       endpointResolve: roles.endpointResolve.bind(SLACK_CHANNEL_ACTION_IDS.endpointResolve), principalResolve: roles.principalResolve.bind(SLACK_CHANNEL_ACTION_IDS.principalResolve),
       messageDeliver: roles.messageDeliver.bind(SLACK_CHANNEL_ACTION_IDS.messageDeliver),
       sessionStatus: roles.sessionStatus.bind(SLACK_CHANNEL_ACTION_IDS.sessionStatus),

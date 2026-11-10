@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { PLUGIN_MANIFEST, activate } from './plugin.js';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { ConversationAttachmentFetchResultV1Schema, createConversationAttachmentIdV1 } from '@happier-dev/channels-protocol/v1';
 
@@ -92,6 +94,27 @@ function channelsCallerContext(input: Readonly<{
 }
 
 describe('Discord Channels provider Actions', () => {
+  it('delivers a registered host notification through the saved connection without a Channels Action caller', async () => {
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const sender = kit.registration('notificationChannels', 'alerts');
+      expect(sender).toBeTypeOf('function');
+      const connection = { v: 1, connectionId: 'connection-1', providerConnectionKey: 'discord:application:application-1',
+        providerConfigVersion: 1, providerConfig: { applicationId: 'application-1', botUserId: 'discord-bot-1' }, credentialRef };
+      const effects: unknown[] = [];
+      const b = channelsCallerContext({ execute: vi.fn(async () => ({ [connection.connectionId]: { ...connection,
+        authorityEpoch: 1, enabled: true, deletionState: 'none', requiresFullSharedMessageContent: false } })),
+        request: async input => {
+          if (input.method === 'POST') { effects.push(JSON.parse(new TextDecoder().decode(input.body))); return jsonResponse({ id: 'message-1', channel_id: 'channel-1' }); }
+          return jsonResponse({ id: 'channel-1', type: 0, name: 'Alerts' });
+        } });
+      const request = { clientRequestId: 'health-test', deliveryId: 'health-test', channelId: 'happier.channel.discord/alerts',
+        title: 'App needs attention', body: 'A saved health check failed.', destination: { connectionId: 'connection-1',
+          endpoint: { kind: 'shared', audience: 'shared', id: 'discord:channel:channel-1' } } };
+      expect(await sender!(request, { ...b.context, caller: undefined })).toMatchObject({ status: 'accepted' });
+      expect(effects).toMatchObject([{ content: 'App needs attention\nA saved health check failed.', allowed_mentions: { parse: [] } }]);
+    } finally { await kit.dispose(); }
+  });
   it.each(['sent', 'createRejected', 'createUnknown', 'cancelAfterCreate', 'sendRejected', 'sendUnknown'] as const)(
     'starts one public thread under the router parent and retains create evidence (%s)', async outcome => {
       const effects: { path: string; body: unknown }[] = [];

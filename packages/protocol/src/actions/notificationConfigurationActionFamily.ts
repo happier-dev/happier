@@ -5,7 +5,9 @@ import { z } from '../zodRuntimePolicy.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { redactObservationInputPaths } from './specs/observationRedaction.js';
 import { WebhookNotificationChannelV1Schema } from '../account/settings/notificationChannels.js';
-import { NOTIFICATION_CONFIGURATION_ACTION_IDS } from './notificationConfigurationActionIds.js';
+import { NOTIFICATION_CONFIGURATION_ACTION_IDS, SAVED_HEALTH_ALERT_TEST_ACTION_ID,
+  WEBHOOK_NOTIFICATION_TEST_ACTION_ID } from './notificationConfigurationActionIds.js';
+import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 export { NOTIFICATION_CONFIGURATION_ACTION_IDS, isNotificationConfigurationActionId,
   type NotificationConfigurationActionId } from './notificationConfigurationActionIds.js';
 
@@ -32,12 +34,32 @@ export const WebhookNotificationTestResultSchema = lazyZodSchema(() => z.discrim
   z.strictObject({ status: z.literal('unreachable'), reason: z.string().check(z.minLength(1)) }),
 ]));
 export type WebhookNotificationTestResult = z.infer<typeof WebhookNotificationTestResultSchema>;
+const SavedHealthAlertTestTargetSchema = lazyZodSchema(() => z.strictObject({
+  serverId: ChannelIdSchema, machineId: ChannelIdSchema, sourceInstanceId: ChannelIdSchema,
+  channelId: ChannelIdSchema, channelIndex: z.number().check(z.int(), z.minimum(0)), expectedSourceRevision: ChannelIdSchema,
+}));
+export const SavedHealthAlertTestResultSchema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('sent'), controllerMachineId: ChannelIdSchema, channelId: ChannelIdSchema }),
+  z.strictObject({ status: z.literal('paused'), controllerMachineId: ChannelIdSchema, channelId: ChannelIdSchema }),
+  z.strictObject({ status: z.literal('off'), controllerMachineId: ChannelIdSchema, channelId: ChannelIdSchema }),
+  z.strictObject({ status: z.literal('unavailable'), controllerMachineId: ChannelIdSchema,
+    channelId: ChannelIdSchema, reason: ChannelIdSchema }),
+]));
+export type SavedHealthAlertTestResult = z.infer<typeof SavedHealthAlertTestResultSchema>;
+export const SavedHealthAlertTestApprovalReviewSchema = lazyZodSchema(() => z.strictObject({
+  request: SavedHealthAlertTestTargetSchema,
+  controllerMachineId: ChannelIdSchema,
+  destination: StrictJsonValueSchema,
+  disclosure: ChannelIdSchema,
+}));
+export type SavedHealthAlertTestApprovalReview = z.infer<typeof SavedHealthAlertTestApprovalReviewSchema>;
 export const NotificationConfigurationActionInputSchemas = {
+  [SAVED_HEALTH_ALERT_TEST_ACTION_ID]: SavedHealthAlertTestTargetSchema,
   'notifications.webhooks.list': z.strictObject({}),
   'notifications.webhooks.add': z.strictObject({ url: WebhookUrlSchema }),
   'notifications.webhooks.update': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ChannelTargetSchema, { patch: PatchSchema }))),
   'notifications.webhooks.remove': ChannelTargetSchema,
-  'notifications.webhooks.test': ChannelTargetSchema,
+  [WEBHOOK_NOTIFICATION_TEST_ACTION_ID]: ChannelTargetSchema,
   'notifications.webhooks.signingSecret.set': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ChannelTargetSchema, { secret: z.string().check(z.minLength(1)) }))),
   'notifications.webhooks.signingSecret.clear': ChannelTargetSchema,
   'notifications.expoPush.update': z.strictObject({ patch: ExpoPushPatchSchema }),
@@ -57,6 +79,7 @@ const PushTokenRegistrationDiagnosticsSchema = lazyZodSchema(() => z.strictObjec
   createdAt: z.number(), updatedAt: z.number() }));
 export type PushTokenRegistrationDiagnostics = z.infer<typeof PushTokenRegistrationDiagnosticsSchema>;
 export const NotificationConfigurationActionOutputSchemas = {
+  [SAVED_HEALTH_ALERT_TEST_ACTION_ID]: SavedHealthAlertTestResultSchema,
   'notifications.webhooks.list': z.strictObject({ items: z.array(z.strictObject({
     channelId: ChannelIdSchema, url: WebhookUrlSchema, enabled: z.boolean(), signingSecretConfigured: z.boolean(),
     topics: z.strictObject({ ready: z.boolean(), permissionRequest: z.boolean(), userActionRequest: z.boolean() }),
@@ -65,7 +88,7 @@ export const NotificationConfigurationActionOutputSchemas = {
   'notifications.webhooks.add': MutationOutputSchema,
   'notifications.webhooks.update': MutationOutputSchema,
   'notifications.webhooks.remove': MutationOutputSchema,
-  'notifications.webhooks.test': WebhookNotificationTestResultSchema,
+  [WEBHOOK_NOTIFICATION_TEST_ACTION_ID]: WebhookNotificationTestResultSchema,
   'notifications.webhooks.signingSecret.set': MutationOutputSchema,
   'notifications.webhooks.signingSecret.clear': MutationOutputSchema,
   'notifications.expoPush.update': MutationOutputSchema,
@@ -89,8 +112,9 @@ export const NotificationConfigurationActionOutputSchemas = {
 function createNotificationConfigurationActionSpecs() {
   return NOTIFICATION_CONFIGURATION_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
   ...({
+    [SAVED_HEALTH_ALERT_TEST_ACTION_ID]: { confirmVerb: { key: 'common.send', fallback: 'Send' } },
     'notifications.webhooks.add': { confirmVerb: { key: 'common.add', fallback: 'Add' } },
-    'notifications.webhooks.test': { confirmVerb: { key: 'common.send', fallback: 'Send' } },
+    [WEBHOOK_NOTIFICATION_TEST_ACTION_ID]: { confirmVerb: { key: 'common.send', fallback: 'Send' } },
     'notifications.webhooks.update': { confirmVerb: { key: 'common.update', fallback: 'Update' } },
     'notifications.webhooks.remove': { confirmVerb: { key: 'common.remove', fallback: 'Remove' }, irreversible: true },
     'notifications.webhooks.signingSecret.set': { confirmVerb: { key: 'common.save', fallback: 'Save' } },
@@ -99,12 +123,13 @@ function createNotificationConfigurationActionSpecs() {
     'notifications.push.tokens.remove': { confirmVerb: { key: 'common.remove', fallback: 'Remove' } },
   } as Partial<Record<typeof id, Pick<PreNormalizedActionSpec, 'confirmVerb' | 'irreversible'>>>)[id],
   id, approvalPolicy: { uiConfirmation: 'policy',
-    ...(id === 'notifications.desktop.permission.request' || id === 'notifications.push.permission.request' || id === 'notifications.webhooks.test'
+    ...(id === SAVED_HEALTH_ALERT_TEST_ACTION_ID || id === 'notifications.desktop.permission.request' || id === 'notifications.push.permission.request' || id === WEBHOOK_NOTIFICATION_TEST_ACTION_ID
       ? { agentDefault: 'authority' as const, requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] as const } : {}),
   }, approval: { result: 'required' }, title: {
+    [SAVED_HEALTH_ALERT_TEST_ACTION_ID]: 'Send a saved health alert test',
     'notifications.webhooks.list': 'List notification webhooks', 'notifications.webhooks.add': 'Add notification webhook',
     'notifications.webhooks.update': 'Configure notification webhook', 'notifications.webhooks.remove': 'Remove notification webhook',
-    'notifications.webhooks.test': 'Send a webhook test',
+    [WEBHOOK_NOTIFICATION_TEST_ACTION_ID]: 'Send a webhook test',
     'notifications.webhooks.signingSecret.set': 'Set notification webhook signing secret',
     'notifications.webhooks.signingSecret.clear': 'Clear notification webhook signing secret',
     'notifications.expoPush.update': 'Configure built-in push notifications',
@@ -118,9 +143,11 @@ function createNotificationConfigurationActionSpecs() {
     'notifications.push.permission.request': 'Request native push notification permission',
     'notifications.push.register': 'Reconcile this device’s push registrations',
   }[id],
-  description: id === 'notifications.expoPush.update'
+  description: id === SAVED_HEALTH_ALERT_TEST_ACTION_ID
+    ? 'Send fixed diagnostic content through one saved health alert destination from its current controller. Review the saved destination, controller and E2EE disclosure before confirmation. The saved source revision must match; caller-authored destinations and content are not accepted. Ask first by default.'
+    : id === 'notifications.expoPush.update'
     ? 'Update the existing built-in Expo push endpoint and its corresponding Account attention preferences together. Topic and preview delivery still intersect global topic and privacy rules; absent or deleted endpoints are not recreated.'
-    : id === 'notifications.webhooks.test' ? 'Send one fixed diagnostic payload to a configured channel through the Account daemon’s existing signed webhook delivery. Reports receiver acceptance, refusal or unreachability. Does not change notification preferences or validate automatic delivery policy. Ask first by default; retry only on another invocation.'
+    : id === WEBHOOK_NOTIFICATION_TEST_ACTION_ID ? 'Send one fixed diagnostic payload to a configured channel through the Account daemon’s existing signed webhook delivery. Reports receiver acceptance, refusal or unreachability. Does not change notification preferences or validate automatic delivery policy. Ask first by default; retry only on another invocation.'
     : id === 'notifications.push.test' ? 'Submit one fixed diagnostic notification to an addressed push registration on the captured Account Home using its ordinary remote push transport. Service acceptance does not confirm phone receipt or display and does not validate mute, quiet-hour or enrollment policy.'
     : id === 'notifications.sounds.preview' ? 'Preview the captured Account sound preset using this device’s current sound preference: a bundled sound on desktop, or a local notification on native mobile clients. Desktop playback follows operating-system volume and mute.'
     : id.startsWith('notifications.desktop.') ? 'Read or request this desktop’s operating-system notification permission. Automation asks first by default; the OS still owns the permission decision.'
@@ -133,8 +160,9 @@ function createNotificationConfigurationActionSpecs() {
   sideEffectClass: id === 'notifications.webhooks.list' || id === 'notifications.push.tokens.list' || id === 'notifications.desktop.permission.read'
     || id === 'notifications.push.permission.read' ? 'read'
     : id === 'notifications.desktop.permission.request' || id === 'notifications.push.permission.request' || id === 'notifications.push.register'
-      || id === 'notifications.sounds.preview' || id === 'notifications.push.test' ? 'write' : 'danger',
-  requiredAuthority: 'account_automation', executionPlacement: id === 'notifications.webhooks.test' ? 'account' : 'client', placements: [],
+      || id === 'notifications.sounds.preview' || id === 'notifications.push.test' || id === SAVED_HEALTH_ALERT_TEST_ACTION_ID ? 'write' : 'danger',
+  requiredAuthority: 'account_automation', executionPlacement: id === SAVED_HEALTH_ALERT_TEST_ACTION_ID ? 'machine'
+    : id === WEBHOOK_NOTIFICATION_TEST_ACTION_ID ? 'account' : 'client', placements: [],
   bindings: { mcpToolName: id.replace(/[.]/g, '_').replace('signingSecret', 'signing_secret'),
     voiceClientToolName: id.replace(/[.]/g, '_').replace('signingSecret', 'signing_secret') },
   cli: { acceptsServerId: true, commands: [{ path: id.split('.').map(segment =>
@@ -143,6 +171,13 @@ function createNotificationConfigurationActionSpecs() {
   toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
   inputSchema: NotificationConfigurationActionInputSchemas[id], outputSchema: NotificationConfigurationActionOutputSchemas[id],
   inputHints: { fields: [
+    ...(id === SAVED_HEALTH_ALERT_TEST_ACTION_ID ? [
+      { path: 'machineId', title: 'Controller Machine', widget: 'text' as const, required: true },
+      { path: 'sourceInstanceId', title: 'Saved health source', widget: 'text' as const, required: true },
+      { path: 'channelId', title: 'Saved notification channel', widget: 'text' as const, required: true },
+      { path: 'channelIndex', title: 'Saved destination index (from zero)', widget: 'number' as const, required: true },
+      { path: 'expectedSourceRevision', title: 'Saved source revision', widget: 'text' as const, required: true },
+    ] : []),
     ...(!id.startsWith('notifications.webhooks.') || id === 'notifications.webhooks.list' || id === 'notifications.webhooks.add' ? [] : [
       { path: 'channelId', title: 'Webhook id', widget: 'text' as const, required: true },
     ]),

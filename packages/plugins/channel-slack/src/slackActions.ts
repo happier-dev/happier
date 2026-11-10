@@ -1,3 +1,9 @@
+import type { NotificationSendRequest, NotificationSendResult } from '@happier-dev/plugin-sdk/notifications';
+import {
+  ConversationNotificationDestinationV1Schema, ConversationNotificationDestinationSetupInputV1Schema,
+  type ConversationNotificationDestinationSetupResultV1, type ConversationProviderConnectionInputV1,
+} from '@happier-dev/channels-protocol/v1';
+import { CONVERSATION_CORE_PLUGIN_ID_V1, CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1, ConversationProviderConnectionsSnapshotV1Schema, hasCurrentConversationProviderConnectionV1 } from '@happier-dev/channels-protocol/v1';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { QualifiedConnectedAccountRefSchema, type ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createProtocolStoredReadSchema, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
@@ -143,6 +149,11 @@ export async function testSlackConnection(input: unknown, context: PluginInvocat
 
 export async function resolveSlackEndpoint(input: unknown, context: PluginInvocationContext): Promise<ConversationEndpointResolveResultV1> {
   assertCore(context);
+  return resolveSlackHostEndpoint(input, context);
+}
+
+/** Shared provider transport; the caller admits either a Channels operation or a host notification. */
+export async function resolveSlackHostEndpoint(input: unknown, context: PluginInvocationContext): Promise<ConversationEndpointResolveResultV1> {
   const request = ConversationEndpointResolveInputV1Schema.parse(input);
   const ready = await readyConnection(context, request);
   if ('kind' in ready) return ready;
@@ -207,6 +218,11 @@ async function readyDestination(context: PluginInvocationContext, request: Conne
 
 export async function deliverSlackMessage(input: unknown, context: PluginInvocationContext): Promise<ConversationDeliveryResultV1> {
   assertCore(context);
+  return deliverSlackHostMessage(input, context);
+}
+
+/** Shared provider transport; the caller admits either a Channels operation or a host notification. */
+export async function deliverSlackHostMessage(input: unknown, context: PluginInvocationContext): Promise<ConversationDeliveryResultV1> {
   const request = ConversationDeliveryInputV1Schema.parse(input);
   if (request.newThread !== undefined) return { kind: 'notReady', reason: 'unsupported' };
   const ready = await readyDestination(context, request);
@@ -272,4 +288,48 @@ export async function fetchSlackAttachments(input: unknown, context: PluginInvoc
     attachments.push({ attachmentId: reference.attachmentId, base64: encodeConversationAttachmentBytesV1(result.bytes) });
   }
   return ConversationAttachmentFetchResultV1Schema.parse({ kind: 'fetched', attachments });
+}
+
+/** Reads the exact selected connection through the Channels-owned current connection boundary. */
+async function readSlackNotificationConnection(connectionId: string, context: PluginInvocationContext): Promise<ConversationProviderConnectionInputV1 | null> {
+  const connections = ConversationProviderConnectionsSnapshotV1Schema.parse(await context.services.actions.execute(
+    { pluginId: CONVERSATION_CORE_PLUGIN_ID_V1, localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead },
+    { connectionId }, { signal: context.signal }));
+  const current = connections[connectionId];
+  if (!current || !hasCurrentConversationProviderConnectionV1({ connections: { [connectionId]: current },
+    providerConnectionKey: current.providerConnectionKey, credentialRef: current.credentialRef })) return null;
+  return { v: current.v, connectionId: current.connectionId, providerConnectionKey: current.providerConnectionKey,
+    providerConfigVersion: current.providerConfigVersion, providerConfig: current.providerConfig, credentialRef: current.credentialRef };
+}
+
+export async function setupSlackNotificationDestination(input: unknown, context: PluginInvocationContext): Promise<ConversationNotificationDestinationSetupResultV1> {
+  const request = ConversationNotificationDestinationSetupInputV1Schema.parse(input);
+  const connection = await readSlackNotificationConnection('destination' in request ? request.destination.connectionId : request.connectionId, context);
+  if (!connection) return { kind: 'unavailable', reason: 'notification_connection_unavailable' };
+  const config = readSlackConnectionConfiguration(connection);
+  if ('kind' in config) return { kind: 'unavailable', reason: 'notification_connection_unavailable' };
+  if ('destination' in request) {
+    return request.destination.newThread === undefined && (readSlackEndpointId(request.destination.endpoint.id)?.teamId === config.teamId)
+      ? { kind: 'ready' } : { kind: 'unavailable', reason: 'notification_destination_unavailable' };
+  }
+  const result = await resolveSlackHostEndpoint({ ...connection, query: request.query }, context);
+  return result.kind === 'resolved'
+    ? { kind: 'resolved', destinations: result.candidates.map(endpoint => ({ connectionId: connection.connectionId, endpoint })) }
+    : { kind: 'unavailable', reason: result.reason };
+}
+
+/** Host notification effect uses the same provider transport after Channels admits current custody. */
+export async function sendSlackNotification(request: NotificationSendRequest, context: PluginInvocationContext): Promise<NotificationSendResult> {
+  const selected = ConversationNotificationDestinationV1Schema.safeParse(request.destination);
+  const identity = { deliveryId: request.deliveryId, channelId: request.channelId };
+  if (!selected.success) return { ...identity, status: 'failed', code: 'notification_destination_unavailable' };
+  const connection = await readSlackNotificationConnection(selected.data.connectionId, context);
+  if (!connection) return { ...identity, status: 'failed', code: 'notification_connection_unavailable' };
+  const result = await deliverSlackHostMessage({ ...connection, endpoint: selected.data.endpoint,
+    ...(selected.data.newThread ? { newThread: selected.data.newThread } : {}), deliveryKey: request.deliveryId,
+    content: { text: [request.title, request.body].filter(Boolean).join('\n') }, linkPreviewPolicy: 'suppress' }, context);
+  if (result.kind === 'delivered') return { ...identity, status: 'accepted', evidence: 'provider' };
+  if (result.kind === 'outcomeUnknown' || result.kind === 'partial') return { ...identity, status: 'outcomeUnknown', code: 'plugin_notification_outcome_unknown' };
+  return { ...identity, status: 'failed', code: 'notification_delivery_unavailable',
+    retryable: result.kind === 'notDelivered' && result.retry !== 'never' };
 }

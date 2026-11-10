@@ -1,3 +1,4 @@
+import { setupTelegramNotificationDestination, sendTelegramNotification } from './channelActions.js';
 import {
   ConversationProvidersContributionProtocolV1,
   CONVERSATION_CORE_PLUGIN_ID_V1,
@@ -155,7 +156,17 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       runtime: telegramConnectedAccountRuntime,
     },
   },
+  notificationChannels: { alerts: { declaration: { title: 'Telegram', kind: 'plugin', metadata: { destinationSetup: { pluginId: TELEGRAM_CHANNEL_PLUGIN_ID, localId: TELEGRAM_CHANNEL_ACTION_IDS.notificationSetup } } }, sender: sendTelegramNotification } },
   actions: {
+    [TELEGRAM_CHANNEL_ACTION_IDS.notificationSetup]: {
+      title: 'Choose Telegram notification destination',
+      surfaces: providers.operations.notificationDestinationSetup.declaration.surfaces,
+      dangerLevel: providers.operations.notificationDestinationSetup.declaration.dangerLevel,
+      inputSchema: providers.operations.notificationDestinationSetup.declaration.input.schema.jsonSchema,
+      resultSchema: providers.operations.notificationDestinationSetup.declaration.resultSchema.jsonSchema,
+      hostAccess: ['telegram-bot-api', TELEGRAM_BOT_CREDENTIAL_PURPOSE],
+      run: setupTelegramNotificationDestination,
+    },
     [TELEGRAM_CHANNEL_ACTION_IDS.setup]: {
       title: 'Set up Telegram Channels',
       description: 'Verifies the selected Telegram bot for Channels setup.',
@@ -357,7 +368,8 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
             setupRemediation: providers.operations.setupRemediation.bind(
               TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation,
             ),
-            connectionTest: providers.operations.connectionTest.bind(TELEGRAM_CHANNEL_ACTION_IDS.connectionTest),
+            notificationDestinationSetup: providers.operations.notificationDestinationSetup.bind(TELEGRAM_CHANNEL_ACTION_IDS.notificationSetup),
+      connectionTest: providers.operations.connectionTest.bind(TELEGRAM_CHANNEL_ACTION_IDS.connectionTest),
             endpointResolve: providers.operations.endpointResolve.bind(TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve),
             observationsPoll: providers.operations.observationsPoll.bind(TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll),
             automationEventAdmit: providers.operations.automationEventAdmit.bind(

@@ -210,6 +210,8 @@ export type PluginNotificationSendRequest = Readonly<{
     title: string;
     body?: string;
     data?: JsonValue;
+    /** Provider-owned saved destination, separate from notification content. */
+    destination?: JsonValue;
 }>;
 export type PluginNotificationSendResult = NotificationSendResult;
 export type PluginNotificationSender = (

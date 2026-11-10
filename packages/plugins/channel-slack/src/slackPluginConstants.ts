@@ -10,6 +10,7 @@ export const SLACK_APP_TOKEN_ENVIRONMENT_KEY = 'SLACK_APP_TOKEN';
 export const SLACK_SOCKET_BACKGROUND_SERVICE_ID = 'socket-supervisor';
 export const SLACK_SOCKET_WORKER_ATTEMPT_ACTION_ID = 'slack/socket-worker-attempt';
 export const SLACK_CHANNEL_ACTION_IDS = Object.freeze({
+  notificationSetup: 'notifications/setup',
   setup: 'slack/prepare-bot',
   connectionTest: 'slack/inspect-connection',
   endpointResolve: 'slack/choose-channel',

@@ -1407,6 +1407,11 @@ export type ActionExecutorDeps = Readonly<{
     input: unknown;
     context: ActionExecutorContext;
   }>) => Promise<ActionExecuteResult | null>;
+  /** The addressed controller discloses the exact saved alert destination without sending. */
+  prepareNotificationTestApproval?: (args: Readonly<{
+    input: import('../notificationConfigurationActionFamily.js').SavedHealthAlertTestApprovalReview['request'];
+    context: ActionExecutorContext;
+  }>) => Promise<import('../notificationConfigurationActionFamily.js').SavedHealthAlertTestApprovalReview | ActionExecuteFailure>;
   /** The receiving native Service owner reviews without copying, setup or Start. */
   prepareLocalServiceStartApproval?: (args: Readonly<{
     input: DaemonLocalServiceLauncherStartRequestV1;

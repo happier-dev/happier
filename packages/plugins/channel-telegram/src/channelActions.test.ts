@@ -1,5 +1,7 @@
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { describe, expect, it, vi } from 'vitest';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { PLUGIN_MANIFEST, activate } from './plugin.js';
 
 /** The exact published request input, so recorded calls keep their real shape. */
 type TelegramHttpRequestInput =
@@ -105,6 +107,26 @@ function botIdentity() {
 }
 
 describe('Telegram Channel provider actions', () => {
+  it('delivers a registered host notification through the saved connection without a Channels Action caller', async () => {
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const sender = kit.registration('notificationChannels', 'alerts');
+      expect(sender).toBeTypeOf('function');
+      const effects: unknown[] = [];
+      const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => {
+        if (input.url.endsWith('/getChat')) return response({ ok: true, result: { id: 456, type: 'private' } });
+        if (input.url.endsWith('/sendMessage')) { effects.push(JSON.parse(new TextDecoder().decode(input.body))); return response({ ok: true, result: { message_id: 88 } }); }
+        throw new Error('Unexpected Telegram notification request');
+      }) };
+      const context = coreContext(http, { executeAction: vi.fn(async () => ({ [connection.connectionId]: { ...connection,
+        authorityEpoch: 1, enabled: true, deletionState: 'none', requiresFullSharedMessageContent: false } })) });
+      const request = { clientRequestId: 'health-test', deliveryId: 'health-test', channelId: 'happier.channel.telegram/alerts',
+        title: 'App needs attention', body: 'A saved health check failed.', destination: { connectionId: 'connection-1',
+          endpoint: { kind: 'direct', audience: 'direct', id: '456' } } };
+      expect(await sender!(request, { ...context, caller: undefined })).toMatchObject({ status: 'accepted' });
+      expect(effects).toMatchObject([{ chat_id: '456', text: 'App needs attention\nA saved health check failed.' }]);
+    } finally { await kit.dispose(); }
+  });
   it('resolves and sends an ordinary destination without repeating bot identity acquisition', async () => {
     const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => {
       if (input.url.endsWith('/getMe')) return response(botIdentity());

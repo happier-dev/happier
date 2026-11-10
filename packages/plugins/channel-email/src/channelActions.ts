@@ -1,3 +1,8 @@
+import type { NotificationSendRequest, NotificationSendResult } from '@happier-dev/plugin-sdk/notifications';
+import {
+  ConversationNotificationDestinationV1Schema, ConversationNotificationDestinationSetupInputV1Schema,
+  type ConversationNotificationDestinationSetupResultV1,
+} from '@happier-dev/channels-protocol/v1';
 import { createHash } from 'node:crypto';
 import { isPluginError, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { isPluginActionHandlerInvocationNotStartedAdvisory } from '@happier-dev/plugin-sdk/actions';
@@ -140,6 +145,11 @@ export async function testEmailConnection(input: unknown, context: PluginInvocat
 
 export async function resolveEmailEndpoint(input: unknown, context: PluginInvocationContext): Promise<ConversationEndpointResolveResultV1> {
   assertConversationChannelsCoreCallerV1(context);
+  return resolveEmailHostEndpoint(input, context);
+}
+
+/** Shared provider transport; the caller admits either a Channels operation or a host notification. */
+export async function resolveEmailHostEndpoint(input: unknown, context: PluginInvocationContext): Promise<ConversationEndpointResolveResultV1> {
   const request = ConversationEndpointResolveInputV1Schema.parse(input);
   const config = readConfig(request);
   if ('kind' in config) return config;
@@ -241,6 +251,11 @@ export async function pollEmailObservations(input: unknown, context: PluginInvoc
 
 export async function deliverEmailMessage(input: unknown, context: PluginInvocationContext): Promise<ConversationDeliveryResultV1> {
   assertConversationChannelsCoreCallerV1(context);
+  return deliverEmailHostMessage(input, context);
+}
+
+/** Shared provider transport; the caller admits either a Channels operation or a host notification. */
+export async function deliverEmailHostMessage(input: unknown, context: PluginInvocationContext): Promise<ConversationDeliveryResultV1> {
   const request = ConversationDeliveryInputV1Schema.parse(input);
   const config = readConfig(request);
   if ('kind' in config) return { kind: 'notDelivered', retry: 'never' };
@@ -351,4 +366,58 @@ export async function fetchEmailAttachment(input: unknown, context: PluginInvoca
     if (!file) throw new Error('Validated attachment is missing');
     return { attachmentId: request.attachmentIds[index]!, base64: encodeConversationAttachmentBytesV1(file.bytes) };
   }) };
+}
+
+/** Reads the exact selected connection through the Channels-owned current connection boundary. */
+async function readEmailNotificationConnection(connectionId: string, context: PluginInvocationContext): Promise<ConversationProviderConnectionInputV1 | null> {
+  const connections = ConversationProviderConnectionsSnapshotV1Schema.parse(await context.services.actions.execute(
+    { pluginId: CONVERSATION_CORE_PLUGIN_ID_V1, localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead },
+    { connectionId }, { signal: context.signal }));
+  const current = connections[connectionId];
+  if (!current || !hasCurrentConversationProviderConnectionV1({ connections: { [connectionId]: current },
+    providerConnectionKey: current.providerConnectionKey, credentialRef: current.credentialRef })) return null;
+  return { v: current.v, connectionId: current.connectionId, providerConnectionKey: current.providerConnectionKey,
+    providerConfigVersion: current.providerConfigVersion, providerConfig: current.providerConfig, credentialRef: current.credentialRef };
+}
+
+export async function setupEmailNotificationDestination(input: unknown, context: PluginInvocationContext): Promise<ConversationNotificationDestinationSetupResultV1> {
+  const request = ConversationNotificationDestinationSetupInputV1Schema.parse(input);
+  const connection = await readEmailNotificationConnection('destination' in request ? request.destination.connectionId : request.connectionId, context);
+  if (!connection) return { kind: 'unavailable', reason: 'notification_connection_unavailable' };
+  const config = readConfig(connection);
+  if ('kind' in config) return { kind: 'unavailable', reason: 'notification_connection_unavailable' };
+  if ('destination' in request) {
+    const selected = request.destination;
+    const domains = config.allowedDomains?.map(domain => domain.trim().toLowerCase()) ?? [];
+    const ready = selected.endpoint.kind === 'direct' && selected.endpoint.id === config.mailbox
+      && selected.newThread !== undefined && selected.newThread.recipients.every(recipient => {
+        const address = normalizeEmailAddress(recipient);
+        return address !== null && (domains.length === 0 || domains.includes(address.slice(address.lastIndexOf('@') + 1)));
+      });
+    return ready ? { kind: 'ready' } : { kind: 'unavailable', reason: 'notification_destination_unavailable' };
+  }
+  const recipient = normalizeEmailAddress(request.query);
+  const domains = config.allowedDomains?.map(domain => domain.trim().toLowerCase()) ?? [];
+  if (recipient === null || (domains.length > 0 && !domains.includes(recipient.slice(recipient.lastIndexOf('@') + 1)))) {
+    return { kind: 'resolved', destinations: [] };
+  }
+  return { kind: 'resolved', destinations: [{ connectionId: connection.connectionId,
+    endpoint: { kind: 'direct', audience: 'direct', id: config.mailbox },
+    newThread: { recipients: [recipient], subject: 'Happier health alert' } }] };
+}
+
+/** Host notification effect uses the same provider transport after Channels admits current custody. */
+export async function sendEmailNotification(request: NotificationSendRequest, context: PluginInvocationContext): Promise<NotificationSendResult> {
+  const selected = ConversationNotificationDestinationV1Schema.safeParse(request.destination);
+  const identity = { deliveryId: request.deliveryId, channelId: request.channelId };
+  if (!selected.success) return { ...identity, status: 'failed', code: 'notification_destination_unavailable' };
+  const connection = await readEmailNotificationConnection(selected.data.connectionId, context);
+  if (!connection) return { ...identity, status: 'failed', code: 'notification_connection_unavailable' };
+  const result = await deliverEmailHostMessage({ ...connection, endpoint: selected.data.endpoint,
+    ...(selected.data.newThread ? { newThread: selected.data.newThread } : {}), deliveryKey: request.deliveryId,
+    content: { text: [request.title, request.body].filter(Boolean).join('\n') }, linkPreviewPolicy: 'suppress' }, context);
+  if (result.kind === 'delivered') return { ...identity, status: 'accepted', evidence: 'provider' };
+  if (result.kind === 'outcomeUnknown' || result.kind === 'partial') return { ...identity, status: 'outcomeUnknown', code: 'plugin_notification_outcome_unknown' };
+  return { ...identity, status: 'failed', code: 'notification_delivery_unavailable',
+    retryable: result.kind === 'notDelivered' && result.retry !== 'never' };
 }

@@ -201,12 +201,13 @@ describe('dispatchActivityNotificationAsync', () => {
         signingSecretRef: 'happier:shared-secret:v1:unavailable', topics: { machines: true } }),
     ] };
     const send = async (committed: Awaited<ReturnType<typeof store.writeNotice>>, controllerMachineId = 'machine',
-      notificationChannelCatalog: NotificationChannelCatalogSnapshotV1 = catalog, isCurrent = async () => true) => {
+      notificationChannelCatalog: NotificationChannelCatalogSnapshotV1 = catalog, isCurrent = async () => true,
+      alerts?: { channels: { channelId: string }[]; phases: ('open' | 'recovered')[] }) => {
       const event = ServiceHealthNoticeNotificationV1Schema.safeParse(Reflect.get(committed, 'healthOpening'));
       if (!event.success) return;
       return dispatchActivityNotification({ settings: accountSettingsParse({}), event: event.data,
         notificationChannelCatalog, pluginNotifications: null, isCurrent,
-        ...{ serviceHealthCommit: { receipt: committed, machineId: 'machine', controllerMachineId } },
+        ...{ serviceHealthCommit: { receipt: committed, machineId: 'machine', controllerMachineId, ...(alerts ? { alerts } : {}) } },
         expoPushSender: { sendToAllDevicesAsync: async (...args: unknown[]) => { delivered.push(args); return true; } },
       });
     };
@@ -215,6 +216,9 @@ describe('dispatchActivityNotificationAsync', () => {
       expect(delivered).toHaveLength(0);
       failCommit = false;
       const opened = await store.writeNotice(notice);
+      await expect(send(opened, 'machine', catalog, async () => true, { channels: [], phases: ['open', 'recovered'] }))
+        .resolves.toMatchObject({ attemptedChannels: 0, deliveredChannels: 0 });
+      expect(delivered).toHaveLength(0);
       await send(opened);
       expect(delivered).toHaveLength(1);
       expect(delivered[0]?.[2]).toMatchObject({ topic: 'account_notice', accountId, artifactId: opened.artifactId });

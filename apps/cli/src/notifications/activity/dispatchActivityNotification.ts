@@ -10,6 +10,7 @@ import { isUsageQuotaNotificationEnabled } from '@happier-dev/protocol/account/s
 import { AccountNoticeArtifactHeaderV1Schema, AccountNoticeArtifactBodyV1Schema, ACCOUNT_NOTICE_ARTIFACT_KIND_V1,
   ServiceHealthNoticeNotificationV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { createAccountArtifactStore, AccountNoticeWriteReceipt } from '@/api/artifacts/accountArtifactStore';
+import type { HealthCheckSourceConfigV1, HealthCheckAlertChannelV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { AttentionDeliveryDecision, PluginNotificationChannelKindV1, AccountSettings } from '@happier-dev/protocol';
 import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { isPushNotificationBundledSoundId, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
@@ -24,6 +25,7 @@ import { logger } from '@/ui/logger';
 import { SavedSecretResolutionError, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import type { ActivityNotificationEvent } from './activityNotificationEvent';
 import type { StablePluginNotificationsOwner } from '@/plugins/runtime/invocation/services/notifications';
+import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { buildActivityNotificationContent } from './buildActivityNotificationContent';
 import { createHostPluginNotificationChannels } from './pluginNotificationChannels';
 import { NotificationChannelCatalogUnavailableError, prepareRuntimeNotificationCatalogRead, readRuntimeNotificationCatalog } from './runtimeNotificationCatalog';
@@ -190,7 +192,9 @@ function resolveChannelDecision(params: Readonly<{
     channel: params.channel,
     now: params.now,
     follow: params.follow,
-    ...((params.event.topic === 'plugin_notification' || params.event.topic === 'service_health') && params.event.type ? { inboxItemType: params.event.type } : {}),
+    // Saved health phases select outward delivery independently of the Inbox
+    // row's presentation type. Quiet hours and channel policy still apply.
+    ...(params.event.topic === 'plugin_notification' && params.event.type ? { inboxItemType: params.event.type } : {}),
   });
 }
 
@@ -225,7 +229,7 @@ export async function listActivityNotificationChannels(params: Readonly<{
   isCurrent?: () => boolean | Promise<boolean>;
   pluginNotifications?: Pick<StablePluginNotificationsOwner, 'availableHostChannels'> | null;
   pushTokenReader?: Pick<PushNotificationClient, 'fetchPushTokens'>;
-}>): Promise<readonly Readonly<{ value: string; label: string; disabled: boolean }>[]> {
+}>): Promise<readonly Readonly<{ value: string; label: string; disabled: boolean; destinationSetup?: PluginContributionRef }>[]> {
   const runtime = await readRuntimeNotificationCatalog(params);
   const settings = accountSettingsParse(runtime.settings ?? {});
   const { channels, savedSecretMaterializer, assertCurrent } = runtime;
@@ -251,7 +255,8 @@ export async function listActivityNotificationChannels(params: Readonly<{
       disabled: !channel.enabled || (channel.kind === 'expo_push' ? !pushConfigured : !configuredForNotifyMe('webhook')
         || channel.signingSecretRef !== null && savedSecretMaterializer?.inspect(channel.signingSecretRef).status !== 'ready') })),
     ...pluginChannels
-      .map(({ value, label, kind }) => ({ value, label, disabled: !configuredForNotifyMe(kind) })),
+      .map(({ value, label, kind, destinationSetup }) => ({ value, label, disabled: !configuredForNotifyMe(kind),
+        ...(destinationSetup ? { destinationSetup } : {}) })),
   ];
 }
 
@@ -312,6 +317,22 @@ export async function dispatchActivityNotificationAsync(params: Parameters<typeo
   }
 }
 
+/** A diagnostic borrows the same policy decision and transport as real delivery. */
+export async function dispatchSavedHealthAlertTestAsync(params: Omit<Parameters<typeof dispatchActivityNotification>[0],
+  'event' | 'channels' | 'channelDestinations' | 'serviceHealthCommit' | 'onChannelSuppressed'> & Readonly<{
+    channel: HealthCheckAlertChannelV1;
+  }>): Promise<Readonly<{ status: 'sent' | 'paused' } | { status: 'unavailable'; reason: string }>> {
+  const { channel, ...runtime } = params;
+  let quietHours = false;
+  const result = await dispatchActivityNotificationAsync({ ...runtime,
+    channels: [channel.channelId], channelDestinations: [channel],
+    event: { topic: 'notify_me', title: 'Health alert test', message: 'Your saved health alert destination is working.' },
+    onChannelSuppressed: (_channelId, reason) => { if (reason === 'quiet_hours') quietHours = true; },
+  });
+  return result.deliveredChannels > 0 ? { status: 'sent' } : quietHours ? { status: 'paused' }
+    : { status: 'unavailable', reason: 'notification_delivery_unavailable' };
+}
+
 async function dispatchActivityNotification(params: Readonly<{
   settings: AccountSettings | null | undefined;
   /** Stops preparation; an admitted occurrence retains its delivery settlement. */
@@ -328,6 +349,7 @@ async function dispatchActivityNotification(params: Readonly<{
   /** Current local-controller native delivery only; external destinations need source opt-in. */
   serviceHealthCommit?: Readonly<{
     receipt: AccountNoticeWriteReceipt; machineId: string; controllerMachineId: string | null | undefined;
+    alerts?: HealthCheckSourceConfigV1['alerts'];
   }>;
   expoPushSender?: ExpoPushActivityNotificationSender | null;
   liveActivityRemoteSender?: LiveActivityRemoteUpdateSender | null;
@@ -341,6 +363,9 @@ async function dispatchActivityNotification(params: Readonly<{
   /** Only the admitted private evaluator supplies these; arbitrary Action policies are not an access grant. */
   admittedRulePolicies?: readonly FollowPolicyV1[];
   channels?: readonly string[];
+  channelDestinations?: readonly HealthCheckAlertChannelV1[];
+  /** The selected-channel policy owner reports suppression to explicit diagnostic callers. */
+  onChannelSuppressed?: (channelId: string, reason: AttentionDeliveryDecision['reason']) => void;
   pluginNotifications?: Pick<StablePluginNotificationsOwner, 'availableHostChannels' | 'sendHostNotification'> | null;
   usageNoticeArtifactStore?: Readonly<{ accountId: string; store: Pick<ReturnType<typeof createAccountArtifactStore>, 'create'> }>;
   /** Existing source-owned personal Follow CAS before outward delivery. Inbox rows stay derived. */
@@ -363,6 +388,12 @@ async function dispatchActivityNotification(params: Readonly<{
       return { attemptedChannels: 0, deliveredChannels: 0 };
     }
     params.signal?.throwIfAborted();
+    const alerts = admission.alerts;
+    const phase = opening.data.healthPhase ?? 'open';
+    if (alerts ? alerts.channels.length === 0 || !alerts.phases.includes(phase)
+      : phase !== 'open' || opening.data.type !== 'blocked') {
+      return { attemptedChannels: 0, deliveredChannels: 0 };
+    }
   }
   const admission = await resolveSessionActivityNotificationAdmission(params);
   params.signal?.throwIfAborted();
@@ -414,11 +445,13 @@ async function dispatchActivityNotification(params: Readonly<{
     outcome.channels.push({ channelId, kind, status: cause ? 'failed' : 'delivered', ...(cause ? { cause } : {}) });
   };
   const selectedChannelIds = serviceHealth
-    ? new Set(channels.filter(channel => channel.kind === 'expo_push' && (!params.channels || params.channels.includes(channel.id)))
-      .map(channel => channel.id))
+    ? new Set(params.serviceHealthCommit?.alerts?.channels.map(channel => channel.channelId)
+      ?? channels.filter(channel => channel.kind === 'expo_push' && (!params.channels || params.channels.includes(channel.id)))
+        .map(channel => channel.id))
     : params.channels ? new Set(params.channels) : null;
   const selects = (id: string) => !selectedChannelIds || selectedChannelIds.has(id);
-  const pluginNotifications = serviceHealth ? null : params.pluginNotifications === undefined
+  const channelDestinations = params.serviceHealthCommit?.alerts?.channels ?? params.channelDestinations;
+  const pluginNotifications = serviceHealth && params.serviceHealthCommit?.alerts === undefined ? null : params.pluginNotifications === undefined
     ? createHostPluginNotificationChannels()
     : params.pluginNotifications;
   let preparedEventContent: ActivityNotificationEvent | undefined;
@@ -484,7 +517,11 @@ async function dispatchActivityNotification(params: Readonly<{
   const expoDecision = channelDecision('expo_push');
   for (const channel of channels) {
     if (channel.kind !== 'expo_push' || !selects(channel.id) || !isTopicEnabled(channel, params.event)
-      || expoDecision.delivery === 'suppress' || admission.homeOwnsPush) continue;
+      || admission.homeOwnsPush) continue;
+    if (expoDecision.delivery === 'suppress') {
+      params.onChannelSuppressed?.(channel.id, expoDecision.reason);
+      continue;
+    }
     outcome.attemptedChannels += 1;
     if (params.expoPushSender) {
       const event = await readEventContent();
@@ -553,6 +590,7 @@ async function dispatchActivityNotification(params: Readonly<{
     if (!isTopicEnabled(channel, params.event)) continue;
     const decision = channelDecision('webhook');
     if (decision.delivery === 'suppress') {
+      params.onChannelSuppressed?.(channel.id, decision.reason);
       continue;
     }
     const event = await readEventContent();
@@ -585,27 +623,33 @@ async function dispatchActivityNotification(params: Readonly<{
       await assertCurrent();
       if (!selects(channel.value)) continue;
       const decision = channelDecision(channel.kind);
+      if (decision.delivery === 'suppress') params.onChannelSuppressed?.(channel.value, decision.reason);
       if (decision.delivery !== 'suppress') {
         const event = await readEventContent();
-        outcome.attemptedChannels += 1;
-        preparationSignal = undefined;
-        try {
-          const content = buildActivityNotificationContent(event, {
-            readyIncludeMessageText: decision.previewBehavior === 'include_preview',
-            requestIncludeMessageText: decision.previewBehavior === 'include_preview',
-            previewBehavior: decision.previewBehavior,
-            nowMs,
-          });
-          const accepted = await pluginNotifications.sendHostNotification({
-            channelId: channel.value, title: content.title, body: content.body, data: content.data,
-            beforeSend: assertCurrent,
-          });
-          if (accepted) outcome.deliveredChannels += 1;
-          recordChannel(channel.value, channel.kind, accepted ? undefined : { errorCode: 'not_accepted', retryable: false });
-        } catch (error) {
-          recordChannel(channel.value, channel.kind, notificationFailureCause(error));
-          if (error instanceof NotificationChannelCatalogUnavailableError) throw error;
-          logger.debug('[activityNotifications] Failed to dispatch plugin notification', serializeAxiosErrorForLog(error));
+        const destinations = channelDestinations === undefined ? [undefined]
+          : channelDestinations.filter(selected => selected.channelId === channel.value).map(selected => selected.destination);
+        for (const destination of destinations) {
+          outcome.attemptedChannels += 1;
+          preparationSignal = undefined;
+          try {
+            const content = buildActivityNotificationContent(event, {
+              readyIncludeMessageText: decision.previewBehavior === 'include_preview',
+              requestIncludeMessageText: decision.previewBehavior === 'include_preview',
+              previewBehavior: decision.previewBehavior,
+              nowMs,
+            });
+            const accepted = await pluginNotifications.sendHostNotification({
+              channelId: channel.value, title: content.title, body: content.body, data: content.data,
+              destination,
+              beforeSend: assertCurrent,
+            });
+            if (accepted) outcome.deliveredChannels += 1;
+            recordChannel(channel.value, channel.kind, accepted ? undefined : { errorCode: 'not_accepted', retryable: false });
+          } catch (error) {
+            recordChannel(channel.value, channel.kind, notificationFailureCause(error));
+            if (error instanceof NotificationChannelCatalogUnavailableError) throw error;
+            logger.debug('[activityNotifications] Failed to dispatch plugin notification', serializeAxiosErrorForLog(error));
+          }
         }
       }
     }

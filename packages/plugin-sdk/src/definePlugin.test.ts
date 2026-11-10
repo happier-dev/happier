@@ -3290,6 +3290,14 @@ void 0; /* @sdk-negative-type-case-end */
                     },
                 },
             } satisfies PluginAgentDefinition;
+            type AuthoredAccountPurpose = NonNullable<PluginAgentDefinition['declaration']['connectedAccounts']>[number];
+            const declaredAccountPurpose: AuthoredAccountPurpose = {
+                purpose: 'primary', service: 'account', credentialKinds: ['token'],
+            };
+            // @ts-expect-error Newly authored purposes must declare their accepted producer kinds.
+            const missingCredentialKinds: AuthoredAccountPurpose = { purpose: 'primary', service: 'account' };
+            void declaredAccountPurpose;
+            void missingCredentialKinds;
             const registrationOwnedLocator = {
                 module: './agent/runtime/factory.js',
                 export: 'createAgentRuntime',

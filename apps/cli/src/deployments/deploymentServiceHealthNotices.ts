@@ -9,11 +9,12 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { logger } from '@/ui/logger';
 import { createCommittedServiceHealthDelivery } from '@/notifications/activity/committedServiceHealthDelivery';
 import { observeNativeWorkload } from './healthChecks/readNativeWorkload';
+import { projectSavedHealthAlertSelection, type SavedHealthCheckSourceRead } from './healthChecks/readSavedHealthCheckSource';
 import type { createMachineServiceRowProjection } from '@/daemon/local/services/launch/machineServiceRowProjection';
 import type { CurrentDomainEdgeObservation } from './healthChecks/currentDomainEdgeObservation';
 import type { CommittedAutomationEventObservationV1 } from '@/plugins/runtime/automations/automationEventActionExecutor';
 import type { MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
-import { HealthCheckSourceConfigV1Schema, HealthCheckTransitionV1Schema,
+import { HealthCheckSourceConfigV1Schema, HealthCheckTransitionV1Schema, createHealthCheckSourceInstanceIdV1,
     type ServiceHealthNoticePageV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readTriageAutomaticInvestigationChoiceV1, requestTriageAutomaticInvestigationV1,
@@ -132,6 +133,7 @@ export type DeploymentServiceHealthNoticeInput = Readonly<{
     machineId: string;
     environment: DeploymentEnvironmentDetailV1;
     readEnvironment(signal: AbortSignal): Promise<DeploymentEnvironmentDetailV1>;
+    readHealthAlertSource?: (sourceInstanceId: string) => Promise<SavedHealthCheckSourceRead>;
     handles: readonly Extract<ProjectManagedServiceHandle, { kind: 'environment' }>[];
     health?: DeploymentHealthAggregateLeaseV1;
     nativeWorkload?: Readonly<{
@@ -161,8 +163,16 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
     const deliver = createCommittedServiceHealthDelivery(input);
     const cleanups: Array<() => void> = [];
     let admittedEnvironment: DeploymentEnvironmentDetailV1 | null = null;
-    // Source access is admitted once for this attachment. The service runs on
-    // this Account's Machine; redeploy/teardown owns the next admission boundary.
+    const readAlertDelivery = async () => {
+        const source = await input.readHealthAlertSource?.(createHealthCheckSourceInstanceIdV1({
+            kind: 'environment', environmentId: input.environment.environment.id,
+        })) ?? { kind: 'unavailable' as const, code: 'health_check_source_unavailable' };
+        if (source.kind === 'available') {
+            const selection = projectSavedHealthAlertSelection(source);
+            return selection.kind === 'active' ? { kind: 'available' as const, alerts: selection.alerts } : selection;
+        }
+        return source.kind === 'unconfigured' ? { kind: 'available' as const, alerts: undefined } : source;
+    };
     let health = input.health;
     const currentHealth = () => !controller.signal.aborted && health?.isCurrent() === true;
     let pending = services.length === 0 && !currentHealth() && !input.nativeWorkload ? Promise.resolve() : input.readEnvironment(controller.signal).then(async fresh => {
@@ -172,7 +182,9 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
             && environment.projectSourceId === input.environment.environment.projectSourceId
             && environment.capabilities.read && fresh.targetLinks.some(({ targetLink }) =>
                 targetLink.id === environment.runtimeTargetLinkId && targetLink.members.some(member =>
-                    member.machineId === input.machineId && member.state === 'active'))) admittedEnvironment = fresh;
+                    member.machineId === input.machineId && member.state === 'active'))) {
+            admittedEnvironment = fresh;
+        }
         const native = input.nativeWorkload;
         if (!admittedEnvironment || !native || environment.controllerMachineId !== input.machineId) return;
         const owned = await observeNativeWorkload({ environment: fresh,
@@ -208,6 +220,8 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                 const fresh = admittedEnvironment;
                 if (!fresh || aggregate.environmentId !== fresh.environment.id
                     || aggregate.targetLinkId !== fresh.environment.runtimeTargetLinkId) return;
+                const alertDelivery = await readAlertDelivery();
+                if (!currentHealth()) return;
                 const committed = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => store.writeNotice({
                     accountId, source: { kind: 'host', topic: 'service_health', subject: { kind: 'environment',
                         environmentId: aggregate.environmentId, targetLinkId: aggregate.targetLinkId, condition: 'health' } },
@@ -218,14 +232,17 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                     type: !recovered && !expectedStop && aggregate.protection === 'production' ? 'blocked' : 'update',
                     healthPhase: recovered ? 'recovered' : 'open', resolved: false,
                     environmentHealth: aggregate,
-                    body: aggregate.members.flatMap(member => member.evidence.filter(evidence => evidence.status !== 'up')
-                        .map(evidence => `${member.machineId} ${evidence.role}: ${evidence.status}${evidence.reason ? ` (${evidence.reason})` : ''}.`)).join(' '),
+                    body: [...aggregate.members.flatMap(member => member.evidence.filter(evidence => evidence.status !== 'up')
+                        .map(evidence => `${member.machineId} ${evidence.role}: ${evidence.status}${evidence.reason ? ` (${evidence.reason})` : ''}.`)),
+                        ...(alertDelivery?.kind === 'unavailable' ? [`Off-app alert settings are unavailable (${alertDelivery.code}).`] : []),
+                    ].join(' '),
                     signal,
                 }));
                 if (!committed.changed || !committed.healthOpening || !currentHealth()) return;
                 const current = health.snapshot();
-                if (current.down === 0 && current.degraded === 0) return;
-                await deliver({ receipt: committed, signal, controllerMachineId: fresh.environment.controllerMachineId });
+                if (recovered ? !current.authoritativeRecovery : current.down === 0 && current.degraded === 0) return;
+                if (alertDelivery?.kind === 'available') await deliver({ receipt: committed, signal,
+                    controllerMachineId: fresh.environment.controllerMachineId, alerts: alertDelivery.alerts });
             });
             void pending.catch(error => {
                 if (!signal.aborted) logger.infoFile('[deploymentHealth] Aggregate notice write failed', {
@@ -249,6 +266,8 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                 if (!isCurrent()) return;
                 const fresh = admittedEnvironment;
                 if (!fresh) return;
+                const alertDelivery = await readAlertDelivery();
+                if (!isCurrent()) return;
                 const expectedStop = snapshot.expectedDown === 'stop';
                 const recovered = snapshot.state === 'healthy' && !expectedStop;
                 const committed = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => store.writeNotice({
@@ -263,14 +282,18 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                     body: [`Service health: ${snapshot.state}.`,
                         ...(snapshot.readiness ? [`Readiness: ${snapshot.readiness.replaceAll('_', ' ')}.`] : []),
                         ...(snapshot.nativePhase ? [`Native phase: ${snapshot.nativePhase.replaceAll('_', ' ')}.`] : []),
+                        ...(alertDelivery?.kind === 'unavailable' ? [`Off-app alert settings are unavailable (${alertDelivery.code}).`] : []),
                     ].join(' '),
                     signal,
                 }));
                 if (!committed.changed || !committed.healthOpening) return;
                 // Read the service owner's cached fact, never run another probe.
-                const openingCurrent = () => isCurrent() && ['unhealthy', 'failed', 'stopped'].includes(handle.snapshot().state);
+                const openingCurrent = () => isCurrent() && (recovered
+                    ? handle.snapshot().state === 'healthy'
+                    : ['unhealthy', 'failed', 'stopped'].includes(handle.snapshot().state));
                 if (!openingCurrent()) return;
-                await deliver({ receipt: committed, signal, controllerMachineId: fresh.environment.controllerMachineId });
+                if (alertDelivery?.kind === 'available') await deliver({ receipt: committed, signal,
+                    controllerMachineId: fresh.environment.controllerMachineId, alerts: alertDelivery.alerts });
             });
             // Keep failures observable without an unhandled background rejection.
             // A later genuine owner transition can progress; there is no retry timer.

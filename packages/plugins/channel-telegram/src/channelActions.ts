@@ -1,3 +1,8 @@
+import type { NotificationSendRequest, NotificationSendResult } from '@happier-dev/plugin-sdk/notifications';
+import {
+  ConversationNotificationDestinationV1Schema, ConversationNotificationDestinationSetupInputV1Schema,
+  type ConversationNotificationDestinationSetupResultV1,
+} from '@happier-dev/channels-protocol/v1';
 import {
   CONVERSATION_CORE_PLUGIN_ID_V1,
   CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1,
@@ -702,6 +707,11 @@ export async function testTelegramConnection(input: unknown, context: PluginInvo
 
 export async function resolveTelegramEndpoint(input: unknown, context: PluginInvocationContext): Promise<ConversationEndpointResolveResultV1> {
   assertTelegramChannelsCoreCaller(context);
+  return resolveTelegramHostEndpoint(input, context);
+}
+
+/** Shared provider transport; the caller admits either a Channels operation or a host notification. */
+export async function resolveTelegramHostEndpoint(input: unknown, context: PluginInvocationContext): Promise<ConversationEndpointResolveResultV1> {
   const request = ConversationEndpointResolveInputV1Schema.parse(input);
   const query = request.query.trim();
   const threadAddress = parseCanonicalTelegramThreadIdentity(query);
@@ -917,6 +927,11 @@ export async function pollTelegramObservations(input: unknown, context: PluginIn
 
 export async function deliverTelegramMessage(input: unknown, context: PluginInvocationContext): Promise<ConversationDeliveryResultV1> {
   assertTelegramChannelsCoreCaller(context);
+  return deliverTelegramHostMessage(input, context);
+}
+
+/** Shared provider transport; the caller admits either a Channels operation or a host notification. */
+export async function deliverTelegramHostMessage(input: unknown, context: PluginInvocationContext): Promise<ConversationDeliveryResultV1> {
   const request = ConversationDeliveryInputV1Schema.parse(input);
   if (request.newThread !== undefined && (request.endpoint.kind !== 'shared' || request.endpoint.audience !== 'shared')) {
     return { kind: 'notReady', reason: 'unsupported' };
@@ -971,4 +986,48 @@ export async function deliverTelegramMessage(input: unknown, context: PluginInvo
     return result.kind === 'delivered' ? { ...result, endpoint } : { kind: 'outcomeUnknown', endpoint };
   }
   return await sendTelegramText({ api, request, chatId, messageThreadId, signal: context.signal });
+}
+
+/** Reads the exact selected connection through the Channels-owned current connection boundary. */
+async function readTelegramNotificationConnection(connectionId: string, context: PluginInvocationContext): Promise<ConversationProviderConnectionInputV1 | null> {
+  const connections = ConversationProviderConnectionsSnapshotV1Schema.parse(await context.services.actions.execute(
+    { pluginId: CONVERSATION_CORE_PLUGIN_ID_V1, localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead },
+    { connectionId }, { signal: context.signal }));
+  const current = connections[connectionId];
+  if (!current || !hasCurrentConversationProviderConnectionV1({ connections: { [connectionId]: current },
+    providerConnectionKey: current.providerConnectionKey, credentialRef: current.credentialRef })) return null;
+  return { v: current.v, connectionId: current.connectionId, providerConnectionKey: current.providerConnectionKey,
+    providerConfigVersion: current.providerConfigVersion, providerConfig: current.providerConfig, credentialRef: current.credentialRef };
+}
+
+export async function setupTelegramNotificationDestination(input: unknown, context: PluginInvocationContext): Promise<ConversationNotificationDestinationSetupResultV1> {
+  const request = ConversationNotificationDestinationSetupInputV1Schema.parse(input);
+  const connection = await readTelegramNotificationConnection('destination' in request ? request.destination.connectionId : request.connectionId, context);
+  if (!connection) return { kind: 'unavailable', reason: 'notification_connection_unavailable' };
+  const config = readConnectionConfig(connection);
+  if (config !== null) return { kind: 'unavailable', reason: 'notification_connection_unavailable' };
+  if ('destination' in request) {
+    return request.destination.newThread === undefined && (/^-?[0-9]+$/.test(request.destination.endpoint.id) || parseCanonicalTelegramThreadIdentity(request.destination.endpoint.id) !== null)
+      ? { kind: 'ready' } : { kind: 'unavailable', reason: 'notification_destination_unavailable' };
+  }
+  const result = await resolveTelegramHostEndpoint({ ...connection, query: request.query }, context);
+  return result.kind === 'resolved'
+    ? { kind: 'resolved', destinations: result.candidates.map(endpoint => ({ connectionId: connection.connectionId, endpoint })) }
+    : { kind: 'unavailable', reason: result.reason };
+}
+
+/** Host notification effect uses the same provider transport after Channels admits current custody. */
+export async function sendTelegramNotification(request: NotificationSendRequest, context: PluginInvocationContext): Promise<NotificationSendResult> {
+  const selected = ConversationNotificationDestinationV1Schema.safeParse(request.destination);
+  const identity = { deliveryId: request.deliveryId, channelId: request.channelId };
+  if (!selected.success) return { ...identity, status: 'failed', code: 'notification_destination_unavailable' };
+  const connection = await readTelegramNotificationConnection(selected.data.connectionId, context);
+  if (!connection) return { ...identity, status: 'failed', code: 'notification_connection_unavailable' };
+  const result = await deliverTelegramHostMessage({ ...connection, endpoint: selected.data.endpoint,
+    ...(selected.data.newThread ? { newThread: selected.data.newThread } : {}), deliveryKey: request.deliveryId,
+    content: { text: [request.title, request.body].filter(Boolean).join('\n') }, linkPreviewPolicy: 'suppress' }, context);
+  if (result.kind === 'delivered') return { ...identity, status: 'accepted', evidence: 'provider' };
+  if (result.kind === 'outcomeUnknown' || result.kind === 'partial') return { ...identity, status: 'outcomeUnknown', code: 'plugin_notification_outcome_unknown' };
+  return { ...identity, status: 'failed', code: 'notification_delivery_unavailable',
+    retryable: result.kind === 'notDelivered' && result.retry !== 'never' };
 }

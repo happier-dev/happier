@@ -6,6 +6,7 @@ export const TELEGRAM_BOT_TOKEN_ENVIRONMENT_KEY = 'TELEGRAM_BOT_TOKEN';
 export const TELEGRAM_BRAND_RESOURCE_ID = 'brand-icon';
 
 export const TELEGRAM_CHANNEL_ACTION_IDS = Object.freeze({
+  notificationSetup: 'notifications/setup',
   setup: 'telegram/prepare-bot',
   setupRemediation: 'telegram/remove-webhook',
   connectionTest: 'telegram/inspect-connection',

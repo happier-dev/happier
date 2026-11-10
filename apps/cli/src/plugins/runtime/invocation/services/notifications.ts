@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolvePluginLocalizedStringV2Text as localizedFallback } from '@happier-dev/protocol/plugins/contributions/public-types';
-import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { AccountNoticeInvestigationV1Schema, AccountNoticeItemTypeV1Schema, PluginNoticePageV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { PluginNotificationPushContextV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { resolveAttentionDeliveryPolicyDecision } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
@@ -390,12 +390,14 @@ export type StablePluginNotificationsOwner = Readonly<{
         value: string;
         label: string;
         kind: ResolvedNotificationChannelContribution['definition']['kind'];
+        destinationSetup?: QualifiedRef;
     }>[]>;
     sendHostNotification(request: Readonly<{
         channelId: string;
         title: string;
         body?: string;
         data?: unknown;
+        destination?: unknown;
         /** Host Account custody is rechecked after plugin activation, before delivery. */
         beforeSend?: () => void | Promise<void>;
     }>): Promise<boolean>;
@@ -450,16 +452,19 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                 value: string;
                 label: string;
                 kind: ResolvedNotificationChannelContribution['definition']['kind'];
+                destinationSetup?: QualifiedRef;
             }>[] = [];
             for (const channel of host.channels) {
                 const ref = hostChannelRef(channel);
                 if (!ref) continue;
                 const binding = host.readChannel(ref);
                 if (binding && !await isSenderBindingCurrent(binding)) continue;
+                const destinationSetup = PluginContributionIdentityV1Schema.safeParse(channel.definition.metadata?.destinationSetup);
                 items.push(Object.freeze({
                     value: qualifiedKey(ref),
                     label: `${localizedFallback(channel.definition.title)} (${ref.pluginId})`,
                     kind: channel.definition.kind,
+                    ...(destinationSetup.success ? { destinationSetup: destinationSetup.data } : {}),
                 }));
             }
             return Object.freeze(items.sort((left, right) => left.value.localeCompare(right.value)));
@@ -474,6 +479,10 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                 path: 'notification data',
                 invalid: (message) => notificationError('plugin_notification_invalid_request', message),
             }) as JsonValue;
+            const destination = request.destination === undefined ? undefined : clonePluginPlainData(request.destination, {
+                path: 'notification destination',
+                invalid: (message) => notificationError('plugin_notification_invalid_request', message),
+            }) as JsonValue;
             const clientRequestId = randomUUID();
             const deliveryId = `notification_${clientRequestId}`;
             const signal = available.binding.retirementSignal ?? new AbortController().signal;
@@ -483,6 +492,7 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                     clientRequestId, deliveryId, channelId: request.channelId, title: request.title,
                     ...(request.body === undefined ? {} : { body: request.body }),
                     ...(data === undefined ? {} : { data }),
+                    ...(destination === undefined ? {} : { destination }),
                 }), signal);
                 return result !== NOTIFICATION_SENDER_RETIRED
                     && !signal.aborted

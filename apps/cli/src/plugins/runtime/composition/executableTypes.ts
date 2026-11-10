@@ -57,6 +57,7 @@ import type { RetainedRunnerAgentServiceBinding } from '../runner/loadRetainedAg
 import type { AgentSessionRunnerBindingV1 } from '../runner/agentSessionRunnerFactoryBinding';
 import type { createManagedServicesOwner } from '../invocation/services/managedServicesOwner';
 import type { CurrentDomainEdgeObservation } from '@/deployments/healthChecks/currentDomainEdgeObservation';
+import type { readAdoptedHealthCheckBatch } from '@/deployments/healthChecks/readAdoptedHealthCheckBatch';
 import type { ManagedServiceCredentialFileOwner } from '../invocation/services/managedServicesAdapter';
 import type { RunnerManagedDependencyRetentionV1 } from '../runner/runnerManagedDependencyRetention';
 import type { BoundAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
@@ -84,6 +85,10 @@ export type PluginContributionRuntimeLifecycle = Readonly<{
 export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     /** Same installed observer's runtime-only current Domain edge facts. */
     currentDomainEdgeObservation?: CurrentDomainEdgeObservation;
+    /** Finite current-source projection from the same local saved observer, without another adoption owner. */
+    readHealthCheckSource?: (sourceInstanceId: string, signal: AbortSignal) => ReturnType<typeof readAdoptedHealthCheckBatch>;
+    /** Native notification admissions borrow the pushed, current Account source view. */
+    readHealthAlertSource?: (sourceInstanceId: string) => Promise<import('@/deployments/healthChecks/readSavedHealthCheckSource').SavedHealthCheckSourceRead>;
     /** Incumbent Resource continuation owner; host Account demand carries no plugin occurrence. */
     uiResourceWatches?: PluginUiResourceWatchOwner;
     /** Host-private SCM process port, sharing this registry's held launch context. */

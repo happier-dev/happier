@@ -1,7 +1,11 @@
+export const NOTIFICATION_NOTIFY_ME_ACTION_ID = 'notifications.notify_me' as const;
+export const SAVED_HEALTH_ALERT_TEST_ACTION_ID = 'notifications.test' as const;
+export const WEBHOOK_NOTIFICATION_TEST_ACTION_ID = 'notifications.webhooks.test' as const;
 export const NOTIFICATION_CONFIGURATION_ACTION_IDS = [
+  SAVED_HEALTH_ALERT_TEST_ACTION_ID,
   'notifications.webhooks.list', 'notifications.webhooks.add', 'notifications.webhooks.update',
   'notifications.webhooks.remove', 'notifications.webhooks.signingSecret.set', 'notifications.webhooks.signingSecret.clear',
-  'notifications.webhooks.test',
+  WEBHOOK_NOTIFICATION_TEST_ACTION_ID,
   'notifications.expoPush.update',
   'notifications.sounds.preview',
   'notifications.push.test',

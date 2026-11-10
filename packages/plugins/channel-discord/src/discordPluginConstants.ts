@@ -15,6 +15,7 @@ export const DISCORD_GATEWAY_BACKGROUND_SERVICE_ID = 'gateway-supervisor';
 export const DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID = 'discord/gateway-worker-attempt';
 
 export const DISCORD_CHANNEL_ACTION_IDS = Object.freeze({
+  notificationSetup: 'notifications/setup',
   setup: 'discord/prepare-bot',
   connectionTest: 'discord/inspect-connection',
   endpointResolve: 'discord/choose-channel',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { getActionSpec } from './actionSpecs.js';
 import {
@@ -10,16 +10,40 @@ import {
 } from './notificationConfigurationActionFamily.js';
 
 describe('notification signing secret Action input', () => {
+  it('requires disclosed approval for a controller-addressed saved health alert test and rejects arbitrary content', () => {
+    const actionId = 'notifications.test';
+    const spec = getActionSpec(actionId);
+    expect(spec.executionPlacement).toBe('machine');
+    expect(spec.safety).toBe('danger');
+    expect(spec.sideEffectClass).toBe('write');
+    const input = Object.entries(NotificationConfigurationActionInputSchemas).find(([id]) => id === actionId)?.[1];
+    const savedTarget = { serverId: 'home', machineId: 'controller', sourceInstanceId: 'subject',
+      channelId: 'happier.channel-slack/alerts', channelIndex: 0, expectedSourceRevision: 'revision-2' };
+    expect(input?.safeParse(savedTarget).success).toBe(true);
+    expect(input?.safeParse({ ...savedTarget, destination: 'other-room', content: 'caller-content' }).success).toBe(false);
+    for (const surface of ['agent', 'mcp'] as const) {
+      expect(isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1 }), {
+        surface, authority: 'account_automation', actionCaller: { kind: 'host' },
+      })).toBe(true);
+    }
+    expect(resolveActionApprovalRouting({ actionId, spec, input: savedTarget,
+      settings: normalizeActionsSettingsV1({ v: 1 }), context: {
+        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      } })).toMatchObject({ required: false, uiConfirmationRequired: true });
+  });
   it('asks before an agent sends an external webhook test unless that surface has an explicit waiver', () => {
     const actionId = 'notifications.webhooks.test';
     const spec = getActionSpec(actionId);
     expect(spec.executionPlacement).toBe('account');
-    for (const surface of ['agent', 'mcp', 'ui'] as const) {
-      const context = { surface, authority: surface === 'ui' ? 'present_user' : 'account_automation', actionCaller: { kind: 'host' } } as const;
+    for (const surface of ['agent', 'mcp'] as const) {
+      const context = { surface, authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
       expect(isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1 }), context)).toBe(true);
       expect(isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1,
         approvalWaivedSurfaces: { [actionId]: [surface] } }), context)).toBe(false);
     }
+    expect(resolveActionApprovalRouting({ actionId, spec, settings: normalizeActionsSettingsV1({ v: 1 }),
+      context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } }))
+      .toMatchObject({ required: false, uiConfirmationRequired: true });
   });
   it('addresses only a configured webhook for test delivery and requires a reason for failed outcomes', () => {
     const input = Object.entries(NotificationConfigurationActionInputSchemas)

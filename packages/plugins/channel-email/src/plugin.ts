@@ -1,3 +1,4 @@
+import { setupEmailNotificationDestination, sendEmailNotification } from './channelActions.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
@@ -61,7 +62,16 @@ export const emailPlugin = definePlugin({
   ] },
   contributionPoints: { transports: EmailTransportsContributionPointV1 },
   connectedAccountDescriptors: { [IMAP_SMTP_CONNECTED_ACCOUNT_ID]: imapSmtpConnectedAccountDescriptor },
+  notificationChannels: { alerts: { declaration: { title: 'Email', kind: 'plugin', metadata: { destinationSetup: { pluginId: EMAIL_CHANNEL_PLUGIN_ID, localId: ids.notificationSetup } } }, sender: sendEmailNotification } },
   actions: {
+    [ids.notificationSetup]: {
+      title: 'Choose Email notification destination',
+      surfaces: providers.operations.notificationDestinationSetup.declaration.surfaces,
+      dangerLevel: providers.operations.notificationDestinationSetup.declaration.dangerLevel,
+      inputSchema: providers.operations.notificationDestinationSetup.declaration.input.schema.jsonSchema,
+      resultSchema: providers.operations.notificationDestinationSetup.declaration.resultSchema.jsonSchema,
+      run: setupEmailNotificationDestination,
+    },
     ...imapSmtpActions,
     [ids.setup]: {
       ...providerAction('Set up Email Channels', providers.operations.setup.declaration, EMAIL_SETUP_INPUT_SCHEMA.jsonSchema, setupEmailChannels),
@@ -82,7 +92,8 @@ export const emailPlugin = definePlugin({
     [CONVERSATION_CORE_PLUGIN_ID_V1]: {
       providers: { 'email-provider': providers.contribute({ descriptor: { v: 1, displayName: 'Email' }, operations: {
         setup: providers.operations.setup.bind(ids.setup),
-        connectionTest: providers.operations.connectionTest.bind(ids.connectionTest),
+        notificationDestinationSetup: providers.operations.notificationDestinationSetup.bind(ids.notificationSetup),
+      connectionTest: providers.operations.connectionTest.bind(ids.connectionTest),
         endpointResolve: providers.operations.endpointResolve.bind(ids.endpointResolve),
         principalResolve: providers.operations.principalResolve.bind(ids.principalResolve),
         observationsPoll: providers.operations.observationsPoll.bind(ids.observationsPoll),

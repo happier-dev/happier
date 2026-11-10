@@ -1,3 +1,4 @@
+import { setupDiscordNotificationDestination, sendDiscordNotification } from './discordActions.js';
 import { definePlugin, type DefinedPlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { ActionContract } from '@happier-dev/plugin-sdk/actions';
@@ -259,7 +260,17 @@ function createDiscordPlugin() {
       runtime: discordConnectedAccountRuntime,
     },
   },
+  notificationChannels: { alerts: { declaration: { title: 'Discord', kind: 'plugin', metadata: { destinationSetup: { pluginId: DISCORD_PLUGIN_ID, localId: DISCORD_CHANNEL_ACTION_IDS.notificationSetup } } }, sender: sendDiscordNotification } },
   actions: {
+    [DISCORD_CHANNEL_ACTION_IDS.notificationSetup]: {
+      title: 'Choose Discord notification destination',
+      surfaces: discordProviderOperations.notificationDestinationSetup.declaration.surfaces,
+      dangerLevel: discordProviderOperations.notificationDestinationSetup.declaration.dangerLevel,
+      inputSchema: discordProviderOperations.notificationDestinationSetup.declaration.input.schema.jsonSchema,
+      resultSchema: discordProviderOperations.notificationDestinationSetup.declaration.resultSchema.jsonSchema,
+      hostAccess: ['discord-rest', DISCORD_BOT_CREDENTIAL_PURPOSE],
+      run: setupDiscordNotificationDestination,
+    },
     [DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID]: {
       title: 'Run Discord Gateway worker attempt',
       description: 'Runs one Discord Gateway worker attempt.',
@@ -436,7 +447,8 @@ function createDiscordPlugin() {
           descriptor: { v: 1, displayName: 'Discord' },
           operations: {
             setup: discordProviderOperations.setup.bind(DISCORD_CHANNEL_ACTION_IDS.setup),
-            connectionTest: discordProviderOperations.connectionTest.bind(DISCORD_CHANNEL_ACTION_IDS.connectionTest),
+            notificationDestinationSetup: discordProviderOperations.notificationDestinationSetup.bind(DISCORD_CHANNEL_ACTION_IDS.notificationSetup),
+      connectionTest: discordProviderOperations.connectionTest.bind(DISCORD_CHANNEL_ACTION_IDS.connectionTest),
             endpointResolve: discordProviderOperations.endpointResolve.bind(DISCORD_CHANNEL_ACTION_IDS.endpointResolve),
             automationEventAdmit: discordProviderOperations.automationEventAdmit.bind(
               DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,

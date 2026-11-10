@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginWebSocketConnection } from '@happier-dev/plugin-sdk/http';
 import { ConversationProviderSetupResultV1Schema, createConversationAttachmentIdV1 } from '@happier-dev/channels-protocol/v1';
 import { assertConversationProviderContributionV1 } from '@happier-dev/channels-protocol/testing/v1';
-import { PLUGIN_MANIFEST } from './manifest.js';
+import { PLUGIN_MANIFEST, activate } from './manifest.js';
 import { setupSlackChannels, testSlackConnection, resolveSlackEndpoint, resolveSlackPrincipal, deliverSlackMessage, fetchSlackAttachments } from './slackActions.js';
 import * as slackActions from './slackActions.js';
 
@@ -46,6 +47,42 @@ function boundary(options: { foreignApp?: boolean; foreignUser?: boolean; direct
 }
 
 describe('Slack provider Actions', () => {
+  it('delivers a registered host notification through the selected current connection without a Channels Action caller', async () => {
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const sender = kit.registration('notificationChannels', 'alerts');
+      expect(sender, 'the shipped Slack plugin must register its host sender').toBeTypeOf('function');
+      const b = boundary();
+      const execute = vi.fn(async () => ({ [connection.connectionId]: { ...connection,
+        authorityEpoch: 1, enabled: true, deletionState: 'none', requiresFullSharedMessageContent: false } }));
+      const context = { ...b.context, caller: undefined,
+        services: { ...b.context.services, actions: { execute } } as unknown as PluginInvocationContext['services'] };
+      const request = { clientRequestId: 'health-test', deliveryId: 'health-test', channelId: 'happier.channel.slack/alerts',
+        title: 'App needs attention', body: 'A saved health check failed.', destination: {
+          connectionId: connection.connectionId, endpoint: { kind: 'shared', audience: 'shared', id: 'slack:T1:channel:C1' },
+        } };
+      const setup = kit.registration('actions', 'notifications/setup');
+      expect(setup, 'destination setup must use the real provider resolver').toBeTypeOf('function');
+      expect(await setup!({ connectionId: connection.connectionId, query: 'C1' }, context)).toMatchObject({
+        kind: 'resolved', destinations: [request.destination],
+      });
+      expect(b.effects).toHaveLength(0);
+      const preparedCredentials = b.materialize.mock.calls.length;
+      const preparedRequests = b.request.mock.calls.length;
+      expect(await setup!({ destination: request.destination }, context)).toMatchObject({ kind: 'ready' });
+      expect(b.materialize.mock.calls.length).toBe(preparedCredentials);
+      expect(b.request.mock.calls.length).toBe(preparedRequests);
+      expect(await sender!(request, context)).toMatchObject({ status: 'accepted' });
+      expect(b.effects).toMatchObject([{ channel: 'C1', text: 'App needs attention\nA saved health check failed.' }]);
+      expect(execute).toHaveBeenCalledWith(expect.objectContaining({ pluginId: 'happier.channels' }),
+        { connectionId: connection.connectionId }, expect.objectContaining({ signal: context.signal }));
+      execute.mockResolvedValueOnce({});
+      const before = b.materialize.mock.calls.length;
+      expect(await sender!(request, context)).toMatchObject({ status: 'failed', code: 'notification_connection_unavailable' });
+      expect(b.materialize.mock.calls.length).toBe(before);
+      expect(b.effects).toHaveLength(1);
+    } finally { await kit.dispose(); }
+  });
   it('posts one content-free Session status and edits that same message for subsequent states', async () => {
     expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.[0]?.operations).toHaveProperty('sessionStatus');
     const b = boundary();

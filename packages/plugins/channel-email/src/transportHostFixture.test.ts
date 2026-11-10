@@ -11,6 +11,27 @@ import { ConversationAttachmentFetchResultV1Schema, ConversationPollResultV1Sche
 import { createEmailTransportFixture as fixture, mailbox, incoming, config, connection, thread, delivery } from '../testkit/emailTransportFixture.js';
 
 describe('email core with an external contributed raw transport', () => {
+  it('delivers a registered host notification through its selected Email connection and real raw transport', async () => {
+    const f = await fixture();
+    try {
+      expect(f.email.registration('notificationChannels', 'alerts')).toBeTypeOf('function');
+      const setup = await f.invoke('notifications/setup', { connectionId: connection.connectionId, query: 'alice@example.com' });
+      expect(setup).toMatchObject({ kind: 'resolved', destinations: [{ connectionId: connection.connectionId,
+        endpoint: { kind: 'direct', audience: 'direct', id: mailbox },
+        newThread: { recipients: ['alice@example.com'], subject: 'Happier health alert' } }] });
+      expect(f.submissions).toHaveLength(0);
+      if (!setup || typeof setup !== 'object' || Array.isArray(setup) || !('destinations' in setup) || !Array.isArray(setup.destinations)) {
+        throw new Error('Expected provider-owned Email destination setup.');
+      }
+      const result = await f.notify({ clientRequestId: 'email-health', deliveryId: 'email-health', channelId: 'happier.channel.email/alerts',
+        title: 'App needs attention', body: 'A saved health check failed.', destination: setup.destinations[0] });
+      expect(result).toMatchObject({ status: 'accepted' });
+      expect(f.submissions).toHaveLength(1);
+      const message = await simpleParser(Buffer.from(f.submissions[0]!.mimeBase64, 'base64'));
+      expect(message.to).toMatchObject({ value: [{ address: 'alice@example.com' }] });
+      expect(message.text).toContain('App needs attention\nA saved health check failed.');
+    } finally { await f.dispose(); }
+  });
   it('shapes a retained-thread replay from current bindings without reverse host reads', async () => {
     const f = await fixture();
     try {

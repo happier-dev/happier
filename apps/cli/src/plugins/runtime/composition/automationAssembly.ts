@@ -5,6 +5,8 @@ import { createAutomationEventAdoptedDefinitionSetHostV1 } from '../automations/
 import type { AutomationEventAdoptedDefinitionSetWithHistoryGapRecoveryV1 } from '../automations/automationEventAdoptedDefinitionSet';
 import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { AutomationEventSourcesListTransportV1, PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
+import type { WorkflowTriggerHealthSourceV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { SavedHealthCheckSourceRead } from '@/deployments/healthChecks/readSavedHealthCheckSource';
 
 type ConsumerLifecycle = Readonly<{
     isCurrent(): boolean;
@@ -22,7 +24,26 @@ export async function assembleAutomationRuntime(input: Readonly<{
     revalidateCallerMaterialization(candidate: PluginMachineMaterializationRefV1): Promise<boolean>;
     revalidateCallerOccurrence(candidate: Readonly<{ pluginId: string; occurrenceId: string }>): Promise<boolean>;
     onAdopted?(): void;
+    readHealthSources?(): Promise<ReadonlyMap<string, WorkflowTriggerHealthSourceV1>>;
 }>) {
+    // Native controllers also consume sources assigned to another observer.
+    // The existing definitions invalidation retires this same assembly's view;
+    // the next admission borrows one refresh, with no idle or per-arrival scan.
+    let healthSources: Promise<ReadonlyMap<string, WorkflowTriggerHealthSourceV1> | Readonly<{ kind: 'unavailable'; code: string; cause?: unknown }>> | null = null;
+    const readHealthAlertSource = async (sourceInstanceId: string): Promise<SavedHealthCheckSourceRead> => {
+        if (!input.readHealthSources) return { kind: 'unavailable', code: 'health_check_source_unavailable' };
+        const current = await (healthSources ??= input.readHealthSources().catch((error: unknown) => {
+            if (error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
+                return { kind: 'unavailable' as const, code: error.code };
+            }
+            // A malformed remote response must not suppress the native Inbox
+            // transition. Keep the cause in-process; consumers disclose only code.
+            return { kind: 'unavailable' as const, code: 'internal_error', cause: error };
+        }));
+        if ('kind' in current) return current;
+        const source = current.get(sourceInstanceId);
+        return source ? { kind: 'available', ...source } : { kind: 'unconfigured' };
+    };
     const adoptedOwners: Array<Readonly<{
         caller: PluginMachineMaterializationRefV1;
         occurrenceId: string;
@@ -140,8 +161,10 @@ export async function assembleAutomationRuntime(input: Readonly<{
     };
     return Object.freeze({
         invalidateSourceDefinitions() {
+            healthSources = null;
             for (const { owner } of adoptedOwners) owner.invalidate();
         },
+        readHealthAlertSource,
         refreshActivatedPlugin,
         resolveAdoptedDefinitionSet,
         resolveHistoryGapSource,
