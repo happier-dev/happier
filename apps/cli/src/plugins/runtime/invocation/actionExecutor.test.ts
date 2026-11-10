@@ -84,7 +84,7 @@ describe('target action executor', () => {
   });
 
   it.each(['same_spec', 'changed_spec', 'changed_input', 'changed_origin', 'changed_authority'] as const)(
-    're-resolves approval after re-adoption and preserves its durable subject: %s', async scenario => {
+    'retains the admitted operand and implementation while later selection changes: %s', async scenario => {
       let adopted = false;
       const invoke = vi.fn(async (_action: ResolvedTargetAction) => ({ status: 'executed' as const, value: 'current implementation' }));
       const receipts: unknown[] = [];
@@ -109,21 +109,17 @@ describe('target action executor', () => {
         invoke,
       });
       const prepared = await executor.prepare({ pluginId: 'acme.alpha', localId: 'run', input: { value: 'original' }, surface: 'cli' });
-      if (scenario === 'same_spec') {
-        expect(prepared.kind).toBe('ready');
-        if (prepared.kind !== 'ready') throw new Error('Same-spec re-adoption refused');
-        expect(invoke).not.toHaveBeenCalled();
-        await expect(Promise.all([prepared.run(), prepared.run()])).resolves.toEqual([
-          { status: 'executed', value: 'current implementation' }, { status: 'executed', value: 'current implementation' },
-        ]);
-        expect(invoke).toHaveBeenCalledTimes(1);
-        expect(invoke.mock.calls[0]?.[0]).toMatchObject({ occurrenceId: '8' });
-      } else {
-        expect(prepared).toMatchObject({ kind: 'settled', result: { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' } });
-        expect(invoke).not.toHaveBeenCalled();
-      }
+      expect(prepared.kind).toBe('ready');
+      if (prepared.kind !== 'ready') throw new Error('Approved operation was not admitted');
+      expect(invoke).not.toHaveBeenCalled();
+      await expect(Promise.all([prepared.run(), prepared.run()])).resolves.toEqual([
+        { status: 'executed', value: 'current implementation' }, { status: 'executed', value: 'current implementation' },
+      ]);
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(invoke.mock.calls[0]?.[0]).toMatchObject({ occurrenceId: '7', input: { value: 'original' },
+        accountId: 'original-account', sourceCustody: { registeredRootId: 'original-root' } });
       expect(receipts).toHaveLength(1);
-      expect(receipts[0]).toMatchObject({ artifactId: 'authenticated-decision', execution: { ok: scenario === 'same_spec', effectAttempted: scenario === 'same_spec' } });
+      expect(receipts[0]).toMatchObject({ artifactId: 'authenticated-decision', execution: { ok: true, effectAttempted: true } });
     },
   );
 
@@ -241,7 +237,7 @@ describe('target action executor', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it('resolves explicit authorization facts again after current-intent approval', async () => {
+  it('retains authorization facts admitted before approval without another lookup', async () => {
     let appliedGeneration = '7';
     const invoke = vi.fn(async () => ({ status: 'executed' as const, value: null }));
     const resolveAuthorizationFacts = vi.fn(() => authorizationFacts({ appliedGeneration }));
@@ -258,10 +254,10 @@ describe('target action executor', () => {
     await expect(executor.execute({
       pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
     })).resolves.toMatchObject({
-      status: 'unavailable', code: 'plugin_action_generation_not_applied',
+      status: 'executed', value: null,
     });
-    expect(resolveAuthorizationFacts).toHaveBeenCalledTimes(2);
-    expect(invoke).not.toHaveBeenCalled();
+    expect(resolveAuthorizationFacts).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledTimes(1);
   });
 
   it('does not prompt for a safe no-access action and invokes exactly once', async () => {
@@ -274,12 +270,12 @@ describe('target action executor', () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['writesLocal', 'writesRemote', 'externalSideEffect', 'destructive'] satisfies PluginActionDangerLevelV2[])('binds %s confirmation and re-evaluates before one invocation', async (dangerLevel) => {
+  it.each(['writesLocal', 'writesRemote', 'externalSideEffect', 'destructive'] satisfies PluginActionDangerLevelV2[])('binds %s confirmation before one invocation', async (dangerLevel) => {
     let generation = '7';
     const requestCurrentIntent = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => ({ status: 'approved' as const, fingerprint }));
     const invoke = vi.fn(async () => ({ status: 'executed' as const, value: null }));
     const executor = createExecutor({
-      resolve: () => resolved(dangerLevel),
+      resolve: () => ({ ...resolved(dangerLevel), confirmation: { title: 'Run effect' }, approvalRequiredByActionSettings: true }),
       resolveAuthorizationFacts: () => authorizationFacts({ desiredGeneration: generation, appliedGeneration: generation }),
       requestCurrentIntent, invoke,
     });
@@ -289,9 +285,9 @@ describe('target action executor', () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects prompt reuse and stale occurrence without invocation', async () => {
+  it('keeps admitted generation facts when selection changes during approval', async () => {
     let generation = '7';
-    const invoke = vi.fn();
+    const invoke = vi.fn(async () => ({ status: 'executed' as const, value: null }));
     const executor = createExecutor({
       resolve: () => resolved('destructive'),
       resolveAuthorizationFacts: () => authorizationFacts({ desiredGeneration: generation, appliedGeneration: generation }),
@@ -299,13 +295,13 @@ describe('target action executor', () => {
       invoke,
     });
     await expect(executor.execute({ pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli' }))
-      .resolves.toMatchObject({ status: 'unavailable' });
-    expect(invoke).not.toHaveBeenCalled();
+      .resolves.toMatchObject({ status: 'executed', value: null });
+    expect(invoke).toHaveBeenCalledOnce();
   });
 
-  it('rejects when the host binding changes after approval', async () => {
+  it('keeps the admitted host binding when later selection changes', async () => {
     let selection = 'account-1';
-    const invoke = vi.fn();
+    const invoke = vi.fn(async (action: ResolvedTargetAction) => ({ status: 'executed' as const, value: action.accountId ?? null }));
     const executor = createExecutor({
       resolve: () => resolved('writesRemote'),
       resolveHostBinding: async (action) => ({
@@ -316,13 +312,14 @@ describe('target action executor', () => {
       invoke,
     });
     await expect(executor.execute({ pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli' }))
-      .resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_mismatch' });
-    expect(invoke).not.toHaveBeenCalled();
+      .resolves.toMatchObject({ status: 'executed', value: 'account-1' });
+    expect(invoke).toHaveBeenCalledOnce();
   });
 
-  it('rejects when a dynamically resolved HostAccess scope changes after approval', async () => {
+  it('keeps the admitted HostAccess scope when later resolution changes', async () => {
     let requestFingerprint = 'scope-one';
-    const invoke = vi.fn();
+    const invoke = vi.fn(async (action: ResolvedTargetAction) => ({ status: 'executed' as const,
+      value: action.hostAccess[0]?.requestFingerprint ?? null }));
     const executor = createExecutor({
       resolve: () => resolved('writesRemote'),
       resolveHostBinding: async (action) => ({
@@ -346,11 +343,11 @@ describe('target action executor', () => {
 
     await expect(executor.execute({
       pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
-    })).resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_mismatch' });
-    expect(invoke).not.toHaveBeenCalled();
+    })).resolves.toMatchObject({ status: 'executed', value: 'scope-one' });
+    expect(invoke).toHaveBeenCalledOnce();
   });
 
-  it('passes only the twice-resolved current service binding to invocation', async () => {
+  it('passes the originally admitted service binding to invocation', async () => {
     let binding = 'first';
     const invoke = vi.fn(async (_action, _args, serviceBinding) => ({
       status: 'executed' as const,
@@ -371,7 +368,7 @@ describe('target action executor', () => {
 
     await expect(executor.execute({
       pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
-    })).resolves.toMatchObject({ status: 'executed', value: 'second' });
+    })).resolves.toMatchObject({ status: 'executed', value: 'first' });
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
@@ -769,9 +766,9 @@ describe('target action executor', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it('does not reuse approval after the current Action confirmation changes', async () => {
+  it('retains the reviewed operation when confirmation copy later changes', async () => {
     let body = 'Events in the history gap are not replayed.';
-    const invoke = vi.fn();
+    const invoke = vi.fn(async () => ({ status: 'executed' as const, value: null }));
     const executor = createExecutor({
       resolve: () => ({
         ...resolved('writesLocal'),
@@ -787,8 +784,8 @@ describe('target action executor', () => {
     await expect(executor.execute({
       pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
     })).resolves.toMatchObject({
-      status: 'unavailable', code: 'plugin_action_current_intent_mismatch',
+      status: 'executed', value: null,
     });
-    expect(invoke).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledOnce();
   });
 });

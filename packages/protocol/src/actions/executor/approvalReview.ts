@@ -29,9 +29,15 @@ export function recordPresentUserApprovalV1(args: Readonly<{
 const consumedConfirmations = new WeakSet<object>();
 
 /** Comparison categories only: never include either compared value. */
+const currentIntentMismatchFields = ['account', 'binding', 'fingerprint_source', 'version', 'surface', 'child_proof'] as const;
 export type CurrentIntentMismatchV1 = Readonly<{
-  field: 'account' | 'binding' | 'fingerprint_source' | 'version' | 'surface' | 'child_proof';
+  field: typeof currentIntentMismatchFields[number];
 }>;
+
+/** Read the owner's closed diagnostic vocabulary from a public failure envelope. */
+export function readCurrentIntentMismatchFieldV1(value: unknown): CurrentIntentMismatchV1['field'] | undefined {
+  return currentIntentMismatchFields.find(field => field === value);
+}
 
 function confirmationMismatch(actionId: ActionId, input: unknown, context: ActionExecutorContext,
   inputDigest?: string): CurrentIntentMismatchV1 | null {

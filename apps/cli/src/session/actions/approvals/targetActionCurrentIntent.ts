@@ -4,10 +4,8 @@ import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import { resolvePluginLocalizedStringV2Text as resolveLocalizedConfirmationText } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult } from '@/plugins/runtime/invocation/actionExecutor';
 import { createLiveApprovalDecision } from './liveDecision';
-import { targetActionApprovalSubjectsEqual } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { projectTargetActionApprovalInput, resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions/actionApprovalPresentation';
-import { admitApprovalRequesterDecisionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { projectTargetActionApprovalInvocationV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { createCliApprovalsArtifactStore } from './artifactStore';
 import { persistTargetActionReceipt } from './targetActionSettlement';
 import { buildTargetActionApprovalDecisionResult } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
@@ -84,25 +82,6 @@ function createTargetActionApprovalRequestCandidate(
   return parsed.data;
 }
 
-/**
- * Rebuilds the persisted approval subject from the current canonical Action
- * owner. The durable placement is supplied only after exact-daemon re-entry,
- * so stale source custody, policy, input, presentation, or placement refuses
- * before the target handler begins.
- */
-export function targetActionApprovalMatchesCurrentIntent(
-  request: TargetActionApprovalRequestV1,
-  currentIntent: TargetActionCurrentIntentRequest,
-): boolean {
-  const candidate = createTargetActionApprovalRequestCandidate(currentIntent, {
-    createdAtMs: request.createdAtMs,
-    updatedAtMs: request.updatedAtMs,
-  });
-  return candidate !== null
-    && candidate.subjectFingerprint === request.subjectFingerprint
-    && targetActionApprovalSubjectsEqual(candidate, request);
-}
-
 export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
   create: (request: TargetActionApprovalRequestV1,
     onReady?: (created: Readonly<{ artifactId: string; request: TargetActionApprovalRequestV1 }>) => void,
@@ -164,8 +143,11 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
     const decidedRequest = StoredTargetActionApprovalRequestV1Schema.safeParse(result.request);
     if (!decidedRequest.success
       || decidedRequest.data.subjectFingerprint !== fingerprint
-      || !targetActionApprovalSubjectsEqual(request, decidedRequest.data)) {
-      return { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' };
+      || decidedRequest.data.qualifiedActionId !== request.qualifiedActionId
+      || decidedRequest.data.accountId !== request.accountId
+      || decidedRequest.data.executionOriginV1?.accountId !== request.executionOriginV1?.accountId
+      || !sameStrictJsonValue(decidedRequest.data.input, request.input)) {
+      return { status: 'unavailable', code: 'plugin_action_current_intent_mismatch', mismatch: { field: 'fingerprint_source' } };
     }
     if (result.decision === 'approve') {
       // A recorded approval decision is history once its effect has settled.
@@ -187,8 +169,7 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
             if (admittedArtifactId !== artifactId || !update) throw new Error('approval_stale');
             const latest = await deps.read(artifactId);
             if (!latest || latest.approvalInputCustody !== 'live_only'
-              || latest.status !== 'executing' || latest.decision?.kind !== 'approve'
-              || !targetActionApprovalSubjectsEqual(request, latest)) throw new Error('approval_stale');
+              || latest.status !== 'executing' || latest.decision?.kind !== 'approve') throw new Error('approval_stale');
             const executedAtMs = Math.max((deps.now ?? Date.now)(), latest.updatedAtMs);
             const terminal = TargetActionApprovalRequestV1Schema.parse({ ...latest,
               status: execution.ok ? 'executed' : 'failed', updatedAtMs: executedAtMs,
@@ -201,14 +182,6 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
               write: async request => (await update({ artifactId, request })).ok });
             if (!settled) throw new Error('approval_execution_outcome_unknown');
           },
-          ...(request.requesterConfirmation ? { revalidateRequesterDecision: async () => {
-            const invocation = projectTargetActionApprovalInvocationV1(request);
-            return invocation !== null && (await admitApprovalRequesterDecisionV1({
-              request: { ...request, ...invocation },
-              context: { authority: 'present_user', surface: 'ui', runtimeAccountId: request.requesterConfirmation!.executionAccountId,
-                requesterApprovalDecision: result.requesterApprovalDecision },
-            })).ok;
-          } } : {}),
         }
       : { status: 'rejected', code: PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE };
   };

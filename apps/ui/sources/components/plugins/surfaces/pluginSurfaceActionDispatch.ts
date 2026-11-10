@@ -108,6 +108,7 @@ import { createPluginRevealSessionInputHandler } from './pluginRevealSessionInpu
 
 import { resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { randomUUID } from '@/platform/randomUUID';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiSessionStatusGet } from '@/sync/ops/actions/sessionStatusAction';
@@ -588,10 +589,9 @@ function clientActionInvocation(selection: ClientContributedActionSelection): Ex
 }
 
 /**
- * Reads one Action from the producer-owned generic executable index. The raw
- * descriptor, exact target/origin and registration generation must all remain
- * current together; no client registration can be reconstructed or substituted
- * by a caller-local availability predicate.
+ * Admits one Action from the producer-owned executable index. The selected
+ * registration and Account lifetime own its cancellation; policy and declaration
+ * changes apply to the next admission.
  */
 function resolveClientContributedActionSelection(
     input: DispatchPluginSurfaceActionInput,
@@ -622,15 +622,9 @@ function resolveClientContributedActionSelection(
     const { registration, handler, pluginVersion, authorization } = resolvedRegistration;
     const isCurrent = (): boolean => {
         if (input.isCurrent?.() === false) return false;
-        if (!isContributedActionEnabled(identity, input.invocationSurface ?? 'ui', input.hostAction?.context)) return false;
         if (!registration.lifecycle.isCurrent() || registration.lifecycle.signal.aborted) return false;
         if (registration.accountLifetime?.isCurrent() === false) return false;
-        const currentAction = resolveProjectedContributedAction(input, identity);
-        if (!currentAction || !arePluginSurfaceContributedActionExecutionsEqual(expectedAction, currentAction)) return false;
-        return resolvePluginUiClientActionRegistration({
-            action: currentAction,
-            platform,
-        })?.registration === registration;
+        return true;
     };
     return isCurrent()
         ? Object.freeze({ action, authorization, binding, registration, handler, pluginVersion, isCurrent })
@@ -702,13 +696,16 @@ function clientActionExecuteAction(
             const authority = registeredAuthority && 'machineId' in registeredAuthority ? registeredAuthority : undefined;
             const execute = selection.binding.execute ?? input.contributedAction?.execute;
             const contributedAction = authority ? {
+                ...input.contributedAction,
                 machineId: authority.machineId,
                 serverId: authority.serverId,
                 ...(selection.binding.sessionId ? { sessionId: selection.binding.sessionId } : {}),
                 ...(execute ? { execute } : {}),
-            } : undefined;
+            } : input.contributedAction;
             const invocation = clientActionInvocation(selection);
             const outcome = await dispatchPluginSurfaceAction({
+                actionRequestId: input.actionRequestId,
+                onDaemonActionOperationAdmitted: input.onDaemonActionOperationAdmitted,
                 callerPluginId: selection.action.pluginId,
                 ...(selection.registration.accountLifetime ? { actionAccountLifetime: selection.registration.accountLifetime } : {}),
                 ...(selected ? {
@@ -934,11 +931,19 @@ function createClientActionUi(
                 isCurrent,
                 ...(authority ? { executionTarget: { machineId: authority.machineId, serverId: authority.serverId ?? accountLifetime.scope.serverId } } : {}),
                 executeSelectedOperation: async (payload, operationOptions) => {
+                    const requestId = randomUUID();
                     const executionOptions = {
                         ...(operationOptions?.signal ? { signal: operationOptions.signal } : {}),
                         ...(retained ? { selectedActionInput: retained.carrier, consumeSelectedActionInput: true } : {}),
                     };
-                    return await executeAction(payload.action, payload.input, executionOptions);
+                    const executePrepared = clientActionExecuteAction({
+                        ...input,
+                        actionRequestId: requestId,
+                        onDaemonActionOperationAdmitted: () => {
+                            operationOptions?.onDaemonActionOperationAdmitted?.(requestId);
+                        },
+                    }, selection, signal, selectedInputs);
+                    return await executePrepared(payload.action, payload.input, executionOptions);
                 },
             });
             const outcome = await openNewSession(request, {
@@ -1113,14 +1118,14 @@ async function settleDaemonActionPresentUserIntent(
     if (input.hostAction?.context?.interactivePresentation === 'unavailable') {
         return failure('unavailable', 'action_interactive_review_required');
     }
-    // The daemon binds this decision to the exact request it arrives on; this
-    // token only correlates the local answer with the question asked here.
-    const fingerprint = `${buildQualifiedPluginContributionKey(identity)}@${projectedAction.occurrenceId}`;
+    const reviewedInput = normalizedInput === undefined ? settledInput : normalizedInput;
+    const approvedInvocation = { action: identity, ...(reviewedInput === undefined ? {} : { input: reviewedInput }) };
+    const fingerprint = fingerprintPluginAccountActionConfirmation({ input: approvedInvocation, pluginId: identity.pluginId });
     let intent: PluginActionCurrentIntentResult;
     try {
         intent = await resolveCurrentIntentPresenter(input, projectedAction, invocationSurface)({
             action: projectedAction,
-            input: normalizedInput === undefined ? settledInput : normalizedInput,
+            input: reviewedInput,
             fingerprint,
             surface: invocationSurface,
             invocationSurface,
@@ -1133,13 +1138,13 @@ async function settleDaemonActionPresentUserIntent(
     if (input.isCurrent && !input.isCurrent()) {
         return failure('stale_surface', 'plugin_ui_generation_retired');
     }
-    if (!isContributedActionEnabled(identity, invocationSurface, input.hostAction?.context)) {
-        return failure('denied', 'plugin_action_disabled');
-    }
     if (intent.status === 'approved') {
         return intent.fingerprint === fingerprint
+            && fingerprintPluginAccountActionConfirmation({ input: approvedInvocation, pluginId: identity.pluginId }) === fingerprint
             ? { ok: true, presentUserIntent: 'confirmed' }
-            : failure('unavailable', 'plugin_action_current_intent_mismatch');
+            : failure('unavailable', 'plugin_action_current_intent_mismatch', {
+                details: { currentIntentMismatch: { field: 'fingerprint_source' } },
+            });
     }
     if (intent.status === 'deferred') {
         return failure('unavailable', 'plugin_action_current_intent_unavailable');
@@ -1249,7 +1254,7 @@ async function prepareClientContributedAction(
             return clientActionFailure('plugin_action_read_observation_session_unresolved');
         }
     }
-    return { kind: 'prepared' as const, initial, authority, invocationAuthority, invocation, preparedInput, accountDeclaration, accountOrigin };
+    return { kind: 'prepared' as const, initial, authority, invocationAuthority, invocation, preparedInput };
 }
 
 /** Both execution placements enter the same retained canonical Session admission. */
@@ -1442,11 +1447,8 @@ async function executeClientContributedAction(
             : await resolveCurrentIntentPresenter(input, projectedAction, invocationSurface)(request);
         if (decision.status === 'approved' && decision.fingerprint === request.fingerprint) {
             const wrapper = { action: identity, ...(request.input === undefined ? {} : { input: request.input }) };
-            const inputDigest = fingerprintPluginAccountActionConfirmation({ input: wrapper, pluginId: identity.pluginId,
-                pluginVersion: initial.pluginVersion, declaration: request.action.accountActionDeclaration ?? preparation.accountDeclaration ?? undefined,
-                sourceCustody: request.action.accountActionDeclaration
-                    ? readPluginUiAccountExecutableOrigin(request.action)?.sourceCustody : preparation.accountOrigin?.sourceCustody });
-            if (inputDigest) confirmedInvocation = { input: wrapper, inputDigest };
+            const inputDigest = fingerprintPluginAccountActionConfirmation({ input: wrapper, pluginId: identity.pluginId });
+            confirmedInvocation = { input: wrapper, inputDigest };
         }
         return decision;
     };
@@ -1487,12 +1489,6 @@ async function executeClientContributedAction(
                         status: accountAvailability.outcome === 'hidden' ? 'unavailable' as const : accountAvailability.outcome,
                         code: accountAvailability.code,
                     } } : {}),
-                    fingerprintContext: Object.freeze({
-                        target: current.registration.target,
-                        ...(current.registration.executionOrigin ? { executionOrigin: current.registration.executionOrigin } : {}),
-                        ...(accountOrigin ? { accountOrigin } : {}),
-                        packageVersion: current.pluginVersion,
-                    }),
                 }),
                 isCurrent: current.isCurrent,
             });
@@ -1538,20 +1534,12 @@ async function executeClientContributedAction(
                         ...(admission.data === undefined ? {} : { data: admission.data }),
                     });
             }
-            // Approval is followed by the shared gate's fresh policy pass; this
-            // final exact registration read closes the interval before effects.
             if (input.hostAction?.context?.verifyMachineAdmissionCurrent
                 && !await input.hostAction.context.verifyMachineAdmissionCurrent()) {
                 return Object.freeze({ status: 'unavailable' as const, code: 'plugin_action_generation_retired',
                     message: 'Plugin action generation is no longer current' });
             }
-            return resolveClientContributedActionSelection(input, identity, projectedAction)
-                ? null
-                : Object.freeze({
-                    status: 'unavailable' as const,
-                    code: 'plugin_action_generation_retired',
-                    message: 'Plugin action generation is no longer current',
-                });
+            return null;
         },
         handler: ({ input: actionInput, signal: handlerSignal }) => {
             // The invocation parser releases its temporary links on settlement.
@@ -1560,11 +1548,7 @@ async function executeClientContributedAction(
             const observationLifetime = observationController
                 ? mergeAbortSignals([initial.registration.lifecycle.signal, input.signal, observationController.signal]) : null;
             const signal = observationLifetime?.signal ?? handlerSignal;
-            const current = resolveClientContributedActionSelection(input, identity, projectedAction);
-            if (!current) {
-                observationLifetime?.dispose();
-                throw new PluginError({ code: 'plugin_action_generation_retired' });
-            }
+            const current = initial;
             const observationRetirement = observationController
                 ? current.registration.accountLifetime?.onRetire(() => observationController.abort()) : undefined;
             const currentUiContext = current.action.execution.target === 'account' ? undefined : readClientActionCurrentUiContext(current);
@@ -2138,6 +2122,11 @@ function mountedHostActionContext(input: DispatchPluginSurfaceActionInput, calle
     const inheritedSessionListAccess = sessionListAccess === 'mounted_ui' ? undefined : sessionListAccess;
     return {
         ...hostContext,
+        ...(caller && input.contributedAction && hostContext.externalActionTarget === undefined
+            ? { externalActionTarget: { kind: 'machine' as const, machineId: input.contributedAction.machineId },
+                serverId: input.contributedAction.accountLifetime?.scope.serverId
+                    ?? input.contributedAction.serverId ?? hostContext.serverId }
+            : {}),
         ...(inheritedSessionListAccess === undefined ? {} : { sessionListAccess: inheritedSessionListAccess }),
         // Admission belongs to the continued parent, not an Action it invokes.
         ...(clientCaller || resourceCaller ? { bypassApprovals: false } : {}),
@@ -2275,9 +2264,6 @@ async function executeContributedAction(
         if (!admitted.ok) return admitted;
         const stopped = preflightFailure(input);
         if (stopped) return stopped;
-        if (!arePluginSurfaceContributedActionExecutionsEqual(projectedAction, resolveProjectedContributedAction(input, identity))) {
-            return failure('stale_surface', 'plugin_ui_generation_retired');
-        }
         return { ok: true, result: { admitted: true } };
     }
     // Execution placement is chosen after the selected-operation carrier is
@@ -2359,6 +2345,10 @@ async function executeContributedAction(
 
     const presentUserIntent = await settleDaemonActionPresentUserIntent(input, identity, projectedAction, normalizedInput, daemonPreparedInput);
     if (!presentUserIntent.ok) return presentUserIntent;
+    if (input.hostAction?.context?.verifyMachineAdmissionCurrent
+        && !await input.hostAction.context.verifyMachineAdmissionCurrent()) {
+        return clientActionFailure('plugin_action_generation_retired');
+    }
     const currentFailure = preflightFailure(input);
     if (currentFailure) return currentFailure;
     if (input.isContributedActionAvailable?.() === false) {
@@ -2367,11 +2357,6 @@ async function executeContributedAction(
     if (binding.accountLifetime !== undefined && binding.accountLifetime?.isCurrent() !== true) {
         return failure('stale_surface', 'plugin_ui_generation_retired');
     }
-    if (input.hostAction?.context?.verifyMachineAdmissionCurrent
-        && !await input.hostAction.context.verifyMachineAdmissionCurrent()) {
-        return clientActionFailure('plugin_action_generation_retired');
-    }
-
     const originSurface = readActionOriginSurface(input);
     if (!originSurface) return failure('unavailable', 'plugin_action_origin_unavailable');
     const execute = binding.execute ?? machinePluginStructuredMessageActionExecute;
@@ -2393,7 +2378,11 @@ async function executeContributedAction(
         ...(binding.accountLifetime === undefined ? {} : { accountLifetime: binding.accountLifetime }),
         ...(binding.onApprovalPending ? { onApprovalPending: binding.onApprovalPending } : {}),
         ...(admittedOperation ? { operation: admittedOperation } : {}),
-        isCurrent: () => input.isCurrent?.() !== false && input.isContributedActionAvailable?.() !== false,
+        // Local admission consumes the view's currentness. The finite result
+        // belongs to its Account after this point, even if that view detaches.
+        isCurrent: admittedOperation
+            ? () => binding.accountLifetime === undefined || binding.accountLifetime?.isCurrent() === true
+            : () => input.isCurrent?.() !== false && input.isContributedActionAvailable?.() !== false,
         expectedContributorOccurrenceId: projectedAction.occurrenceId,
         ...(input.requiredReadOnly ? { requiredReadOnly: true } : {}),
         qualifiedActionId: buildQualifiedPluginContributionKey(identity),
@@ -2431,7 +2420,7 @@ async function executeContributedAction(
         ...(presentUserIntent.presentUserIntent
             ? { presentUserIntent: presentUserIntent.presentUserIntent }
             : {}),
-        ...(input.signal ? { signal: input.signal } : {}),
+        ...(!admittedOperation && input.signal ? { signal: input.signal } : {}),
     };
     let result = input.readObservation
         ? await observeDaemonActionRead(binding.machineId, options, input.readObservation)
@@ -2566,6 +2555,9 @@ export function createPluginSurfaceActionDispatchHandler(
         let connectionPendingEligible = false;
         const outcome = await dispatchPluginSurfaceAction({
             actionRequestId: request.requestId,
+            ...(options?.onDaemonActionOperationAdmitted ? {
+                onDaemonActionOperationAdmitted: () => options.onDaemonActionOperationAdmitted?.(request.requestId),
+            } : {}),
             ...(input.actionAccountLifetime ? { actionAccountLifetime: input.actionAccountLifetime } : {}),
             callerPluginId: input.pluginId,
             callerSourceCustody: input.callerSourceCustody,

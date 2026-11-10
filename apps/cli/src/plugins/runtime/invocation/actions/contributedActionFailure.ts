@@ -2,6 +2,26 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
+
+/** Preserve the public failure envelope across ordinary Action normalization. */
+export function projectContributedActionFailure(result: Readonly<{
+  errorCode: string;
+  error: string;
+  retryable?: boolean;
+  actionHandlerInvocation?: 'notStarted';
+  data?: JsonValue;
+}>): ActionExecuteFailure {
+  const data = { code: result.errorCode, message: result.error,
+    ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
+    ...readPluginActionFailureAuthorPayload(result.data) };
+  const error = result.actionHandlerInvocation === 'notStarted'
+    ? createPluginActionHandlerNotStartedError(data) : new PluginError(data);
+  return { ok: false, errorCode: result.errorCode, error: result.error,
+    ...(error.data.failureCause ? { failureCause: error.data.failureCause } : {}), details: error.data };
+}
 
 /** One public refusal projection for immediate RPCs and retained finite results. */
 export function projectStructuredMessageActionFailure(result: Readonly<{

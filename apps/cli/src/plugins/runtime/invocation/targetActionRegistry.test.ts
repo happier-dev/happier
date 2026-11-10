@@ -9,6 +9,7 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 
 import {
     COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
+    DeploymentTargetPreparationBaseV1ProtocolSchema,
     isPluginError,
     type JsonValue,
     PluginError,
@@ -17,7 +18,9 @@ import {
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
-import { createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
+import { createPluginHttpFixture, createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
+import * as supabaseQueryPlugin from '@happier-dev/plugins-deployment-supabase';
+import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import * as actionContractProducer from '../../../../../../packages/plugin-sdk/examples/action-contract-producer/src/index';
 import type { MessageActionAvailableSnapshotV1, PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 import type {
@@ -31,7 +34,7 @@ import type { HostCurrentSessionPresentationService } from '@/agent/runtime/stat
 import { createTargetActionInvocationRegistry } from './targetActionRegistry';
 import { logger } from '@/ui/logger';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
-import { createTargetActionCurrentIntentAdapter, targetActionApprovalMatchesCurrentIntent } from '@/session/actions/approvals/targetActionCurrentIntent';
+import { createTargetActionCurrentIntentAdapter } from '@/session/actions/approvals/targetActionCurrentIntent';
 import { StoredTargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { TargetActionCurrentIntentRequest } from './actionExecutor';
 import { TriageStartEntrySessionInputV1Schema, TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1 } from '../../../../../../packages/plugins/triage/src/actions/entrySessionProtocol';
@@ -43,7 +46,7 @@ import { testkitEntryRef, testkitLocator, TESTKIT_SOURCE_INSTANCE_ID } from '../
 import { TriageSessionHandoffInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { testkitReadOnlySourceSnapshot } from '../../../../../../packages/plugins/triage/src/sessions/testkit/entrySessionTestkit.test-support';
 import { CORPUS_SESSION_LINKS_INDEX_ID } from '../../../../../../packages/plugins/triage/src/corpus/collections/ids';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutor, createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionDefinitionSummaryV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { markSessionListQueryResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -124,7 +127,66 @@ function createRegistry(
     });
 }
 
+function reviewedActionContext(pluginId: string, localId: string, input: unknown) {
+    const context = { surface: 'ui' as const, authority: 'account_automation' as const };
+    return { ...context, hostReviewedChild: createHostReviewedChildPortV1({
+        actionId: 'action.invoke', input: { action: { pluginId, localId }, input }, context, reviewAdmitted: true,
+    }) };
+}
+
 describe('target action invocation registry', () => {
+    it('admits the qualified Supabase read-only query for an agent under default policy without an approval', async () => {
+        const manifest = normalizePluginManifestV2(supabaseQueryPlugin.manifest);
+        const localId = manifest.contributes.deploymentTargets[0]?.dataV1?.query?.readOnly;
+        const declaration = manifest.contributes.actions.find(candidate => candidate.id === localId);
+        if (!declaration || !localId) throw new Error('Missing qualified Supabase query declaration');
+        const plugin = await createPluginTestkit({ manifest: supabaseQueryPlugin.manifest, module: supabaseQueryPlugin });
+        const handler = plugin.registration('actions', localId);
+        if (!handler) throw new Error('Missing registered Supabase query runtime');
+        const requests: HttpRequest[] = [];
+        // Provider HTTP is the boundary; the real manifest, registered handler,
+        // target registry and shared current-intent policy remain in the path.
+        const http = createPluginHttpFixture({ async request(request) {
+            requests.push(request);
+            return { status: 201, headers: {}, body: new TextEncoder().encode(JSON.stringify([{ value: 'hello' }])) };
+        } });
+        const unavailable = createUnavailablePluginServicesFactory();
+        const registry = createRegistry({
+            actions: [{ ...action(), pluginId: manifest.id, localId,
+                definition: { ...declaration, inputSchema: declaration.inputSchema ?? undefined,
+                    hostAccessRequests: manifest.hostAccess.required.map(request => ({ request, required: true })) },
+                handler,
+            }],
+            createServices: (seed, binding) => ({ ...unavailable(seed, binding), http }),
+        });
+        const qualifiedId = formatQualifiedPluginActionId({ pluginId: manifest.id, localId });
+        let settings = normalizeActionsSettingsV1({ v: 1 });
+        const credentialRef = { service: { pluginId: manifest.id, localId: 'supabase' }, accountId: 'connected' };
+        const input = { ...DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ v: 1, serverId: 'home', environmentId: 'production',
+            expectedRevision: 1, targetLinkId: 'database', expectedTargetLinkRevision: 1, credentialRef,
+            credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: manifest.id, localId }, purpose: 'deploy-manage' },
+                target: { kind: 'account', account: credentialRef } },
+            providerIdentity: { providerAccountId: 'org', providerResourceId: 'parent', providerEnvironment: 'preview' },
+            providerEnvironment: { kind: 'custom', id: 'preview' } }), sql: 'select $1::text as value', params: { '1': 'hello' } };
+        const invocation = { pluginId: manifest.id, localId, surface: 'agent' as const, invocationAuthority: 'account_automation' as const,
+            requiredReadOnly: true as const, input,
+            isApprovalRequiredByActionSettings: (manifestDefault: boolean, normalizedInput?: unknown) =>
+                isApprovalRequiredByActionsSettings(qualifiedId, settings, { surface: 'agent' }, undefined, manifestDefault, normalizedInput),
+        };
+        try {
+            // No current-intent presenter exists: an accidental default Ask
+            // settles unavailable before the provider, rather than passing.
+            expect(await registry.invoke(invocation)).toMatchObject({ status: 'executed',
+                value: { ok: true, columns: [{ name: 'value' }], rows: [['hello']] } });
+            expect(requests).toHaveLength(1);
+            expect(requests[0]).toMatchObject({ method: 'POST', url: 'https://api.supabase.com/v1/projects/preview/database/query/read-only',
+                credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy-manage' } });
+            settings = normalizeActionsSettingsV1({ v: 1, actions: { [qualifiedId]: { approvalRequiredSurfaces: ['agent'] } } });
+            expect(await registry.invoke(invocation)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+            expect(requests).toHaveLength(1);
+        } finally { registry.dispose(); await plugin.dispose(); }
+    });
+
     it('refuses an Environment-scoped contributed Action before its handler without admitted owner facts', async () => {
         const handler = vi.fn(async () => ({ echoed: 'never' }));
         const registry = createRegistry({ actions: [{ ...action({ approvalScope: 'environment' }), handler }] });
@@ -1082,7 +1144,7 @@ describe('target action invocation registry', () => {
         try {
             const input = createTriageSelectedPrStartApprovalInput();
             const result = await registry.invoke({ pluginId: 'happier.triage', localId: TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
-                input, surface, requestCurrentIntent: adapter });
+                input, surface, isApprovalRequiredByActionSettings: () => true, requestCurrentIntent: adapter });
             if (surface === 'ui') {
                 // UI admission requires its carried present-user confirmation;
                 // a durable Artifact by itself cannot authorize the handler.
@@ -1100,9 +1162,7 @@ describe('target action invocation registry', () => {
             await expect(registry.invoke({
                 pluginId: 'happier.triage', localId: TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
                 input: approved.input, surface, requireCurrentIntent: true,
-                requestCurrentIntent: async request => targetActionApprovalMatchesCurrentIntent(approved, request)
-                    ? { status: 'approved', fingerprint: request.fingerprint, artifactId: `triage-${surface}` }
-                    : { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' },
+                approvalContext: reviewedActionContext('happier.triage', TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1, approved.input),
             })).resolves.toEqual({ status: 'executed', value: null });
             expect(applied).toEqual(input);
         } finally { registry.dispose(); }
@@ -1148,7 +1208,7 @@ describe('target action invocation registry', () => {
                 ...declaration, pluginVersion: version, sourceCustody, occurrenceId,
                 definition: {
                     ...declaration.definition,
-                    // Both declarations accept the saved JSON; validation alone cannot bind intent.
+                    // The admitted operands stay exact while the declaration may change.
                     inputSchema: change === 'input declaration'
                         ? { ...declaration.definition.inputSchema, properties: { value: { type: 'string', enum: ['approved'] } } }
                         : declaration.definition.inputSchema,
@@ -1160,17 +1220,10 @@ describe('target action invocation registry', () => {
                 const result = await successor.invoke({
                     pluginId: 'acme.alpha', localId: 'run', input: saved.input,
                     surface: 'cli', invocationSurface: 'api', replayPlacement, requireCurrentIntent: true,
-                    requestCurrentIntent: async request => targetActionApprovalMatchesCurrentIntent(saved, { ...request, executionOriginV1 })
-                        ? { status: 'approved', fingerprint: request.fingerprint, artifactId: 'approval-development-replay' }
-                        : { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' },
+                    approvalContext: reviewedActionContext('acme.alpha', 'run', saved.input),
                 });
-                if (change === 'unchanged') {
-                    expect(result).toEqual({ status: 'executed', value: { echoed: '1.0.0' } });
-                    expect(appliedVersion).toBe('1.0.0');
-                } else {
-                    expect(result).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_mismatch', actionHandlerInvocation: 'notStarted' });
-                    expect(appliedVersion).toBeUndefined();
-                }
+                expect(result).toEqual({ status: 'executed', value: { echoed: version } });
+                expect(appliedVersion).toBe(version);
             } finally { successor.dispose(); }
         },
     );
@@ -1194,15 +1247,13 @@ describe('target action invocation registry', () => {
             await expect(registry.invoke({
                 pluginId: 'acme.alpha', localId: 'run', input: approved.action.input, surface: 'cli', invocationSurface: 'api',
                 requireCurrentIntent: true,
-                requestCurrentIntent: async request => request.fingerprint === approved.fingerprint
-                    ? { status: 'approved', fingerprint: request.fingerprint, artifactId: 'approval-api-normalized' }
-                    : { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' },
+                approvalContext: reviewedActionContext('acme.alpha', 'run', approved.action.input),
             })).resolves.toEqual({ status: 'executed', value: { echoed: 'approved-normalized' } });
             expect(applied).toEqual(approved.action.input);
         } finally { registry.dispose(); }
     });
 
-    it('exposes the existing host correlation identity and distinguishes independent Actions', async () => {
+    it('preserves the originating request identity separately from independent Action identities', async () => {
         const contexts: PluginInvocationContext[] = [];
         const correlations: string[] = [];
         const services = createUnavailablePluginServicesFactory();
@@ -1220,12 +1271,15 @@ describe('target action invocation registry', () => {
             const results = await Promise.all(['session-first', 'session-second'].map(sessionId => registry.invoke({
                 pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
                 sessionId,
+                ...(sessionId === 'session-first' ? { requestId: 'originating-ui-request' } : {}),
             })));
             expect(results).toMatchObject([{ status: 'executed' }, { status: 'executed' }]);
             expect(contexts.map(context => context.invocationId)).toEqual(correlations);
             expect(contexts.map(context => context.session?.id)).toEqual(['session-first', 'session-second']);
             expect(contexts[0]!.invocationId).toBeTruthy();
             expect(contexts[1]!.invocationId).not.toBe(contexts[0]!.invocationId);
+            expect(contexts.map(context => context.requestId)).toEqual(['originating-ui-request', undefined]);
+            expect(contexts[0]!.invocationId).not.toBe(contexts[0]!.requestId);
         } finally {
             registry.dispose();
         }
@@ -1373,21 +1427,6 @@ describe('target action invocation registry', () => {
 
         await expect(invocation).resolves.toEqual({ status: 'executed', value: { echoed: 'approved' } });
         expect(handler).toHaveBeenCalledOnce();
-    });
-
-    it('rechecks host Action-settings enablement immediately before the handler', async () => {
-        const handler = vi.fn(async () => ({ echoed: 'should-not-run' }));
-        const registry = createRegistry({ actions: [{ ...action(), handler }] });
-
-        await expect(registry.invoke({
-            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
-            isEnabledByActionSettings: () => false,
-        })).resolves.toMatchObject({
-            status: 'unavailable',
-            code: 'plugin_action_unavailable',
-            actionHandlerInvocation: 'notStarted',
-        });
-        expect(handler).not.toHaveBeenCalled();
     });
 
     it('prepares without entering the handler and runs the exact admitted handler once with progress', async () => {
@@ -2357,7 +2396,7 @@ describe('target action invocation registry', () => {
         expect(handler).not.toHaveBeenCalled();
     });
 
-    it('rejects a decision when refresh replaces the registered generation while intent is pending', async () => {
+    it('reports local generation retirement when refresh replaces the handler while intent is pending', async () => {
         const oldHandler = vi.fn(async () => ({ echoed: 'old' }));
         const newHandler = vi.fn(async () => ({ echoed: 'new' }));
         let actions: Parameters<typeof createTargetActionInvocationRegistry>[0]['actions'] = [
@@ -2374,7 +2413,7 @@ describe('target action invocation registry', () => {
             },
         });
 
-        expect(result).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_mismatch' });
+        expect(result).toMatchObject({ status: 'unavailable', code: 'plugin_action_generation_retired' });
         expect(oldHandler).not.toHaveBeenCalled();
         expect(newHandler).not.toHaveBeenCalled();
     });

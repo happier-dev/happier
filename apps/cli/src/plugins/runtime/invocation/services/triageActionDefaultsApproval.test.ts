@@ -28,8 +28,12 @@ import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SESSION_LINKS_COLLECTION_
 describe('Triage Save defaults approval through the Account host', () => {
     it.each([
         { label: 'own present-user UI Save click', ask: false, confirm: false, direct: true },
+        { label: 'disabled own present-user UI Save click', ask: false, confirm: false, direct: true, disabled: true },
         { label: 'automation without UI consent', ask: false, confirm: false, direct: false },
         { label: 'explicit Ask confirmed', ask: true, confirm: true, direct: false },
+        { label: 'explicit Ask confirmed before Action disabled', ask: true, confirm: true, direct: false, disabled: true },
+        { label: 'explicit Ask belongs to another Account', ask: true, confirm: true, direct: false, change: 'account' },
+        { label: 'explicit Ask approved different operands', ask: true, confirm: true, direct: false, change: 'input' },
         { label: 'explicit Ask without consent', ask: true, confirm: false, direct: false },
     ])('saves only reviewed Profile and prompt effects: $label', async scenario => {
         const declaration = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === TRIAGE_SAVE_ACTION_DEFAULTS_ACTION_REF_V1.localId)!;
@@ -92,7 +96,7 @@ describe('Triage Save defaults approval through the Account host', () => {
                 writeRecord: async ({ record }) => { invocationRecord = record; return { status: 'updated', revision: 1, cursor: 1 }; },
             },
             approvalsCreate: async () => {
-                if (scenario.direct) throw new Error('An admitted UI Save must not create a second Ask');
+                if (scenario.direct || scenario.confirm) throw new Error('An admitted UI Save must not create a second Ask');
                 return { artifactId: 'nested-approval' };
             },
         });
@@ -108,7 +112,7 @@ describe('Triage Save defaults approval through the Account host', () => {
         });
         const targets = createTargetActionInvocationRegistry({
             actions: [{ pluginId: PLUGIN_MANIFEST.id, pluginVersion: PLUGIN_MANIFEST.version, occurrenceId, sourceCustody,
-                localId: declaration.id, definition: declaration, accountActionDeclaration: declaration,
+                localId: declaration.id, definition: declaration,
                 handler: async (value, context) => StrictJsonValueSchema.parse(await plugin.invokeAction(declaration.id, value, { ...context,
                     services: { ...context.services, storage, targetedContributions } })),
             }],
@@ -137,7 +141,8 @@ describe('Triage Save defaults approval through the Account host', () => {
         },
             runtimeAccountId: 'owner', serverId: 'home', serverIdentityId: 'home', actionRequestId: envelope.requestId,
             externalActionTarget: target, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
-                actions: scenario.ask ? { [formatQualifiedPluginActionId(action)]: { approvalRequiredSurfaces: ['ui'] } } : {} }),
+                actions: scenario.disabled ? { [formatQualifiedPluginActionId(action)]: { enabled: false } }
+                    : scenario.ask ? { [formatQualifiedPluginActionId(action)]: { approvalRequiredSurfaces: ['ui'] } } : {} }),
             externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-verified-root', binding: {
                 accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
                 serverIdentityId: 'home', machineId: target.machineId, installationId: 'installation', actionId: 'action.invoke',
@@ -151,15 +156,22 @@ describe('Triage Save defaults approval through the Account host', () => {
         if (scenario.confirm && pluginActionRequiresPresentUserIntent({ ...declaration,
             ...(scenario.ask ? { approvalRequiredByActionSettings: true } : {}) }, 'ui', input.input, 'present_user')) {
             context.presentUserConfirmation = { actionId: 'action.invoke', requestId: envelope.requestId,
-                accountId: 'owner', serverId: 'home', target,
-                inputDigest: fingerprintPluginAccountActionConfirmation({ input, pluginId: PLUGIN_MANIFEST.id,
+                accountId: scenario.change === 'account' ? 'other-owner' : 'owner', serverId: 'home', target,
+                inputDigest: fingerprintPluginAccountActionConfirmation({
+                    input: scenario.change === 'input' ? { ...input, input: { ...input.input, label: 'Other approved label' } } : input,
+                    pluginId: PLUGIN_MANIFEST.id,
                     pluginVersion: PLUGIN_MANIFEST.version, declaration, sourceCustody })!,
             };
         }
         try {
             const result = await executor.execute('action.invoke', input, context);
-            if (!scenario.confirm && !scenario.direct) {
+            if ((!scenario.confirm && !scenario.direct) || scenario.change || scenario.disabled && !scenario.confirm) {
                 expect(result.ok).toBe(false);
+                if (scenario.disabled) expect(result).toMatchObject({ errorCode: 'plugin_action_unavailable' });
+                if (scenario.change) expect(result).toMatchObject({ errorCode: 'plugin_action_current_intent_mismatch',
+                    details: { actionHandlerInvocation: 'notStarted', details: { currentIntentMismatch: {
+                        field: scenario.change === 'account' ? 'account' : 'fingerprint_source',
+                    } } } });
                 expect(profiles).toEqual([]);
                 expect(documents.size).toBe(0);
                 expect(kv.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1)).toBeUndefined();

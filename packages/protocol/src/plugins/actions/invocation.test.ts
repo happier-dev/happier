@@ -195,7 +195,7 @@ describe('createPluginActionInvocation', () => {
     )).toBe('plugin_action_current_intent_rejected');
   });
 
-  it('prompts once for a non-safe client Action and admits only its freshly resolved policy', async () => {
+  it('resolves admission once and prompts once for a non-safe client Action', async () => {
     const present = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => ({
       status: 'approved' as const,
       fingerprint,
@@ -213,7 +213,7 @@ describe('createPluginActionInvocation', () => {
     });
 
     expect(present).toHaveBeenCalledOnce();
-    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(resolve).toHaveBeenCalledOnce();
     expect(present).toHaveBeenCalledWith(expect.objectContaining({
       input: { title: 'ship it' },
       surface: 'ui',
@@ -222,7 +222,7 @@ describe('createPluginActionInvocation', () => {
     }));
   });
 
-  it.each([true, false])('consumes exact reviewed child intent without bypassing availability (available=%s)', async available => {
+  it.each([true, false])('retains an admitted exact child without re-deciding policy (available=%s)', async available => {
     const present = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => ({
       status: 'approved' as const, fingerprint,
     }));
@@ -248,10 +248,31 @@ describe('createPluginActionInvocation', () => {
       }) }),
     });
     await expect(port.invoke({ action, role: 'power', input })).resolves.toMatchObject({
-      ok: true, result: { status: available ? 'admitted' : 'unavailable' },
+      ok: true, result: { status: 'admitted' },
     });
     expect(present).not.toHaveBeenCalled();
   });
+
+  it.each(['exact', 'changed input', 'changed Action', 'serialized port'] as const)(
+    'accepts only the existing private admitted Account operand: %s', async variant => {
+      const input = { title: 'ship it' };
+      const action = { pluginId: 'acme.action', localId: 'commit' };
+      const port = createHostReviewedChildPortV1({ actionId: 'action.invoke', input: { action, input },
+        context: {}, reviewAdmitted: true });
+      const present = vi.fn(async () => ({ status: 'unavailable' as const, code: 'plugin_action_current_intent_unavailable' }));
+      const gate = createPluginActionPresentUserGate({
+        resolve: () => {
+          const resolved = currentIntentResolution();
+          return variant === 'changed Action' ? { ...resolved, policy: { ...resolved.policy, qualifiedId: 'acme.action/actions/other' } } : resolved;
+        }, requestCurrentIntent: present,
+      });
+      const result = await gate.admit({ input: variant === 'changed input' ? { title: 'other' } : input,
+        surface: 'ui', invocationSurface: 'ui', reviewedChildContext: {
+          hostReviewedChild: variant === 'serialized port' ? { parent: port.parent, invoke: port.invoke } : port,
+        } });
+      expect(result.status).toBe(variant === 'exact' ? 'admitted' : 'unavailable');
+      expect(present).toHaveBeenCalledTimes(variant === 'exact' ? 0 : 1);
+    });
 
   it('admits a waived dangerous agent Action without current intent while retaining its danger metadata', async () => {
     const action = { committed: true };
@@ -399,7 +420,7 @@ describe('createPluginActionInvocation', () => {
     expect(present).toHaveBeenCalledOnce();
   });
 
-  it('does not admit a rejected or retired present-user Action', async () => {
+  it('refuses declined consent and retains admitted work after approval', async () => {
     const rejected = createPluginActionPresentUserGate({
       resolve: () => currentIntentResolution(),
       requestCurrentIntent: async () => ({
@@ -436,10 +457,7 @@ describe('createPluginActionInvocation', () => {
       input: null,
       surface: 'ui',
       invocationSurface: 'ui',
-    })).resolves.toMatchObject({
-      status: 'unavailable',
-      code: 'plugin_action_generation_retired',
-    });
+    })).resolves.toMatchObject({ status: 'admitted', action: { occurrenceId: 'acme-action-occurrence-7' } });
   });
 
   it.each(['returned fingerprint', 'changed policy'] as const)('identifies a current-intent mismatch without exposing values: %s', async phase => {
@@ -457,8 +475,20 @@ describe('createPluginActionInvocation', () => {
       },
     });
     const result = await gate.admit({ input: { confidential: 'private-input' }, surface: 'ui', invocationSurface: 'ui' });
-    expect(result).toEqual({ status: 'unavailable', code: 'plugin_action_current_intent_mismatch',
-      message: 'plugin_action_current_intent_mismatch', data: { details: { currentIntentMismatch: { field: 'fingerprint_source' } } } });
+    expect(result).toEqual(phase === 'changed policy' ? { status: 'admitted', action: { occurrenceId: 'acme-action-occurrence-7' } }
+      : { status: 'unavailable', code: 'plugin_action_current_intent_mismatch',
+        message: 'plugin_action_current_intent_mismatch', data: { details: { currentIntentMismatch: { field: 'fingerprint_source' } } } });
+  });
+
+  it('refuses operands mutated while the person approves the original input', async () => {
+    const input = { title: 'approved' };
+    const gate = createPluginActionPresentUserGate({ resolve: () => currentIntentResolution(),
+      requestCurrentIntent: async ({ fingerprint }) => {
+        input.title = 'retargeted';
+        return { status: 'approved', fingerprint };
+      } });
+    await expect(gate.admit({ input, surface: 'ui', invocationSurface: 'ui' }))
+      .resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_mismatch' });
   });
 
   it.each(['matching', 'other failure', 'bare marker'] as const)('reads the dispatch proof only from its matching public failure envelope: %s', kind => {

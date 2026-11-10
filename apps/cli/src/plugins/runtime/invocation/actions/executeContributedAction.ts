@@ -2,7 +2,7 @@ import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionExecutorContext, ActionId, QualifiedPluginActionId } from '@happier-dev/protocol/actions';
-import { buildApprovalExecutionOriginV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { buildApprovalExecutionOriginV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { randomUUID } from 'node:crypto';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
@@ -491,18 +491,6 @@ export async function executeContributedAction(params: Readonly<{
   // authority no direct plugin call can claim. The plugin runtime
   // (ActionsService) and background/automation ingresses are the real
   // plugin-authority callers and check the target's `plugin` surface.
-  const actionSurface = params.context.admittedPluginActionSurface
-    ?? (invocationSurface === 'plugin' || invocationSurface === 'background' ? 'plugin' : invocationSurface);
-  if (action.definition.surfaces[actionSurface] !== true) {
-    return {
-      matched: true,
-      result: actionHandlerNotStartedFailure(
-        'plugin_action_unavailable',
-        'Plugin action is not available on the requested surface',
-      ),
-    };
-  }
-
   const pluginId = action.pluginId;
   if (!pluginId) {
     return {
@@ -517,12 +505,30 @@ export async function executeContributedAction(params: Readonly<{
     pluginId,
     action.definition.id,
   );
+  const reviewedInput = params.input ?? null;
+  const reviewedOperation = contributedActionSettingsId
+    ? readHostReviewedChildOperationV1(params.approvalContext, contributedActionSettingsId, reviewedInput) : null;
+  const hasAdmittedReview = contributedActionSettingsId !== null
+    && isHostAdmittedReviewedChildPolicyV1(reviewedOperation, contributedActionSettingsId, reviewedInput);
+  const actionSurface = params.context.admittedPluginActionSurface
+    ?? (invocationSurface === 'plugin' || invocationSurface === 'background' ? 'plugin' : invocationSurface);
+  if (!hasAdmittedReview && action.definition.surfaces[actionSurface] !== true) {
+    return {
+      matched: true,
+      result: actionHandlerNotStartedFailure(
+        'plugin_action_unavailable',
+        'Plugin action is not available on the requested surface',
+      ),
+    };
+  }
   const scopedActionsSettings = params.actionsSettings;
   const actionSettingsProvider = scopedActionsSettings
     ? { getActionsSettings: () => scopedActionsSettings }
     : createActionSettingsProvider();
-  const settingsUnavailable = checkContributedActionSettingsAvailability({ action, surface: actionSurface,
-    actionsSettings: actionSettingsProvider.getActionsSettings() });
+  const settingsUnavailable = hasAdmittedReview
+    ? null
+    : checkContributedActionSettingsAvailability({ action, surface: actionSurface,
+      actionsSettings: actionSettingsProvider.getActionsSettings() });
   if (settingsUnavailable) return { matched: true, result: settingsUnavailable };
 
   const runtimeRegistry = isExecutablePluginRuntimeRegistry(registry)
@@ -758,8 +764,6 @@ export async function executeContributedAction(params: Readonly<{
         })
       : params.context.caller;
     const replayPlacement = params.expectedApprovalReplayPlacement;
-    let revalidateRequesterDecision: (() => Promise<boolean>) | undefined;
-    let answeredByPerson = false;
     const sharedRequester = params.approvalContext !== undefined && isSharedRequesterActionV1(params.approvalContext);
     const requestCurrentIntent = params.requestCurrentIntent
       ? async (request: TargetActionCurrentIntentRequest): Promise<TargetActionCurrentIntentResult> => {
@@ -873,10 +877,6 @@ export async function executeContributedAction(params: Readonly<{
             ...(executionOriginV1 ? { executionOriginV1 } : {}),
             ...(requesterConfirmation ? { requesterConfirmation } : {}),
           });
-          if (result.status === 'approved') {
-            revalidateRequesterDecision = result.revalidateRequesterDecision;
-            answeredByPerson = true;
-          }
           return result;
         }
       : params.requestCurrentIntent;
@@ -925,23 +925,13 @@ export async function executeContributedAction(params: Readonly<{
       ...(params.context.operationProgress
         ? { operationProgress: params.context.operationProgress }
         : {}),
-      ...(accountTarget || params.admittedManagedProviderOperation || params.admittedConnectedAccountPurposeBinding || params.context.beforeHandlerInvocation || params.inheritedTargetedOperation || sharedRequester
+      ...(params.admittedManagedProviderOperation || params.admittedConnectedAccountPurposeBinding || params.context.beforeHandlerInvocation || params.inheritedTargetedOperation
         ? { beforeHandlerInvocation: async () => {
-            if (revalidateRequesterDecision && !await revalidateRequesterDecision()) {
-              throw new PluginError({ code: 'approval_stale', message: 'approval_stale' });
-            }
             await params.context.beforeHandlerInvocation?.();
             await params.inheritedTargetedOperation?.beforeHandlerInvocation();
             if (!await isManagedCustodyCurrent()) {
               throw new PluginError({ code: 'plugin_managed_provider_operation_custody_invalid',
                 message: 'The native provisioner role requires current managed-resource custody' });
-            }
-            // This request's Account census admitted the release. An approval
-            // wait is the one later boundary: the person may have disabled the
-            // plugin or rotated the credential while it was open.
-            if (accountTarget && answeredByPerson
-              && await runtimeRegistry.revalidateAccountExecution?.(pluginId, params.context.signal) !== true) {
-              throw new PluginError({ code: 'plugin_action_generation_retired', message: 'Account Action source is no longer current' });
             }
           } }
         : {}),
@@ -976,11 +966,6 @@ export async function executeContributedAction(params: Readonly<{
       ...(contributedActionSettingsId === null
         ? {}
         : {
-          isEnabledByActionSettings: () => isActionEnabledByActionsSettings(
-            contributedActionSettingsId,
-            actionSettingsProvider.getActionsSettings(),
-            { surface: actionSurface },
-          ),
           isApprovalRequiredByActionSettings: (manifestDefault: boolean, parsedInput?: unknown,
             environmentAdmission?: import('@happier-dev/protocol/actions/actionApprovalPolicy').ActionEnvironmentApprovalScopeAdmissionV1) => {
             // The target owner parsed this invocation before asking policy.

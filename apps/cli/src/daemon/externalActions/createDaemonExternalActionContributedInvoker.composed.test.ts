@@ -2751,7 +2751,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       });
       const result = await replay({ artifactId: 'provider-cause-replay', decision: 'approve' });
       expect(result).toMatchObject({ ok: false, errorCode: 'provider_request_rejected',
-        data: { code: 'provider_request_rejected', details: { nativeCause } } });
+        details: { code: 'provider_request_rejected', details: { nativeCause } } });
       expect(JSON.stringify(result)).not.toContain('fixture-private-token');
       expect(persisted).toMatchObject({ status: 'failed', execution: { ok: false, errorCode: 'provider_request_rejected' } });
       expect(diagnostic.mock.calls).toEqual([['[ExternalAction] Approved contributed Action replay failed',
@@ -3420,7 +3420,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
   });
 
   it.each(['policy', 'version', 'readoption', 'input declaration', 'result declaration', 'origin', 'transport_unknown'] as const)(
-    'replays only the approved Action subject after replacement: %s', async change => {
+    'executes approved operands once after plugin metadata changes: %s', async change => {
     const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
       v: 1,
@@ -3486,7 +3486,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       });
 
       if (change === 'policy') {
-        // A stored Ask-first subject cannot become executable merely by flipping to Allowed.
+        // Changing future admission policy does not withdraw settled consent.
         process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({ v: 1, actions: {} });
       } else {
         runtime.targetActionInvocations?.dispose();
@@ -3515,7 +3515,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         artifactId: 'approval-api-stale-1',
         decision: 'approve',
       });
-      if (change === 'version' || change === 'readoption') {
+      if (change !== 'transport_unknown') {
         expect(result).toMatchObject({ ok: true, result: { status: 'executed' } });
         expect(actionInvocations).toBe(1);
         expect(persisted).toMatchObject({ status: 'executed', execution: { ok: true } });
@@ -3534,19 +3534,6 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         expect(actionInvocations).toBe(1);
         return;
       }
-      expect(result).toMatchObject({
-        ok: false,
-        errorCode: 'plugin_action_current_intent_mismatch',
-      });
-      expect(actionInvocations).toBe(0);
-      expect(persisted).toMatchObject({
-        status: 'failed',
-        decision: { kind: 'approve' },
-        execution: {
-          ok: false,
-          errorCode: 'plugin_action_current_intent_mismatch',
-        },
-      });
     } finally {
       if (previousSettings === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
       else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousSettings;

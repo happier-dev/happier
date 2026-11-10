@@ -8,6 +8,7 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { PluginHttpTraceDiagnostic } from '@happier-dev/cli-common/plugins/http';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import type { CurrentIntentMismatchV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 
 const innerStageContext = new AsyncLocalStorage<Readonly<{ actionId: string; rootRequestId: string }>>();
 
@@ -27,6 +28,14 @@ export type ExternalActionInnerDiagnostic = Readonly<PluginHttpTraceDiagnostic &
   collectionId?: string;
   collectionPreparationTriggerKind?: 'declaration-publication' | 'collection-operation' | 'explicit-candidate';
 }>;
+
+/** File-only refusal categories reuse the active request correlation, never its operands. */
+export function logExternalActionCurrentIntentMismatch(field: CurrentIntentMismatchV1['field'],
+  diagnostic?: Readonly<{ lookupBranch: 'account_confirmation'; hasConfirmation: boolean; hasApproval: boolean }>): void {
+  try { logger.warnLocalFile('[PluginAction] Current intent refused', {
+    ...innerStageContext.getStore(), code: 'plugin_action_current_intent_mismatch', field, ...diagnostic,
+  }); } catch { /* File diagnostics cannot change admission. */ }
+}
 
 /** Host-only phase facts; never pass plugin input, results, URLs or thrown values. */
 export function traceExternalActionInnerStage(stage: string,

@@ -132,8 +132,6 @@ export type TargetActionInvocationRegistration = Readonly<{
     sourceCustody?: PluginSourceCustodyV1;
     localId: string;
     definition: TargetActionDefinition;
-    /** Whole portable manifest Action, retained separately from invocation normalization. */
-    accountActionDeclaration?: import("@happier-dev/protocol/plugins/actions/v2").PluginActionContributionV2;
     inputParser?: PluginActionInputParser;
     resultParser?: PluginActionInputParser;
     handler: ActionHandler<JsonValue, JsonValue | void>;
@@ -207,10 +205,8 @@ export type InvokeTargetActionParams = Readonly<{
     requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
     /** Host-stamped durable target for exact API approval replay. */
     replayPlacement?: TargetActionApprovalReplayPlacementV1;
-    /** Revalidate a durable approval against current policy before execution. */
+    /** Require consent for this admission even when the initial policy does not ask. */
     requireCurrentIntent?: true;
-    /** Current host Action-settings enablement for this exact qualified target Action. */
-    isEnabledByActionSettings?: () => boolean;
     /** Current host Action-settings policy for this exact qualified target Action. */
     isApprovalRequiredByActionSettings?: (manifestDefault: boolean, input?: unknown,
         environmentAdmission?: ActionEnvironmentApprovalScopeAdmissionV1) => boolean;
@@ -1075,7 +1071,6 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     pluginVersion: registration.pluginVersion,
                     ...(registration.definition.inputSchema === undefined ? {} : { inputSchema: registration.definition.inputSchema }),
                     declaration: registration.definition,
-                    ...(registration.accountActionDeclaration ? { accountActionDeclaration: registration.accountActionDeclaration } : {}),
                 };
                 return Object.freeze({ ...action, policyFingerprint: fingerprintTargetActionPolicy(action) });
             };
@@ -1100,19 +1095,6 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     const current = actionsByKey.get(key);
                     if (!current || !indexed.isCurrent() || current.invocation !== indexed.invocation) {
                         return unavailable('plugin_action_generation_retired', 'Plugin action occurrence is no longer current');
-                    }
-                    try {
-                        if (invocation.isEnabledByActionSettings?.() === false) {
-                            return unavailable(
-                                'plugin_action_unavailable',
-                                'Plugin action is disabled by Action settings',
-                            );
-                        }
-                    } catch {
-                        return unavailable(
-                            'plugin_action_unavailable',
-                            'Plugin action settings are unavailable',
-                        );
                     }
                     if (invocation.isMountedCallerCurrent) {
                         let mountedCallerCurrent = false;
@@ -1183,6 +1165,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     signal: lifetime.signal,
                     ...(invocation.replayPlacement ? { replayPlacement: invocation.replayPlacement } : {}),
                     ...(invocation.requireCurrentIntent === true ? { requireCurrentIntent: true as const } : {}),
+                    ...(invocation.approvalContext ? { approvalContext: invocation.approvalContext } : {}),
                     ...(invocation.requestCurrentIntent ? {
                         requestCurrentIntent: async (request: TargetActionCurrentIntentRequest) => {
                             const reviewedSave = readReviewedSharedSaveAdmission(request.action.input, () => {

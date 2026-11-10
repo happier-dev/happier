@@ -6,12 +6,11 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import type { ActionDefinitionV1 } from '@happier-dev/protocol';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
-import { createHostReviewedChildPortV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { inputTypeResourceReference } from '@happier-dev/protocol/inputs/runtime';
 import { PluginActionExecutionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
-import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
-import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 
 import type { ResolvedActionContribution, ResolvedActionDefinition } from '@/plugins/projection/registry/types';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
@@ -25,9 +24,11 @@ import type { PluginExternalActionContext } from '../services/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '../../resolveExecutablePluginRuntimeRegistry';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { captureConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
+import { logExternalActionCurrentIntentMismatch } from '@/daemon/externalActions/externalActionPhase';
 import { readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ConnectedAccountPurposeBindingOwner, ConnectedAccountPurposeBindingLease } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { AdmittedManagedProviderOperationExecutionRequest } from './managedProviderCustody';
+import { projectContributedActionFailure } from './contributedActionFailure';
 
 function projectDefinition(definition: ResolvedActionDefinition, identity: NonNullable<ResolvedActionContribution['identity']>): ActionDefinitionV1 {
   const execution = PluginActionExecutionV2Schema.safeParse(definition.execution);
@@ -121,8 +122,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
   return async ({ action, input: actionInput, clientId, messageActionReference, context, approvalExecutionOrigin, requiredDangerLevel, resolveEnvironmentApprovalScope, signal }) => {
     const approvalContext = { ...context };
     const expectedContributorOccurrenceId = context.expectedContributedActionOccurrenceId;
-    const hasCarriedConsent = context.presentUserConfirmation?.actionId === ACTION_INVOKE_ACTION_ID_V1
-      || context.presentUserApproval?.actionId === ACTION_INVOKE_ACTION_ID_V1;
+    const hasCarriedConsent = context.presentUserConfirmation?.actionId === ACTION_INVOKE_ACTION_ID_V1;
     const invocationSignal = signal ?? context.signal ?? new AbortController().signal;
     invocationSignal.throwIfAborted();
     const surface = readSurface(context.surface) ?? input.defaultInvocationSurface;
@@ -136,6 +136,28 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
       && externalActionContext === null
     ) {
       return { ok: false, errorCode: 'contributed_action_unavailable', error: 'contributed_action_unavailable' };
+    }
+    if (hasCarriedConsent) {
+      const wrapper = { action,
+        ...(actionInput === undefined ? {} : { input: actionInput }),
+        ...(clientId === undefined ? {} : { clientId }),
+        ...(expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId }),
+        ...(messageActionReference ? { messageActionReference } : {}) };
+      const admission = admitAccountActionInvokeConfirmationV1(wrapper, context,
+        fingerprintPluginAccountActionConfirmation({ input: wrapper, pluginId: action.pluginId }));
+      if (!admission.admitted) {
+        logExternalActionCurrentIntentMismatch(admission.mismatch.field, {
+          lookupBranch: 'account_confirmation',
+          hasConfirmation: context.presentUserConfirmation !== undefined,
+          hasApproval: context.presentUserApproval !== undefined,
+        });
+        return projectContributedActionFailure({ errorCode: 'plugin_action_current_intent_mismatch',
+          error: 'plugin_action_current_intent_mismatch', actionHandlerInvocation: 'notStarted',
+          data: { details: { currentIntentMismatch: admission.mismatch } } });
+      }
+      approvalContext.hostReviewedChild = createHostReviewedChildPortV1({
+        actionId: ACTION_INVOKE_ACTION_ID_V1, input: wrapper, context: approvalContext, reviewAdmitted: true,
+      });
     }
     const lease = await acquire();
     let purposeLease: ConnectedAccountPurposeBindingLease | undefined;
@@ -177,33 +199,12 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         ...(context.actionsSettings ? { actionsSettings: context.actionsSettings } : {}),
         ...(admittedManagedProviderOperation ? { admittedManagedProviderOperation } : {}),
         ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
-        ...(input.requestCurrentIntent || hasCarriedConsent ? { requestCurrentIntent: async request => {
-          const wrapper = { action: { pluginId: request.action.pluginId, localId: request.action.localId },
-            ...(request.action.input === undefined ? {} : { input: request.action.input }),
-            ...(clientId === undefined ? {} : { clientId }),
-            ...(expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId }),
-            ...(messageActionReference ? { messageActionReference } : {}) };
-          const digest = fingerprintPluginAccountActionConfirmation({ input: wrapper, pluginId: request.action.pluginId,
-            pluginVersion: request.action.pluginVersion, sourceCustody: request.action.sourceCustody,
-            declaration: request.action.accountActionDeclaration });
-          const admission = admitAccountActionInvokeConfirmationV1(wrapper, context, digest);
-          if (admission.admitted) {
-            // Retain the native review at its admission owner. Nested Actions
-            // keep plugin authority and consume this existing private parent.
-            approvalContext.hostReviewedChild ??= createHostReviewedChildPortV1({
-              actionId: ACTION_INVOKE_ACTION_ID_V1, input: wrapper, context: approvalContext, reviewAdmitted: true,
-            });
-            return { status: 'approved', fingerprint: request.fingerprint };
-          }
-          if (hasCarriedConsent) return { status: 'unavailable', code: 'plugin_action_current_intent_mismatch', mismatch: admission.mismatch };
-          return input.requestCurrentIntent ? await input.requestCurrentIntent(request)
-            : { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
-        } } : {}),
+        ...(input.requestCurrentIntent ? { requestCurrentIntent: input.requestCurrentIntent } : {}),
         context: {
           ...(input.observePluginExecution ? { observePluginExecution: input.observePluginExecution } : {}),
           surface,
           invocationSurface: surface,
-          ...(readHostReviewedChildOperationV1(context, formatQualifiedPluginActionId(action), actionInput)
+          ...(readHostReviewedChildRootV1(approvalContext, formatQualifiedPluginActionId(action), actionInput)
             ? { admittedPluginActionSurface: 'plugin' as const } : {}),
           initiatingActionCaller: context.actionCaller ?? { kind: 'host' },
           ...(externalActionContext ? { externalActionContext } : {}),
@@ -225,12 +226,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
       // existing details field; private top-level transport data is stripped
       // by ordinary Action normalization.
       if (attempt.result.details !== undefined) return attempt.result;
-      const errorData = { code: attempt.result.errorCode, message: attempt.result.error,
-        ...(attempt.result.retryable === undefined ? {} : { retryable: attempt.result.retryable }),
-        ...readPluginActionFailureAuthorPayload(attempt.result.data) };
-      const error = attempt.result.actionHandlerInvocation === 'notStarted'
-        ? createPluginActionHandlerNotStartedError(errorData) : new PluginError(errorData);
-      return { ...attempt.result, ...(error.data.failureCause ? { failureCause: error.data.failureCause } : {}), details: error.data };
+      return projectContributedActionFailure(attempt.result);
     } finally {
       purposeLease?.dispose();
       await lease.release();

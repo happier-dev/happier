@@ -68,6 +68,7 @@ import {
     PluginUiArtifactsManifestEntryV2Schema,
     PluginHostedWebBridgeEnvelopeV1Schema,
     PluginUiExecuteActionRequestV1Schema,
+    PluginUiOpenNewSessionRequestV1Schema,
     PluginUiJsonValueV1Schema,
     PluginUiTargetedContributionsV1Schema,
     type
@@ -751,12 +752,48 @@ function resolveDaemonTargetAction(
 }
 
 describe('mounted picker approval through the Account relay to the daemon', () => {
+    it.each(['source', 'account'] as const)('retires an unbound raw confirmation with its mounted %s lifetime', async change => {
+        const lifetime = clientAccountLifetime();
+        const definition = definePlugin({ id: 'acme.confirmed-surface', version: '1.2.3' });
+        const parsed = ingestPluginManifestV2(definition.manifest);
+        if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
+        const publish = (digest: string, cursor: number) => replacePluginAccountAvailabilityProjection({ scope: lifetime.scope,
+            snapshot: { availabilityCursor: cursor, materializations: [], snapshots: [], intentReads: [{ pluginId: parsed.manifest.id,
+                response: { availabilityCursor: cursor, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
+                    intent: { pluginId: parsed.manifest.id, desiredVersion: parsed.manifest.version, enabled: true,
+                        offlineUiHosting: 'disabled', writableCollections: [], revision: String(cursor) },
+                    release: { ref: { pluginId: parsed.manifest.id, version: parsed.manifest.version }, archiveDigestSha256: digest,
+                        normalizedManifest: parsed.manifest, collectionContracts: [], uiSlots: [],
+                        packageAssetArchive: { archiveDigestSha256: `sha256:${'c'.repeat(64)}`, resources: [] } },
+                } }] } });
+        publish(`sha256:${'a'.repeat(64)}`, 1);
+        const selected = readPluginAccountAvailability(lifetime.scope).readCurrentAccountExecution(parsed.manifest.id);
+        if (selected.kind !== 'available') throw new Error('Expected admitted Account surface custody');
+        const controller = createBoundPluginSurfaceController({ facts: {
+            pluginId: parsed.manifest.id, contributionId: 'panel', surfaceId: 'confirmed-account-surface', placement: 'appSurface',
+            platform: 'web', channel: 'internal', serverId: lifetime.scope.serverId, occurrenceId: selected.custodyId,
+            accountExecutionOrigin: { ...lifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },
+            accountLifetime: lifetime, interactionEnabled: true, daemonInteractionEnabled: false,
+            actionInputSelectionFactsKey: createPluginActionInputSelectionFactsPublication().publish({ targetPluginId: parsed.manifest.id }),
+        } });
+        nestedActionConfirmation.onShow = confirm => {
+            if (change === 'source') publish(`sha256:${'b'.repeat(64)}`, 2);
+            else lifetime.retire();
+            queueMicrotask(confirm);
+        };
+        try {
+            const result = await controller.hostApi.handleRequest({ version: 1, requestId: 'admitted-account-confirmation',
+                surface: controller.surfaceContext, method: 'confirm', payload: { message: 'Apply the reviewed change?' } });
+            expect(result).toMatchObject({ code: 'stale_surface' });
+        } finally { nestedActionConfirmation.onShow = null; controller.dispose(); lifetime.retire(); }
+    });
+
     it.each([
         { name: 'executes the exact approved mutation once without another approval Artifact', change: 'none' },
         { name: 'executes the exact bundled approved mutation once', change: 'bundled' },
         { name: 'retains the acquired declaration when the mounted Account row is cold', change: 'cold-declaration' },
         { name: 'does not execute a declined picker mutation', change: 'decline' },
-        { name: 'does not transfer consent to a changed Account source', change: 'source' },
+        { name: 'executes the approved operands after the trusted Account source changes', change: 'source' },
         { name: 'retains the host repair confirmation through the same Account relay', change: 'raw-host' },
         { name: 'refuses host repair consent after its projected target occurrence changes', change: 'raw-host-target' },
         { name: 'does not reuse consent after the normalized input changes', change: 'input' },
@@ -925,10 +962,10 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                     await editor.onCommit('alice');
                 }
             });
-            if (change === 'none' || change === 'cold-declaration' || change === 'bundled') {
+            if (change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'source') {
                 expect(settledExecution, JSON.stringify({ confirmations, effects, secondArtifacts, receivedCaller, receivedAuthority, requests: network.httpRequests.map(request => ({ method: request.method, path: new URL(request.url).pathname })), execution: settledExecution })).toMatchObject({ status: 'success' });
             }
-            expect({ settledStatus, effects, secondArtifacts }).toEqual(change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'raw-host'
+            expect({ settledStatus, effects, secondArtifacts }).toEqual(change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'source' || change === 'raw-host'
                 ? { settledStatus: change === 'raw-host' ? 'idle' : 'success', effects: 1, secondArtifacts: 0 }
                 : { settledStatus: rawHost ? 'idle' : 'error', effects: 0, secondArtifacts: 0 });
             expect({ confirmations, execution: settledExecution }).toMatchObject({ confirmations: rawHost ? 0 : 1 });
@@ -2212,7 +2249,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { await hook.unmount(); await activation.composition.unload(); accountLifetime.retire(); }
     });
 
-    it.each(['client', 'account'] as const)('uses the preview template approval once at the UI contributed Action admission (%s)', async target => {
+    it.each(['client', 'account'] as const)('uses the preview template approval once and retains admission after policy changes (%s)', async target => {
         const storage = getStorage();
         const previous = storage.getState();
         const home = rpcHomes.get('server-client-action')!;
@@ -2239,9 +2276,14 @@ describe('Account Action placement through the executable dispatcher', () => {
             required: ['serverId', 'environmentId'], additionalProperties: false,
         } });
         await activation.composition.reconcile([activation.activation]);
-        const requestCurrentIntent = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => ({
-            status: 'approved' as const, fingerprint,
-        }));
+        const requestCurrentIntent = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => {
+            storage.setState(state => ({ settings: { ...state.settings,
+                actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
+                    actions: { [actionId]: { enabled: false } },
+                }),
+            } }));
+            return { status: 'approved' as const, fingerprint };
+        });
         const dispatch = () => dispatchPluginSurfaceAction({
             action: { pluginId: 'acme.releases', localId: 'publish' },
             input: { serverId: home.id, environmentId: child.id },
@@ -3919,7 +3961,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { await activation.composition.unload(); accountLifetime.retire(); }
     });
 
-    it.each(['decline', 'disable', 'release-retired'] as const)('refuses Account effects after %s at the ordinary approval gate', async (decision) => {
+    it.each(['decline', 'disable', 'release-retired'] as const)('consumes admitted Account consent after %s without rechecking policy', async (decision) => {
         const storage = getStorage();
         const previous = storage.getState();
         const accountLifetime = clientAccountLifetime();
@@ -3944,8 +3986,8 @@ describe('Account Action placement through the executable dispatcher', () => {
                     return { status: 'approved', fingerprint };
                 },
             });
-            expect(result).toMatchObject({ ok: false });
-            expect(effects).toBe(0);
+            expect(result).toMatchObject({ ok: decision === 'disable' });
+            expect(effects).toBe(decision === 'disable' ? 1 : 0);
         } finally { storage.setState(previous); await activation.composition.unload(); accountLifetime.retire(); }
     });
 
@@ -5217,6 +5259,59 @@ describe('plugin-surface action branch selection', () => {
         }
     });
 
+    it('reaches the canonical catalog transport from the real configured browser handler', async () => {
+        const { activate } = await import('../../../../../../packages/plugins/triage/src/accountRuntime');
+        const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
+        const { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol');
+        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        await prepareSessionDraftPersistenceStorage();
+        const lifetime = clientAccountLifetime();
+        const previous = getStorage().getState();
+        const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
+        if (!admitted.ok) throw new Error('Triage manifest must be admitted');
+        const declaration = admitted.manifest.contributes.actions.find(action => action.id === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1)!;
+        const subject = { kind: 'deploymentEnvironment', serverId: lifetime.scope.serverId, environmentId: 'serving-environment' } as const;
+        const input = { v: 1, handoff: { task: 'investigate', configuredActionId: 'deployments.set-up',
+            context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }],
+            sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'compose' } };
+        let relayed = 0;
+        const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
+            serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'setup-machine',
+            actionId: 'action.invoke', tokenEpoch: 1, execute: async () => {
+                relayed++;
+                return { v: 1, availability: 'unavailable', actions: [], revision: null };
+            } });
+        const machine = createMachineFixture({ id: boundary.machine.id, activeAt: Date.now(), access: boundary.machine.access });
+        getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [lifetime.scope.serverId]: [machine] },
+            machineListStatusByServerId: { [lifetime.scope.serverId]: 'idle' } });
+        network.setHttpResponder(async (url, init) => await boundary.handle(new URL(String(url)), init)
+            ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
+        const activation = createClientActionActivation({ pluginId: PLUGIN_MANIFEST.id, localId: declaration.id,
+            accountPlacement: true, accountLifetime: lifetime, accountActionDeclaration: declaration,
+            confirmationWhen: declaration.confirmationWhen,
+            inputSchema: declaration.inputSchema, outputSchema: declaration.resultSchema,
+            artifactGraph: { ...CLIENT_ACTION_ARTIFACT_GRAPH, artifactId: 'triage-account-runtime', executable: { exports: ['activate'] } },
+            accountManifest: admitted.manifest, accountActivate: activate });
+        newSessionNavigation.mockClear();
+        accountBrowserRelay.enabled = true;
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const { scopedHomeActionExecutor } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
+            const outcome = await dispatchPluginSurfaceAction({ action: { pluginId: PLUGIN_MANIFEST.id, localId: declaration.id },
+                input, hostAction: { execute: scopedHomeActionExecutor(lifetime.scope), context: { serverId: lifetime.scope.serverId, runtimeAccountId: lifetime.scope.accountId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } }, resolveContributedAction: identity => activation.projection.actionsById[`${identity.pluginId}/${identity.localId}`] ?? null, clientAction: {} });
+            expect(relayed).toBe(1);
+            expect(outcome).toMatchObject({ ok: true, result: { handoff: { kind: 'unavailable', reason: 'configuredActionUnavailable' } } });
+        } finally {
+            accountBrowserRelay.enabled = false;
+            await activation.composition.unload(); lifetime.retire();
+            getStorage().setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
+                machineListStatusByServerId: previous.machineListStatusByServerId });
+        }
+    });
+
     it.each(['browser', 'native'] as const)('keeps an Environment Account read on its controller when another own Machine is first (%s)', async httpHost => {
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
         const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
@@ -5317,13 +5412,24 @@ describe('plugin-surface action branch selection', () => {
     );
 
     it.each([
-        { publication: 'initial snapshot', settlement: 'prepared' },
-        { publication: 'pushed snapshot', settlement: 'prepared' },
-        { publication: 'pushed snapshot', settlement: 'typed refusal' },
-        { publication: 'pushed snapshot', settlement: 'unrelated failed result' },
+        { publication: 'initial snapshot', settlement: 'prepared', detached: false },
+        { publication: 'pushed snapshot', settlement: 'prepared', detached: false },
+        { publication: 'pushed snapshot', settlement: 'typed refusal', detached: false },
+        { publication: 'pushed snapshot', settlement: 'unrelated failed result', detached: false },
+        { publication: 'initial snapshot', settlement: 'prepared', detached: true },
+        { publication: 'pushed snapshot', settlement: 'prepared', detached: true },
+        { publication: 'pushed snapshot', settlement: 'prepared', detached: true, transport: 'react-native' },
+        { publication: 'pushed snapshot', settlement: 'prepared', detached: true, transport: 'hosted-web' },
+        { publication: 'pushed snapshot', settlement: 'prepared', detached: true, navigationRefusal: true },
+        { publication: 'pushed snapshot', settlement: 'prepared', detached: true, clientAction: true },
+        { publication: 'pushed snapshot', settlement: 'aborted before admission', detached: false },
+        { publication: 'pushed snapshot', settlement: 'cancelled deliberately', detached: false },
     ] as const)(
-        'awaits the prepared parent operation while presenting native approval from its $publication ($settlement)', async ({ publication, settlement }) => {
-            const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+        'awaits the prepared parent operation while presenting native approval from its $publication ($settlement, detached=$detached, transport=$transport, navigationRefusal=$navigationRefusal, clientAction=$clientAction)', async scenario => {
+            const { publication, settlement, detached } = scenario;
+            const navigationRefusal = 'navigationRefusal' in scenario;
+            const fromClientAction = 'clientAction' in scenario;
+            const { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
             const { ActionApprovalRequestCreatedResultSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
             const { createActionApprovalContinuationObserver } = await import('@/components/approvals/actionApprovalContinuation');
             const { consumeActionOperationSnapshotPush } = await import('@/sync/domains/actionOperations/consumeActionOperationSnapshotPush');
@@ -5335,9 +5441,10 @@ describe('plugin-surface action branch selection', () => {
             await prepareSessionDraftPersistenceStorage();
             actionOperationStore.reset();
             const accountLifetime = clientAccountLifetime();
-            const scope = { accountId: accountLifetime.scope.accountId, machineId: 'machine-1' };
+            const scope = { accountId: accountLifetime.scope.accountId,
+                machineId: fromClientAction ? CLIENT_ACTION_ORIGIN.materializationRef.machineId : 'machine-1' };
             const identity = { pluginId: CALLER_PLUGIN_ID, localId: 'prepare-review-workspace' };
-            const projected = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction(identity), scopes: ['global'],
+            const projected = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction(identity), scopes: ['global'], surfaces: ['ui', 'plugin'],
                 operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } } });
             const store = createActionOperationStore();
             const runner = createActionOperationRunner({ store, resolveAction: actionId => ({ actionId,
@@ -5359,7 +5466,21 @@ describe('plugin-surface action branch selection', () => {
             let joinedParent = false;
             const registered: string[] = [];
             const approval = createActionApprovalContinuationObserver({ onExecuted() {} });
+            clientActionSchemasByQualifiedId.set(buildQualifiedPluginContributionKey(identity), {
+                inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+            });
             network.setRpcResponder(async request => {
+                if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) {
+                    return { status: 'current', targetedSurfaceMounts: [], targetedContributions };
+                }
+                if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                    return { protocolVersion: 1, projectionDigest: 'prepared-source-digest', projection: {
+                        v: 2, generation: 1, familiesById: {}, installedPackagesById: { [identity.pluginId]: {
+                            id: identity.pluginId, displayName: 'Reviewer', version: '1.0.0', enabled: true,
+                            source: { kind: 'localPath', locator: 'reviewer' },
+                        } }, actionsById: { [buildQualifiedPluginContributionKey(identity)]: projected },
+                    } };
+                }
                 if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
                     const payload = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request.payload);
                     observedRequestId = payload.requestId;
@@ -5369,7 +5490,7 @@ describe('plugin-surface action branch selection', () => {
                             ? { ...contributedActionFailureResult,
                                 project: () => ({ ok: true, result: { kind: 'prepared', repositoryPath: '/must-not-open' } }) }
                             : contributedActionFailureResult,
-                        input: payload.input, scope, execute: async context => {
+                        input: payload.input, scope, cancellation: 'supported', execute: async context => {
                             // The fixture plugin's effect stays held by the real finite runner after acceptance.
                             effects++;
                             const publish = (receipt: typeof approvals[number]) => context.updateProgress({
@@ -5379,6 +5500,7 @@ describe('plugin-surface action branch selection', () => {
                             context.operationAcceptance?.accept(approvals[0]!);
                             if (publication === 'initial snapshot') publishNextApproval();
                             await preparation;
+                            if (context.signal.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
                             return settlement === 'prepared'
                                 ? { ok: true, result: { kind: 'prepared', repositoryPath: '/workspaces/review-final' } } : failed;
                         } });
@@ -5393,6 +5515,9 @@ describe('plugin-surface action branch selection', () => {
                         ? await runner.waitForTerminal(scope, payload.operationId) : store.get(scope, payload.operationId);
                     return operation ? { kind: 'found', operation } : { kind: 'not_found' };
                 }
+                if (request.method === ACTION_OPERATION_RPC_METHODS_V1.cancel) {
+                    return runner.cancel(scope, (request.payload as { operationId: string }).operationId);
+                }
                 return answerActionSchemasRead(request);
             });
             const operation = { point: { pointId: 'review', protocol: { id: 'review', version: 1 } },
@@ -5404,25 +5529,87 @@ describe('plugin-surface action branch selection', () => {
                     point: operation.point, contributor: { pluginId: identity.pluginId, contributionId: 'review-source',
                         sourceCustody: CONTRIBUTOR_SOURCE_CUSTODY } }, connectedAccount: { kind: 'none' as const },
                 presentation: { connectedAccountLabel: null, machineDisplayName: 'Development Mac' } };
-            const api = createPluginSurfaceActionHostApi({ surfaceContext: surfaceContext(),
-                callerBinding: mountedCallerBinding(), callerSourceCustody: TARGET_SOURCE_CUSTODY,
-                targetSourceCustody: TARGET_SOURCE_CUSTODY, resolveContributedAction: resolveExactClientAction(projected),
-                contributedAction: { ...scope, serverId: accountLifetime.scope.serverId, accountLifetime,
+            const targetedContributions = PluginUiTargetedContributionsV1Schema.parse({
+                target: { pluginId: CALLER_PLUGIN_ID, occurrenceId: `occurrence-${CALLER_PLUGIN_ID}`,
+                    sourceCustody: TARGET_SOURCE_CUSTODY },
+                points: [{ pointId: operation.point.pointId, protocols: [{ protocol: operation.point.protocol,
+                    contributions: [{ contributor: operation.contributor, protocol: operation.point.protocol,
+                        operations: [operation], surfaces: [] }] }] }],
+            });
+            const physicalCarrier = 'transport' in scenario;
+            const selectorInputs = physicalCarrier ? await loadDaemonMergedProjectionCacheEntry({ sections: 'complete',
+                machineId: scope.machineId, serverId: accountLifetime.scope.serverId, accountLifetime, reuseFreshReady: false }) : null;
+            if (physicalCarrier && selectorInputs?.kind !== 'ready') throw new Error('Prepared source projection did not load');
+            const { createPluginActionInputSelectionHostApiHandler } = await import('./pluginActionInputSelectionHostApi');
+            const contributedAction = { ...scope, serverId: accountLifetime.scope.serverId, accountLifetime,
                     onApprovalPending: registration => {
                         registered.push(typeof registration === 'string' ? registration : registration.artifactId);
                         approval.requestApproval(registration);
-                    } },
+                    } } satisfies NonNullable<DispatchPluginSurfaceActionInput['contributedAction']>;
+            const api = createPluginSurfaceActionHostApi({ surfaceContext: surfaceContext(),
+                callerBinding: mountedCallerBinding(), callerSourceCustody: TARGET_SOURCE_CUSTODY,
+                targetSourceCustody: TARGET_SOURCE_CUSTODY, resolveContributedAction: resolveExactClientAction(projected),
+                contributedAction,
+                ...(selectorInputs?.kind === 'ready' ? { selectActionInput: createPluginActionInputSelectionHostApiHandler({
+                    pluginProjectionById: selectorInputs.inputs.pluginProjectionById,
+                    pluginUiProjection: selectorInputs.inputs.pluginUiProjection, targetedContributions,
+                    resolveContributedAction: resolveExactClientAction(projected), isCurrent: () => true,
+                    host: { machineId: scope.machineId, serverId: accountLifetime.scope.serverId,
+                        targetPluginId: CALLER_PLUGIN_ID, accountLifetime },
+                }) } : {}),
                 createOpenNewSession: executeSelectedOperation => createPluginOpenNewSessionHostApiHandler({
                     pluginId: CALLER_PLUGIN_ID, accountLifetime, isCurrent: () => true,
                     executionTarget: { serverId: accountLifetime.scope.serverId, machineId: scope.machineId }, executeSelectedOperation,
                 }) });
             newSessionNavigation.mockReset();
             let settled = false;
-            const request = { ...executeActionRequest({ checkoutIntent: 'preparedReviewWorkspace' }), method: 'openNewSession' as const };
-            const pending = api.handleRequest(request, { targetedOperation: operation, selectedActionInput: selected })
-                .then(result => { settled = true; return result; });
+            const caller = new AbortController();
+            const request = { ...executeActionRequest({ checkoutIntent: 'preparedReviewWorkspace',
+                prompt: 'Review the selected pull request and explain the changes.',
+                attachments: [{ attachmentLocalId: 'entry', value: {
+                    key: 'pull-request:42', value: { v: 1, number: 42 }, presentation: { label: 'PR #42' },
+                } }],
+            }), method: 'openNewSession' as const };
+            const carrier = 'transport' in scenario
+                ? await physicalHostApiCarrier(scenario.transport, api, () => true, 'plain', request.surface) : null;
+            const carrierSelection = carrier ? await carrier.api.selectActionInput({ operation, draft: {} }, { signal: caller.signal }) : null;
+            if (carrierSelection && carrierSelection.kind !== 'submitted') throw new Error('Prepared source selection did not submit');
+            const activation = fromClientAction ? createClientActionActivation({ accountLifetime, localId: 'start-prepared-review',
+                handler: async (_input, context) => {
+                    const selectedInput = await context.ui.selectActionInput({ operation, draft: {} });
+                    if (selectedInput.kind !== 'submitted') throw new Error('Prepared source selection did not submit');
+                    await context.ui.openNewSession(PluginUiOpenNewSessionRequestV1Schema.parse(request.payload), {
+                        preparedReviewWorkspace: { operation, result: selectedInput },
+                    });
+                    return null;
+                } }) : null;
+            if (activation) await activation.composition.reconcile([activation.activation]);
+            if (settlement === 'aborted before admission') caller.abort();
+            let invocationResult: unknown;
+            const pending = Promise.resolve(activation ? dispatchPluginSurfaceAction({
+                action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id }, signal: caller.signal,
+                callerSourceCustody: TARGET_SOURCE_CUSTODY, targetSourceCustody: TARGET_SOURCE_CUSTODY,
+                resolveContributedAction: action => action.localId === activation.action.id
+                    ? activation.action : resolveExactClientAction(projected)(action), clientAction: {}, contributedAction,
+            }).then(outcome => outcome.ok ? outcome.result : outcome.reason) : carrier
+                ? carrier.api.openNewSession(PluginUiOpenNewSessionRequestV1Schema.parse(request.payload), { signal: caller.signal,
+                    preparedReviewWorkspace: { operation, result: carrierSelection ?? selected } }).then(() => null,
+                        error => { if (!caller.signal.aborted) throw error; return null; })
+                : api.handleRequest(request, { targetedOperation: operation, selectedActionInput: selected, signal: caller.signal }))
+                .then(result => { settled = true; invocationResult = result; return result; });
+            void pending.catch(() => {});
             try {
-                await vi.waitFor(() => expect(registered).toContain(approvals[0]!.artifactId));
+                if (settlement === 'aborted before admission') {
+                    expect(await pending).toMatchObject({ code: 'unavailable', diagnostics: ['plugin_ui_invocation_aborted'] });
+                    expect(effects).toBe(0);
+                    expect(store.list(scope).items).toEqual([]);
+                    expect(newSessionNavigation).not.toHaveBeenCalled();
+                    return;
+                }
+                if (fromClientAction) await vi.waitFor(() => expect(effects,
+                    `Invocation result before daemon admission: ${JSON.stringify(invocationResult)}`).toBe(1));
+                await vi.waitFor(() => expect(registered, `Invocation result: ${JSON.stringify(invocationResult)}`)
+                    .toContain(approvals[0]!.artifactId));
                 expect(settled).toBe(false);
                 expect(approval.getSnapshot().approval?.artifactId).toBe(approvals[0]!.artifactId);
                 await vi.waitFor(() => expect(joinedParent).toBe(true));
@@ -5437,6 +5624,17 @@ describe('plugin-surface action branch selection', () => {
                 await vi.waitFor(() => expect(registered).toContain(approvals[1]!.artifactId));
                 expect(settled).toBe(false);
                 expect(newSessionNavigation).not.toHaveBeenCalled();
+                if (detached) caller.abort();
+                if (settlement === 'cancelled deliberately') {
+                    const admitted = [...actionOperationStore.getSnapshot().operationsByKey.values()]
+                        .find(value => value.snapshot.requestId === observedRequestId);
+                    expect(admitted).toBeDefined();
+                    const { requestActionOperationStop } = await import('@/components/inbox/actionOperations/requestActionOperationStop');
+                    const { Modal } = await import('@/modal');
+                    vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+                    expect(await requestActionOperationStop(admitted!)).toEqual({ kind: 'requested' });
+                    expect(caller.signal.aborted).toBe(false);
+                }
                 finishPreparation();
                 const result = await pending;
                 expect(observedActionId).toBe(`${identity.pluginId}/${identity.localId}`);
@@ -5445,12 +5643,56 @@ describe('plugin-surface action branch selection', () => {
                     .map(value => value.payload)).toEqual([{ requestIdentity: { actionId: observedActionId, requestId: observedRequestId } }]);
                 expect(effects).toBe(1);
                 if (settlement === 'prepared') {
-                    expect(result).toBeNull();
-                    expect(newSessionNavigation).toHaveBeenCalledTimes(1);
-                    const route = newSessionNavigation.mock.calls[0]![0] as { params: { draftId: string } };
+                    if (detached) {
+                        expect(newSessionNavigation).not.toHaveBeenCalled();
+                        await vi.waitFor(() => {
+                            const retained = [...actionOperationStore.getSnapshot().operationsByKey.values()]
+                                .find(value => value.snapshot.requestId === observedRequestId);
+                            expect(retained?.snapshot.state).toBe('succeeded');
+                            expect(retained?.resumeNewSession).toBeTypeOf('function');
+                        });
+                        const completed = [...actionOperationStore.getSnapshot().operationsByKey.values()]
+                            .find(value => value.snapshot.requestId === observedRequestId);
+                        expect(completed?.snapshot).toMatchObject({ state: 'succeeded',
+                            result: { kind: 'prepared', repositoryPath: '/workspaces/review-final' } });
+                        const { createActionOperationPresentationCoordinator } = await import('@/components/inbox/actionOperations/actionOperationPresentationCoordinator');
+                        const { acknowledgeActionOperationPresented } = await import('@/sync/domains/actionOperations/acknowledgeActionOperationPresented');
+                        const coordinator = createActionOperationPresentationCoordinator({
+                            openDetail() {}, openDestination() {}, markPresented: operation => {
+                                acknowledgeActionOperationPresented(operation.snapshot, operation.serverId);
+                            },
+                        });
+                        if (navigationRefusal) {
+                            // Router/native navigation is the physical boundary; the seed
+                            // producer and refusal-to-attention path remain real.
+                            newSessionNavigation.mockImplementationOnce(() => { throw new Error('Router unavailable'); });
+                            coordinator.open(completed!);
+                            await vi.waitFor(() => expect(actionOperationStore.getSnapshot().followUpAttentionByRequestKey.size).toBe(1));
+                            expect(newSessionNavigation).toHaveBeenCalledTimes(1);
+                            expect([...actionOperationStore.getSnapshot().operationsByKey.values()]
+                                .find(value => value.snapshot.requestId === observedRequestId)?.resumeNewSession).toBeTypeOf('function');
+                        }
+                        // Activity/Details is a returning view of the existing operation.
+                        // Reopening it must consume the retained composer handoff once.
+                        coordinator.open(completed!);
+                        await vi.waitFor(() => expect(newSessionNavigation).toHaveBeenCalledTimes(navigationRefusal ? 2 : 1));
+                        if (navigationRefusal) await vi.waitFor(() =>
+                            expect(actionOperationStore.getSnapshot().followUpAttentionByRequestKey.size).toBe(0));
+                        coordinator.open(completed!);
+                        await act(async () => {});
+                    } else expect(result).toBeNull();
+                    expect(newSessionNavigation).toHaveBeenCalledTimes(navigationRefusal ? 2 : 1);
+                    const route = newSessionNavigation.mock.calls[navigationRefusal ? 1 : 0]![0] as { params: { draftId: string } };
                     const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
                     expect(readNewSessionDraftFromRepository({ scope: accountLifetime.scope, draftId: route.params.draftId }))
-                        .toMatchObject({ selectedPath: '/workspaces/review-final' });
+                        .toMatchObject({ selectedPath: '/workspaces/review-final',
+                            input: 'Review the selected pull request and explain the changes.',
+                            composerAttachmentSeeds: [expect.objectContaining({ pluginId: CALLER_PLUGIN_ID, attachmentLocalId: 'entry',
+                                value: { key: 'pull-request:42', value: { v: 1, number: 42 }, presentation: { label: 'PR #42' } } })] });
+                } else if (settlement === 'cancelled deliberately') {
+                    expect(newSessionNavigation).not.toHaveBeenCalled();
+                    expect(store.list(scope).items[0]?.state).toBe('cancelled');
+                    expect(result).not.toBeNull();
                 } else {
                     expect(newSessionNavigation).not.toHaveBeenCalled();
                     expect(result).toMatchObject(settlement === 'typed refusal'
@@ -5462,7 +5704,7 @@ describe('plugin-surface action branch selection', () => {
                     expect(JSON.stringify(result)).not.toContain('must-not-cross');
                 }
             } finally {
-                finishPreparation(); await pending; api.dispose?.(); approval.dispose(); accountLifetime.retire(); actionOperationStore.reset();
+                finishPreparation(); await pending; await carrier?.dispose(); await activation?.composition.unload(); api.dispose?.(); approval.dispose(); accountLifetime.retire(); actionOperationStore.reset();
             }
         },
     );
@@ -7808,10 +8050,19 @@ describe('present-user confirmation for daemon-target Actions', () => {
             storage.setState(previous);
         }
     });
-    it('confirms locally before the daemon RPC and carries the settled present intent', async () => {
+    it.each(['unchanged', 'policy', 'operands'] as const)('confirms locally before the daemon RPC and retains the admitted policy (changed: %s)', async change => {
+        const storage = getStorage();
+        const previous = storage.getState();
         const order: string[] = [];
-        const requestCurrentIntent = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => {
+        const requestCurrentIntent = vi.fn(async ({ fingerprint, input }: Readonly<{ fingerprint: string; input: unknown }>) => {
             order.push('confirm');
+            // Coordination 2026-11-10 10:44: settings affect the next admission.
+            if (change === 'policy') storage.setState(state => ({ settings: { ...state.settings,
+                actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
+                    actions: { 'acme.releases/actions/publish': { enabled: false } },
+                }),
+            } }));
+            if (change === 'operands' && input && typeof input === 'object' && 'tag' in input) input.tag = 'v2';
             return { status: 'approved' as const, fingerprint };
         });
         const contributed = vi.fn<PluginSurfaceContributedActionTransport>(async () => {
@@ -7819,24 +8070,32 @@ describe('present-user confirmation for daemon-target Actions', () => {
             return { supported: true as const, result: { ok: true as const, result: { published: true } } };
         });
 
-        await expect(dispatchPluginSurfaceAction({
-            action: { pluginId: 'acme.releases', localId: 'publish' },
-            input: { tag: 'v1' },
-            resolveContributedAction: resolveConfirmedDaemonTargetAction,
-            requestCurrentIntent,
-            contributedAction: { machineId: 'machine-1', execute: contributed },
-        })).resolves.toEqual({ ok: true, result: { published: true } });
+        try {
+            const result = await dispatchPluginSurfaceAction({
+                action: { pluginId: 'acme.releases', localId: 'publish' },
+                input: { tag: 'v1' },
+                resolveContributedAction: resolveConfirmedDaemonTargetAction,
+                requestCurrentIntent,
+                contributedAction: { machineId: 'machine-1', execute: contributed },
+            });
+            if (change === 'operands') {
+                expect(result).toMatchObject({ ok: false, reason: 'plugin_action_current_intent_mismatch' });
+                expect(contributed).not.toHaveBeenCalled();
+                return;
+            }
+            expect(result).toEqual({ ok: true, result: { published: true } });
 
-        expect(order).toEqual(['confirm', 'transport']);
-        expect(requestCurrentIntent).toHaveBeenCalledWith(expect.objectContaining({
-            action: expect.objectContaining({ pluginId: 'acme.releases', id: 'publish' }),
-            invocationSurface: 'ui',
-        }));
-        expect(contributed).toHaveBeenCalledWith('machine-1', expect.objectContaining({
-            qualifiedActionId: 'acme.releases/publish',
-            executionSurface: 'ui',
-            presentUserIntent: 'confirmed',
-        }));
+            expect(order).toEqual(['confirm', 'transport']);
+            expect(requestCurrentIntent).toHaveBeenCalledWith(expect.objectContaining({
+                action: expect.objectContaining({ pluginId: 'acme.releases', id: 'publish' }),
+                invocationSurface: 'ui',
+            }));
+            expect(contributed).toHaveBeenCalledWith('machine-1', expect.objectContaining({
+                qualifiedActionId: 'acme.releases/publish',
+                executionSurface: 'ui',
+                presentUserIntent: 'confirmed',
+            }));
+        } finally { storage.setState(previous); }
     });
 
     it('runs nothing and leaves nothing pending when the person cancels the local confirmation', async () => {
@@ -8848,6 +9107,40 @@ describe('composed React Native host API to canonical plugin-surface dispatcher'
         } finally { adapter.dispose(); }
     });
 
+    it('exposes the issued native read identity without changing the domain failure or daemon identity', async () => {
+        const failure = { kind: 'unavailable', failure: { class: 'rateLimited', code: 'provider-rate-limited' } };
+        let daemonRequestId: string | undefined;
+        const adapter = createReactNativeSurface({
+            executeHostAction: async () => ({ ok: true, result: null }),
+            contributedActionExecute: async (_machineId, request) => {
+                daemonRequestId = request.requestId;
+                return { supported: true, result: { ok: true, result: failure } };
+            },
+        });
+        const onIssued = vi.fn();
+        try {
+            await expect(adapter.api.executeAction('refresh-index', {}, { onIssued })).resolves.toEqual(failure);
+            expect(onIssued).toHaveBeenCalledWith(adapter.requests[0]?.requestId);
+            expect(daemonRequestId).toBe(adapter.requests[0]?.requestId);
+        } finally { adapter.dispose(); }
+    });
+
+    it('does not issue a diagnostic identity for a locally refused native read', async () => {
+        const adapter = createReactNativeSurface({
+            executeHostAction: async () => ({ ok: true, result: null }),
+            contributedActionExecute: async () => ({ supported: true, result: { ok: true, result: null } }),
+        });
+        const onIssued = vi.fn();
+        const controller = new AbortController();
+        controller.abort();
+        try {
+            await expect(adapter.api.executeAction('refresh-index', {}, { signal: controller.signal, onIssued }))
+                .rejects.toMatchObject({ code: 'aborted' });
+            expect(onIssued).not.toHaveBeenCalled();
+            expect(adapter.requests).toEqual([]);
+        } finally { adapter.dispose(); }
+    });
+
     it('carries both branches from the React Native public API with the host stamps intact', async () => {
         const executeHostAction = vi.fn<PluginSurfaceHostActionExecute>(async () => ({ ok: true as const, result: { reloaded: true } }));
         const contributedActionExecute = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({
@@ -8945,10 +9238,11 @@ describe('composed React Native host API to canonical plugin-surface dispatcher'
 });
 
 /** Reuse the real physical carrier owners; only the browser realm hop is synthetic. */
-async function externalDocCarrier(transport: 'hosted-web' | 'react-native',
-    host: ReturnType<typeof createPluginSurfaceActionHostApi>, isCurrent: () => boolean, mode: 'plain' | 'e2ee') {
-    const pluginId = externalAuthoringPlugin.manifest.id;
-    const requestSurface = { ...COMPOSED_SURFACE, pluginId, contributionId: 'external-authoring-semantic' };
+async function physicalHostApiCarrier(transport: 'hosted-web' | 'react-native',
+    host: ReturnType<typeof createPluginSurfaceActionHostApi>, isCurrent: () => boolean, mode: 'plain' | 'e2ee',
+    requestSurface: PluginUiSurfaceContextV1 = { ...COMPOSED_SURFACE, pluginId: externalAuthoringPlugin.manifest.id,
+        contributionId: 'external-authoring-semantic' }) {
+    const pluginId = requestSurface.pluginId;
     const surface = createPluginSurfaceContextFixture({ accountEncryptionMode: mode, target: { kind: 'app' },
         mount: { kind: 'destination', destination: { pluginId, localId: requestSurface.contributionId }, container: 'appPage' },
         targetedContributions: { target: { pluginId, occurrenceId: 'external-doc-occurrence', sourceCustody: TARGET_SOURCE_CUSTODY }, points: [] } });
@@ -9056,7 +9350,7 @@ describe('external author Doc collaboration through physical SDK carriers', () =
             hostAction: { execute: executor, context: { serverId, runtimeAccountId: 'alice', actionsSettings,
                 // A mounted plugin must not inherit this host's present person or bypass.
                 authority: 'present_user', bypassApprovals: true } } });
-        const carrier = await externalDocCarrier(transport, host, () => current, mode);
+        const carrier = await physicalHostApiCarrier(transport, host, () => current, mode);
         try {
             const read = DocCollaborationActionOutputSchemasV1['doc.read'].parse(await readExternalDoc(carrier.api, { ref }));
             expect(read.artifact.body).toBe(source);

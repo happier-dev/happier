@@ -11,11 +11,9 @@ import {
   type ActionExecutorContext,
   type ActionExecutorDeps,
 } from '@happier-dev/protocol/actions';
-import { admitApprovalRequesterDecisionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { projectTargetActionApprovalInvocationV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { createTargetActionApprovalDecision, buildTargetActionApprovalDecisionResult } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
-import { PluginError } from '@happier-dev/plugin-sdk';
 import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -31,7 +29,8 @@ import {
   createCommittedContributedActionInvoker,
 } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
-import { targetActionApprovalMatchesCurrentIntent } from '@/session/actions/approvals/targetActionCurrentIntent';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 import {
   acquireAuthoritativePluginRuntimeRegistryLease,
   tryAcquireAuthoritativePluginRuntimeRegistryLease,
@@ -158,11 +157,6 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
     isRequesterSourceCurrent,
     executeApproved: async ({ artifactId, request, context, signal, persist, nextTimestamp }) => {
       let approved = request;
-      const admitRequester = async (subject: TargetActionApprovalRequestV1) => {
-        const invocation = projectTargetActionApprovalInvocationV1(subject);
-        return invocation ? await admitApprovalRequesterDecisionV1({ request: { ...subject, ...invocation }, context: context ?? {} })
-          : targetActionReplayFailure('approval_invalid');
-      };
       const requestedSurface = approved.requestedSurface;
       if ((requestedSurface !== 'api' && requestedSurface !== 'cli' && requestedSurface !== 'agent' && requestedSurface !== 'mcp')
         || approved.replayPlacement === undefined) {
@@ -331,25 +325,18 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
               workspaceWrites: sourceSession?.workspaceWrites,
               ...(externalActionContext ?? {}),
             };
+            replayContext.hostReviewedChild = createHostReviewedChildPortV1({
+              actionId: 'action.invoke', input: { action, input: approved.input }, context: replayContext, reviewAdmitted: true,
+            });
             const attempt = await executeContributedAction({
               runtimeRegistry: lease.registry,
               actionId: buildQualifiedPluginContributionKey(action),
               input: approved.input,
               expectedApprovalReplayPlacement: replayPlacement,
-              // Replay fingerprints the admitting authority, not the decider's
-              // authority or the dispatcher's absent-context automation default.
               approvalContext: { ...replayContext,
                 ...(input.createFileDownloadPublisher ? { prepareFileDownload: input.createFileDownloadPublisher(replayContext) } : {}),
               },
               approvalExecutionOrigin: origin,
-              requestCurrentIntent: async (currentIntent) => (
-                targetActionApprovalMatchesCurrentIntent(approved, {
-                  ...currentIntent,
-                  executionOriginV1: origin,
-                })
-                  ? { status: 'approved', fingerprint: currentIntent.fingerprint, artifactId }
-                  : { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' }
-              ),
               context: {
                 ...(input.observePluginExecution ? { observePluginExecution: input.observePluginExecution } : {}),
                 surface: requestedSurface,
@@ -360,24 +347,13 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
                   ? {}
                   : { defaultSessionId: replayPlacement.defaultSessionId }),
                 signal: invocationSignal,
-                ...(approved.requesterConfirmation ? { beforeHandlerInvocation: async () => {
-                  const admission = await admitRequester(approved);
-                  if (!admission.ok) throw new PluginError({
-                    code: admission.errorCode, message: admission.error,
-                  });
-                  const projected = projectTargetApprovalRequest(approved);
-                  if (!projected || !await sourceCurrentness({ origin, request: projected, ...(signal ? { signal } : {}) })) {
-                    throw new PluginError({ code: 'approval_stale', message: 'approval_stale' });
-                  }
-                } } : {}),
               },
             });
             if (!attempt.matched) {
               executionResult = targetActionReplayFailure('contributed_action_unavailable');
-            } else if (attempt.result.ok && attempt.result.deferredApprovalArtifactId !== undefined) {
-              executionResult = targetActionReplayFailure('plugin_action_current_intent_mismatch');
             } else {
-              executionResult = attempt.result;
+              executionResult = attempt.result.ok || attempt.result.details !== undefined
+                ? attempt.result : projectContributedActionFailure(attempt.result);
             }
           } finally {
             await lease.release();
@@ -385,14 +361,13 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
         } catch (error) {
           const failure = readPluginActionError(error);
           const failureCode = failure ? failure.code : 'plugin_action_execution_failed';
-          executionResult = failure ? {
-            ok: false,
+          executionResult = failure ? projectContributedActionFailure({
             errorCode: failure.code,
             error: projectPluginFailureMessage(failure.message),
             ...(failure.data === undefined ? {} : {
               data: redactPluginInvocationResultData(failure.data, projectPluginFailureMessage),
             }),
-          } : targetActionReplayFailure('plugin_action_execution_failed');
+          }) : targetActionReplayFailure('plugin_action_execution_failed');
           logger.warnLocalFile('[ExternalAction] Approved contributed Action replay failed', { code: failureCode });
         }
       }

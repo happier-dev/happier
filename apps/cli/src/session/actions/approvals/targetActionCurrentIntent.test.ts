@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PluginSourceCustodyV1, TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
-import { createTargetActionCurrentIntentAdapter, targetActionApprovalMatchesCurrentIntent } from './targetActionCurrentIntent';
+import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
+import { createTargetActionCurrentIntentAdapter } from './targetActionCurrentIntent';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
 import { logger } from '@/ui/logger';
@@ -319,31 +319,7 @@ describe('target action current-intent adapter', () => {
     });
   });
 
-  it.each([
-    { sourceCustody: { kind: 'development', registeredRootId: 'root-8' } },
-    { secretInputPaths: ['x'] },
-    { secretInputLabels: { x: 'Different operand' } },
-    { approvalInputCustody: undefined },
-  ])('rejects a durable decision whose subject fields changed under the same fingerprint: %j', async change => {
-    let stored: any;
-    const adapter = createTargetActionCurrentIntentAdapter({
-      now: () => 1,
-      create: async (request) => {
-        stored = request;
-        return { artifactId: 'approval-2' };
-      },
-      update: async () => ({ ok: true }),
-      read: async () => ({
-        ...stored, ...change, status: 'canceled', updatedAtMs: 2,
-      }),
-    });
-    await expect(adapter({
-      action: { qualifiedId: 'acme.alpha/actions/run', pluginId: 'acme.alpha', localId: 'run', occurrenceId: '7', sourceCustody: developmentCustody, dangerLevel: 'destructive', scopes: ['global'], surfaces: ['cli'], hostAccess: [], input: { x: 1, private: 'held' }, secretInputPaths: ['private'], policyFingerprint: 'b'.repeat(64), confirmation: { title: 'Run action' } },
-      fingerprint: 'a'.repeat(64), surface: 'cli',
-    })).resolves.toEqual({ status: 'unavailable', code: 'plugin_action_current_intent_mismatch' });
-  });
-
-  it('fails closed when the durable confirmation presentation is changed or canceled', async () => {
+  it('retains a canceled decision when presentation changes', async () => {
     let stored: any;
     const action = {
       qualifiedId: 'acme.alpha/actions/run', pluginId: 'acme.alpha', localId: 'run', occurrenceId: '7', sourceCustody: developmentCustody,
@@ -368,7 +344,7 @@ describe('target action current-intent adapter', () => {
       update: async () => ({ ok: true }),
     });
     await expect(changed({ action, fingerprint: 'a'.repeat(64), surface: 'cli' })).resolves.toEqual({
-      status: 'unavailable', code: 'plugin_action_current_intent_mismatch',
+      status: 'rejected', code: 'plugin_action_current_intent_rejected',
     });
 
     const canceled = createTargetActionCurrentIntentAdapter({
@@ -389,66 +365,5 @@ describe('target action current-intent adapter', () => {
     });
   });
 
-  it.each([
-    {
-      label: 'managed',
-      sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-7', installSource: 'npm' },
-      staleSourceCustody: { kind: 'managed', immutableGenerationId: 'generation-8', installSource: 'npm' },
-    },
-    {
-      label: 'bundled',
-      sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'cli_version_root', versionRootId: 'cli-root-7' } },
-      staleSourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'cli_version_root', versionRootId: 'cli-root-8' } },
-    },
-    {
-      label: 'development',
-      sourceCustody: developmentCustody,
-      staleSourceCustody: { kind: 'development', registeredRootId: 'root-8' },
-    },
-  ] satisfies ReadonlyArray<Readonly<{
-    label: string;
-    sourceCustody: PluginSourceCustodyV1;
-    staleSourceCustody: PluginSourceCustodyV1;
-  }>>)('binds $label durable replay to source custody, never the live occurrence', async ({ sourceCustody, staleSourceCustody }) => {
-    let stored: TargetActionApprovalRequestV1 | undefined;
-    const adapter = createTargetActionCurrentIntentAdapter({
-      now: () => 1,
-      create: async (request) => {
-        stored = request;
-        return { artifactId: 'approval-api-source-custody' };
-      },
-      read: async () => null,
-    });
-    const currentIntent: Parameters<typeof adapter>[0] = {
-      action: {
-        qualifiedId: 'acme.alpha/actions/run', pluginId: 'acme.alpha', localId: 'run',
-        occurrenceId: 'occurrence-7', sourceCustody, dangerLevel: 'safe' as const,
-        scopes: ['global'], surfaces: ['cli'], hostAccess: [], input: { x: 1 },
-        policyFingerprint: 'b'.repeat(64), approvalRequiredByActionSettings: true as const,
-      },
-      fingerprint: 'a'.repeat(64), surface: 'cli', invocationSurface: 'api',
-      replayPlacement: { serverId: 'server-1', machineId: 'machine-1' },
-      executionOriginV1: {
-        v: 1 as const, authority: 'account_automation' as const, surface: 'api' as const,
-        caller: { kind: 'host' as const }, serverId: 'server-1', accountId: 'account-1',
-        principalId: 'principal-1', credentialId: 'credential-1', machineId: 'machine-1',
-        actionId: 'action.invoke', requestId: 'request-1',
-      },
-    };
 
-    await expect(adapter(currentIntent)).resolves.toEqual({
-      status: 'deferred', artifactId: 'approval-api-source-custody',
-    });
-    expect(stored?.sourceCustody).toEqual(sourceCustody);
-    expect(stored).not.toHaveProperty('occurrenceId');
-    if (!stored) throw new Error('Expected the deferred approval to be persisted');
-    expect(targetActionApprovalMatchesCurrentIntent(stored, {
-      ...currentIntent,
-      action: { ...currentIntent.action, occurrenceId: 'occurrence-8' },
-    })).toBe(true);
-    expect(targetActionApprovalMatchesCurrentIntent(stored, {
-      ...currentIntent,
-      action: { ...currentIntent.action, sourceCustody: staleSourceCustody },
-    })).toBe(false);
-  });
 });

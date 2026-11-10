@@ -379,7 +379,7 @@ describe('portable Account Action consent binding', () => {
     confirmation: { title: 'Assign', body: 'Assign this issue?', confirmLabel: 'Assign' } });
   const requested = { pluginId: 'acme.picker', pluginVersion: '1.2.3', declaration,
     input: { action: { pluginId: 'acme.picker', localId: 'assign' }, input: { assignee: 'alice' } } };
-  it('retains bundled consent across host build roots while binding the whole declaration', () => {
+  it('binds consent to exact Action operands independently of plugin metadata', () => {
     const browser = fingerprintPluginAccountActionConfirmation({ ...requested,
       sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'source_declaration', packageName: '@acme/picker' } } });
     const daemon = { ...requested, sourceCustody: { kind: 'bundled_first_party' as const,
@@ -388,7 +388,9 @@ describe('portable Account Action consent binding', () => {
     expect(fingerprintPluginAccountActionConfirmation(daemon)).toBe(browser);
     expect(fingerprintPluginAccountActionConfirmation({ ...daemon,
       declaration: PluginActionContributionV2Schema.parse({ ...declaration,
-        confirmation: { ...declaration.confirmation, title: 'Review different effect' } }) })).not.toBe(browser);
-    expect(fingerprintPluginAccountActionConfirmation({ ...daemon, declaration: undefined })).toBeNull();
+        confirmation: { ...declaration.confirmation, title: 'Review different effect' } }) })).toBe(browser);
+    expect(fingerprintPluginAccountActionConfirmation({ ...daemon, declaration: undefined })).toBe(browser);
+    expect(fingerprintPluginAccountActionConfirmation({ ...daemon, input: { ...requested.input, input: { assignee: 'bob' } } })).not.toBe(browser);
+    expect(fingerprintPluginAccountActionConfirmation({ ...daemon, input: { ...requested.input, action: { ...requested.input.action, localId: 'other' } } })).not.toBe(browser);
   });
 });

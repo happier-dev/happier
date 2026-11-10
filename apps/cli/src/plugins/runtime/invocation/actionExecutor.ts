@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import { logExternalActionCurrentIntentMismatch } from '@/daemon/externalActions/externalActionPhase';
 import { createPluginActionPresentUserGate, projectPluginActionUnavailableOutcomeCode, readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
-import type { CurrentIntentMismatchV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { readCurrentIntentMismatchFieldV1, type CurrentIntentMismatchV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
 import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalExecutionV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { ApprovalExecutionOriginV1, ApprovalRequesterConfirmationV1, PluginSourceCustodyV1, TargetActionApprovalReplayPlacementV1, PluginActionPresentUserGatePolicy } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ApprovalExecutionOriginV1, ApprovalRequesterConfirmationV1, PluginSourceCustodyV1, TargetActionApprovalReplayPlacementV1, PluginActionPresentUserGatePolicy } from '@happier-dev/protocol';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginActionHandlerInvocation } from '@happier-dev/plugin-sdk/actions';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
@@ -35,7 +37,6 @@ export type ResolvedTargetAction = NormalizedTargetActionPolicy & Readonly<{
   inputSchema?: object;
   /** Canonical admitted Action declaration; excludes implementation/build identity. */
   declaration?: object;
-  accountActionDeclaration?: import("@happier-dev/protocol/plugins/actions/v2").PluginActionContributionV2;
   accountId?: string;
   resourceId?: string;
   /** Durable source authority for replay; live admission remains occurrence-fenced. */
@@ -121,8 +122,6 @@ export type TargetActionCurrentIntentResult = Readonly<
     fingerprint: string;
     /** Durable identity when approval is Artifact-owned. */
     artifactId?: string;
-    /** Live ingress proof retained only by the original invocation. */
-    revalidateRequesterDecision?: () => Promise<boolean>;
     /** Captured host writer; raw input and handler output never enter this receipt. */
     settleExecution?: (args: Readonly<{
       artifactId: string;
@@ -147,7 +146,6 @@ export function fingerprintTargetActionPolicy(action: NormalizedTargetActionPoli
   pluginVersion?: string;
   inputSchema?: object;
   declaration?: object;
-  accountActionDeclaration?: import("@happier-dev/protocol/plugins/actions/v2").PluginActionContributionV2;
 }>): string {
   return createHash('sha256').update(stable({
     qualifiedId: action.qualifiedId,
@@ -161,9 +159,9 @@ export function fingerprintTargetActionPolicy(action: NormalizedTargetActionPoli
     approvalRequiredByActionSettings: action.approvalRequiredByActionSettings,
     secretInputPaths: action.secretInputPaths ?? [],
     ...(action.secretInputLabels === undefined ? {} : { secretInputLabels: action.secretInputLabels }),
-    // Consent binds the executable declaration, independently of its build.
+    // Historical admission provenance; this is not compared again after approval.
     inputSchema: action.inputSchema,
-    declaration: action.accountActionDeclaration ?? action.declaration,
+    declaration: action.declaration,
   })).digest('hex');
 }
 
@@ -230,21 +228,6 @@ export function resolvePresentUserGatePolicy(
         ...(access.code === undefined ? {} : { code: access.code }),
       })),
     )),
-    // The Protocol gate already fingerprints normalized policy facts. Preserve
-    // the daemon-only binding choices that are not expressed by the generic
-    // evaluator so approval cannot authorize a replacement service selection.
-    // Exact API replay placement is instead a durable approval-subject field:
-    // it is captured only after this gate determines that an approval is
-    // needed, then checked again before replay. Including it here would force
-    // a materialized execution origin before an Allowed Action can run.
-    fingerprintContext: Object.freeze({
-      input: action.input,
-      accountId: action.accountId ?? null,
-      resourceId: action.resourceId ?? null,
-      policyFingerprint: action.policyFingerprint,
-      sourceCustody: action.sourceCustody,
-      hostAccess: action.hostAccess,
-    }),
   });
 }
 
@@ -275,8 +258,9 @@ export function createTargetActionExecutor(deps: Readonly<{
     signal?: AbortSignal;
     /** Immutable replay subject injected only by the host dispatcher. */
     replayPlacement?: TargetActionApprovalReplayPlacementV1;
-    /** Revalidate a persisted approval even if current policy no longer asks. */
+    /** Require consent for this admission even when the initial policy does not ask. */
     requireCurrentIntent?: true;
+    approvalContext?: ActionExecutorContext;
     requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
   }>;
 
@@ -298,6 +282,11 @@ export function createTargetActionExecutor(deps: Readonly<{
       };
       const invocationSurface = args.invocationSurface ?? args.surface;
       const finish = async (result: TargetActionExecutionResult): Promise<TargetActionExecutionResult> => {
+        if (result.status === 'unavailable' && result.code === 'plugin_action_current_intent_mismatch') {
+          // Emit only the owner's closed category, never either compared value or plugin-authored data.
+          const field = readCurrentIntentMismatchFieldV1(readRecord(readRecord(readRecord(result.data).details).currentIntentMismatch).field);
+          if (field) logExternalActionCurrentIntentMismatch(field);
+        }
         const redactedAction = action;
         const redactFailureText = deps.redactFailureText;
         const publicResult = projectTargetActionFailure(result, redactedAction && redactFailureText
@@ -417,6 +406,7 @@ export function createTargetActionExecutor(deps: Readonly<{
         ...(args.sessionId === undefined ? {} : { sessionId: args.sessionId }),
         ...(args.signal === undefined ? {} : { signal: args.signal }),
         ...(args.requireCurrentIntent === true ? { requireCurrentIntent: true as const } : {}),
+        ...(args.approvalContext ? { reviewedChildContext: args.approvalContext } : {}),
       });
       if (admission.status !== 'admitted') {
         if (admission.status === 'failed') {
@@ -439,7 +429,8 @@ export function createTargetActionExecutor(deps: Readonly<{
       const { action: admittedAction, serviceBinding } = admission.action;
       action = admittedAction;
       if (settleExecution && admission.artifactId !== approvalArtifactId) {
-        return Object.freeze({ kind: 'settled' as const, result: await finish(unavailable('plugin_action_current_intent_mismatch')) });
+        return Object.freeze({ kind: 'settled' as const, result: await finish(unavailable('plugin_action_current_intent_mismatch',
+          { details: { currentIntentMismatch: { field: 'binding' } } })) });
       }
       approvalArtifactId = admission.artifactId;
       let runPromise: Promise<TargetActionExecutionResult> | null = null;

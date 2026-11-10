@@ -3,10 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
+import { logger } from '@/ui/logger';
+import { runTracedExternalActionStage } from './externalActionPhase';
 import { defineProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutor, createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { createTargetActionApprovalDecision } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
 import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -26,17 +28,27 @@ import { createExternalActionRuntime, publishAccountExternalActionRuntime } from
 describe('Account relay consent at a contributed child admission', () => {
   it.each([
     { scenario: 'matching Account', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: true },
+    { scenario: 'matching Account with unrelated retained parent', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: true, change: 'parent' },
+    { scenario: 'approved version differs', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: true, change: 'version' },
+    { scenario: 'approved source differs', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: true, change: 'source' },
+    { scenario: 'approved declaration absent', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: true, change: 'declaration' },
+    { scenario: 'approved surface policy changed', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: true, change: 'surface' },
     { scenario: 'binding belongs to another Account', bindingAccountId: 'bob', confirmationAccountId: 'alice', allowed: false },
     { scenario: 'confirmation belongs to another Account', bindingAccountId: 'alice', confirmationAccountId: 'bob', allowed: false },
     { scenario: 'fingerprint differs', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: false, change: 'fingerprint' },
+    { scenario: 'approved input differs', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: false, change: 'input' },
     { scenario: 'binding request differs', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: false, change: 'binding' },
   ])('binds carried consent to the runtime Account: $scenario', async ({ bindingAccountId, confirmationAccountId, allowed, change }) => {
+    const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    const previousTrace = process.env.HAPPIER_WEB_LATENCY_TRACE;
+    process.env.HAPPIER_WEB_LATENCY_TRACE = '1';
+    const requestId = '31de1189-990e-4baf-b1f4-6a31e89cc41e';
     let effects = 0;
     const sourceCustody = { kind: 'account_release', pluginId: 'acme.account', version: '1.0.0',
       archiveDigestSha256: `sha256:${'a'.repeat(64)}` } as const;
     const runtime = createExternalActionRuntime('global', 'acme.account', () => { effects++; },
       () => null, () => null, undefined, undefined, 'writesRemote', undefined,
-      { surfaces: ['plugin'], executionTarget: 'account', sourceCustody });
+      { surfaces: change === 'surface' ? ['cli'] : ['plugin'], executionTarget: 'account', sourceCustody });
     const published = await publishAccountExternalActionRuntime(runtime);
     const list = createCommittedContributedActionDefinitionLister({
       tryAcquireRuntimeRegistryLease: () => tryAcquireAuthoritativePluginRuntimeRegistryLease({ controller: published.controller }),
@@ -47,37 +59,71 @@ describe('Account relay consent at a contributed child admission', () => {
     });
     const input = { action: { pluginId: 'acme.account', localId: 'inspect' }, input: {} };
     const target = { kind: 'machine', machineId: 'machine-local' } as const;
-    const inputDigest = fingerprintPluginAccountActionConfirmation({ input, pluginId: 'acme.account',
-      pluginVersion: runtime.manifest.version, sourceCustody, declaration: runtime.manifest.contributes?.actions?.[0] });
+    const inputDigest = fingerprintPluginAccountActionConfirmation({
+      input: change === 'input' ? { ...input, input: { changed: true } } : input, pluginId: 'acme.account',
+      pluginVersion: change === 'version' ? '0.9.0' : runtime.manifest.version,
+      sourceCustody: change === 'source' ? { ...sourceCustody, archiveDigestSha256: `sha256:${'b'.repeat(64)}` } : sourceCustody,
+      declaration: change === 'declaration' ? undefined : runtime.manifest.contributes?.actions?.[0] });
     if (!inputDigest) throw new Error('Expected portable Account consent fingerprint');
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'account-relay-proof', binding: {
       serverIdentityId: 'account-home', accountId: bindingAccountId, custodianAccountId: bindingAccountId,
       authentication: { kind: 'account', tokenEpoch: 0 }, installationId: 'account-installation',
-      machineId: target.machineId, actionId: 'action.invoke', requestId: change === 'binding' ? 'another-request' : 'account-relay-request',
+      machineId: target.machineId, actionId: 'action.invoke', requestId: change === 'binding' ? 'another-request' : requestId,
       requestEnvelopeDigest: 'A'.repeat(43), target,
     } });
     const installation = tweetnacl.sign.keyPair();
     try {
-      const result = await executor.execute('action.invoke', input, {
+      const context = {
         surface: 'plugin', authority: 'account_automation', actionCaller: { kind: 'plugin', pluginId: 'acme.parent' },
         runtimeAccountId: 'alice', serverId: 'account-home', serverIdentityId: 'account-home',
         actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
           [formatQualifiedPluginActionId(input.action)]: { approvalRequiredSurfaces: ['plugin'] },
         } }),
-        actionRequestId: 'account-relay-request', externalActionExecutionAuthorization: authorization, externalActionTarget: target,
+        actionRequestId: requestId, externalActionExecutionAuthorization: authorization, externalActionTarget: target,
+        ...(change === 'parent' ? { hostReviewedChild: createHostReviewedChildPortV1({
+          actionId: 'action.invoke', input: { action: { pluginId: 'acme.other', localId: 'run' }, input: {} },
+          context: { surface: 'plugin', runtimeAccountId: 'alice' }, reviewAdmitted: true,
+        }) } : {}),
         signExternalActionApprovalInput: ({ actionId, input: signedInput, target: signedTarget, requesterConfirmation }) =>
           signExternalActionApprovalInputV1({ authorizationToken: authorization.token, actionId,
             input: signedInput, target: signedTarget, requesterConfirmation, privateKey: installation.secretKey }),
-        presentUserConfirmation: { actionId: 'action.invoke', requestId: 'account-relay-request',
+        presentUserConfirmation: { actionId: 'action.invoke', requestId,
           accountId: confirmationAccountId, serverId: 'account-home', target, inputDigest: change === 'fingerprint' ? 'another-fingerprint' : inputDigest },
-      });
+      } satisfies Parameters<typeof executor.execute>[2];
+      if (change === 'surface') {
+        const { presentUserConfirmation: _confirmation, ...withoutConsent } = context;
+        expect(await executor.execute('action.invoke', input, withoutConsent)).toMatchObject({
+          ok: false, errorCode: 'plugin_action_unavailable',
+        });
+        expect(effects).toBe(0);
+      }
+      const result = await runTracedExternalActionStage('action.invoke', requestId, 'contributed.target_invoke',
+        () => executor.execute('action.invoke', input, context));
+      const mismatchField = change === 'fingerprint' || change === 'input' ? 'fingerprint_source' : change ?? 'account';
       expect(result).toMatchObject(allowed ? { ok: true }
         : { ok: false, errorCode: 'plugin_action_current_intent_mismatch',
           details: { actionHandlerInvocation: 'notStarted',
-            details: { currentIntentMismatch: { field: change === 'fingerprint' ? 'fingerprint_source' : change ?? 'account' } } } });
+            details: { currentIntentMismatch: { field: mismatchField } } } });
       if (!allowed) expect(projectContributedActionExecuteResult(result)).toMatchObject({ actionHandlerInvocation: 'notStarted' });
+      if (!allowed) expect(diagnostic.mock.calls).toContainEqual(['[PluginAction] Current intent refused', {
+        actionId: 'action.invoke', rootRequestId: requestId,
+        code: 'plugin_action_current_intent_mismatch', lookupBranch: 'account_confirmation', field: mismatchField,
+        hasConfirmation: true, hasApproval: false,
+      }]);
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(inputDigest);
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('account-relay-proof');
       expect(effects).toBe(allowed ? 1 : 0);
-    } finally { await published.dispose(); }
+      if (allowed) {
+        expect(await executor.execute('action.invoke', input, context)).toMatchObject({ ok: false,
+          errorCode: 'plugin_action_current_intent_mismatch',
+          details: { actionHandlerInvocation: 'notStarted', details: { currentIntentMismatch: { field: 'child_proof' } } } });
+        expect(effects).toBe(1);
+      }
+    } finally {
+      if (previousTrace === undefined) delete process.env.HAPPIER_WEB_LATENCY_TRACE;
+      else process.env.HAPPIER_WEB_LATENCY_TRACE = previousTrace;
+      diagnostic.mockRestore(); await published.dispose();
+    }
   });
 
   it.each(['safe', 'writesRemote'] as const)('admits a different %s child under its own policy and consent', async dangerLevel => {

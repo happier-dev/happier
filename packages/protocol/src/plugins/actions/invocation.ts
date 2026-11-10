@@ -1,4 +1,5 @@
-import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
+import { computeActionInputApprovalDigestV1 } from '../../actions/decisionAuthority.js';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '../../actions/actionIds.js';
 import type { PluginSourceCustodyV1 } from '../runtime/sourceCustody.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { evaluateInputPredicate } from '../../inputs/inputPredicates.js';
@@ -723,27 +724,16 @@ function evaluatePresentUserPolicy(
   });
 }
 
-/** Portable settled consent for one Account action.invoke, not generic host approval.
- * Bundled build roots differ between hosts; the canonical declaration and package
- * version bind what was reviewed while Account releases retain exact source custody.
- */
+/** Settled consent binds one exact Action operand; plugin metadata is not consent. */
 export function fingerprintPluginAccountActionConfirmation(params: Readonly<{
   input: unknown;
   pluginId: string;
   pluginVersion?: string;
   sourceCustody?: PluginSourceCustodyV1;
-  /** Whole normalized manifest Action; transformed invocation definitions are insufficient. */
+  /** Retained call shape; declaration metadata is not part of consent. */
   declaration?: PluginActionContributionV2;
-}>): string | null {
-  const source = params.sourceCustody;
-  const declaration = params.declaration;
-  if (!params.pluginVersion || !declaration || declaration.execution.target !== 'account'
-    || !source || source.kind !== 'account_release' && source.kind !== 'bundled_first_party') return null;
-  return computeCanonicalDomainSeparatedDigest('happier.plugin-account-action.confirmation.v1',
-    [createCanonicalJsonSigningInput({ input: params.input, pluginId: params.pluginId,
-      pluginVersion: params.pluginVersion, declaration,
-      source: source.kind === 'account_release' ? source : { kind: source.kind },
-    })]);
+}>): string {
+  return computeActionInputApprovalDigestV1(ACTION_INVOKE_ACTION_ID_V1, params.input);
 }
 
 export function fingerprintPluginActionCurrentIntent(params: Readonly<{
@@ -754,44 +744,19 @@ export function fingerprintPluginActionCurrentIntent(params: Readonly<{
   invocationAuthority?: ActionRequiredAuthority;
   sessionId?: string;
 }>): string {
-  // Generation proves the currently resolved implementation is admitted. It is
-  // rechecked on both resolves, but does not change what the person approved.
-  const { generation: _generation, ...authorization } = params.policy.authorization;
   return computeCanonicalDomainSeparatedHexDigest(
     'happier.plugin-action.current-intent.v1',
     [createCanonicalJsonSigningInput({
       qualifiedId: params.policy.qualifiedId,
       inputPresent: params.input !== undefined,
       ...(params.input === undefined ? {} : { input: params.input }),
-      surface: params.surface,
-      invocationSurface: params.invocationSurface,
-      ...(params.invocationAuthority === undefined ? {} : { invocationAuthority: params.invocationAuthority }),
-      ...(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
-      dangerLevel: params.policy.dangerLevel,
-      scopes: params.policy.scopes,
-      surfaces: params.policy.surfaces,
-      ...(params.policy.confirmation === undefined
-        ? {}
-        : { confirmation: params.policy.confirmation }),
-      ...(params.policy.confirmationWhen === undefined ? {} : { confirmationWhen: params.policy.confirmationWhen }),
-      ...(params.policy.approvalRequiredByActionSettings === undefined
-        ? {}
-        : { approvalRequiredByActionSettings: params.policy.approvalRequiredByActionSettings }),
-      ...(params.policy.availability === undefined
-        ? {}
-        : { availability: params.policy.availability }),
-      authorization,
-      ...(params.policy.fingerprintContext === undefined
-        ? {}
-        : { fingerprintContext: params.policy.fingerprintContext }),
     })],
   );
 }
 
 /**
  * One realm-neutral current-intent gate for Action execution. It owns policy
- * admission, consent binding, cancellation, and the mandatory fresh resolve /
- * policy / fingerprint pass after approval; leaves own only realm-specific
+ * admission, exact consent binding and cancellation; leaves own realm-specific
  * selection and execution.
  */
 export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
@@ -839,14 +804,14 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
       if (args.signal?.aborted) return presentUserUnavailable('plugin_action_aborted');
       const initial = await readResolved();
       if ('status' in initial && initial.status !== 'resolved') return initial;
-      const initialPolicy = evaluatePresentUserPolicy(initial.policy, args);
-      if (initialPolicy.outcome !== 'visible') return presentUserUnavailable(initialPolicy.code);
       const reviewedChild = readHostReviewedChildOperationV1(args.reviewedChildContext, initial.policy.qualifiedId, args.input);
-      if (args.requireCurrentIntent !== true && isHostAdmittedReviewedChildPolicyV1(
+      if (isHostAdmittedReviewedChildPolicyV1(
         reviewedChild, initial.policy.qualifiedId, args.input,
       )) {
         return Object.freeze({ status: 'admitted' as const, action: initial.action });
       }
+      const initialPolicy = evaluatePresentUserPolicy(initial.policy, args);
+      if (initialPolicy.outcome !== 'visible') return presentUserUnavailable(initialPolicy.code);
       const requiresCurrentIntent = args.requireCurrentIntent === true
         || initialPolicy.requiresCurrentIntent;
       if (!requiresCurrentIntent) {
@@ -855,16 +820,13 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
 
       const requestCurrentIntent = deps.requestCurrentIntent;
       if (!requestCurrentIntent) return presentUserUnavailable('plugin_action_current_intent_unavailable');
+      const fingerprintOperands = () => fingerprintPluginActionCurrentIntent({
+        policy: initial.policy, input: args.input, surface: args.surface,
+        invocationSurface: args.invocationSurface,
+      });
       let fingerprint: string;
       try {
-        fingerprint = fingerprintPluginActionCurrentIntent({
-          policy: initial.policy,
-          input: args.input,
-          surface: args.surface,
-          invocationSurface: args.invocationSurface,
-          ...(args.invocationAuthority === undefined ? {} : { invocationAuthority: args.invocationAuthority }),
-          ...(args.sessionId === undefined ? {} : { sessionId: args.sessionId }),
-        });
+        fingerprint = fingerprintOperands();
       } catch {
         return presentUserUnavailable('plugin_action_current_intent_unavailable');
       }
@@ -893,31 +855,16 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
           : presentUserUnavailable('plugin_action_current_intent_unavailable');
       }
       if (intent.status !== 'approved') return presentUserUnavailable(intent.code, intent.code, intent.mismatch);
-      if (intent.fingerprint !== fingerprint) {
+      // Consume consent against the operands about to run, without resolving
+      // policy or plugin metadata again. Mutable input cannot retarget approval.
+      let consumedFingerprint: string;
+      try { consumedFingerprint = fingerprintOperands(); }
+      catch { return presentUserUnavailable('plugin_action_current_intent_mismatch', undefined, { field: 'fingerprint_source' }); }
+      if (intent.fingerprint !== fingerprint || consumedFingerprint !== fingerprint) {
         return presentUserUnavailable('plugin_action_current_intent_mismatch', undefined, { field: 'fingerprint_source' });
       }
 
-      const current = await readResolved();
-      if ('status' in current && current.status !== 'resolved') return current;
-      const currentPolicy = evaluatePresentUserPolicy(current.policy, args);
-      if (currentPolicy.outcome !== 'visible') return presentUserUnavailable(currentPolicy.code);
-      let currentFingerprint: string;
-      try {
-        currentFingerprint = fingerprintPluginActionCurrentIntent({
-          policy: current.policy,
-          input: args.input,
-          surface: args.surface,
-          invocationSurface: args.invocationSurface,
-          ...(args.invocationAuthority === undefined ? {} : { invocationAuthority: args.invocationAuthority }),
-          ...(args.sessionId === undefined ? {} : { sessionId: args.sessionId }),
-        });
-      } catch {
-        return presentUserUnavailable('plugin_action_current_intent_unavailable');
-      }
-      if (currentFingerprint !== fingerprint) {
-        return presentUserUnavailable('plugin_action_current_intent_mismatch', undefined, { field: 'fingerprint_source' });
-      }
-      return Object.freeze({ status: 'admitted' as const, action: current.action,
+      return Object.freeze({ status: 'admitted' as const, action: initial.action,
         ...(intent.artifactId === undefined ? {} : { artifactId: intent.artifactId }) });
     },
   });
