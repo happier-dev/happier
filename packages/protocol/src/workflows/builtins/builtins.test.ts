@@ -4,6 +4,7 @@ import { WORKFLOW_STARTER_EXAMPLES_V1, materializeWorkflowStarterExample, workfl
 import { validateWorkflowDefinition } from '../workflowValidationV1.js';
 import { parseWorkflowDefinitionRefV1 } from '../workflowDefinitionRefV1.js';
 import { WorkflowDefinitionBaseSchema, type WorkflowBlock } from '../workflowV1.js';
+import { AutomationTriggerDefinitionInputSchema } from '../../automations/automationTriggerDefinition.js';
 
 function listBlocks(blocks: readonly WorkflowBlock[]): WorkflowBlock[] {
   return blocks.flatMap((block) => {
@@ -163,6 +164,17 @@ describe('built-in workflow catalog', () => {
 
 describe('workflow starter schedules without a Session', () => {
   const byKey = (key: string) => WORKFLOW_STARTER_EXAMPLES_V1.find((entry) => entry.key === key)!;
+  it.each([undefined, { sessionId: 'session-once', machineId: 'machine-once' }])(
+    'materializes an absolute schedule without adding timezone fields (Session: %j)', (session) => {
+      const schedule = { kind: 'once' as const, scheduledAt: 1_800_000_000_000 };
+      const selection = materializeWorkflowStarterExample({ ...byKey('nightly-backups'),
+        triggerSeed: { kind: 'schedule', enabled: true, schedule } }, { session, timezone: 'Europe/Zurich' });
+      expect(selection.status).toBe('ready');
+      if (selection.status !== 'ready') throw new Error('Expected a ready absolute schedule');
+      expect(AutomationTriggerDefinitionInputSchema.parse(selection.example.trigger)).toEqual({
+        kind: 'schedule', enabled: true, schedule,
+      });
+    });
   it.each([['nightly-backups', '0 2 * * *'], ['run-a-job-on-a-schedule', '0 3 * * *']] as const)(
     '%s opens with its schedule off, needing no Session', (key, scheduleExpr) => {
       const selection = materializeWorkflowStarterExample(byKey(key), { timezone: 'Europe/Zurich' });

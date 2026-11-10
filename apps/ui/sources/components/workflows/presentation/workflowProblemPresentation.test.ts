@@ -16,6 +16,7 @@ vi.mock('@/text', async () => {
 import {
     resolveWorkflowOperationUnavailableReason,
     resolveWorkflowProblemPresentation,
+    resolveWorkflowRunProblemPresentation,
     resolveWorkflowsUnavailablePresentation,
 } from './workflowProblemPresentation';
 
@@ -29,6 +30,15 @@ function actionError(rawCode: string | null, message = 'server-internal reason')
  * never reach a person as prose the server chose or as the identifier itself.
  */
 describe('workflowProblemPresentation', () => {
+    it.each([
+        ['machine_offline', 'workflows.triggers.once.missedOffline'],
+        ['machine_presence_at_due_unavailable', 'workflows.triggers.once.missedUnavailable'],
+        ['private-unknown-server-error', 'workflows.triggers.once.missed'],
+    ])('explains a missed occurrence with safe recovery copy (%s)', (errorCode, message) => {
+        expect(resolveWorkflowRunProblemPresentation({ state: 'missed', errorCode })).toMatchObject({
+            code: null, message, repair: 'none', repairLabel: null,
+        });
+    });
     it('explains missing requester custody without offering an automatic retry', () => {
         const failure = WorkflowActionFailureV1Schema.parse({ ok: false,
             errorCode: 'requester_custody_unavailable', error: 'requester_custody_unavailable' });

@@ -249,17 +249,19 @@ export function materializeWorkflowStarterExample(example: WorkflowStarterExampl
   timezone?: string | null;
 }>): Readonly<{ status: 'requires_session' }> | Readonly<{ status: 'ready'; example: WorkflowStarterExampleSelection }> {
   const session = context?.session;
+  const seed = example.triggerSeed;
+  const scheduleTrigger = seed?.kind === 'schedule' ? { ...seed,
+    schedule: seed.schedule.kind === 'once' ? seed.schedule
+      : { ...seed.schedule, timezone: context?.timezone ?? seed.schedule.timezone } } : undefined;
   if (session === undefined) {
     if (workflowStarterRequiresSession(example)) return { status: 'requires_session' };
-    const { triggerSeed: seed, ...unseeded } = example;
-    return { status: 'ready', example: seed?.kind !== 'schedule' ? example : { ...unseeded,
-      trigger: { ...seed, schedule: { ...seed.schedule, timezone: context?.timezone ?? seed.schedule.timezone } } } };
+    const { triggerSeed: _seed, ...unseeded } = example;
+    return { status: 'ready', example: scheduleTrigger === undefined ? example : { ...unseeded, trigger: scheduleTrigger } };
   }
   const sessionTarget = { sessionId: session.sessionId, machineId: session.machineId };
-  const seed = example.triggerSeed;
   const trigger: AutomationTriggerDefinitionInput | undefined = seed === undefined ? undefined : seed.kind === 'sessionLifecycle'
     ? { ...seed, sourceSessionId: session.sessionId }
-    : { ...seed, schedule: { ...seed.schedule, timezone: context?.timezone ?? seed.schedule.timezone } };
+    : scheduleTrigger;
   let draft = { name: '', ...example.definition };
   const conversation = { kind: 'existing_session' as const, ...sessionTarget };
   if (draft.defaults.conversation === undefined || draft.defaults.conversation.kind === 'origin_session') {

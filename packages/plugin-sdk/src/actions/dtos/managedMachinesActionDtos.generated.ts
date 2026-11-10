@@ -153,6 +153,9 @@ export type ManagedMachinesActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
+            profileId?: string | undefined;
+            title?: string | undefined;
+            allowedTools?: string[] | undefined;
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -183,9 +186,6 @@ export type ManagedMachinesActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
-            title?: string | undefined;
-            profileId?: string | undefined;
-            allowedTools?: string[] | undefined;
             terminal?: undefined | {
                 mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
                 tmux?: undefined | {
@@ -202,92 +202,7 @@ export type ManagedMachinesActionInputById = {
                     windowName?: string | undefined;
                 };
             };
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
-            roleId?: string | undefined;
-            modelSelection?: undefined | {
-                v: 1;
-                ref: {
-                    agentTargetKey: string;
-                    providerConnectionId: null;
-                    modelId: string;
-                } | {
-                    agentTargetKey: string;
-                    providerConnectionId: string;
-                    modelId: string;
-                };
-                updatedAt: number;
-            };
-            connectedServices?: undefined | {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                    appliedProfileId?: string | undefined;
-                } | {
-                    source: 'native';
-                }>;
-            } | {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                    appliedProfileId?: string | undefined;
-                } | {
-                    source: 'native';
-                }>;
-            } | {
-                v: 2;
-                bindingsByServiceId?: Record<string, {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                    appliedProfileId?: string | undefined;
-                } | {
-                    source: 'native';
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'brokered';
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'direct';
-                    disclosedMember: {
-                        service: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        accountId: string;
-                    };
-                }> | undefined;
-            };
+            configuration?: unknown;
             manager?: undefined | {
                 sessionId: string;
             };
@@ -1101,9 +1016,7 @@ export type ManagedMachinesActionInputById = {
                 externalPrincipalId: string;
                 sourceMessageId: string;
             };
-            configuration?: unknown;
-            approvalProfileId?: null | string | undefined;
-            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+            roleId?: string | undefined;
             capabilitySelection?: undefined | {
                 mcp?: undefined | {
                     v?: 1 | undefined;
@@ -1119,24 +1032,25 @@ export type ManagedMachinesActionInputById = {
                     excludeNativeSkillNames?: string[] | undefined;
                 };
             };
-            promptStack?: undefined | {
-                id: string;
+            modelSelection?: undefined | {
+                v: 1;
                 ref: {
-                    kind: 'bundle' | 'doc';
-                    artifactId: string;
-                    serverId?: string | undefined;
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
                 };
-                enabled?: boolean | undefined;
-                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
-                maxChars?: number | undefined;
-                required?: boolean | undefined;
-                skillMigrationV1?: true | undefined;
-                plan?: true | undefined;
-            }[];
+                updatedAt: number;
+            };
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             placementOrigin?: undefined | {
                 kind: 'machine_pool';
                 poolId: string;
             };
+            approvalProfileId?: null | string | undefined;
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -1146,6 +1060,67 @@ export type ManagedMachinesActionInputById = {
             };
             agentModeId?: string | undefined;
             unlistedTools?: 'ask' | 'deny' | undefined;
+            connectedServices?: undefined | {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                }>;
+            } | {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                }>;
+            } | {
+                v: 2;
+                bindingsByServiceId?: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                }> | undefined;
+            };
             transcriptStorage?: 'direct' | 'persisted' | undefined;
             checkoutCreationDraft?: null | undefined | {
                 kind: 'git_worktree';
@@ -1391,6 +1366,20 @@ export type ManagedMachinesActionInputById = {
                 discussionId: string;
                 participantSlotId: string;
             };
+            promptStack?: undefined | {
+                id: string;
+                ref: {
+                    kind: 'bundle' | 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+                skillMigrationV1?: true | undefined;
+                plan?: true | undefined;
+            }[];
             initialTriggers?: undefined | {
                 trigger: {
                     kind: 'ciFailed' | 'prComment';
@@ -1518,12 +1507,15 @@ export type ManagedMachinesActionInputById = {
                         scheduleExpr: null;
                         everyMs: number;
                         timezone: null | string;
+                    } | {
+                        kind: 'once';
+                        scheduledAt: number;
                     };
                     enabled: boolean;
                 } | {
                     kind: 'sessionLifecycle';
-                    enabled: boolean;
                     events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                    enabled: boolean;
                     policy: {
                         kind: 'everyMatch';
                     } | {
@@ -1889,13 +1881,13 @@ export type ManagedMachinesActionInputById = {
                     kind: 'workflow';
                     ref: string;
                 };
+                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
                 approvalProfileId?: null | string | undefined;
-                inputs?: Record<string, unknown> | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -1950,6 +1942,17 @@ export type ManagedMachinesActionInputById = {
                 id: string;
                 revision: number;
             }> | undefined;
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+            };
         };
         reviewedFacts?: undefined | {
             launch: {
@@ -2269,6 +2272,7 @@ export type ManagedMachinesActionInputById = {
             homeId: string;
             id: string;
             revision: number;
+            name?: string | undefined;
         };
         enrollmentIdentity: {
             kind: 'dedicatedDaemonUser';
@@ -2320,6 +2324,9 @@ export type ManagedMachinesActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
+            profileId?: string | undefined;
+            title?: string | undefined;
+            allowedTools?: string[] | undefined;
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -2350,9 +2357,6 @@ export type ManagedMachinesActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
-            title?: string | undefined;
-            profileId?: string | undefined;
-            allowedTools?: string[] | undefined;
             terminal?: undefined | {
                 mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
                 tmux?: undefined | {
@@ -2369,92 +2373,7 @@ export type ManagedMachinesActionInputById = {
                     windowName?: string | undefined;
                 };
             };
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
-            roleId?: string | undefined;
-            modelSelection?: undefined | {
-                v: 1;
-                ref: {
-                    agentTargetKey: string;
-                    providerConnectionId: null;
-                    modelId: string;
-                } | {
-                    agentTargetKey: string;
-                    providerConnectionId: string;
-                    modelId: string;
-                };
-                updatedAt: number;
-            };
-            connectedServices?: undefined | {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                    appliedProfileId?: string | undefined;
-                } | {
-                    source: 'native';
-                }>;
-            } | {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                    appliedProfileId?: string | undefined;
-                } | {
-                    source: 'native';
-                }>;
-            } | {
-                v: 2;
-                bindingsByServiceId?: Record<string, {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                    appliedProfileId?: string | undefined;
-                } | {
-                    source: 'native';
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'brokered';
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'direct';
-                    disclosedMember: {
-                        service: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        accountId: string;
-                    };
-                }> | undefined;
-            };
+            configuration?: unknown;
             manager?: undefined | {
                 sessionId: string;
             };
@@ -3268,9 +3187,7 @@ export type ManagedMachinesActionInputById = {
                 externalPrincipalId: string;
                 sourceMessageId: string;
             };
-            configuration?: unknown;
-            approvalProfileId?: null | string | undefined;
-            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+            roleId?: string | undefined;
             capabilitySelection?: undefined | {
                 mcp?: undefined | {
                     v?: 1 | undefined;
@@ -3286,24 +3203,25 @@ export type ManagedMachinesActionInputById = {
                     excludeNativeSkillNames?: string[] | undefined;
                 };
             };
-            promptStack?: undefined | {
-                id: string;
+            modelSelection?: undefined | {
+                v: 1;
                 ref: {
-                    kind: 'bundle' | 'doc';
-                    artifactId: string;
-                    serverId?: string | undefined;
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
                 };
-                enabled?: boolean | undefined;
-                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
-                maxChars?: number | undefined;
-                required?: boolean | undefined;
-                skillMigrationV1?: true | undefined;
-                plan?: true | undefined;
-            }[];
+                updatedAt: number;
+            };
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             placementOrigin?: undefined | {
                 kind: 'machine_pool';
                 poolId: string;
             };
+            approvalProfileId?: null | string | undefined;
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -3313,6 +3231,67 @@ export type ManagedMachinesActionInputById = {
             };
             agentModeId?: string | undefined;
             unlistedTools?: 'ask' | 'deny' | undefined;
+            connectedServices?: undefined | {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                }>;
+            } | {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                }>;
+            } | {
+                v: 2;
+                bindingsByServiceId?: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                }> | undefined;
+            };
             transcriptStorage?: 'direct' | 'persisted' | undefined;
             checkoutCreationDraft?: null | undefined | {
                 kind: 'git_worktree';
@@ -3558,6 +3537,20 @@ export type ManagedMachinesActionInputById = {
                 discussionId: string;
                 participantSlotId: string;
             };
+            promptStack?: undefined | {
+                id: string;
+                ref: {
+                    kind: 'bundle' | 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+                skillMigrationV1?: true | undefined;
+                plan?: true | undefined;
+            }[];
             initialTriggers?: undefined | {
                 trigger: {
                     kind: 'ciFailed' | 'prComment';
@@ -3685,12 +3678,15 @@ export type ManagedMachinesActionInputById = {
                         scheduleExpr: null;
                         everyMs: number;
                         timezone: null | string;
+                    } | {
+                        kind: 'once';
+                        scheduledAt: number;
                     };
                     enabled: boolean;
                 } | {
                     kind: 'sessionLifecycle';
-                    enabled: boolean;
                     events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                    enabled: boolean;
                     policy: {
                         kind: 'everyMatch';
                     } | {
@@ -4056,13 +4052,13 @@ export type ManagedMachinesActionInputById = {
                     kind: 'workflow';
                     ref: string;
                 };
+                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
                 approvalProfileId?: null | string | undefined;
-                inputs?: Record<string, unknown> | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -4117,6 +4113,17 @@ export type ManagedMachinesActionInputById = {
                 id: string;
                 revision: number;
             }> | undefined;
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+            };
         };
         reviewedFacts?: undefined | {
             launch: {
@@ -14296,6 +14303,7 @@ export type ManagedMachinesActionResultById = {
             itemIndex: number;
             status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported' | 'unverifiable';
             reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+            requiredFact?: string | undefined;
         }[];
         sourceFacts?: MachineSetupSourceFactsMapV1 | undefined;
         appOrigins?: undefined | {
@@ -17727,6 +17735,7 @@ export type ManagedMachinesActionResultById = {
                     itemIndex: number;
                     status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported' | 'unverifiable';
                     reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                    requiredFact?: string | undefined;
                 }[];
                 sourceFacts?: MachineSetupSourceFactsMapV1 | undefined;
                 appOrigins?: undefined | {

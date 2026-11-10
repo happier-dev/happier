@@ -12,6 +12,7 @@ import type {
 } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import { t, type TranslationKey } from '@/text';
 import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
+import { isSpentOnceSchedule } from '@/components/workflows/triggers/triggerSchedule';
 import type { AutomationV3RunListItem } from '@happier-dev/protocol/automations/automationApiV3';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
@@ -37,8 +38,10 @@ function formatAutomationSessionLifecyclePolicyLabel(
 }
 
 export function formatAutomationScheduleLabel(automation: {
-    schedule: { kind: 'cron' | 'interval'; everyMs: number | null; scheduleExpr: string | null; timezone?: string | null };
+    schedule: { kind: 'once'; scheduledAt: number }
+        | { kind: 'cron' | 'interval'; everyMs: number | null; scheduleExpr: string | null; timezone?: string | null };
 }): string {
+    if (automation.schedule.kind === 'once') return formatTriggerSummary({ kind: 'schedule', schedule: automation.schedule });
     if (automation.schedule.kind === 'interval' && typeof automation.schedule.everyMs === 'number') {
         const minutes = Math.max(1, Math.round(automation.schedule.everyMs / 60_000));
         const timezone = typeof automation.schedule.timezone === 'string' && automation.schedule.timezone.trim().length > 0
@@ -88,6 +91,7 @@ export function formatAutomationTriggerStatusLabel(
     trigger: AutomationTriggerListItem,
     automationEnabled = true,
 ): string {
+    if (isSpentOnceSchedule(trigger)) return t('common.done');
     if (trigger.kind === 'sessionLifecycle' || trigger.kind === 'runLifecycle') {
         return t(AUTOMATION_SESSION_LIFECYCLE_STATUS_KEYS[trigger.status.state]);
     }

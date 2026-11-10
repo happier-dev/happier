@@ -25,6 +25,7 @@ import { createDefaultThen, readScheduleWhen, readTriggerWhen, type ExecutableTr
 import { FieldSelect, TriggerPopover } from './TriggerPopover';
 import { TriggerRunsOnRow } from './TriggerRunsOnRow';
 import { TriggerRow } from './TriggerRow';
+import { isSpentOnceSchedule } from './triggerSchedule';
 import type { TriggerRowProps } from './TriggerRow';
 import { useWorkflowSourcePeople } from '../useWorkflowSourcePeople';
 import { useWorkflowDefinitionLibrary } from '../library/workflowLibraryReads';
@@ -390,7 +391,8 @@ const WorkflowTriggerRowView = React.memo(function WorkflowTriggerRowView(props:
                 sourceSavedBy={props.sourceSavedBy} sourceSavedAt={props.sourceSavedAt}
                 sourceProfile={props.sourceProfile} viewerAccountId={props.viewerAccountId}
                 title={formatTriggerSummary(row.trigger)}
-                qualifier={row.kind === 'new' ? t('workflows.triggers.editor.newRow') : undefined}
+                qualifier={row.kind === 'new' ? t('workflows.triggers.editor.newRow')
+                    : isSpentOnceSchedule(row.trigger) ? t('common.done') : undefined}
                 glyph={row.trigger.kind === 'schedule' ? 'clock' : 'lightning'}
                 enabled={row.enabled}
                 onToggle={props.onToggle}

@@ -325,20 +325,26 @@ async function advanceAutomationTriggerSetRevisionTx(tx: Tx, automation: Automat
 }
 
 type AutomationScheduleDbFields = Readonly<{
-    scheduleKind: "cron" | "interval";
+    scheduleKind: "cron" | "interval" | "once";
     scheduleExpr: string | null;
     everyMs: number | null;
     timezone: string | null;
+    scheduledAt: Date | null;
 }>;
 
 function resolveScheduleDbFields(schedule: AutomationScheduleInput): AutomationScheduleDbFields {
     const validated = parseAutomationScheduleInput(schedule);
+    if (validated.kind === "once") return {
+        scheduleKind: "once", scheduledAt: new Date(validated.scheduledAt),
+        scheduleExpr: null, everyMs: null, timezone: null,
+    };
     if (validated.kind === "interval") {
         return {
             scheduleKind: "interval",
             scheduleExpr: null,
             everyMs: validated.everyMs,
             timezone: validated.timezone ?? null,
+            scheduledAt: null,
         };
     }
     return {
@@ -346,6 +352,7 @@ function resolveScheduleDbFields(schedule: AutomationScheduleInput): AutomationS
         scheduleExpr: validated.scheduleExpr,
         everyMs: null,
         timezone: validated.timezone ?? null,
+        scheduledAt: null,
     };
 }
 
@@ -358,7 +365,7 @@ function resolveScheduleDbFields(schedule: AutomationScheduleInput): AutomationS
 function resolveTriggerDefinitionScheduleDbFields(
     schedule: Extract<AutomationTriggerDefinition, { kind: "schedule" }>["schedule"],
 ): AutomationScheduleDbFields {
-    return resolveScheduleDbFields(schedule.kind === "interval"
+    return resolveScheduleDbFields(schedule.kind === "once" ? schedule : schedule.kind === "interval"
         ? {
             kind: "interval",
             everyMs: schedule.everyMs,
@@ -373,16 +380,18 @@ function resolveTriggerDefinitionScheduleDbFields(
 
 function hasSameAutomationScheduleFields(
     current: Readonly<{
-        scheduleKind: "cron" | "interval" | null;
+        scheduleKind: "cron" | "interval" | "once" | null;
         scheduleExpr: string | null;
         everyMs: number | null;
         timezone: string | null;
+        scheduledAt?: Date | null;
     }>,
     next: AutomationScheduleDbFields,
 ): boolean {
     return current.scheduleKind === next.scheduleKind
         && current.scheduleExpr === next.scheduleExpr
         && current.everyMs === next.everyMs
+        && (current.scheduledAt?.getTime() ?? null) === (next.scheduledAt?.getTime() ?? null)
         && current.timezone === next.timezone;
 }
 
@@ -4194,6 +4203,7 @@ const AUTOMATION_TRIGGER_PRIVATE_FIELDS_CLEARED = {
     everyMs: null,
     timezone: null,
     nextRunAt: null,
+    scheduledAt: null,
     observationTransport: null,
     webhookEndpointId: null,
     observationStartsAt: null,
@@ -4308,19 +4318,7 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     }
 
     if (params.input.kind === "schedule") {
-        const schedule = resolveScheduleDbFields(
-            params.input.schedule.kind === "interval"
-                ? {
-                    kind: "interval",
-                    everyMs: params.input.schedule.everyMs,
-                    timezone: params.input.schedule.timezone,
-                }
-                : {
-                    kind: "cron",
-                    scheduleExpr: params.input.schedule.scheduleExpr,
-                    timezone: params.input.schedule.timezone,
-                },
-        );
+        const schedule = resolveTriggerDefinitionScheduleDbFields(params.input.schedule);
         const unchangedSchedule = params.existing?.kind === "schedule"
             && hasSameAutomationScheduleFields(params.existing, schedule);
         return {
@@ -4329,6 +4327,9 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
                 ...common,
                 kind: "schedule",
                 ...schedule,
+                remainingOccurrences: schedule.scheduleKind === "once"
+                    ? unchangedSchedule ? params.existing?.remainingOccurrences ?? 1 : 1
+                    : null,
                 // Effective enablement owns the cursor, independent of the
                 // request shape: a paused trigger has no next occurrence even
                 // when the same definition is redundantly supplied, an

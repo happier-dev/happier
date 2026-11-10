@@ -8,15 +8,18 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { retainMachinePresenceTransitionInTx } from "@/app/presence/machinePresenceTransitions";
 import { cancelWorkflowRunTx } from "@/app/workflows/workflowRunService";
 import { createDatabaseIntegrationHarness } from "@/testkit/databaseIntegrationHarness";
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 import { observePrismaRequests } from "@/testkit/observeSqliteRequests";
 
 import { claimAutomationRun } from "./automationClaimService";
-import { createAutomation } from "./automationCrudService";
+import { createAutomation, updateAutomationTrigger } from "./automationCrudService";
 import { DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS, runAutomationScheduleWorkerPass, startAutomationScheduleWorker } from "./automationScheduleWorker";
 import { emitAutomationScheduleWake } from "./automationScheduleWake";
+import { ensureAutomationScheduleCursorsTx } from "./automationRunQueueService";
+import { toAutomationDefinitionListItemApiDto } from "./automationApiProjection";
 
 const MACHINE_ID = "machine-schedule-firing";
 
@@ -143,6 +146,133 @@ describe("Automation schedule trigger firing (integration)", () => {
             orderBy: [{ triggerId: "asc" }, { id: "asc" }],
         });
     }
+
+    async function seedOnce(active = true) {
+        accountId = `account-${randomUUID()}`;
+        await db.account.create({ data: { id: accountId, encryptionMode: "plain" } });
+        await db.machine.create({ data: { id: MACHINE_ID, accountId, metadata: "{}",
+            installationId: `installation-${MACHINE_ID}`, active } });
+        const created = await createAutomation({ accountId, input: {
+            automationId: randomUUID(), name: "Run once", enabled: true,
+            executionRecipe: executionRecipe(), assignments: [{ machineId: MACHINE_ID }],
+            triggers: [{ triggerId: AutomationTriggerIdSchema.parse(randomUUID()), trigger: {
+                kind: "schedule", enabled: true, schedule: { kind: "once", scheduledAt: dueAt.getTime() },
+            } }],
+        } });
+        automationId = created.id;
+        expect(toAutomationDefinitionListItemApiDto(created, null).triggers[0]).toMatchObject({
+            schedule: { kind: "once", scheduledAt: dueAt.getTime() }, remainingOccurrences: 1, nextRunAt: dueAt.getTime(),
+        });
+        return created.triggers[0]!;
+    }
+
+    it("admits one absolute occurrence once and never rearms a spent schedule", async () => {
+        const trigger = await seedOnce();
+        await runAutomationScheduleWorkerPass({ now: new Date(dueAt.getTime() - 1) });
+        await expect(readRuns()).resolves.toHaveLength(0);
+        await runAutomationScheduleWorkerPass({ now: dueAt });
+        await runAutomationScheduleWorkerPass({ now: new Date(dueAt.getTime() + 60_000) });
+        await expect(readRuns()).resolves.toMatchObject([{ state: "queued", causeScheduledFor: dueAt }]);
+        await expect(db.automationTrigger.findUniqueOrThrow({ where: { id: trigger.id } }))
+            .resolves.toMatchObject({ nextRunAt: null, remainingOccurrences: 0, enabled: true });
+        await updateAutomationTrigger({ accountId, automationId, triggerId: trigger.id,
+            expectedRevision: trigger.revision, enabled: false });
+        await updateAutomationTrigger({ accountId, automationId, triggerId: trigger.id,
+            expectedRevision: trigger.revision + 1, enabled: true });
+        await inTx(tx => ensureAutomationScheduleCursorsTx({ tx, automationId, now: new Date(dueAt.getTime() + 120_000) }));
+        await runAutomationScheduleWorkerPass({ now: new Date(dueAt.getTime() + 120_000) });
+        await expect(readRuns()).resolves.toHaveLength(1);
+    });
+
+    it("records offline at the instant as missed and never runs it on reconnect", async () => {
+        await seedOnce(false);
+        await runAutomationScheduleWorkerPass({ now: dueAt });
+        await expect(readRuns()).resolves.toMatchObject([{ state: "missed", errorCode: "machine_offline", causeScheduledFor: dueAt }]);
+        await db.machine.update({ where: { id: MACHINE_ID }, data: { active: true } });
+        await runAutomationScheduleWorkerPass({ now: new Date(dueAt.getTime() + 60_000) });
+        await expect(readRuns()).resolves.toMatchObject([{ state: "missed", errorCode: "machine_offline" }]);
+        await expect(claimAutomationRun({ accountId, machineId: MACHINE_ID, leaseDurationMs: 30_000 }))
+            .resolves.toMatchObject({ run: null });
+    });
+
+    it("does not admit late after a Machine reconnects beyond the scheduled instant", async () => {
+        await seedOnce(false);
+        // The canonical presence owner retained an offline-to-online transition
+        // while the schedule worker was unavailable; current online is too late.
+        await db.machine.update({ where: { id: MACHINE_ID }, data: { active: true,
+            presenceTransitions: JSON.stringify({ v: 1, revision: 2,
+                offline: { revision: 1, occurredAt: dueAt.getTime() - 1_000 },
+                online: { revision: 2, occurredAt: dueAt.getTime() + 1_000 } }) } });
+        await runAutomationScheduleWorkerPass({ now: new Date(dueAt.getTime() + 2_000) });
+        await expect(readRuns()).resolves.toMatchObject([{ state: "missed", errorCode: "machine_offline" }]);
+    });
+
+    it("marks erased on-time presence missed after a later disconnect and reconnect", async () => {
+        await seedOnce();
+        // The retained pair is indistinguishable from an offline-at-due target
+        // that reconnected twice. Prefer visible missed over firing uncertain work.
+        await db.machine.update({ where: { id: MACHINE_ID }, data: {
+            presenceTransitions: JSON.stringify({ v: 1, revision: 2,
+                offline: { revision: 1, occurredAt: dueAt.getTime() + 1_000 },
+                online: { revision: 2, occurredAt: dueAt.getTime() + 2_000 } }) } });
+        await runAutomationScheduleWorkerPass({ now: new Date(dueAt.getTime() + 3_000) });
+        await expect(readRuns()).resolves.toMatchObject([{ state: "missed", errorCode: "machine_presence_at_due_unavailable" }]);
+    });
+
+    it("never fires late when multiple reconnects erase offline-at-due evidence", async () => {
+        await seedOnce(false);
+        for (const [active, offset] of [[false, -1_000], [true, 1_000], [false, 2_000], [true, 3_000]] as const) {
+            await inTx(async tx => {
+                await tx.machine.update({ where: { id: MACHINE_ID }, data: { active } });
+                await retainMachinePresenceTransitionInTx(tx, {
+                    machineId: MACHINE_ID, active, occurredAt: dueAt.getTime() + offset,
+                    recipientAccountIds: [accountId],
+                });
+            });
+        }
+        await runAutomationScheduleWorkerPass({ now: new Date(dueAt.getTime() + 4_000) });
+        await expect(readRuns()).resolves.toMatchObject([{ state: "missed", errorCode: "machine_presence_at_due_unavailable" }]);
+        await expect(claimAutomationRun({ accountId, machineId: MACHINE_ID, leaseDurationMs: 30_000 }))
+            .resolves.toMatchObject({ run: null });
+    });
+
+    it("retains proven on-time presence across a later disconnect without reconnect", async () => {
+        await seedOnce();
+        await db.machine.update({ where: { id: MACHINE_ID }, data: { active: false,
+            presenceTransitions: JSON.stringify({ v: 1, revision: 2,
+                online: { revision: 1, occurredAt: dueAt.getTime() - 1_000 },
+                offline: { revision: 2, occurredAt: dueAt.getTime() + 1_000 } }) } });
+        await runAutomationScheduleWorkerPass({ now: new Date(dueAt.getTime() + 2_000) });
+        await expect(readRuns()).resolves.toMatchObject([{ state: "queued" }]);
+    });
+
+    it("freezes only on-time targets when the highest-priority assignment is offline", async () => {
+        await seedOnce(false);
+        const onlineId = `${MACHINE_ID}-online`;
+        await db.machine.create({ data: { id: onlineId, accountId, metadata: "{}", active: true, installationId: onlineId } });
+        await db.automationAssignment.updateMany({ where: { automationId }, data: { priority: 2 } });
+        await db.automationAssignment.create({ data: { automationId, machineId: onlineId, priority: 1, enabled: true } });
+        await runAutomationScheduleWorkerPass({ now: dueAt });
+        const runs = await readRuns();
+        expect(runs).toMatchObject([{ state: "queued" }]);
+        await expect(db.automationRunAssignment.findMany({ where: { runId: runs[0]!.id }, select: { machineId: true } }))
+            .resolves.toEqual([{ machineId: onlineId }]);
+    });
+
+    it("edits and cancels a pending absolute occurrence before it is due", async () => {
+        const trigger = await seedOnce();
+        const later = new Date(dueAt.getTime() + 60_000);
+        await updateAutomationTrigger({ accountId, automationId, triggerId: trigger.id,
+            expectedRevision: trigger.revision, trigger: { kind: "schedule", schedule: { kind: "once", scheduledAt: later.getTime() } } });
+        await runAutomationScheduleWorkerPass({ now: dueAt });
+        await expect(readRuns()).resolves.toHaveLength(0);
+        await updateAutomationTrigger({ accountId, automationId, triggerId: trigger.id,
+            expectedRevision: trigger.revision + 1, enabled: false });
+        await runAutomationScheduleWorkerPass({ now: later });
+        await expect(readRuns()).resolves.toHaveLength(0);
+        await expect(db.automationTrigger.findUniqueOrThrow({ where: { id: trigger.id } }))
+            .resolves.toMatchObject({ nextRunAt: null, remainingOccurrences: 1, enabled: false });
+    });
 
     it("skips an inconsistent Account without preventing a ready sibling Account from firing", async () => {
         await seedTwoScheduleTriggers();

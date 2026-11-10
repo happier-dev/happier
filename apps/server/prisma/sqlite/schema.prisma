@@ -2558,15 +2558,15 @@ model UsageEvent {
     credentialDeliveryMode         String?
     requestCount                   Int      @default(0)
     isCumulative       Boolean  @default(false)
-    inputTokens        Int      @default(0)
-    outputTokens       Int      @default(0)
-    reasoningTokens    Int      @default(0)
-    cacheReadTokens    Int      @default(0)
-    cacheWriteTokens   Int      @default(0)
-    totalTokens        Int      @default(0)
-    reportedCostUsd    Float    @default(0)
-    estimatedCostUsd   Float    @default(0)
-    invoiceCostUsd     Float    @default(0)
+    inputTokens        Int?
+    outputTokens       Int?
+    reasoningTokens    Int?
+    cacheReadTokens    Int?
+    cacheWriteTokens   Int?
+    totalTokens        Int?
+    reportedCostUsd    Float?
+    estimatedCostUsd   Float?
+    invoiceCostUsd     Float?
     billingContext     String?
     costSource         String?
     currency           String   @default("USD")
@@ -2874,6 +2874,7 @@ enum AutomationScheduleKind {
     cron
     interval
     manual
+    once
 }
 
 enum AutomationTargetType {
@@ -3045,6 +3046,7 @@ model AutomationTrigger {
     everyMs                      Int?
     timezone                     String?
     nextRunAt                    DateTime?
+    scheduledAt                  DateTime?
     eventPluginId                String?
     eventLocalId                 String?
     sourceSelectorId             String?

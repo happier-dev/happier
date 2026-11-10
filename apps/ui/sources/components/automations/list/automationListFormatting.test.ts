@@ -30,6 +30,16 @@ afterEach(() => {
 describe('formatAutomationTriggerLabel', () => {
     const sourceSelectorId = '11111111-1111-4111-8111-111111111111';
 
+    it('retains the exact one-time schedule and distinguishes done from a paused pending occurrence', () => {
+        const trigger = AutomationTriggerListItemSchema.parse({ id: 'once', revision: 1, enabled: true,
+            createdAt: 1, updatedAt: 1, kind: 'schedule', nextRunAt: null, remainingOccurrences: 0,
+            schedule: { kind: 'once', scheduledAt: new Date(2030, 10, 11, 9, 15).getTime() } });
+        expect(formatAutomationTriggerLabel(trigger)).toContain('2030');
+        expect(formatAutomationTriggerStatusLabel(trigger)).toBe(t('common.done'));
+        expect(formatAutomationTriggerStatusLabel({ ...trigger, enabled: false, remainingOccurrences: 1 })).toBe(t('automations.detail.status.paused'));
+        expect(formatAutomationRunStateLabel({ state: 'missed' })).toBe(t('automations.detail.runMeta.state.missed'));
+    });
+
     it('distinguishes PR and Run conditions without exposing private source configuration', () => {
         const base = { id: 'trigger-1', revision: 1, enabled: true, createdAt: 1, updatedAt: 1 };
         const labels = [

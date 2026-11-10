@@ -9,7 +9,8 @@ import type { WorkflowBlock, WorkflowDefinitionV1, WorkflowSessionAuthoringSelec
 import type { AutomationRunLifecycleTrigger } from '@happier-dev/protocol/automations/automationRunLifecycle';
 
 import { readSessionLifecycleKind } from './formatTriggerSummary';
-import { buildSimpleScheduleCron, parseSimpleSchedule, type SimpleSchedule } from './triggerSchedule';
+import { buildSimpleScheduleCron, parseSimpleSchedule, resolveOnceSchedule, type OnceScheduleDraft, type SimpleSchedule } from './triggerSchedule';
+import { toHappierLocalDateTimeDraft } from '@happier-dev/plugin-ui/presentation';
 import { withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
 import { projectWorkflowRunInputFields, buildWorkflowRunStartInputs, type WorkflowRunInputFieldState } from '@/sync/domains/workflows/workflowAuthoring';
 
@@ -46,7 +47,8 @@ export type TriggerWhenValue =
      * A simple schedule, a cron kept as written, or an interval ("Every hour", `everyMs`) kept as it
      * was saved until the person picks a simple schedule instead.
      */
-    | Readonly<{ kind: 'schedule'; schedule: SimpleSchedule | null; expression: string; everyMs?: number; timezone: string | null }>
+    | Readonly<{ kind: 'schedule'; schedule: SimpleSchedule | null; expression: string; everyMs?: number; timezone: string | null;
+        once?: OnceScheduleDraft }>
     | Readonly<{ kind: 'prComment' | 'ciFailed'; pullRequest: Readonly<{ repository: string; number: number }> | null }>;
 
 export const TRIGGER_THEN_KINDS = ['sendPrompt', 'doAction', 'notifyMe', 'runWorkflow'] as const;
@@ -175,6 +177,10 @@ export function buildTriggerDefinition(params: Readonly<{
     if (when.kind === 'runLifecycle') return { ...when, enabled };
     if (when.kind === 'pluginEvent') return when.value === null ? null : { ...when.value, enabled };
     if (when.kind === 'schedule') {
+        if (when.once !== undefined) {
+            const scheduledAt = resolveOnceSchedule(when.once);
+            return scheduledAt === null ? null : { kind: 'schedule', enabled, schedule: { kind: 'once', scheduledAt } };
+        }
         if (when.schedule === null && when.everyMs !== undefined) {
             return { kind: 'schedule', enabled, schedule: { kind: 'interval', scheduleExpr: null, everyMs: when.everyMs, timezone: when.timezone } };
         }
@@ -375,12 +381,14 @@ export function readTriggerThen(
 type SetTrigger = WorkflowTriggerSetV1['triggers'][number];
 
 /** The one reading of a saved schedule as a When: a cron as written, or an interval as its period. */
-export function readScheduleWhen(schedule: Readonly<{
+export function readScheduleWhen(schedule: Readonly<{ kind: 'once'; scheduledAt: number }> | Readonly<{
     kind: 'cron' | 'interval';
     scheduleExpr: string | null;
     everyMs: number | null;
     timezone: string | null;
 }>): Extract<TriggerWhenValue, Readonly<{ kind: 'schedule' }>> {
+    if (schedule.kind === 'once') return { kind: 'schedule', schedule: null, expression: '', timezone: readDeviceTimeZone(),
+        once: { ...toHappierLocalDateTimeDraft(new Date(schedule.scheduledAt)), relative: '', scheduledAt: schedule.scheduledAt } };
     if (schedule.kind === 'interval' && schedule.everyMs !== null) {
         return { kind: 'schedule', schedule: null, expression: '', everyMs: schedule.everyMs, timezone: schedule.timezone };
     }

@@ -13,7 +13,7 @@ import { catchUpAutomationRunLifecycleSourcesTx } from "./automationRunLifecycle
 import { markSharedWorkflowTriggerSummaryChangedInTx } from "./automationSharedWorkflowSummaries";
 
 function isCanonicalScheduleKind(value: string | null): value is AutomationScheduleKind {
-    return value === "cron" || value === "interval";
+    return value === "cron" || value === "interval" || value === "once";
 }
 
 export function resolveScheduledRunDueAt(params: Readonly<{
@@ -23,6 +23,7 @@ export function resolveScheduledRunDueAt(params: Readonly<{
     scheduleExpr: string | null;
     timezone: string | null;
     nextRunAt: Date | null;
+    scheduledAt?: Date | null;
 }>): Date | null {
     return computeNextDueAtForAutomation(params);
 }
@@ -45,7 +46,7 @@ export async function ensureAutomationScheduleCursorsTx(params: Readonly<{
                 where: { kind: "schedule", enabled: true, deletedAt: null },
                 select: {
                     id: true, revision: true, scheduleKind: true, scheduleExpr: true,
-                    everyMs: true, timezone: true, nextRunAt: true,
+                    everyMs: true, timezone: true, nextRunAt: true, scheduledAt: true, remainingOccurrences: true,
                 },
                 orderBy: [{ createdAt: "asc" }, { id: "asc" }],
             },
@@ -55,6 +56,7 @@ export async function ensureAutomationScheduleCursorsTx(params: Readonly<{
     let changed = false;
     for (const trigger of automation.triggers) {
         if (!isCanonicalScheduleKind(trigger.scheduleKind) || trigger.nextRunAt !== null) continue;
+        if (trigger.scheduleKind === "once" && trigger.remainingOccurrences !== 1) continue;
         // Property narrowing does not survive an object spread, so the live
         // schedule kind is passed explicitly instead of `...trigger`.
         const dueAt = resolveScheduledRunDueAt({
@@ -64,6 +66,7 @@ export async function ensureAutomationScheduleCursorsTx(params: Readonly<{
             scheduleExpr: trigger.scheduleExpr,
             timezone: trigger.timezone,
             nextRunAt: trigger.nextRunAt,
+            scheduledAt: trigger.scheduledAt,
         });
         if (!dueAt) continue;
         const updated = await params.tx.automationTrigger.updateMany({
@@ -139,7 +142,7 @@ export async function admitDueAutomationScheduleTriggerTx(params: Readonly<{
         },
     });
     if (result.kind === "ineligible") return null;
-    if (scoped || isTerminalAutomationRunState(result.run.state)) {
+    if (trigger.scheduleKind === "once" || scoped || isTerminalAutomationRunState(result.run.state)) {
         await advanceAutomationScheduleCursorTx({
             tx: params.tx,
             run: result.run,
@@ -190,7 +193,7 @@ async function advanceAutomationScheduleCursorTx(params: Readonly<{
     // Property narrowing does not survive an object spread, so the live
     // schedule kind is passed explicitly instead of `...trigger`. A disabled
     // or deleted trigger still tombstones its cursor to null below.
-    const nextRunAt = trigger.enabled && trigger.deletedAt === null
+    const nextRunAt = trigger.scheduleKind !== "once" && trigger.enabled && trigger.deletedAt === null
         ? resolveScheduledRunDueAt({
             now: params.now,
             scheduleKind: trigger.scheduleKind,
@@ -207,7 +210,7 @@ async function advanceAutomationScheduleCursorTx(params: Readonly<{
             revision: trigger.revision,
             nextRunAt: trigger.nextRunAt,
         },
-        data: { nextRunAt },
+        data: { nextRunAt, ...(trigger.scheduleKind === "once" ? { remainingOccurrences: 0 } : {}) },
     });
     if (updated.count > 0) await markSharedWorkflowTriggerSummaryChangedInTx(params.tx, trigger.automationId);
 }

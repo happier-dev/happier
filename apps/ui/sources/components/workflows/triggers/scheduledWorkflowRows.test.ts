@@ -11,6 +11,17 @@ function set(id: string, nextRunAt: number | null, destination: string, enabled 
 }
 
 describe('upcoming scheduled work', () => {
+    it('keeps spent one-time schedules in their trigger set but removes them from upcoming work', () => {
+        const pending = set('once', 2000, 'here');
+        const trigger = pending.triggers[0]!;
+        if (trigger.kind !== 'schedule') throw new Error('Expected schedule');
+        const spent = { ...pending, triggers: [{ ...trigger, schedule: { kind: 'once' as const, scheduledAt: 2000 },
+            remainingOccurrences: 0, nextRunAt: null }] };
+        expect(projectScheduledWorkflowRows([spent])).toEqual([]);
+        expect(spent.triggers).toHaveLength(1);
+        expect(projectScheduledWorkflowRows([{ ...spent, triggers: [{ ...spent.triggers[0]!, remainingOccurrences: 1,
+            nextRunAt: 2000 }] }])).toHaveLength(1);
+    });
     it('orders by the scheduler, retains pending occurrences, and filters by the canonical destination relation', () => {
         const sets = [set('later', 2000, 'here'), set('paused', 500, 'here', false), set('pending', null, 'here'),
             set('other', 700, 'elsewhere'), set('first', 1000, 'here')];

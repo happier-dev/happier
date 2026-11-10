@@ -1,5 +1,28 @@
 import { getPreferredLanguage } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
+import { resolveHappierFutureLocalDateTime, type HappierLocalDateTimeDraft } from '@happier-dev/plugin-ui/presentation';
+
+/** The editor retains a saved instant exactly; editing its fields releases that retained value. */
+export type OnceScheduleDraft = HappierLocalDateTimeDraft & Readonly<{ relative: string; scheduledAt?: number }>;
+
+/** Consumption is scheduler-owned; a paused pending occurrence is still not done. */
+export function isSpentOnceSchedule(trigger: Readonly<{
+    kind: string; schedule?: Readonly<{ kind: string }>; remainingOccurrences?: number | null;
+}>): boolean {
+    return trigger.kind === 'schedule' && trigger.schedule?.kind === 'once' && trigger.remainingOccurrences === 0;
+}
+
+/** Resolve relative text only at the trigger editor's confirmation boundary, never on a timer. */
+export function resolveOnceSchedule(draft: OnceScheduleDraft, nowMs = Date.now()): number | null {
+    const relative = draft.relative.trim();
+    if (relative.length === 0) return draft.scheduledAt ?? resolveHappierFutureLocalDateTime(draft, nowMs);
+    const match = /^(?:in\s+)?(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|h(?:ours?)?|d(?:ays?)?)$/iu.exec(relative);
+    if (!match) return null;
+    const duration = Number(match[1]) * (match[2]!.toLowerCase().startsWith('m') ? 60_000
+        : match[2]!.toLowerCase().startsWith('h') ? 3_600_000 : 86_400_000);
+    const scheduledAt = nowMs + duration;
+    return duration > 0 && Number.isSafeInteger(scheduledAt) && Number.isFinite(new Date(scheduledAt).getTime()) ? scheduledAt : null;
+}
 
 /**
  * The simple schedules a person picks (07 S4: Repeat Every day · Weekdays · Weekly, At a time) and

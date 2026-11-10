@@ -18,7 +18,7 @@ export const automationRunWithoutExecutionWhere = {
 
 export const automationTriggerSelect = {
     id: true, automationId: true, kind: true, enabled: true, revision: true, deletedAt: true,
-    scheduleKind: true, scheduleExpr: true, everyMs: true, timezone: true, nextRunAt: true,
+    scheduleKind: true, scheduleExpr: true, everyMs: true, timezone: true, nextRunAt: true, scheduledAt: true,
     eventPluginId: true, eventLocalId: true, sourceSelectorId: true, sourceContractVersion: true,
     observationTransport: true, webhookEndpointId: true, observationStartsAt: true,
     watcherMachineId: true, watcherMachineInstallationId: true, watcherPluginId: true,
@@ -38,7 +38,7 @@ export const automationTriggerSelect = {
  */
 export const automationTriggerListItemSelect = {
     id: true, automationId: true, kind: true, enabled: true, revision: true, deletedAt: true,
-    scheduleKind: true, scheduleExpr: true, everyMs: true, timezone: true, nextRunAt: true,
+    scheduleKind: true, scheduleExpr: true, everyMs: true, timezone: true, nextRunAt: true, scheduledAt: true,
     eventPluginId: true, eventLocalId: true, sourceSelectorId: true, sourceContractVersion: true,
     observationTransport: true, webhookEndpointId: true, observationStartsAt: true,
     watcherMachineId: true, watcherMachineInstallationId: true, watcherPluginId: true,

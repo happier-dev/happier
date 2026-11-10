@@ -38,6 +38,7 @@ import { createWorkflowRunRoute, type WorkflowRunRouteTarget } from '@/sync/doma
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { executeOccurrenceRunAction } from './occurrenceRunActions';
+import { resolveWorkflowRunProblemPresentation } from '../presentation/workflowProblemPresentation';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loading: {
@@ -571,6 +572,7 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
     const run = directDetailIsCurrent
         ? directDetail.detail
         : cachedRun;
+    const runProblem = run ? resolveWorkflowRunProblemPresentation(run) : null;
     const privateContent = directDetailIsCurrent
         ? directDetail.privateContent
         : null;
@@ -872,9 +874,9 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
                             description={t('automationPages.run.statusDescription')}
                         >
                             <Item title={formatAutomationRunStateLabel(run)} showChevron={false} mode="info" />
-                            {run.errorCode ? (
+                            {runProblem !== null || run.errorCode ? (
                                 <Item
-                                    title={t('automations.detail.runMeta.error', { message: run.errorCode })}
+                                    title={runProblem?.message ?? t('automations.detail.runMeta.error', { message: run.errorCode ?? '' })}
                                     subtitleLines={0}
                                     showChevron={false}
                                     mode="info"

@@ -19,6 +19,16 @@ import {
 const selection = { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
 
 describe('session trigger form', () => {
+    it('resolves relative schedules at save time and refuses invalid dates or delays', async () => {
+        const { resolveOnceSchedule } = await import('./triggerSchedule');
+        const draft = { date: '', time: '', relative: 'in 20 min' };
+        expect(resolveOnceSchedule(draft, 1_000)).toBe(1_201_000);
+        expect(resolveOnceSchedule(draft, 61_000)).toBe(1_261_000);
+        for (const relative of ['in 0 min', 'in -2 min', 'tomorrow-ish', 'in Infinity hours']) {
+            expect(resolveOnceSchedule({ ...draft, relative }, 1_000)).toBeNull();
+        }
+        expect(resolveOnceSchedule({ date: '2030-02-31', time: '09:00', relative: '' }, 1_000)).toBeNull();
+    });
     it('reopens and preserves the exact Run lifecycle source when editing a managed rule', async () => {
         const { AutomationTriggerDetailSchema} = await import('@happier-dev/protocol/automations/automationTriggerProjectionV1');
         const source = { kind: 'execution_run', machineId: 'source-machine', runId: 'run-exact', sessionId: 'source-session' } as const;

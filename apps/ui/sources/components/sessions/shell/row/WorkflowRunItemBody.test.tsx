@@ -152,6 +152,27 @@ async function initializeRun(triggerId?: string) {
 }
 
 describe('opened habit History result', () => {
+    it.each(['machine_offline', 'machine_presence_at_due_unavailable'] as const)('retains a missed one-time occurrence and its reason in schedule History (%s)', async errorCode => {
+        const { serve } = await initializeRun('timer');
+        const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerId: 'timer', triggerRevision: 1,
+            triggerKind: 'schedule', occurrenceKey: 'A'.repeat(43), occurredAt: 1, evidence: { scheduledFor: 1 } });
+        const summary = createWorkflowRunSummaryFixture({ id: 'habit-run', revision: 4, state: 'missed', errorCode,
+            workflowCustodyState: 'settled', origin: { kind: 'automation', automationId: 'auto-1', cause } });
+        serve({ summary });
+        storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(summary, null)]);
+        const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'auto-1', revision: 1, enabled: true, health: 'available',
+            triggers: [{ id: 'timer', revision: 1, enabled: true, kind: 'schedule', nextRunAt: null, remainingOccurrences: 0,
+                createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null, schedule: { kind: 'once', scheduledAt: 1 } }] });
+        const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="missed-once" set={set}
+            draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={() => {}} status="ready" onRetry={() => {}}
+            runsOn={null} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
+        expect(screen.getTextContent()).toContain('common.done');
+        await screen.pressByTestIdAsync('missed-once-trigger:saved:timer-history');
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
+        expect(screen.getTextContent()).toContain(errorCode === 'machine_offline'
+            ? 'workflows.triggers.once.missedOffline' : 'workflows.triggers.once.missedUnavailable');
+        expect(screen.getTextContent()).not.toContain('workflows.finalOutput.none');
+    });
     it('opens a saved workflow schedule History on demand with its frozen editor attribution', async () => {
         await initializeRun('timer');
         const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'auto-1', revision: 1, enabled: true, health: 'available',

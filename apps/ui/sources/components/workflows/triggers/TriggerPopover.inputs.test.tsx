@@ -91,12 +91,53 @@ vi.mock('@/components/ui/popover', async (importOriginal) => {
     return createInlinePopoverModuleMock(importOriginal, { maxHeight: 640, maxWidth: 280, placement: 'bottom' });
 });
 
-const { TriggerPopover } = await import('./TriggerPopover');
+const { TriggerPopover, FieldSelect } = await import('./TriggerPopover');
 const { WorkflowTriggerSection } = await import('./WorkflowTriggerSection');
 const { WorkflowDefinitionV1Schema} = await import('@happier-dev/protocol/workflows/workflowV1');
 type ExistingTriggerSubmit = Extract<React.ComponentProps<typeof TriggerPopover>, { creatingSession?: false }>['onSubmit'];
 
 describe('Run a workflow trigger inputs', () => {
+    it('saves one local date/time or a relative delay as one absolute occurrence and reopens it unchanged', async () => {
+        const { LocalDateTimeEditor } = await import('@/components/ui/dateTime/LocalDateTimeEditor');
+        const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
+        const { readScheduleWhen } = await import('./sessionTriggerForm');
+        const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
+        const screen = await renderScreen(<TriggerPopover testID="once-trigger" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['schedule']} sessionId={null} showThen={false}
+            initial={{ when: { kind: 'schedule', schedule: { repeat: 'daily', hour: 9, minute: 0, day: 1 },
+                expression: '0 9 * * *', timezone: 'Pacific/Honolulu' }, enabled: true,
+                then: { kind: 'runWorkflow', ref: null, inputs: {} } }} workflowOptions={[]} onSubmit={submit} />);
+        await screen.pressByTestIdAsync('once-trigger-repeat:once');
+        const picked = new Date(2030, 10, 11, 9, 15);
+        await act(async () => { screen.findByType(LocalDateTimeEditor).props.onChange({ date: '2030-11-11', time: '09:15' }); });
+        await screen.pressByTestIdAsync('once-trigger-submit');
+        expect(submit.mock.calls[0]?.[1].trigger).toEqual({ kind: 'schedule', enabled: true,
+            schedule: { kind: 'once', scheduledAt: picked.getTime() } });
+        expect(submit.mock.calls[0]?.[0].when).toMatchObject({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+        await act(async () => {
+            const relative = screen.findAllByType(FieldValueItem).find(row => row.props.testID === 'once-trigger-relative')!;
+            relative.props.onCommit('in 20 min');
+        });
+        submit.mockRejectedValueOnce(new Error('Save unavailable'));
+        const beforeSave = Date.now();
+        await screen.pressByTestIdAsync('once-trigger-submit');
+        const definition = submit.mock.calls[1]?.[1].trigger;
+        expect(definition?.kind).toBe('schedule');
+        if (definition?.kind !== 'schedule' || definition.schedule.kind !== 'once') throw new Error('Expected one-time schedule');
+        expect(definition.schedule.scheduledAt).toBeGreaterThanOrEqual(beforeSave + 20 * 60_000);
+        expect(definition.schedule.scheduledAt).toBeLessThanOrEqual(Date.now() + 20 * 60_000);
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(beforeSave + 60_000);
+        await screen.pressByTestIdAsync('once-trigger-submit');
+        expect(submit.mock.calls[2]?.[1].trigger).toEqual(definition);
+        clock.mockRestore();
+        await screen.unmount();
+        const reopened = await renderScreen(<TriggerPopover testID="saved-once" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['schedule']} sessionId={null} showThen={false}
+            initial={{ when: readScheduleWhen(definition.schedule), enabled: true,
+                then: { kind: 'runWorkflow', ref: null, inputs: {} } }} workflowOptions={[]} onSubmit={submit} />);
+        await reopened.pressByTestIdAsync('saved-once-submit');
+        expect(submit.mock.calls[3]?.[1].trigger).toEqual(definition);
+    });
     it.each([true, false])('reads back the armed Event filter, exact Environment, controller, profile and destination on guided review (page controller: %s)', async (pageController) => {
         const { GuidedAutomationSetup } = await import('./GuidedAutomationSetup');
         const { TriggerPluginEventRows } = await import('./TriggerPluginEventRows');
@@ -879,7 +920,7 @@ describe('a workflow trigger in its popover (07 S4)', () => {
         // "Continues this session on a schedule" is a session trigger's description, not a workflow's.
         expect(screen.getTextContent()).not.toContain('workflows.triggers.kindDescription.schedule');
         // The interval reads as its own repeat, not as an empty schedule field.
-        expect(screen.findByTestId('wf-trigger-repeat:interval')).not.toBeNull();
+        expect(screen.findAllByType(FieldSelect).find(row => row.props.testID === 'wf-trigger-repeat')?.props.selectedId).toBe('interval');
         expect(screen.findByTestId('wf-trigger-expression')).toBeNull();
         await screen.pressByTestIdAsync('wf-trigger-submit');
         expect(submit.mock.calls[0]?.[1].trigger).toEqual({

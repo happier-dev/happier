@@ -12,6 +12,17 @@ No persisted format, wire epoch, gate or compatibility adapter is added. The
 inspected `../0.2` frontier at `7b37d65ca75e58560f8f3ca850958ac5407d2e75`,
 including scoped local changes, has no `voice/attemptPresentation.ts` contract.
 
+## Machine Setup prerequisite presentation (unreleased 0.3)
+
+An unperformed Setup item check is `unverifiable`; positively observed native
+`unsupported` results retain that classification. The target Plan's support
+projection optionally carries `requiredFact` from its selected native blocker,
+without guessing a fact for an unperformed check. This is presentation metadata
+and does not enter the Apply operand. Matching development Protocol, CLI and UI
+readers reload together; older strict development Plan readers reject the added
+field. No persisted format, new status, wire epoch or compatibility adapter is
+introduced.
+
 ## Requester profile admission (unreleased 0.3)
 
 Requester identity admission in current development source reads the existing

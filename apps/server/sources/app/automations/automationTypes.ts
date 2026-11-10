@@ -10,7 +10,7 @@ import { type AutomationSessionLifecycleEvent } from '@happier-dev/protocol/auto
 import type { automationRunCauseSelect } from './automationPersistenceSelect';
 import type { WorkflowRunStateV1 } from '@happier-dev/protocol/workflows/workflowRunStateV1';
 
-export type AutomationScheduleKind = 'cron' | 'interval';
+export type AutomationScheduleKind = import('@happier-dev/protocol/automations/automationTriggerDefinition').AutomationScheduleTrigger['schedule']['kind'];
 export type AutomationTargetType = 'new_session' | 'existing_session' | 'execution_run';
 /** The released V2 definition target vocabulary. */
 export type AutomationLegacyTargetType = Exclude<
@@ -91,6 +91,12 @@ export type AutomationAssignmentInput = Readonly<{
 }>;
 
 export type AutomationScheduleInput = Readonly<{
+    kind: 'once';
+    scheduledAt: number;
+    everyMs?: undefined;
+    scheduleExpr?: undefined;
+    timezone?: undefined;
+}> | Readonly<{
     kind: 'interval';
     everyMs: number;
     scheduleExpr?: undefined;
@@ -103,7 +109,7 @@ export type AutomationScheduleInput = Readonly<{
 }>;
 
 /** Exact released V2 schedule input; manual means no automatic trigger. */
-export type AutomationLegacyScheduleInput = AutomationScheduleInput | Readonly<{
+export type AutomationLegacyScheduleInput = Exclude<AutomationScheduleInput, { kind: 'once' }> | Readonly<{
     kind: 'manual';
     everyMs?: undefined;
     scheduleExpr?: undefined;
@@ -252,6 +258,8 @@ export type AutomationTriggerItem = Readonly<{
     everyMs: number | null;
     timezone: string | null;
     nextRunAt: Date | null;
+    /** Absent only on retained/internal projections predating one-time schedules. */
+    scheduledAt?: Date | null;
     eventPluginId: string | null;
     eventLocalId: string | null;
     sourceSelectorId: string | null;

@@ -93,6 +93,7 @@ const AutomationTriggerProjectionBaseSchema = lazyZodSchema(() => z.strictObject
 export const AutomationScheduleTriggerProjectionSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, {
   ...AutomationScheduleTriggerSchema.shape,
   nextRunAt: z.nullable(TIMESTAMP_SCHEMA),
+  remainingOccurrences: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
 })));
 
 export const AutomationPluginEventTriggerProjectionSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, {

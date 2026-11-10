@@ -395,11 +395,13 @@ export type WorkflowDiagnosticsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 enabled: boolean;
             } | {
                 kind: 'sessionLifecycle';
-                enabled: boolean;
                 policy: {
                     kind: 'currentTurn';
                     sourceTurnId: string;
@@ -412,6 +414,7 @@ export type WorkflowDiagnosticsActionResultById = {
                     count: number;
                 };
                 events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                enabled: boolean;
             };
         }[];
     };
@@ -758,11 +761,13 @@ export type WorkflowDiagnosticsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 enabled: boolean;
             } | {
                 kind: 'sessionLifecycle';
-                enabled: boolean;
                 policy: {
                     kind: 'currentTurn';
                     sourceTurnId: string;
@@ -775,6 +780,7 @@ export type WorkflowDiagnosticsActionResultById = {
                     count: number;
                 };
                 events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                enabled: boolean;
             };
             trigger?: undefined | {
                 kind: 'ciFailed' | 'prComment';
@@ -909,6 +915,9 @@ export type WorkflowDiagnosticsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 enabled: boolean;
             } | {

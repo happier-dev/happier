@@ -1582,12 +1582,15 @@ export type SessionLifecycleActionInputById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 enabled: boolean;
             } | {
                 kind: 'sessionLifecycle';
-                enabled: boolean;
                 events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                enabled: boolean;
                 policy: {
                     kind: 'everyMatch';
                 } | {
@@ -1953,13 +1956,13 @@ export type SessionLifecycleActionInputById = {
                 kind: 'workflow';
                 ref: string;
             };
+            inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
             approvalProfileId?: null | string | undefined;
-            inputs?: Record<string, unknown> | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;

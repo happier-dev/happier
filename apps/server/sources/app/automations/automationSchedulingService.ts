@@ -7,7 +7,9 @@ export function computeNextDueAtForAutomation(params: {
     everyMs: number | null;
     scheduleExpr: string | null;
     timezone?: string | null;
+    scheduledAt?: Date | null;
 }): Date | null {
+    if (params.scheduleKind === "once") return params.scheduledAt ?? null;
     if (params.scheduleKind === "interval") {
         if (typeof params.everyMs !== "number" || !Number.isFinite(params.everyMs) || params.everyMs <= 0) {
             return null;

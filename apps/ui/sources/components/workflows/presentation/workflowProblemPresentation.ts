@@ -312,6 +312,12 @@ export function resolveWorkflowRunProblemPresentation(
     run: Pick<WorkflowRunSummaryV1, 'state' | 'errorCode'>,
 ): WorkflowProblemPresentation | null {
     const code = run.errorCode ?? null;
+    if (run.state === 'missed') return present(null, {
+        messageKey: code === 'machine_offline' ? 'workflows.triggers.once.missedOffline'
+            : code === 'machine_presence_at_due_unavailable' ? 'workflows.triggers.once.missedUnavailable'
+                : 'workflows.triggers.once.missed',
+        repair: 'none', accessibilitySemantics: 'status',
+    });
     return (run.state === 'failed' || run.state === 'interrupted') && isWorkflowOperationErrorCode(code)
         ? describeWorkflowOperationProblem(code) : null;
 }

@@ -1423,8 +1423,8 @@ export type WorkflowsActionInputById = {
         triggerId: string;
     } | {
         deploymentBackup: {
-            serverId: string;
             machineId: string;
+            serverId: string;
             environmentId: string;
             targetLinkId: string;
             deploymentId: string;
@@ -1827,12 +1827,12 @@ export type WorkflowsActionInputById = {
             paths?: string[] | undefined;
         };
         actionApproval?: 'ask' | 'automatic' | undefined;
+        inputs?: Record<string, unknown> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
-        inputs?: Record<string, unknown> | undefined;
         approvalProfileId?: null | string | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
@@ -2053,12 +2053,12 @@ export type WorkflowsActionInputById = {
                 paths?: string[] | undefined;
             };
             actionApproval?: 'ask' | 'automatic' | undefined;
+            inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
-            inputs?: Record<string, unknown> | undefined;
             approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
@@ -2295,12 +2295,12 @@ export type WorkflowsActionInputById = {
             kind: 'workflow';
             ref: string;
         };
+        inputs?: Record<string, unknown> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
-        inputs?: Record<string, unknown> | undefined;
         approvalProfileId?: null | string | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
@@ -2527,12 +2527,12 @@ export type WorkflowsActionInputById = {
                 };
                 kind: 'sessionLifecycle';
             };
+            inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
-            inputs?: Record<string, unknown> | undefined;
             approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {

@@ -22,6 +22,12 @@ function interval(everyMs: number) {
 }
 
 describe('formatTriggerSummary', () => {
+    it('names the exact one-time instant instead of presenting it as a recurring interval', () => {
+        const summary = formatTriggerSummary({ kind: 'schedule', schedule: { kind: 'once', scheduledAt: new Date(2030, 10, 11, 9, 15).getTime() } });
+        expect(summary).toContain('workflows.triggers.once.at(time=');
+        expect(summary).toContain('2030');
+        expect(summary).not.toContain('everyMinutes');
+    });
     it('waits for a scheduler projection instead of presenting a retained past occurrence as the next run', () => {
         const now = new Date(2026, 9, 20, 10).getTime();
         expect(formatNextScheduledRun(now - 7 * 86_400_000, true, now)).toBe('automations.list.nextRunPending');

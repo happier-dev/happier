@@ -15,6 +15,7 @@ import { publishManagedRunWakeInTx } from '@/app/machines/managed/managedWake';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { getSessionReviewProjectionIdForRun, invalidateSessionReviewProjectionForRunInTx } from './sessionReviewProjectionInvalidation';
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+import { classifyMachinePresenceAtInstant } from "@/app/presence/machinePresenceAtInstant";
 import { resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
 import { publishWorkflowRunMachineWakeInTx } from '@/app/workflows/workflowRunMachineRouting';
 import { attachAutomationWorkflowBodyTx } from "@/app/workflows/workflowRunService";
@@ -190,7 +191,7 @@ const automationAdmissionDefinitionSelect = {
             machineId: true,
             priority: true,
             machine: {
-                select: { accountId: true, installationId: true, revokedAt: true, replacedByMachineId: true },
+                select: { accountId: true, installationId: true, revokedAt: true, replacedByMachineId: true, active: true, presenceTransitions: true },
             },
         },
         orderBy: [{ priority: "desc" as const }, { machineId: "asc" as const }],
@@ -207,6 +208,7 @@ const automationAdmissionTriggerSelect = {
     enabled: true,
     revision: true,
     kind: true,
+    scheduleKind: true,
 } satisfies Prisma.AutomationTriggerSelect;
 
 type AutomationAdmissionTrigger = Prisma.AutomationTriggerGetPayload<{
@@ -219,6 +221,7 @@ type PreparedAutomationRunAdmission = Readonly<{
     executionInputEnvelope: string | null;
     workflowDefinitionEnvelope: string | null;
     automation: AutomationAdmissionDefinition;
+    missedReason: "machine_offline" | "machine_presence_at_due_unavailable" | null;
 }>;
 
 type PreparedAutomationRunAdmissionResult =
@@ -326,9 +329,22 @@ function prepareAutomationRunAdmission(params: Readonly<{
         return availability === "available"
             || (availability === "replaced" && isSessionLifecycleCause(cause));
     };
+    const availableAssignments = automation.assignments.filter(assignmentMayBeFrozen);
+    const once = cause.kind === "trigger" && cause.triggerKind === "schedule"
+        && params.triggersById.get(cause.triggerId)?.scheduleKind === "once";
+    const presenceAtDue = once && cause.kind === "trigger" && cause.triggerKind === "schedule"
+        ? availableAssignments.map(assignment => ({ assignment,
+            presence: classifyMachinePresenceAtInstant(assignment.machine, cause.evidence.scheduledFor) }))
+        : null;
+    const onTimeAssignments = presenceAtDue?.filter(item => item.presence === "present").map(item => item.assignment)
+        ?? availableAssignments;
+    const missedReason = once && onTimeAssignments.length === 0
+        ? presenceAtDue?.some(item => item.presence === "unavailable")
+            ? "machine_presence_at_due_unavailable" : "machine_offline"
+        : null;
     const admissionAutomation: AutomationAdmissionDefinition = {
         ...automation,
-        assignments: automation.assignments.filter(assignmentMayBeFrozen),
+        assignments: missedReason !== null ? availableAssignments : onTimeAssignments,
     };
     // The select loads only enabled assignments. Replayable causes freeze only
     // presently available machines; every Session-lifecycle occurrence is
@@ -376,6 +392,7 @@ function prepareAutomationRunAdmission(params: Readonly<{
             executionInputEnvelope: frozen.executionInputEnvelope,
             workflowDefinitionEnvelope: frozen.workflowDefinitionEnvelope,
             automation: admissionAutomation,
+            missedReason,
         },
     };
 }
@@ -385,7 +402,8 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
     accountId: string;
     admission: PreparedAutomationRunAdmission;
 }>): Promise<AutomationRunAdmissionResult> {
-    const { request, cause, executionInputEnvelope, workflowDefinitionEnvelope, automation } = params.admission;
+    const { request, cause, executionInputEnvelope, workflowDefinitionEnvelope, automation, missedReason } = params.admission;
+    const missed = missedReason !== null;
     const triggerId = cause.kind === "manual" ? undefined : cause.triggerId;
     // PR feedback and CI failures are distinct immutable occurrences, including
     // while the Session is busy. Other scoped triggers keep their existing
@@ -423,7 +441,8 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
             automationScopeSessionId: automation.scopeSessionId,
             accountId: params.accountId,
             ...(workflowDefinitionEnvelope !== null ? { originKind: "automation" } : {}),
-            state: "queued",
+            state: missed ? "missed" : "queued",
+            ...(missed ? { finishedAt: request.now, errorCode: missedReason } : {}),
             ...causeFields,
             // One derivation owner for the persisted identity and the rejoin
             // probe: the cause codec cannot see a manual invocation's
@@ -473,6 +492,7 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
             automationId: request.automationId,
             definitionEnvelope: workflowDefinitionEnvelope,
         });
+        if (missed) await params.tx.automationRun.update({ where: { id: run.id }, data: { workflowCustodyState: "settled" } });
         const attached = await params.tx.automationRun.findUnique({
             where: { id: run.id },
             select: automationRunItemSelect,
@@ -488,8 +508,11 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
         kind: "automation",
         entityId: request.automationId,
     });
-    await publishManagedRunWakeInTx(params.tx, { accountId: params.accountId, runId: run.id, cursor });
-    if (workflowDefinitionEnvelope !== null) await publishWorkflowRunMachineWakeInTx(params.tx,
+    if (missed) await params.tx.automationRunEvent.create({ data: {
+        runId: run.id, ts: request.now, type: "run_missed", payload: { errorCode: missedReason },
+    } });
+    if (!missed) await publishManagedRunWakeInTx(params.tx, { accountId: params.accountId, runId: run.id, cursor });
+    if (!missed && workflowDefinitionEnvelope !== null) await publishWorkflowRunMachineWakeInTx(params.tx,
         { accountId: params.accountId, run, cursor, admittedTargets: automation.assignments.map(assignment => ({
             machineId: assignment.machineId, custodianAccountId: assignment.machine.accountId,
         })) });
@@ -501,6 +524,7 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
             cursor: cursor.resolveCursor(),
         });
         for (const assignment of automation.assignments) {
+            if (missed) continue;
             if (workflowDefinitionEnvelope !== null) continue;
             emitAutomationRunUpdatedToMachineOnly({
                 accountId: params.accountId,

@@ -72,11 +72,15 @@ function triggerProjection(
     if (trigger.kind === "schedule") {
         return {
             ...common, kind: "schedule" as const,
-            schedule: {
+            schedule: trigger.scheduleKind === "once" ? {
+                kind: "once" as const,
+                scheduledAt: required(trigger.scheduledAt, "scheduledAt").getTime(),
+            } : {
                 kind: required(trigger.scheduleKind, "scheduleKind"),
                 scheduleExpr: trigger.scheduleExpr, everyMs: trigger.everyMs, timezone: trigger.timezone,
             },
             nextRunAt: trigger.nextRunAt?.getTime() ?? null,
+            ...(trigger.scheduleKind === "once" ? { remainingOccurrences: trigger.remainingOccurrences } : {}),
             ...(includeDefinition ? { triggerDefinitionEnvelope: null } : {}),
         };
     }

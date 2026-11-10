@@ -1,5 +1,6 @@
 import { z } from "zod/mini";
 import { AUTOMATION_INT_COLUMN_MAX } from '@happier-dev/protocol/automations/automationColumnBoundsV1';
+import { AutomationOnceScheduleSchema } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND, AUTOMATION_TEMPLATE_PLAIN_V1_KIND, AutomationTemplateEnvelopeSchema, LegacyEncryptedAutomationTemplateEnvelopeSchema, LegacyPlainAutomationTemplateEnvelopeSchema } from '@happier-dev/protocol/automations/automationTemplateEnvelope';
 import { type AutomationEventFilterPayloadSchemaValidationIssueV1 } from '@happier-dev/protocol/automations/event';
 
@@ -36,6 +37,7 @@ export class AutomationEventFilterValidationError extends AutomationValidationEr
 
 
 const ScheduleSchema = z.discriminatedUnion("kind", [
+    AutomationOnceScheduleSchema,
     z.strictObject({
         kind: z.literal("interval"),
         everyMs: z.number().check(z.int(), z.minimum(1_000), z.maximum(AUTOMATION_INT_COLUMN_MAX)),
@@ -189,7 +191,7 @@ export function assertAutomationTemplateEnvelopeForAccountMode(
 
 }
 
-function assertScheduleIsComputable(schedule: { kind: "interval" | "cron"; everyMs?: number; scheduleExpr?: string; timezone?: string | null }): void {
+function assertScheduleIsComputable(schedule: AutomationScheduleInput): void {
     const now = new Date();
     const due = computeNextDueAtForAutomation({
         now,
@@ -197,6 +199,7 @@ function assertScheduleIsComputable(schedule: { kind: "interval" | "cron"; every
         everyMs: schedule.kind === "interval" ? (schedule.everyMs ?? null) : null,
         scheduleExpr: schedule.kind === "cron" ? (schedule.scheduleExpr ?? null) : null,
         timezone: schedule.timezone ?? null,
+        scheduledAt: schedule.kind === "once" ? new Date(schedule.scheduledAt) : null,
     });
     if (!due) {
         throw new AutomationValidationError("schedule: unsupported or invalid schedule");

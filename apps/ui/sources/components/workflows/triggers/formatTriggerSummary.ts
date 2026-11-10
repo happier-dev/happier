@@ -89,7 +89,8 @@ export function formatNextScheduledRunAccessibilityLabel(nextRunAt: number | nul
 export type TriggerSummarySource =
     | Readonly<{
         kind: 'schedule';
-        schedule: Readonly<{ kind: 'cron' | 'interval'; scheduleExpr: string | null; everyMs: number | null }>;
+        schedule: Readonly<{ kind: 'once'; scheduledAt: number }>
+            | Readonly<{ kind: 'cron' | 'interval'; scheduleExpr: string | null; everyMs: number | null }>;
     }>
     | (Pick<AutomationPluginEventTrigger, 'kind' | 'eventRef'> & Readonly<{ displayLabel?: string }>
         & Partial<Pick<AutomationPluginEventTrigger, 'observation'>>
@@ -179,6 +180,11 @@ function readDeclaredEventTitle(trigger: Extract<TriggerSummarySource, { kind: '
 export function formatTriggerSummary(trigger: TriggerSummarySource, context?: TriggerSummaryContext): string {
     switch (trigger.kind) {
         case 'schedule':
+            if (trigger.schedule.kind === 'once') return t('workflows.triggers.once.at', {
+                time: formatWithCachedDateTimeFormatter(trigger.schedule.scheduledAt, getPreferredLanguage(), {
+                    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+                }),
+            });
             return trigger.schedule.kind === 'cron' && trigger.schedule.scheduleExpr !== null
                 ? formatCron(trigger.schedule.scheduleExpr)
                 : trigger.schedule.everyMs !== null

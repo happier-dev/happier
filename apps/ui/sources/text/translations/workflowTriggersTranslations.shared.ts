@@ -9,6 +9,16 @@ export type WorkflowTriggersCopy = typeof en;
 
 
 export const en = {
+    once: {
+        label: "Once",
+        relative: "Or after",
+        relativeHint: "For example: in 20 min, 2 h, or 1 d. Resolved when you confirm the trigger.",
+        relativeInvalid: "Enter a positive delay, such as in 20 min.",
+        at: ({ time }: { time: string }) => `Once at ${time}`,
+        missed: "This scheduled run was missed. Reschedule it or choose Run now.",
+        missedOffline: "This run was missed because its machine was offline at the scheduled time. Reschedule it or choose Run now.",
+        missedUnavailable: "This run was missed because machine availability at the scheduled time could not be confirmed. Reschedule it or choose Run now.",
+    },
     activity: {
         create: 'Create a trigger from this event',
         test: 'Test this trigger',

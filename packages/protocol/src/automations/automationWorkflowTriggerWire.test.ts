@@ -2,8 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionListRequestSchema, AutomationV3WorkerClaimedRunSchema } from './automationApiV3.js';
 import { AutomationRunCauseSchema } from './automationRunCause.js';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../artifacts/artifactListSelectionV1.js';
+import { AutomationScheduleTriggerInputSchema } from './automationTriggerDefinition.js';
 
 describe('workflow trigger wire contract', () => {
+  it('preserves an absolute one-time instant and refuses an unrepresentable Date', () => {
+    const trigger = { kind: 'schedule', enabled: true, schedule: { kind: 'once', scheduledAt: Date.UTC(2026, 10, 10, 9) } };
+    expect(AutomationScheduleTriggerInputSchema.parse(trigger)).toEqual(trigger);
+    expect(AutomationScheduleTriggerInputSchema.safeParse({ ...trigger, schedule: { kind: 'once', scheduledAt: Number.MAX_SAFE_INTEGER } }).success).toBe(false);
+  });
   it('admits one complete Artifact page of workflow selectors and refuses conflicting or oversized demand', () => {
     const ids = Array.from({ length: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 }, (_, index) => `plugin:com.external.workflows/page-${index}`);
     expect(AutomationDefinitionListRequestSchema.safeParse({ workflowDefinitionIds: ids }).success).toBe(true);

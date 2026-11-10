@@ -57,6 +57,7 @@ import {
     buildInitialTriggerDefinition,
     buildTriggerTarget,
     readTriggerThen,
+    readScheduleWhen,
     projectSessionTriggerWorkflowInputFields,
     buildSessionTriggerWorkflowInputs,
     createDefaultThen,
@@ -68,7 +69,9 @@ import {
     type TriggerThenValue,
     type TriggerWhenValue,
 } from './sessionTriggerForm';
-import { buildSimpleScheduleCron, formatClockTimeInput, SIMPLE_SCHEDULE_REPEATS as REPEATS, type SimpleScheduleRepeat } from './triggerSchedule';
+import { buildSimpleScheduleCron, formatClockTimeInput, resolveOnceSchedule, SIMPLE_SCHEDULE_REPEATS as REPEATS } from './triggerSchedule';
+import { LocalDateTimeEditor } from '@/components/ui/dateTime/LocalDateTimeEditor';
+import { parseHappierLocalDateTime } from '@happier-dev/plugin-ui/presentation';
 import { useTriggerScheduleCommands } from './useTriggerScheduleCommands';
 import { useNotifyMeChannelOptions, useTriggerWorkflowDefinition } from './useTriggerThenOptions';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -435,19 +438,30 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
 
     const submit = (context?: ActionExecutorContext) => {
         if (!complete) return;
+        // Confirmation freezes relative text into one instant. Save failures, retries and the
+        // workflow's later Save retain this instant rather than starting the delay again.
+        const submittedTrigger = props.manual || props.creatingSession ? null : buildTriggerDefinition({ when, enabled, sessionId: props.sessionId });
+        const submittedInitialTrigger = props.creatingSession ? buildInitialTriggerDefinition({ when, enabled }) : null;
+        if (!props.manual && (props.creatingSession ? submittedInitialTrigger : submittedTrigger) === null) return;
+        const submittedSchedule = submittedTrigger?.kind === 'schedule' ? submittedTrigger.schedule
+            : submittedInitialTrigger?.kind === 'schedule' ? submittedInitialTrigger.schedule : null;
+        const submittedWhen = submittedSchedule?.kind === 'once' ? readScheduleWhen(submittedSchedule) : when;
+        if (submittedWhen !== when) setWhen(submittedWhen);
         const inputs = observationOnly ? {} : then.kind === 'runWorkflow' || inlineDefinition !== null ? buildSessionTriggerWorkflowInputs({ when,
             fields: inputFields, declarations: inlineDefinition?.inputs ?? workflow.definition?.inputs ?? [],
             retainedInputs: then.kind === 'runWorkflow' || then.kind === 'kept' ? then.inputs : {} })
             : then.kind === 'kept' ? then.inputs : {};
         const submittedThen = then.kind === 'runWorkflow' || then.kind === 'kept' ? { ...then, inputs } : then;
-        const value = { when, then: submittedThen, enabled };
+        const value = { when: submittedWhen, then: submittedThen, enabled };
         return run(() => props.creatingSession
-            ? props.onSubmit(value, { trigger: initialTrigger, target, inputs }, context)
-            : props.onSubmit(value, { trigger, target, inputs, ...(observationOnly ? { observationOnly } : {}) }, context));
+            ? props.onSubmit(value, { trigger: submittedInitialTrigger, target, inputs }, context)
+            : props.onSubmit(value, { trigger: submittedTrigger, target, inputs, ...(observationOnly ? { observationOnly } : {}) }, context));
     };
     const savedWhen = props.initial?.when;
     const scheduleUnchanged = when.kind === 'schedule' && savedWhen?.kind === 'schedule'
-        && when.expression === savedWhen.expression && when.timezone === savedWhen.timezone && when.everyMs === savedWhen.everyMs;
+        && when.expression === savedWhen.expression && when.timezone === savedWhen.timezone && when.everyMs === savedWhen.everyMs
+        && when.once?.scheduledAt === savedWhen.once?.scheduledAt && when.once?.date === savedWhen.once?.date
+        && when.once?.time === savedWhen.once?.time && when.once?.relative === savedWhen.once?.relative;
     const nextRunAt = enabled && scheduleUnchanged ? props.savedNextRunAt ?? null : null;
     const readNextRefresh = React.useCallback((nowMs: number) => readNextScheduledRunRefreshAtMs(nextRunAt, nowMs), [nextRunAt]);
     const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, nextRunAt !== null && props.pushedPage === undefined);
@@ -718,53 +732,47 @@ export function ScheduleRows(props: Readonly<{
     const schedule = when.schedule;
     const everyMs = when.everyMs;
     const commands = useTriggerScheduleCommands(props);
-    if (schedule === null && everyMs !== undefined) {
-        // An interval ("Every hour") stays as it was saved and reads as itself; choosing a simple
-        // repeat replaces it with that schedule (09:00 until the person picks a time).
-        return (
-            <SegmentedChoiceItem<'interval' | SimpleScheduleRepeat>
-                accessoryLayout="stacked"
-                labelSize="field"
-                testIDPrefix={`${props.testID}-repeat`}
-                title={t('workflows.triggers.popover.repeat')}
-                value="interval"
-                onChange={(repeat) => {
-                    if (repeat === 'interval') return;
-                    commands.changeRepeat(repeat);
-                }}
-                options={[
-                    { id: 'interval' as const, label: formatTriggerInterval(everyMs) },
-                    ...REPEATS.map((repeat) => ({ id: repeat, label: t(`workflows.triggers.popover.${REPEAT_LABEL_KEYS[repeat]}`) })),
-                ]}
-            />
-        );
+    const repeatValue = when.once ? 'once' : schedule?.repeat ?? (everyMs === undefined ? 'custom' : 'interval');
+    const repeatOptions = [
+        { id: 'once', label: t('workflows.triggers.once.label') },
+        ...REPEATS.map(repeat => ({ id: repeat, label: t(`workflows.triggers.popover.${REPEAT_LABEL_KEYS[repeat]}`) })),
+    ];
+    const repeatRow = everyMs !== undefined || repeatValue === 'custom' ? <FieldSelect
+        testID={`${props.testID}-repeat`}
+        title={t('workflows.triggers.popover.repeat')}
+        items={[{ id: repeatValue, title: everyMs === undefined ? t('workflows.triggers.popover.expression') : formatTriggerInterval(everyMs) },
+            ...repeatOptions.map(option => ({ id: option.id, title: option.label }))]}
+        selectedId={repeatValue} onSelect={commands.changeRepeat} /> : <SegmentedChoiceItem
+        accessoryLayout="stacked" labelSize="field" testIDPrefix={`${props.testID}-repeat`}
+        title={t('workflows.triggers.popover.repeat')} value={repeatValue}
+        onChange={commands.changeRepeat} options={repeatOptions} />;
+    if (when.once !== undefined) {
+        // A retained occurrence may already be done; only edited fields must choose a future instant.
+        return <>
+            {repeatRow}
+            <Item title={t('workflows.triggers.popover.at')} subtitle={when.timezone ?? undefined}
+                accessoryLayout="stacked" showChevron={false}
+                rightElement={<LocalDateTimeEditor nowMs={when.once.scheduledAt === undefined ? Date.now()
+                    : (parseHappierLocalDateTime(when.once) ?? when.once.scheduledAt) - 1}
+                    value={when.once} onChange={commands.changeOnceDateTime} testIDPrefix={`${props.testID}-once`}
+                    labels={{ date: t('sessionsList.reminders.dateLabel'), time: t('sessionsList.reminders.timeLabel'),
+                        pastInstant: t('sessionsList.reminders.futureTimeRequired') }} />} />
+            <FieldValueItem testID={`${props.testID}-relative`} accessoryLayout={accessoryLayout}
+                title={t('workflows.triggers.once.relative')} subtitle={t('workflows.triggers.once.relativeHint')}
+                value={when.once.relative} onCommit={commands.commitRelative} autoCapitalize="none"
+                error={when.once.relative.trim() && resolveOnceSchedule(when.once) === null ? t('workflows.triggers.once.relativeInvalid') : null} />
+        </>;
     }
     if (schedule === null) {
-        return (
-            <FieldValueItem
-                accessoryLayout={accessoryLayout}
-                testID={`${props.testID}-expression`}
-                title={t('workflows.triggers.popover.expression')}
-                {...(when.timezone ? { subtitle: when.timezone } : {})}
-                value={when.expression}
-                monospace
-                autoCapitalize="none"
-                onCommit={commands.commitExpression}
-            />
-        );
+        return <>{repeatRow}{everyMs === undefined ? <FieldValueItem
+            accessoryLayout={accessoryLayout} testID={`${props.testID}-expression`}
+            title={t('workflows.triggers.popover.expression')} subtitle={when.timezone ?? undefined}
+            value={when.expression} monospace autoCapitalize="none" onCommit={commands.commitExpression} /> : null}</>;
     }
     const setSchedule = (next: typeof schedule) => props.onChange({ ...when, schedule: next, expression: buildSimpleScheduleCron(next) });
     return (
         <>
-            <SegmentedChoiceItem<SimpleScheduleRepeat>
-                accessoryLayout="stacked"
-                labelSize="field"
-                testIDPrefix={`${props.testID}-repeat`}
-                title={t('workflows.triggers.popover.repeat')}
-                value={schedule.repeat}
-                onChange={commands.changeRepeat}
-                options={REPEATS.map((repeat) => ({ id: repeat, label: t(`workflows.triggers.popover.${REPEAT_LABEL_KEYS[repeat]}`) }))}
-            />
+            {repeatRow}
             {schedule.repeat === 'weekly' ? (
                 <FieldSelect
                     currentUiContextCommandScope={props.currentUiContextCommandScope === undefined ? undefined : `${props.currentUiContextCommandScope}-day`}

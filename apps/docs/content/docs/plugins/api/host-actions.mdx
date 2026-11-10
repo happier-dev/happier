@@ -566,6 +566,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `action.pluginId` (text, required): Plugin id
 - `action.localId` (text, required): Action id
 - `input` (textarea): Declared Action input
+- `expectedContributorOccurrenceId` (text): Expected Contributor Occurrence Id
 - `clientId` (text): Client Id
 - `messageActionReference` (json): Message Action Reference
 
@@ -10802,7 +10803,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `machines.resources.policy.set`
 
-**Change resource settings** — Changes a machine’s alerts, guard, monitoring and cleanup settings. Monitoring’s read interval applies only while someone watches Live or Overview; otherwise the machine reads once a minute. If they changed meanwhile, you see the current ones first.
+**Change resource settings** — Changes a machine’s alerts, guard, monitoring and cleanup settings. Monitoring’s read interval applies only while someone watches Live or Overview; otherwise the machine reads every 15 s while a summary is visible and once a minute when nothing is. If they changed meanwhile, you see the current ones first.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -24427,7 +24428,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `api`.
 
 ### Input guidance
 
@@ -26772,6 +26773,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `source.definitionId` (json): Definition Id
 - `source.revision` (json): Revision
 - `source.pluginVersion` (json): Plugin Version
+- `source.path` (json): Path
 - `metadata` (json): Metadata
 - `roleOverrides` (json): Role Overrides
 - `origin` (json): Origin

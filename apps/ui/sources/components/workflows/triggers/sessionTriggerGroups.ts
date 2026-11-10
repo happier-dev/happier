@@ -5,6 +5,7 @@ import { workflowTriggerDisplayNameV1 } from '@happier-dev/protocol/workflows/wo
 import { t } from '@/text';
 
 import type { TriggerRowOutcome } from './TriggerRow';
+import { isSpentOnceSchedule } from './triggerSchedule';
 import { resolveTriggerEventGroup, type TriggerEventGroup } from './triggerEventGroups';
 import { formatTriggerSetSummary, formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, formatTriggerLastOutcome, type ScheduledRunQualifierTime } from './formatTriggerSummary';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
@@ -73,7 +74,7 @@ export function describeLegacyTriggerSet(set: WorkflowTriggerSetV1, resolveMachi
     const first = set.target?.kind === 'inline' ? set.target.definition.blocks[0] : undefined;
     const prompt = first?.kind === 'step' ? first.document.text : null;
     const placements = set.legacy.placements ?? (set.project ? [set.project] : null);
-    const timezones = [...new Set(set.triggers.flatMap((trigger) => trigger.kind === 'schedule' && trigger.schedule.timezone ? [trigger.schedule.timezone] : []))];
+    const timezones = [...new Set(set.triggers.flatMap((trigger) => trigger.kind === 'schedule' && trigger.schedule.kind !== 'once' && trigger.schedule.timezone ? [trigger.schedule.timezone] : []))];
     const nextRuns = set.triggers.flatMap((trigger) => trigger.kind === 'schedule' && trigger.nextRunAt !== null ? [trigger.nextRunAt] : []);
     const next = nextRuns.length === 0 ? null : Math.min(...nextRuns);
     const prefix = [formatTriggerSetSummary(set.triggers), ...timezones].join(' · ');
@@ -143,9 +144,9 @@ export function projectSessionTriggerGroups(params: Readonly<{
                 ...(set.sourceSavedAt === undefined ? {} : { sourceSavedAt: set.sourceSavedAt }),
                 ...(legacy ? { legacy: true, qualifier: legacy.qualifier,
                     ...(legacy.qualifierTime ? { qualifierTime: legacy.qualifierTime } : {}) } : trigger.kind === 'schedule' ? {
-                    qualifier: formatNextScheduledRun(trigger.nextRunAt, set.enabled && trigger.enabled),
+                    qualifier: isSpentOnceSchedule(trigger) ? t('common.done') : formatNextScheduledRun(trigger.nextRunAt, set.enabled && trigger.enabled),
                     ...(trigger.nextRunAt === null ? {} : { qualifierTime: { atMs: trigger.nextRunAt } }),
-                    qualifierAccessibilityLabel: formatNextScheduledRunAccessibilityLabel(trigger.nextRunAt, set.enabled && trigger.enabled),
+                    qualifierAccessibilityLabel: isSpentOnceSchedule(trigger) ? t('common.done') : formatNextScheduledRunAccessibilityLabel(trigger.nextRunAt, set.enabled && trigger.enabled),
                 } : {}),
             };
             const existing = groups.get(group.id);

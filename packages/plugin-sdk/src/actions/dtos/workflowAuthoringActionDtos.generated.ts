@@ -765,6 +765,9 @@ export type WorkflowAuthoringActionInputById = {
                             scheduleExpr: null;
                             everyMs: number;
                             timezone: null | string;
+                        } | {
+                            kind: 'once';
+                            scheduledAt: number;
                         };
                         enabled: boolean;
                     } | {
@@ -1075,6 +1078,9 @@ export type WorkflowAuthoringActionResultById = {
                                 scheduleExpr: null;
                                 everyMs: number;
                                 timezone: null | string;
+                            } | {
+                                kind: 'once';
+                                scheduledAt: number;
                             };
                             enabled: boolean;
                         } | {
