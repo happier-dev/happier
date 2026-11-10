@@ -2,17 +2,17 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, renderHook, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
-import { readUsableHomeServerIds } from '@/sync/domains/scope/usableHomeServerIds';
 
 installSettingsViewCommonModuleMocks({ storage: 'real' });
 const account = createProviderSettingsAccountHarness();
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
+const { useHomeViewSelectionSettingsMutable } = await import('@/hooks/server/useHomeViewSelectionSettings');
 const { MachineThisMachineSection } = await import('./MachineThisMachineSection');
 const { MachineWindowsLaunchSection } = await import('../windows/MachineWindowsLaunchSection');
 const { MachineTerminalSettingsSection } = await import('../terminal/MachineTerminalSettingsSection');
@@ -24,6 +24,7 @@ const { getInstallablesRegistryEntries } = await import('@/capabilities/installa
 const { holdSettingWrite } = await import('@/sync/store/settingsPreview');
 const { buildMachineTerminalSettingsPatch } = await import('@/sync/domains/settings/terminalSettings');
 const { Item } = await import('@/components/ui/lists/Item');
+const { HappierSwitchNative } = await import('@happier-dev/plugin-ui/presentation');
 
 afterEach(async () => { standardCleanup(); await account.reset(); });
 
@@ -37,9 +38,14 @@ describe('Machine settings subscriptions', () => {
             computerUseByMachineId: { [machine.id]: { enabledProviders: ['cua'], defaultProvider: 'cua' } },
             installablesPolicyByMachineId: { [machine.id]: { [tool.key]: { autoUpdateMode: 'off' } } },
         } });
+        // Account restoration selects its Home after hydration. Publish that selection's
+        // compatibility projection through the same owner as the Home picker before measurement.
+        const homeView = await renderHook(useHomeViewSelectionSettingsMutable);
+        await act(async () => { await homeView.getCurrent().setHomeViewSelectionSettings(current => current); });
+        await homeView.unmount();
         expect(storage.getState().settings.sessionTerminalHostByMachineId[machine.id]).toBe('zellij');
         let commits = 0;
-        const screen = await renderScreen(<React.Profiler id={kind} onRender={() => { commits++; console.log('A7 commit', kind, commits, readUsableHomeServerIds()); }}>
+        const screen = await renderScreen(<React.Profiler id={kind} onRender={() => { commits++; }}>
             {kind === 'summary' ? <MachineThisMachineSection serverId={account.serverId} machine={machine} />
                 : kind === 'terminal' ? <MachineTerminalSettingsSection serverId={account.serverId} machineId={machine.id} tmuxAvailable />
                     : kind === 'computer' ? <MachineComputerUseSection serverId={account.serverId} machineId={machine.id} machineName="devbox" online={false} />
@@ -47,13 +53,12 @@ describe('Machine settings subscriptions', () => {
         </React.Profiler>);
         // Settle the mounted readers' shared credential lookup before measuring settings publications.
         await act(async () => { await resolveServerCredentialAccountScope(account.serverId); });
+        if (kind === 'terminal') {
+            // The Switch defers its first mount; measure publications after the control is present.
+            await waitForTestEvent(screen.subscribe, () => screen.findAllByType(HappierSwitchNative).length, count => count > 0);
+        }
         commits = 0;
-        console.log('A7 usable at measurement', kind, readUsableHomeServerIds());
-        const stopDiagnostic = kind === 'summary' ? storage.subscribe((next, previous) => {
-            console.log('A7 changed state', Object.keys(next).filter(key => next[key as keyof typeof next] !== previous[key as keyof typeof previous]));
-            console.log('A7 changed settings', Object.keys(next.settings).filter(key => JSON.stringify(next.settings[key as keyof typeof next.settings]) !== JSON.stringify(previous.settings[key as keyof typeof previous.settings])));
-            console.log('A7 selected computer identity', next.settings.computerUseByMachineId[machine.id] === previous.settings.computerUseByMachineId[machine.id], previous.settings.computerUseByMachineId[machine.id], next.settings.computerUseByMachineId[machine.id]);
-        }) : () => {};
+        const initialSettings = storage.getState().settings;
         for (let index = 0; index < 3; index++) {
             await act(async () => {
                 const settings = storage.getState().settings;
@@ -68,7 +73,9 @@ describe('Machine settings subscriptions', () => {
                 });
             });
         }
-        stopDiagnostic();
+        expect(storage.getState().settings.serverSelectionGroups).toBe(initialSettings.serverSelectionGroups);
+        expect(storage.getState().settings.serverSelectionActiveTargetKind).toBe(initialSettings.serverSelectionActiveTargetKind);
+        expect(storage.getState().settings.serverSelectionActiveTargetId).toBe(initialSettings.serverSelectionActiveTargetId);
         expect(commits).toBe(0);
         await act(async () => {
             const settings = storage.getState().settings;
@@ -117,11 +124,15 @@ describe('Machine settings subscriptions', () => {
         </React.Profiler>);
         // Settle the mounted readers' shared credential lookup before measuring settings publications.
         await act(async () => { await resolveServerCredentialAccountScope(account.serverId); });
+        if (kind === 'windows') {
+            // The Switch defers its first mount; measure publications after the control is present.
+            await waitForTestEvent(screen.subscribe, () => screen.findAllByType(HappierSwitchNative).length, count => count > 0);
+        }
         commits = 0;
         await act(async () => { storage.setState({ settings: { ...storage.getState().settings, analyticsOptOut: !storage.getState().settings.analyticsOptOut } }); });
         expect(commits).toBe(0);
         await act(async () => { storage.setState({ settings: { ...storage.getState().settings,
-            ...(kind === 'summary' ? { sessionTerminalHost: 'tmux' as const } : { sessionWindowsRemoteSessionLaunchMode: 'console' as const }),
+            ...(kind === 'summary' ? { sessionTerminalHost: 'legacy' as const, sessionUseTmux: true } : { sessionWindowsRemoteSessionLaunchMode: 'console' as const }),
         } }); });
         expect(commits).toBe(1);
         if (kind === 'summary') expect(screen.findAllByType(Item).find(node => node.props.testID === 'machine-page-row-terminal')?.props.subtitle).toBe('tmux');
