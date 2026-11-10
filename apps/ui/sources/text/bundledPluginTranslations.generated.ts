@@ -311,9 +311,14 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Fes servir un testimoni d’accés personal per a l’equip o projecte seleccionat. Les sandboxes també necessiten accés al pla de l’equip.",
     "machineVercel.vcpus": "CPU virtuals",
     "managedPurpose.anthropic.title": "Compte o grup de Claude",
+    "managedPurpose.antigravity.title": "Compte o grup de Antigravity",
+    "managedPurpose.devin.title": "Compte o grup de Devin",
     "managedPurpose.gemini.title": "Compte o grup amb clau d’API de Gemini",
+    "managedPurpose.kimi.title": "Compte o grup de Kimi Code",
     "managedPurpose.meta.title": "Compte de Muse o grup",
     "managedPurpose.openai.title": "Compte o grup de ChatGPT",
+    "managedPurpose.unavailable.sdkRegistration": "L’entorn d’execució actual de la passarel·la no admet aquesta família de comptes.",
+    "managedPurpose.xai.title": "Compte o grup de xAI",
     "plugins.appContext.annotation.note": "La teva nota",
     "plugins.appContext.annotation.refused": "Ara no es pot desar aquesta nota; es conserva aquí. Si estàs editant un missatge pendent, acaba primer.",
     "plugins.appContext.annotation.save": "Desa la nota",
@@ -4720,9 +4725,14 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Verwende einen persönlichen Zugriffstoken für das gewählte Team oder Projekt. Sandboxes benötigen außerdem Zugriff auf den Teamtarif.",
     "machineVercel.vcpus": "Virtuelle CPUs",
     "managedPurpose.anthropic.title": "Claude-Konto oder Pool",
+    "managedPurpose.antigravity.title": "Antigravity-Konto oder Pool",
+    "managedPurpose.devin.title": "Devin-Konto oder Pool",
     "managedPurpose.gemini.title": "Gemini-API-Schlüssel-Konto oder Pool",
+    "managedPurpose.kimi.title": "Kimi Code-Konto oder Pool",
     "managedPurpose.meta.title": "Muse-Konto oder Pool",
     "managedPurpose.openai.title": "ChatGPT-Konto oder Pool",
+    "managedPurpose.unavailable.sdkRegistration": "Diese Kontofamilie wird von der aktuellen Gateway-Laufzeit nicht unterstützt.",
+    "managedPurpose.xai.title": "xAI-Konto oder Pool",
     "plugins.appContext.annotation.note": "Deine Notiz",
     "plugins.appContext.annotation.refused": "Die Notiz kann gerade nicht gespeichert werden – sie bleibt hier erhalten. Wenn du eine wartende Nachricht bearbeitest, schließ das zuerst ab.",
     "plugins.appContext.annotation.save": "Notiz speichern",
@@ -8834,6 +8844,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "agentInput.agent.fx": "FX",
     "agentInput.agent.grok": "Grok",
     "agentInput.agent.kimi": "Kimi",
+    "agentInput.agent.muse": "Muse",
     "agentInput.connectedServiceLabel.claude": "Claude Code",
     "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
     "agentInput.connectedServiceLabel.copilot": "GitHub Copilot",
@@ -9133,9 +9144,14 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Use a personal access token for the selected team or project. Sandboxes also require team plan access.",
     "machineVercel.vcpus": "vCPUs",
     "managedPurpose.anthropic.title": "Claude account or pool",
+    "managedPurpose.antigravity.title": "Antigravity account or pool",
+    "managedPurpose.devin.title": "Devin account or pool",
     "managedPurpose.gemini.title": "Gemini API key account or pool",
+    "managedPurpose.kimi.title": "Kimi Code account or pool",
     "managedPurpose.meta.title": "Muse account or pool",
     "managedPurpose.openai.title": "ChatGPT account or pool",
+    "managedPurpose.unavailable.sdkRegistration": "This account family is not supported by the current gateway runtime.",
+    "managedPurpose.xai.title": "xAI account or pool",
     "plugins.appContext.annotation.note": "Your note",
     "plugins.appContext.annotation.refused": "This note can’t be saved right now — it’s kept here. If you’re editing a queued message, finish that first.",
     "plugins.appContext.annotation.save": "Save note",
@@ -13136,6 +13152,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.fxSubtitleExperimental": "FX coding agent (experimental)",
     "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (experimental)",
     "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (experimental)",
+    "profiles.aiBackend.museSubtitle": "",
     "session.subagents.launch.description": "Description",
     "session.subagents.launch.instructions": "Instructions",
     "session.subagents.launch.intro": "Start a team of Claude agents on one task, or add a teammate to a team.",
@@ -13549,9 +13566,14 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Usa un token de acceso personal para el equipo o proyecto seleccionado. Los sandboxes también necesitan acceso al plan del equipo.",
     "machineVercel.vcpus": "CPU virtuales",
     "managedPurpose.anthropic.title": "Cuenta o grupo de Claude",
+    "managedPurpose.antigravity.title": "Cuenta o grupo de Antigravity",
+    "managedPurpose.devin.title": "Cuenta o grupo de Devin",
     "managedPurpose.gemini.title": "Cuenta o grupo con clave de API de Gemini",
+    "managedPurpose.kimi.title": "Cuenta o grupo de Kimi Code",
     "managedPurpose.meta.title": "Cuenta de Muse o grupo",
     "managedPurpose.openai.title": "Cuenta o grupo de ChatGPT",
+    "managedPurpose.unavailable.sdkRegistration": "El entorno de ejecución actual de la pasarela no admite esta familia de cuentas.",
+    "managedPurpose.xai.title": "Cuenta o grupo de xAI",
     "plugins.appContext.annotation.note": "Tu nota",
     "plugins.appContext.annotation.refused": "Ahora no se puede guardar esta nota; se conserva aquí. Si estás editando un mensaje pendiente, termina primero.",
     "plugins.appContext.annotation.save": "Guardar nota",
@@ -17958,9 +17980,14 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Utilisez un jeton d’accès personnel pour l’équipe ou le projet choisi. Les sandboxes nécessitent aussi l’accès au forfait de l’équipe.",
     "machineVercel.vcpus": "Processeurs virtuels",
     "managedPurpose.anthropic.title": "Compte ou groupe Claude",
+    "managedPurpose.antigravity.title": "Compte ou groupe Antigravity",
+    "managedPurpose.devin.title": "Compte ou groupe Devin",
     "managedPurpose.gemini.title": "Compte ou pool avec clé API Gemini",
+    "managedPurpose.kimi.title": "Compte ou groupe Kimi Code",
     "managedPurpose.meta.title": "Compte Muse ou pool",
     "managedPurpose.openai.title": "Compte ou groupe ChatGPT",
+    "managedPurpose.unavailable.sdkRegistration": "Cette famille de comptes n’est pas prise en charge par l’environnement d’exécution actuel de la passerelle.",
+    "managedPurpose.xai.title": "Compte ou groupe xAI",
     "plugins.appContext.annotation.note": "Votre note",
     "plugins.appContext.annotation.refused": "Cette note ne peut pas être enregistrée pour l’instant — elle est conservée ici. Si vous modifiez un message en attente, terminez d’abord.",
     "plugins.appContext.annotation.save": "Enregistrer la note",
@@ -22367,9 +22394,14 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Usa un token di accesso personale per il team o progetto selezionato. Le sandbox richiedono anche l’accesso al piano del team.",
     "machineVercel.vcpus": "CPU virtuali",
     "managedPurpose.anthropic.title": "Account o pool Claude",
+    "managedPurpose.antigravity.title": "Account o pool Antigravity",
+    "managedPurpose.devin.title": "Account o pool Devin",
     "managedPurpose.gemini.title": "Account o pool con chiave API Gemini",
+    "managedPurpose.kimi.title": "Account o pool Kimi Code",
     "managedPurpose.meta.title": "Account Muse o pool",
     "managedPurpose.openai.title": "Account o pool ChatGPT",
+    "managedPurpose.unavailable.sdkRegistration": "Questa famiglia di account non è supportata dall’ambiente di esecuzione attuale del gateway.",
+    "managedPurpose.xai.title": "Account o pool xAI",
     "plugins.appContext.annotation.note": "La tua nota",
     "plugins.appContext.annotation.refused": "Al momento non è possibile salvare la nota: resta qui. Se stai modificando un messaggio in attesa, termina prima.",
     "plugins.appContext.annotation.save": "Salva nota",
@@ -26776,9 +26808,14 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "選択したチームまたはプロジェクトの個人アクセストークンを使用してください。サンドボックスにはチームのプランを読み取る権限も必要です。",
     "machineVercel.vcpus": "仮想 CPU 数",
     "managedPurpose.anthropic.title": "Claude アカウントまたはプール",
+    "managedPurpose.antigravity.title": "Antigravity アカウントまたはプール",
+    "managedPurpose.devin.title": "Devin アカウントまたはプール",
     "managedPurpose.gemini.title": "Gemini API キーのアカウントまたはプール",
+    "managedPurpose.kimi.title": "Kimi Code アカウントまたはプール",
     "managedPurpose.meta.title": "Muse アカウントまたはプール",
     "managedPurpose.openai.title": "ChatGPT アカウントまたはプール",
+    "managedPurpose.unavailable.sdkRegistration": "このアカウント種別は現在のゲートウェイランタイムではサポートされていません。",
+    "managedPurpose.xai.title": "xAI アカウントまたはプール",
     "plugins.appContext.annotation.note": "メモ",
     "plugins.appContext.annotation.refused": "今はこのメモを保存できません。内容はここに残っています。保留中のメッセージを編集中の場合は、先に編集を終えてください。",
     "plugins.appContext.annotation.save": "メモを保存",
@@ -31185,9 +31222,14 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Użyj osobistego tokenu dostępu dla wybranego zespołu lub projektu. Piaskownice wymagają też dostępu do planu zespołu.",
     "machineVercel.vcpus": "Wirtualne procesory",
     "managedPurpose.anthropic.title": "Konto lub pula Claude",
+    "managedPurpose.antigravity.title": "Konto lub pula Antigravity",
+    "managedPurpose.devin.title": "Konto lub pula Devin",
     "managedPurpose.gemini.title": "Konto lub pula kluczy API Gemini",
+    "managedPurpose.kimi.title": "Konto lub pula Kimi Code",
     "managedPurpose.meta.title": "Konto Muse lub pula",
     "managedPurpose.openai.title": "Konto lub pula ChatGPT",
+    "managedPurpose.unavailable.sdkRegistration": "Ta rodzina kont nie jest obsługiwana przez bieżące środowisko uruchomieniowe bramy.",
+    "managedPurpose.xai.title": "Konto lub pula xAI",
     "plugins.appContext.annotation.note": "Twoja notatka",
     "plugins.appContext.annotation.refused": "Nie można teraz zapisać tej notatki — zostaje tutaj. Jeśli edytujesz oczekującą wiadomość, najpierw ją zakończ.",
     "plugins.appContext.annotation.save": "Zapisz notatkę",
@@ -35594,9 +35636,14 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Use um token de acesso pessoal para a equipe ou projeto selecionado. Os sandboxes também precisam de acesso ao plano da equipe.",
     "machineVercel.vcpus": "CPUs virtuais",
     "managedPurpose.anthropic.title": "Conta ou grupo do Claude",
+    "managedPurpose.antigravity.title": "Conta ou grupo do Antigravity",
+    "managedPurpose.devin.title": "Conta ou grupo do Devin",
     "managedPurpose.gemini.title": "Conta ou grupo com chave de API Gemini",
+    "managedPurpose.kimi.title": "Conta ou grupo do Kimi Code",
     "managedPurpose.meta.title": "Conta Muse ou grupo",
     "managedPurpose.openai.title": "Conta ou grupo do ChatGPT",
+    "managedPurpose.unavailable.sdkRegistration": "Esta família de contas não é compatível com o ambiente de execução atual do gateway.",
+    "managedPurpose.xai.title": "Conta ou grupo do xAI",
     "plugins.appContext.annotation.note": "Sua nota",
     "plugins.appContext.annotation.refused": "Não é possível salvar esta nota agora; ela fica guardada aqui. Se você estiver editando uma mensagem pendente, termine primeiro.",
     "plugins.appContext.annotation.save": "Salvar nota",
@@ -40003,9 +40050,14 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "Используйте персональный токен доступа для выбранной команды или проекта. Песочницам также нужен доступ к тарифу команды.",
     "machineVercel.vcpus": "Виртуальные процессоры",
     "managedPurpose.anthropic.title": "Учётная запись или пул Claude",
+    "managedPurpose.antigravity.title": "Учётная запись или пул Antigravity",
+    "managedPurpose.devin.title": "Учётная запись или пул Devin",
     "managedPurpose.gemini.title": "Аккаунт или пул с API-ключом Gemini",
+    "managedPurpose.kimi.title": "Учётная запись или пул Kimi Code",
     "managedPurpose.meta.title": "Аккаунт Muse или пул",
     "managedPurpose.openai.title": "Учётная запись или пул ChatGPT",
+    "managedPurpose.unavailable.sdkRegistration": "Это семейство аккаунтов не поддерживается текущей средой выполнения шлюза.",
+    "managedPurpose.xai.title": "Учётная запись или пул xAI",
     "plugins.appContext.annotation.note": "Ваша заметка",
     "plugins.appContext.annotation.refused": "Сейчас не удаётся сохранить заметку — она остаётся здесь. Если вы редактируете ожидающее сообщение, сначала завершите это.",
     "plugins.appContext.annotation.save": "Сохранить заметку",
@@ -44412,9 +44464,14 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "使用所选团队或项目的个人访问令牌。沙盒还需要团队套餐的读取权限。",
     "machineVercel.vcpus": "虚拟 CPU 数",
     "managedPurpose.anthropic.title": "Claude 帐户或帐户池",
+    "managedPurpose.antigravity.title": "Antigravity 帐户或帐户池",
+    "managedPurpose.devin.title": "Devin 帐户或帐户池",
     "managedPurpose.gemini.title": "Gemini API 密钥账户或账户池",
+    "managedPurpose.kimi.title": "Kimi Code 帐户或帐户池",
     "managedPurpose.meta.title": "Muse 账户或池",
     "managedPurpose.openai.title": "ChatGPT 帐户或帐户池",
+    "managedPurpose.unavailable.sdkRegistration": "当前网关运行时不支持此账号类型。",
+    "managedPurpose.xai.title": "xAI 帐户或帐户池",
     "plugins.appContext.annotation.note": "你的备注",
     "plugins.appContext.annotation.refused": "暂时无法保存此备注，内容仍保留在这里。如果你正在编辑待发送的消息，请先完成编辑。",
     "plugins.appContext.annotation.save": "保存备注",
@@ -48821,9 +48878,14 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.tokenDescription": "使用所選團隊或專案的個人存取權杖。沙盒還需要團隊方案的讀取權限。",
     "machineVercel.vcpus": "虛擬 CPU 數",
     "managedPurpose.anthropic.title": "Claude 帳戶或帳戶集區",
+    "managedPurpose.antigravity.title": "Antigravity 帳戶或帳戶集區",
+    "managedPurpose.devin.title": "Devin 帳戶或帳戶集區",
     "managedPurpose.gemini.title": "Gemini API 金鑰帳戶或帳戶池",
+    "managedPurpose.kimi.title": "Kimi Code 帳戶或帳戶集區",
     "managedPurpose.meta.title": "Muse 帳戶或集區",
     "managedPurpose.openai.title": "ChatGPT 帳戶或帳戶集區",
+    "managedPurpose.unavailable.sdkRegistration": "目前的閘道執行環境不支援此帳號類型。",
+    "managedPurpose.xai.title": "xAI 帳戶或帳戶集區",
     "plugins.appContext.annotation.note": "你的備註",
     "plugins.appContext.annotation.refused": "暫時無法儲存此備註，內容仍保留在這裡。如果你正在編輯待傳送的訊息，請先完成編輯。",
     "plugins.appContext.annotation.save": "儲存備註",
@@ -52937,6 +52999,7 @@ export type BundledPluginTranslationKey =
     | 'agentInput.agent.fx'
     | 'agentInput.agent.grok'
     | 'agentInput.agent.kimi'
+    | 'agentInput.agent.muse'
     | 'agentInput.connectedServiceLabel.claude'
     | 'agentInput.connectedServiceLabel.codex'
     | 'agentInput.connectedServiceLabel.copilot'
@@ -53236,9 +53299,14 @@ export type BundledPluginTranslationKey =
     | 'machineVercel.tokenDescription'
     | 'machineVercel.vcpus'
     | 'managedPurpose.anthropic.title'
+    | 'managedPurpose.antigravity.title'
+    | 'managedPurpose.devin.title'
     | 'managedPurpose.gemini.title'
+    | 'managedPurpose.kimi.title'
     | 'managedPurpose.meta.title'
     | 'managedPurpose.openai.title'
+    | 'managedPurpose.unavailable.sdkRegistration'
+    | 'managedPurpose.xai.title'
     | 'plugins.appContext.annotation.note'
     | 'plugins.appContext.annotation.refused'
     | 'plugins.appContext.annotation.save'
@@ -57239,6 +57307,7 @@ export type BundledPluginTranslationKey =
     | 'profiles.aiBackend.fxSubtitleExperimental'
     | 'profiles.aiBackend.grokSubtitleExperimental'
     | 'profiles.aiBackend.kimiSubtitleExperimental'
+    | 'profiles.aiBackend.museSubtitle'
     | 'session.subagents.launch.description'
     | 'session.subagents.launch.instructions'
     | 'session.subagents.launch.intro'

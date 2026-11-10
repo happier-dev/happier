@@ -321,16 +321,17 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
       .flatMap((entry) => (entry.agentUiDescriptor ? [createDescriptorAgentUiProjectionSource(entry, entry.agentUiDescriptor)] : []))
       .map((source) => [source.agentId, source] as const),
   );
-  const uiProjectionOrder = new Set(AGENT_UI_PROJECTION_ORDER);
+  const uiProjectionOrder = [...AGENT_UI_PROJECTION_ORDER];
+  const orderedAgentIds = new Set(uiProjectionOrder);
   for (const agentId of descriptorSourcesByAgentId.keys()) {
-    if (!uiProjectionOrder.has(agentId)) {
-      throw new Error(`Bundled agent UI descriptor '${agentId}' is missing from AGENT_UI_PROJECTION_ORDER`);
-    }
+    if (orderedAgentIds.has(agentId)) continue;
+    uiProjectionOrder.push(agentId);
+    orderedAgentIds.add(agentId);
   }
   const bundledAgentIds = new Set(
     params.pluginPackages.flatMap((entry) => (entry.agentId ? [entry.agentId] : [])),
   );
-  const selectedProjectionSources = AGENT_UI_PROJECTION_ORDER.flatMap((agentId) => {
+  const selectedProjectionSources = uiProjectionOrder.flatMap((agentId) => {
     if (!bundledAgentIds.has(agentId)) return [];
     const descriptorSource = descriptorSourcesByAgentId.get(agentId);
     if (!descriptorSource) return [];
@@ -395,24 +396,24 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
   lines.push(renderBundledPluginPresentationTs(params.pluginPackages));
   lines.push('');
   lines.push('export const BUNDLED_CANONICAL_AGENTS_CORE: Readonly<Partial<Record<CanonicalAgentId, AgentCoreConfig>>> = Object.freeze({');
-  for (const agentId of AGENT_UI_PROJECTION_ORDER) {
+  for (const agentId of uiProjectionOrder) {
     const valueName = selectedProjectionSourcesByAgentId.get(agentId)?.coreConst;
     if (!valueName) {
       if (!bundledAgentIds.has(agentId)) continue;
       throw new Error(`Missing UI core projection source for ${agentId}`);
     }
-    lines.push(`    ${agentId}: ${valueName},`);
+    lines.push(`    ${renderTsStringLiteral(agentId)}: ${valueName},`);
   }
   lines.push('} satisfies Readonly<Partial<Record<CanonicalAgentId, AgentCoreConfig>>>);');
   lines.push('');
   lines.push('export const BUNDLED_CANONICAL_AGENTS_UI: Readonly<Partial<Record<CanonicalAgentId, AgentUiConfig>>> = Object.freeze({');
-  for (const agentId of AGENT_UI_PROJECTION_ORDER) {
+  for (const agentId of uiProjectionOrder) {
     const valueName = selectedProjectionSourcesByAgentId.get(agentId)?.uiConst;
     if (!valueName) {
       if (!bundledAgentIds.has(agentId)) continue;
       throw new Error(`Missing UI projection source for ${agentId}`);
     }
-    lines.push(`    ${agentId}: ${valueName},`);
+    lines.push(`    ${renderTsStringLiteral(agentId)}: ${valueName},`);
   }
   lines.push('} satisfies Readonly<Partial<Record<CanonicalAgentId, AgentUiConfig>>>);');
   lines.push('');

@@ -3509,10 +3509,14 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "vendorResume": "unsupported"
     },
     "runtimeInput": {
-      "inFlightSteerSupported": false,
+      "inFlightSteerSupported": true,
       "terminalPromptInjectionSupported": false
     },
     "sessionCapabilities": {
+      "compaction": {
+        "events": true,
+        "manual": true
+      },
       "sessionFork": {
         "conversation": "unsupported",
         "fromMessage": "unsupported"
@@ -3540,7 +3544,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     ],
     "defaultMode": "default",
     "dynamicProbe": "auto",
-    "nonAcpApplyScope": "spawn_only",
+    "nonAcpApplyScope": "next_prompt",
     "supportsFreeform": false,
     "supportsSelection": true
   },

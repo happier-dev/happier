@@ -12,6 +12,8 @@ import { renderBundledAgentPresentationTs, renderUiBundledPluginEntriesTs } from
 import { renderBundledAgentDeclarationTypeTs, renderBundledAgentDeclarationsTs, renderBundledUiDeclarationImportsTs } from './uiDeclarations.ts';
 import { CLAUDE_UI_DESCRIPTOR } from '../../../../../packages/plugins/claude/src/ui/descriptor';
 import { PLUGIN_MANIFEST as CLAUDE_MANIFEST } from '../../../../../packages/plugins/claude/src/manifest';
+import { MUSE_UI_DESCRIPTOR } from '../../../../../packages/plugins/muse/src/ui/descriptor';
+import { PLUGIN_MANIFEST as MUSE_MANIFEST } from '../../../../../packages/plugins/muse/src/manifest';
 import { renderCliBundledPluginEntriesTs, renderCliBundledPluginManifestEntriesTs } from './registry.ts';
 import { renderAgentIdsTs } from './agentFacts.ts';
 import type { BundledPluginPackage } from './projectionFacts.ts';
@@ -40,6 +42,36 @@ function emittedMapKeys(source: string, name: string): string[] {
 }
 
 describe('bundled Agent exclusion projections', () => {
+    it('keeps released UI order and appends admitted descriptor routing ids generically', () => {
+        const claude = ingestPluginManifestV2(CLAUDE_MANIFEST);
+        const muse = ingestPluginManifestV2(MUSE_MANIFEST);
+        if (!claude.ok) throw new Error(JSON.stringify(claude.diagnostics));
+        if (!muse.ok) throw new Error(JSON.stringify(muse.diagnostics));
+
+        const novelRoutingId = 'novel-routing-id';
+        const pluginPackages: readonly BundledPluginPackage[] = [{
+            pluginPackageId: 'muse', pluginId: muse.manifest.id, packageName: '@happier-dev/plugins-muse',
+            packageVersion: '0.0.0', agentId: 'muse', manifest: muse.manifest,
+            agentUiDescriptor: MUSE_UI_DESCRIPTOR,
+        }, {
+            // The routing id deliberately differs from the real manifest-local id,
+            // matching the supported qualified-routing projection shape.
+            pluginPackageId: 'novel-order-fixture', pluginId: claude.manifest.id,
+            packageName: '@happier-dev/plugins-claude', packageVersion: '0.0.0',
+            agentId: novelRoutingId, manifest: claude.manifest,
+            agentUiDescriptor: { ...CLAUDE_UI_DESCRIPTOR, agentId: novelRoutingId },
+        }, {
+            pluginPackageId: 'claude', pluginId: claude.manifest.id, packageName: '@happier-dev/plugins-claude',
+            packageVersion: '0.0.0', agentId: 'claude', manifest: claude.manifest,
+            agentUiDescriptor: CLAUDE_UI_DESCRIPTOR,
+        }];
+
+        const ui = renderUiBundledPluginEntriesTs({ packageNames: [], pluginPackages });
+        const expectedOrder = ['claude', 'muse', novelRoutingId];
+        expect(emittedMapKeys(ui, 'BUNDLED_CANONICAL_AGENTS_CORE')).toEqual(expectedOrder);
+        expect(emittedMapKeys(ui, 'BUNDLED_CANONICAL_AGENTS_UI')).toEqual(expectedOrder);
+    });
+
     it('preserves the declared Claude organization usage requirement in the bundled account fallback', () => {
         const parsed = ingestPluginManifestV2(CLAUDE_MANIFEST);
         if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));

@@ -878,4 +878,41 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
     },
     "sourceKind": "copilotHome"
   },
+  {
+    "agentId": "muse",
+    "instances": [
+      {
+        "constants": {},
+        "kind": "default"
+      }
+    ],
+    "key": {
+      "segments": [
+        {
+          "kind": "literal",
+          "value": "museNative"
+        },
+        {
+          "field": "museHome",
+          "kind": "field"
+        }
+      ]
+    },
+    "schema": {
+      "fields": [
+        {
+          "kind": "literal",
+          "name": "kind",
+          "value": "museNative"
+        },
+        {
+          "kind": "string",
+          "min": 1,
+          "name": "museHome",
+          "nullish": true
+        }
+      ]
+    },
+    "sourceKind": "museNative"
+  },
 ] as const;

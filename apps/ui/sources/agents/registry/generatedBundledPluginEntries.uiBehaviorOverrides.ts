@@ -640,6 +640,23 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
   }
 } as const),
     }),
+    muse: Object.freeze({
+        agentId: 'muse' as CanonicalAgentId,
+        descriptor: Object.freeze({
+  "accountingSourcePresentation": [
+    {
+      "sourceId": "muse-native-accounting",
+      "title": {
+        "fallback": "usage · {agent}",
+        "key": "usage.board.page.sourceAccountingAgent",
+        "params": {
+          "agent": "Muse"
+        }
+      }
+    }
+  ]
+} as const),
+    }),
     ohMyPi: Object.freeze({
         agentId: 'ohMyPi' as CanonicalAgentId,
         descriptor: Object.freeze({
