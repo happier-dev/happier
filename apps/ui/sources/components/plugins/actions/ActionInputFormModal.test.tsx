@@ -176,6 +176,29 @@ describe('ActionInputFormModal', () => {
         await act(async () => { form.retire(); });
     });
 
+    it('offers adding a Connected Account beside a Connected Account choice that already has accounts', async () => {
+        const setChrome = vi.fn();
+        const form = createActionInputForm({
+            presentation: { title: 'Set up Discord Channels', description: null, choosesConnectedAccount: true, inputHints: { fields: [{
+                path: 'credentialRef', title: 'Connected account', widget: 'select',
+                options: [{ value: 'account-1', label: 'Happier QA Bot' }],
+            }] } },
+            submit: async () => ({ ok: true }),
+        });
+        try {
+            const screen = await renderScreen(<ActionInputFormModal form={form} onClose={vi.fn()} setChrome={setChrome} />);
+            const chrome = setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter;
+            const handoff = React.Children.toArray(chrome.footer.props.children)
+                .find((child): child is React.ReactElement<RoundButtonProps> => (
+                    React.isValidElement<RoundButtonProps>(child)
+                    && child.props.testID === 'plugin-contributed-action-form-repair-connected-accounts'
+                ));
+            expect(handoff).toBeDefined();
+            // The choice is not empty, so nothing says it is.
+            expect(screen.findAllByTestId('plugin-contributed-action-form-connected-accounts-empty')).toHaveLength(0);
+        } finally { await act(async () => { form.retire(); }); }
+    });
+
     it.each([null, { machineId: 'settings-machine', serverId: 'settings-home' }])(
         'repairs empty Connected Account options on the admitted form target %j', async pickerContext => {
             const { Modal } = await import('@/modal');

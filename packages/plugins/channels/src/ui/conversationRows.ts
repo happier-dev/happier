@@ -677,6 +677,25 @@ export function connectionLabel(connection: ChannelsConnection): string {
     : shortRowIdentity(connection.connectionId);
 }
 
+/**
+ * The detail that tells apart connections a list would otherwise show identically: two bots with
+ * one name on one provider (two GitHub apps both called "leeroybrun"). Each such connection maps to
+ * its short row identity; a connection whose name is unique among its siblings is absent.
+ */
+export function connectionTwinIdentities(connections: readonly ChannelsConnection[]): ReadonlyMap<string, string> {
+  const byName = new Map<string, ChannelsConnection[]>();
+  for (const connection of connections) {
+    const key = `${connection.providerPluginId}\u0000${connectionLabel(connection)}`;
+    byName.set(key, [...(byName.get(key) ?? []), connection]);
+  }
+  const twins = new Map<string, string>();
+  for (const group of byName.values()) {
+    if (group.length < 2) continue;
+    for (const connection of group) twins.set(connection.connectionId, shortRowIdentity(connection.connectionId));
+  }
+  return twins;
+}
+
 export function providerReadinessLabel(
   providerReadiness: NonNullable<ConnectionProviderReadiness>,
   t: Translate,

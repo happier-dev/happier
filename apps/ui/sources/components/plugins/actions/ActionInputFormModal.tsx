@@ -97,6 +97,9 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
     const hasResolvedEmptyConnectedAccountOptions = fields.some((field) => (
         field.resolvedEmptyConnectedAccountOptions === true
     ));
+    // A Connected Account choice always offers adding one: the right account may not exist yet.
+    const offersConnectedAccounts = hasResolvedEmptyConnectedAccountOptions
+        || props.form.presentation.choosesConnectedAccount === true;
 
     const close = React.useCallback(() => {
         props.form.cancel();
@@ -145,7 +148,7 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
 
     const footer = React.useMemo(() => (
         <ModalCardFooterActions cancel={{ onPress: close, testID: 'plugin-contributed-action-form-cancel' }}>
-            {hasResolvedEmptyConnectedAccountOptions ? (
+            {offersConnectedAccounts ? (
                 <RoundButton
                     testID="plugin-contributed-action-form-repair-connected-accounts"
                     accessibilityLabel={t('connectedServices.title')}
@@ -163,7 +166,7 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 onPress={submit}
             />
         </ModalCardFooterActions>
-    ), [close, hasResolvedEmptyConnectedAccountOptions, pending, props.form.presentation.inputHints.submitLabel, props.form.presentation.title, repairConnectedAccounts, submit]);
+    ), [close, offersConnectedAccounts, pending, props.form.presentation.inputHints.submitLabel, props.form.presentation.title, repairConnectedAccounts, submit]);
 
     const chrome = React.useMemo(() => ({
         ...createAnchoredSheetChrome({ title, subtitle: description ?? undefined, anchor: props.anchor }),

@@ -40,7 +40,7 @@ afterEach(() => {
  */
 async function renderPanel(
   fit: 'shrink' | 'shift' | undefined,
-  over: Readonly<{ placement?: 'top' | 'bottom'; anchorTop?: number; flip?: boolean; contentHeight?: number; cap?: number | 'default' }> = {},
+  over: Readonly<{ placement?: 'top' | 'bottom'; anchorTop?: number; flip?: boolean; contentHeight?: number; cap?: number | 'default'; minSpace?: number }> = {},
 ) {
   const { Popover } = await import('./Popover');
   const { OverlayPortalProvider, OverlayPortalHost } =
@@ -73,6 +73,7 @@ async function renderPanel(
           {...(over.cap === 'default' ? {} : { maxHeightCap: over.cap ?? 600 })}
           maxWidthCap={900}
           {...(fit ? { fit } : {})}
+          {...(over.minSpace === undefined ? {} : { placementMinSpace: over.minSpace })}
         >
           {({ maxHeight }) => {
             seen.push(maxHeight);
@@ -135,6 +136,19 @@ describe('Popover: a designed panel keeps its size when neither side of its trig
     // pinned to the trigger it would start 400 above the window, so its bottom edge is held down instead.
     const { style } = await renderPanel(undefined, { placement: 'top', flip: false, anchorTop: 100, contentHeight: 500 });
     expect(800 - Number(style.bottom) - 500).toBeGreaterThanOrEqual(0);
+  });
+
+  it('opens a short dropdown below its field when it fits there, instead of covering the help line above it', async () => {
+    // A Connected Account field low in a setup popover: 800 - 532 - 8 = 260 below, under the 320 a window-bounded
+    // dropdown usually wants, so the side heuristic picks above. Its one row (48) fits below, so it hangs below.
+    const { panelTop, direction } = await renderPanel(undefined, { anchorTop: 500, contentHeight: 48, cap: 'default', minSpace: 320 });
+    expect(panelTop).toBe(500 + 32 + 8);
+    expect(direction).toBe('bottom');
+  });
+
+  it('still opens a dropdown above its field when its measured content does not fit below', async () => {
+    const { direction } = await renderPanel(undefined, { anchorTop: 500, contentHeight: 300, cap: 'default', minSpace: 320 });
+    expect(direction).toBe('top');
   });
 
   it('keeps shrinking menus to the larger side by default', async () => {

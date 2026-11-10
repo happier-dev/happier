@@ -137,7 +137,16 @@ type NativeCredentialFormChoice = Readonly<{
 type ResolvedCredentialFormHints = Readonly<{
     inputHints: ActionInputHints;
     nativeChoices: readonly NativeCredentialFormChoice[];
+    /** One field's choices came from the person's Connected Accounts. */
+    choosesConnectedAccount?: true;
 }>;
+
+function presentResolvedCredentialFormHints(hints: ResolvedCredentialFormHints) {
+    return {
+        inputHints: hints.inputHints,
+        ...(hints.choosesConnectedAccount ? { choosesConnectedAccount: true as const } : {}),
+    };
+}
 
 function resolveNativeCredentialFormInput(candidate: Readonly<Record<string, unknown>>, choices: readonly NativeCredentialFormChoice[]) {
     let input = candidate;
@@ -1189,10 +1198,10 @@ export function createPluginContributedActionController(params: Readonly<{
 
     function createForm(
         resolved: ResolvedAction,
-        inputHints: ActionInputHints,
-        nativeChoices: readonly NativeCredentialFormChoice[] = [],
+        hints: ResolvedCredentialFormHints,
         anchor?: PopoverAnchor,
     ): PluginContributedActionForm {
+        const { inputHints, nativeChoices } = hints;
         const form = createActionInputForm<
             PluginSurfaceActionDispatchOutcome,
             PluginContributedActionUnavailableOutcome['reason'],
@@ -1201,7 +1210,7 @@ export function createPluginContributedActionController(params: Readonly<{
             presentation: {
                 title: resolved.descriptor.title,
                 description: resolved.descriptor.description,
-                inputHints,
+                ...presentResolvedCredentialFormHints(hints),
             },
             ...(isSessionRowPlacement(resolved.snapshot, resolved.descriptor.placement, resolved.descriptor.scope) ? { initialInput: seedSessionRowInput(
                 resolved.snapshot, resolved.identity, seedInputByFieldHints({ inputHints }, {}),
@@ -1300,7 +1309,7 @@ export function createPluginContributedActionController(params: Readonly<{
             // This transient view is the exact host-produced option result for
             // this one form lifetime. It removes the dynamic marker so the
             // renderer cannot re-resolve, cache, or re-authorize accounts.
-            return { nativeChoices, inputHints: ActionInputHintsSchema.parse({
+            return { nativeChoices, choosesConnectedAccount: true, inputHints: ActionInputHintsSchema.parse({
                 ...resolved.descriptor.inputHints,
                 fields: resolved.descriptor.inputHints.fields.map((field) => {
                     if (field.connectedAccountOptions !== true) return field;
@@ -1489,7 +1498,7 @@ export function createPluginContributedActionController(params: Readonly<{
             : { kind: 'unavailable', reason: 'host_unavailable' };
         const options = result.result.options.map(({ value, label }) => ({ value, label }));
         try {
-            return { nativeChoices: readNativeCredentialFormChoices(field.path, result.result.options), inputHints: ActionInputHintsSchema.parse({
+            return { nativeChoices: readNativeCredentialFormChoices(field.path, result.result.options), choosesConnectedAccount: true, inputHints: ActionInputHintsSchema.parse({
                 ...inputHints,
                 fields: inputHints.fields.map((candidate) => {
                     if (candidate.path !== field.path) return candidate;
@@ -1677,7 +1686,7 @@ export function createPluginContributedActionController(params: Readonly<{
             presentation: {
                 title: presentation.title,
                 description: presentation.description,
-                inputHints: resolvedHints.inputHints,
+                ...presentResolvedCredentialFormHints(resolvedHints),
             },
             initialInput: draft,
             accountLifetime: resolved.snapshot.host.accountLifetime,
@@ -1894,7 +1903,7 @@ export function createPluginContributedActionController(params: Readonly<{
                 return {
                     kind: 'form',
                     action: prepared.value.descriptor,
-                    form: createForm(prepared.value, inputHints.inputHints, inputHints.nativeChoices, anchor),
+                    form: createForm(prepared.value, inputHints, anchor),
                 };
             }
             const submitted = await dispatchResolvedAction(
@@ -1988,7 +1997,7 @@ export function createPluginContributedActionController(params: Readonly<{
                 return {
                     kind: 'form',
                     action: prepared.value.descriptor,
-                    form: createForm(prepared.value, inputHints.inputHints, inputHints.nativeChoices, anchor),
+                    form: createForm(prepared.value, inputHints, anchor),
                 };
             }
             const submitted = await dispatchResolvedAction(

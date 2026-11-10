@@ -954,11 +954,17 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     // The side the popover is shown on, which its position and its entrance both follow. A designed panel
     // (`fit: 'shift'`) that placement hung below its trigger is measured at its own height: when it does not fit
     // below but fits above, it opens above, whole, instead of sliding up over the trigger; it slides only when it
-    // fits on neither side.
+    // fits on neither side. Likewise a popover asked to open below that the room heuristic moved above (a short
+    // dropdown low in a dialog) opens below after all once its measured content fits there, so it never covers
+    // the field's own label and help line.
     const shownPlacement: PopoverLayoutProps['placement'] = (() => {
-        if (computed.placement !== 'bottom' || props.fit !== 'shift' || !anchorRectState || !contentRectState) return computed.placement;
+        if (!anchorRectState || !contentRectState) return computed.placement;
+        const shiftedPanel = computed.placement === 'bottom' && props.fit === 'shift';
+        const flippedFromBottom = computed.placement === 'top' && placement === 'bottom';
+        if (!shiftedPanel && !flippedFromBottom) return computed.placement;
         const boundary = boundaryRectState ?? getFallbackBoundaryRect({ windowWidth, windowHeight });
         const fitsBelow = anchorRectState.y + anchorRectState.height + gap + contentRectState.height <= boundary.y + boundary.height;
+        if (flippedFromBottom) return fitsBelow ? 'bottom' : 'top';
         const fitsAbove = anchorRectState.y - gap - contentRectState.height >= boundary.y;
         return !fitsBelow && fitsAbove ? 'top' : 'bottom';
     })();

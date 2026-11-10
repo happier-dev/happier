@@ -9,6 +9,11 @@ export type ActionInputFormPresentation = Readonly<{
     description: string | null;
     /** The already-normalized Protocol descriptor; this form never infers fields from a schema. */
     inputHints: ActionInputHints;
+    /**
+     * The host resolved one of this form's choices from the person's Connected Accounts, so the form can offer
+     * adding one beside it. Resolution removes the field's own marker, so the host states it here.
+     */
+    choosesConnectedAccount?: true;
 }>;
 
 export type ActionInputFormSubmissionResult = Readonly<{ ok: boolean }

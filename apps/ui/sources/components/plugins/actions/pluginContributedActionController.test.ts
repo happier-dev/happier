@@ -2796,6 +2796,8 @@ describe('plugin contributed Action controller', () => {
         const field = opened.form.presentation.inputHints.fields[0];
         const option = field?.options?.[0];
         if (!option || typeof option.value === 'string') throw new Error('expected host-resolved account ref');
+        // The form chooses a Connected Account, so it can offer adding another one.
+        expect(opened.form.presentation.choosesConnectedAccount).toBe(true);
 
         expect(resolveConnectedAccountOptions).toHaveBeenCalledWith(MACHINE_ID, expect.objectContaining({
             serverId: SERVER_ID,

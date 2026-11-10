@@ -846,7 +846,7 @@ async function openBindingEndpointSelection(
 ): Promise<void> {
   await fixture.press(await fixture.getByRole('button', { name: 'Add binding' }));
   await enterTextByTestId('channels-binding-create-endpoint-query', bindingEndpointSelection.query);
-  await fixture.press(await fixture.getByRole('button', { name: 'Search endpoints' }));
+  await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
   await fixture.press(await fixture.getByRole('button', { name: candidateLabel }));
 }
 
@@ -2773,7 +2773,7 @@ describe('Channels mounted binding creation', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Add binding' }));
       await expectBindingCreateStage(fixture, { title: 'Choose a conversation', hasBack: false });
       await enterTextByTestId('channels-binding-create-endpoint-query', bindingEndpointSelection.query);
-      await fixture.press(await fixture.getByRole('button', { name: 'Search endpoints' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
       await fixture.press(await fixture.getByRole('button', { name: bindingEndpointCandidate.label }));
       await expectBindingCreateStage(fixture, { title: 'Choose an allowed sender', hasBack: true });
 
@@ -2875,7 +2875,7 @@ describe('Channels mounted binding creation', () => {
       expect(document.querySelector('[data-testid="channels-binding-create-open"]')).toBeNull();
 
       await enterTextByTestId('channels-binding-create-endpoint-query', bindingEndpointSelection.query);
-      await fixture.press(await fixture.getByRole('button', { name: 'Search endpoints' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
       await fixture.press(await fixture.getByRole('button', { name: bindingEndpointCandidate.label }));
       const principalHeading = headingFor('Choose an allowed sender');
       expect(principalHeading).toBeDefined();
@@ -2997,7 +2997,7 @@ describe('Channels mounted binding creation', () => {
     try {
       await fixture.press(await fixture.getByRole('button', { name: 'Add binding' }));
       await enterTextByTestId('channels-binding-create-endpoint-query', endpointSelection.query);
-      await fixture.press(await fixture.getByRole('button', { name: 'Search endpoints' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
       await vi.waitFor(() => {
         expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
           action: 'binding/resolve-v1',
@@ -3255,7 +3255,7 @@ describe('Channels mounted binding creation', () => {
     try {
       await fixture.press(await fixture.getByRole('button', { name: 'Add binding' }));
       await enterTextByTestId('channels-binding-create-endpoint-query', endpointSelection.query);
-      await fixture.press(await fixture.getByRole('button', { name: 'Search endpoints' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
       await vi.waitFor(() => {
         expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
           action: 'binding/resolve-v1',
@@ -4458,7 +4458,7 @@ describe('Channels mounted binding creation', () => {
         await fixture.press(await fixture.getByRole('button', { name: 'Review binding' }));
         await fixture.press(await fixture.getByRole('button', { name: 'Create pairing challenge' }));
         await expect(fixture.getByText(refusal.title)).resolves.toBeDefined();
-        expect(document.body.textContent).not.toContain('Could not create the binding');
+        expect(document.body.textContent).not.toContain('Couldn’t link this conversation');
       } finally {
         await fixture.dispose();
       }
@@ -4469,7 +4469,7 @@ describe('Channels mounted binding creation', () => {
     const settlements = [
       {
         result: { kind: 'unavailable', reason: 'providerUnavailable' } as const,
-        expectedTitle: 'Binding setup is unavailable',
+        expectedTitle: 'The bot couldn’t look this up',
       },
       {
         result: { kind: 'stale' } as const,
@@ -4511,6 +4511,133 @@ describe('Channels mounted binding creation', () => {
       } finally {
         await fixture.dispose();
       }
+    }
+  });
+
+  it('lets the link step choose a bot by its health, provider mark and a detail that tells same-named bots apart (CH-FIRST-CONTACT F2/F4)', async () => {
+    const connectionRow = (connectionId: string, label: string, readiness?: 'providerCredentialInvalid') => ({
+      connectionId,
+      revision: 1,
+      authorityEpoch: 1,
+      providerPluginId: providerSetupOperation.contributor.pluginId,
+      selectedMachineId: 'machine-1',
+      selectedTransport: 'checkpointedPull',
+      integrationPrincipalLabel: label,
+      enabled: true,
+      deletionState: 'none',
+      attention: {
+        historyGap: null,
+        ...(readiness === undefined ? {} : { providerReadiness: { code: readiness } }),
+        pollFailure: null,
+        bestEffortBeforeDurableAdmission: false,
+        oldTransportStopUnconfirmed: false,
+        endpointRetargetOwed: false,
+        acceptedPossibleLoss: false,
+        outwardDelivery: { retryDue: false, notDelivered: false, partial: false, outcomeUnknown: false },
+      },
+    });
+    const connections = jsonResource({ connections: [
+      connectionRow('connection-aaaa1111', 'leeroybrun'),
+      connectionRow('connection-bbbb2222', 'leeroybrun', 'providerCredentialInvalid'),
+      connectionRow('connection-cccc3333', 'Happier QA Bot'),
+    ] }, '7');
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-ch-f2', mountNonce: 'fixture-mount-ch-f2' },
+      authorPlugin: { id: 'happier.channels', version: '0.0.0' },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction: async ({ action }) => { throw new Error(`Unexpected mounted Action: ${String(action)}`); },
+        readResource: async ({ resource }) => {
+          const localId = resourceFixtureLocalId(resource);
+          if (localId === BINDINGS_RESOURCE.localId) return bindingsResource;
+          if (localId === CONNECTIONS_RESOURCE.localId) return connections;
+          throw new Error(`Unexpected Resource: ${localId}`);
+        },
+      },
+    });
+    const row = (id: string) => document.querySelector<HTMLElement>(`[data-testid="channels-binding-create-connection-${id}"]`);
+
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Add binding' }));
+      await vi.waitFor(() => expect(row('connection-aaaa1111')).not.toBeNull());
+      // The broken bot carries the same health fact the bot's settings show.
+      expect(document.querySelector('[data-testid="channels-binding-create-connection-status-connection-bbbb2222"]')?.textContent)
+        .toContain('Connected Account credential needs attention');
+      expect(document.querySelector('[data-testid="channels-binding-create-connection-status-connection-aaaa1111"]')).toBeNull();
+      // Every row carries its provider's mark.
+      for (const id of ['connection-aaaa1111', 'connection-bbbb2222', 'connection-cccc3333']) {
+        expect(document.querySelector(`[data-testid="channels-binding-create-connection-brand-${id}"]`)).not.toBeNull();
+      }
+      // Two bots with one name and provider each say which one they are; a unique name says nothing more.
+      expect(row('connection-aaaa1111')?.textContent).toContain('aaaa1111');
+      expect(row('connection-bbbb2222')?.textContent).toContain('bbbb2222');
+      expect(row('connection-cccc3333')?.textContent).not.toContain('cccc3333');
+
+      await pressByTestId('channels-binding-create-connection-connection-bbbb2222');
+      const attention = document.querySelector<HTMLElement>('[data-testid="channels-binding-create-connection-attention"]');
+      expect(attention?.textContent).toContain('Connected Account credential needs attention');
+      await fixture.press(await fixture.getByRole('button', { name: 'Manage bot' }));
+      // The repair is the bot's own settings row, opened where it stands.
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-testid="channels-connection-connection-bbbb2222"]')?.getAttribute('aria-expanded')).toBe('true');
+      });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it('says in plain words what a failed search and a failed link mean, each with its own message (CH-FIRST-CONTACT F2/F2b)', async () => {
+    let failSearch = true;
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
+        if (failSearch) throw new Error('provider did not answer');
+        return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
+          ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
+          : { kind: 'principalCandidates', candidates: [bindingPrincipalCandidate] };
+      }
+      if (action === 'session.list') {
+        return createSessionCandidatePageFixture({ sessions: [{ id: 'session-1', title: 'Project review' }], nextCursor: null });
+      }
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingCreate) throw new Error('writer did not answer');
+      throw new Error(`Unexpected mounted Action: ${String(action)}`);
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-ch-f2b', mountNonce: 'fixture-mount-ch-f2b' },
+      authorPlugin: { id: 'happier.channels', version: '0.0.0' },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction,
+        readResource: bindingResourceReader(),
+      },
+    });
+    const banner = () => document.querySelector<HTMLElement>('[data-testid="channels-binding-create-feedback"]')?.textContent ?? '';
+
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Add binding' }));
+      await enterTextByTestId('channels-binding-create-endpoint-query', bindingEndpointSelection.query);
+      await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
+      await vi.waitFor(() => expect(banner()).toContain('The bot couldn’t look this up'));
+      expect(banner()).not.toMatch(/binding|endpoint/i);
+      // The next step is real: the bot's own settings.
+      await expect(fixture.getByRole('button', { name: 'Manage bot' })).resolves.toBeDefined();
+
+      failSearch = false;
+      await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
+      await fixture.press(await fixture.getByRole('button', { name: bindingEndpointCandidate.label }));
+      await selectPrincipalAndOpenTarget(fixture);
+      await fixture.press(await fixture.getByRole('button', { name: 'Project review' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Review binding' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Link conversation' }));
+      await vi.waitFor(() => expect(banner()).toContain('Couldn’t link this conversation'));
+      expect(banner()).not.toContain('The bot couldn’t look this up');
+    } finally {
+      await fixture.dispose();
     }
   });
 
@@ -4557,7 +4684,7 @@ describe('Channels mounted binding creation', () => {
       try {
         await fixture.press(await fixture.getByRole('button', { name: 'Add binding' }));
         await enterTextByTestId('channels-binding-create-endpoint-query', 'Project room');
-        await fixture.press(await fixture.getByRole('button', { name: 'Search endpoints' }));
+        await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
         await vi.waitFor(() => {
           for (const text of settlement.expected) expect(document.body.textContent).toContain(text);
         });
@@ -5599,7 +5726,7 @@ describe('Channels mounted binding editor', () => {
         name: 'Re-resolve conversation and allowed senders',
       }));
       await enterTextByAccessibleLabel('Conversation search', 'fork pull request');
-      await fixture.press(await fixture.getByRole('button', { name: 'Search endpoints' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
       await fixture.press(await fixture.getByRole('button', { name: externalEndpoint.label }));
       await fixture.press(await fixture.getByRole('button', { name: 'Back' }));
       expect(Array.from(document.querySelectorAll<HTMLInputElement>('input')).find((candidate) => (
@@ -5785,7 +5912,7 @@ describe('Channels mounted binding editor', () => {
         name: 'Re-resolve conversation and allowed senders',
       }));
       await enterTextByAccessibleLabel('Conversation search', 'fork pull request');
-      await fixture.press(await fixture.getByRole('button', { name: 'Search endpoints' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
       await fixture.press(await fixture.getByRole('button', { name: externalEndpoint.label }));
       await enterTextByAccessibleLabel('People search', 'reviewer');
       await fixture.press(await fixture.getByRole('button', { name: 'Search people' }));
@@ -10614,7 +10741,7 @@ describe('Channels first connection continuation', () => {
       // the incumbent binding journey opens with the new connection selected
       // and no second connection mutation is dispatched.
       await enterTextByTestId('channels-binding-create-endpoint-query', bindingEndpointSelection.query);
-      await fixture.press(await fixture.getByRole('button', { name: 'Search endpoints' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
       await vi.waitFor(() => {
         expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
           action: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve,
@@ -11054,7 +11181,7 @@ describe('Channels page (the one owner of linked conversations)', () => {
         expect(document.querySelector('[data-testid="channels-binding-create-endpoint-query"]')).not.toBeNull();
       });
       await enterTextByTestId('channels-binding-create-endpoint-query', 'ada-direct');
-      await fixture.press(await fixture.getByRole('button', { name: 'Search endpoints' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
       await fixture.press(await fixture.findByRole('button', { name: 'Ada direct' }));
       await enterTextByTestId('channels-binding-create-principal-query', principalSelection.query);
       await fixture.press(await fixture.getByRole('button', { name: 'Search people' }));
