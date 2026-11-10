@@ -201,4 +201,29 @@ describe('Icon accessibility props', () => {
             renderer?.unmount();
         });
     });
+
+    it.each(['hugeicons', 'phosphor'] as const)('draws every supported icon on native with the %s family', async (family) => {
+        platformState.os = 'ios';
+        const { Icon } = await import('./Icon');
+        const { ICON_REGISTRY } = await import('./iconRegistry.generated');
+        const { setIconFamily } = await import('./iconFamily');
+        setIconFamily(family);
+        const names = Object.keys(ICON_REGISTRY) as (keyof typeof ICON_REGISTRY)[];
+        let renderer: TestRenderer.ReactTestRenderer | null = null;
+        try {
+            await actRenderer(async () => {
+                renderer = TestRenderer.create(<>{names.map(name => <Icon key={name} name={name} testID={name} />)}</>);
+            });
+            if (!renderer) throw new Error('Expected the native icon catalog to render');
+            const catalog = renderer as TestRenderer.ReactTestRenderer;
+            const drawings = catalog.root.findAllByType('svg');
+            expect(drawings.map(drawing => drawing.props['data-testid'])).toEqual(names);
+            for (const drawing of drawings) {
+                expect(drawing.findAll(node => ['path', 'circle', 'rect', 'line'].includes(String(node.type))).length,
+                    drawing.props['data-testid']).toBeGreaterThan(0);
+            }
+        } finally {
+            await actRenderer(async () => { renderer?.unmount(); });
+        }
+    });
 });

@@ -99,7 +99,7 @@ function projectExternalSpeechDescriptor(input: Readonly<{
     // A speech contribution declares no description; its raw plugin id is never shown in its place.
     subtitleKey: '',
     detailKey: title,
-    iconName: 'extension',
+    iconName: 'puzzle-piece',
     ...(declaration.credentials
       ? {
           credential: Object.freeze({

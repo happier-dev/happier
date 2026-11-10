@@ -172,6 +172,7 @@ import { NavigationArrowIcon } from 'phosphor-react-native/src/icons/NavigationA
 import { NewspaperIcon } from 'phosphor-react-native/src/icons/Newspaper';
 import { NoteIcon } from 'phosphor-react-native/src/icons/Note';
 import { NotePencilIcon } from 'phosphor-react-native/src/icons/NotePencil';
+import { PackageIcon } from 'phosphor-react-native/src/icons/Package';
 import { PaintBrushIcon } from 'phosphor-react-native/src/icons/PaintBrush';
 import { PaletteIcon } from 'phosphor-react-native/src/icons/Palette';
 import { PaperPlaneIcon } from 'phosphor-react-native/src/icons/PaperPlane';
@@ -447,6 +448,7 @@ export const ICON_REGISTRY = {
     'note': NoteIcon,
     'note-pencil': NotePencilIcon,
     'octagon-x': ProhibitIcon,
+    'package': PackageIcon,
     'paint-brush': PaintBrushIcon,
     'palette': PaletteIcon,
     'pane-arrangement': SquareHalfIcon,

@@ -16,11 +16,12 @@ const REGISTRY_FILE = join(__dirname, 'iconRegistry.generated.ts');
  * them. `Icon` now degrades instead of throwing; this keeps the underlying gap from reappearing.
  */
 const NAME_PATTERNS = [
-    /<Icon\s+name="([a-z][a-z0-9-]*)"/g,
-    /\biconName="([a-z][a-z0-9-]{2,})"/g,
-    /\bicon="([a-z][a-z0-9-]{2,})"/g,
-    /\b(?:iconName|agentPickerIconName|iconIonName|menuIcon|icon)\s*:\s*['"]([a-z][a-z0-9-]{2,})['"]/g,
+    /<Icon\b[^>]*?\bname\s*=\s*\{?\s*['"]([a-z][a-z0-9-]*)['"]/g,
+    /\b(?:iconName|agentPickerIconName|iconIonName|menuIcon)\s*[:=]\s*\{?\s*['"]([a-z][a-z0-9-]*)['"]/g,
 ];
+// A generic `icon` prop can instead be a semantic domain token (find history, annotation step,
+// updates spinner). Compound names retain the migration audit without treating those as app names.
+const AMBIGUOUS_ICON_PATTERN = /\bicon\s*[:=]\s*['"]([a-z][a-z0-9-]*)['"]/g;
 
 const PLUGIN_UI_ICON_TOKENS: ReadonlySet<string> = new Set(PLUGIN_UI_ICON_TOKENS_V1);
 
@@ -29,7 +30,7 @@ function walk(dir: string, out: string[] = []): string[] {
         const full = join(dir, entry);
         if (statSync(full).isDirectory()) {
             walk(full, out);
-        } else if (/\.tsx?$/.test(entry) && !/\.(test|spec)\./.test(entry)) {
+        } else if (/\.tsx?$/.test(entry) && !/\.(test|spec|testFixture)\./.test(entry)) {
             out.push(full);
         }
     }
@@ -57,12 +58,10 @@ describe('icon registry coverage', () => {
             // Plugin UI components name icons by semantic token (`PluginUiIconTokenV1`), which the
             // plugin icon-token resolver maps into this registry; such a token is not an app name.
             const pluginUiTokens = source.includes("from '@happier-dev/plugin-ui") ? PLUGIN_UI_ICON_TOKENS : null;
-            for (const pattern of NAME_PATTERNS) {
+            for (const pattern of [...NAME_PATTERNS, AMBIGUOUS_ICON_PATTERN]) {
                 for (const match of source.matchAll(pattern)) {
-                    // Picker fields always name icons; elsewhere only multi-word names are
-                    // unambiguous, since a bare `icon:` field can also hold a domain value.
-                    const isAgentPickerIcon = match[0].startsWith('agentPickerIconName');
-                    if ((isAgentPickerIcon || match[1].includes('-')) && !registry.has(match[1]) && !pluginUiTokens?.has(match[1])) unregistered.add(match[1]);
+                    if (pattern === AMBIGUOUS_ICON_PATTERN && !match[1].includes('-')) continue;
+                    if (!registry.has(match[1]) && !pluginUiTokens?.has(match[1])) unregistered.add(match[1]);
                 }
             }
         }

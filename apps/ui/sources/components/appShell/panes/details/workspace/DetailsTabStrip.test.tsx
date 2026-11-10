@@ -86,6 +86,15 @@ const testIds = {
 await import('./DetailsTabStrip');
 
 describe('DetailsTabStrip chrome absorption for browser-view tabs', () => {
+    it('gives an SCM review tab the supported diff glyph', async () => {
+        const { resolveDetailsTabGlyph } = await import('./DetailsTabStrip');
+        const tab: DetailsTabState = {
+            key: 'scmReview:review', kind: 'scmReview', title: 'Review', isPinned: false, isPreview: false,
+            resource: { kind: 'scmReview' },
+        };
+        expect(resolveDetailsTabGlyph(tab)).toBe('git-diff');
+    });
+
     it('keeps 120 Details tab visual callbacks local to the changed tab', async () => {
         const { DetailsTabStrip } = await import('./DetailsTabStrip');
         const { WorkspaceDestinationRow } = await import('@/components/appShell/workspace/WorkspaceDestinationRow');

@@ -45,14 +45,16 @@ function detailsTabDestinationRef(tab: DetailsTabState, sessionId: string, serve
     };
 }
 
+const DETAILS_TAB_GLYPHS: Readonly<Record<string, IconName>> = {
+    commit: 'git-commit', scmReview: 'git-diff', scmStash: 'archive',
+    scmPullRequest: 'git-pull-request', terminal: 'terminal', executionRunLauncher: 'play',
+    'browser-view': 'globe',
+};
+
 /** The glyph a Details tab's chip carries (a file chip draws its file type instead). */
 export function resolveDetailsTabGlyph(tab: DetailsTabState, resolveTabIconName?: ((tab: DetailsTabState) => string | null | undefined) | null): IconName {
     if (tab.kind === 'file') return 'file';
-    return (resolveTabIconName?.(tab) ?? ({
-        commit: 'git-commit', scmReview: 'diff', scmStash: 'archive',
-        scmPullRequest: 'git-pull-request', terminal: 'terminal', executionRunLauncher: 'play',
-        'browser-view': 'globe',
-    } as Record<string, string>)[tab.kind] ?? 'circle') as IconName;
+    return (resolveTabIconName?.(tab) ?? DETAILS_TAB_GLYPHS[tab.kind] ?? 'circle') as IconName;
 }
 
 /** A Details tab's close, as its strip offers it: an unsaved tab asks first. */

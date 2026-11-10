@@ -149,7 +149,7 @@ export function HappierStep(props: Readonly<{
       {hasAction ? (
         <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
           columnGap: theme.spacing.medium, rowGap: theme.spacing.small }}>
-          <View style={{ flexGrow: 1, flexShrink: 1, flexBasis: STEP_TEXT_MIN_WIDTH_BESIDE_ACTION, minWidth: 0, gap: theme.spacing.small }}>
+          <View style={{ flexGrow: 1, flexShrink: 0, flexBasis: STEP_TEXT_MIN_WIDTH_BESIDE_ACTION, minWidth: 0, maxWidth: '100%', gap: theme.spacing.small }}>
             {words}
           </View>
           <View style={{ flexShrink: 0 }}>{props.action}</View>

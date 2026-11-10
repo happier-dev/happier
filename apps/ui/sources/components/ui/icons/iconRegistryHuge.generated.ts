@@ -176,6 +176,7 @@ import NoteIcon from '@hugeicons/core-free-icons/NoteIcon';
 import Notification01Icon from '@hugeicons/core-free-icons/Notification01Icon';
 import NotificationOff01Icon from '@hugeicons/core-free-icons/NotificationOff01Icon';
 import OctagonXIcon from '@hugeicons/core-free-icons/OctagonXIcon';
+import PackageIcon from '@hugeicons/core-free-icons/PackageIcon';
 import PaintBoardIcon from '@hugeicons/core-free-icons/PaintBoardIcon';
 import PaintBrush01Icon from '@hugeicons/core-free-icons/PaintBrush01Icon';
 import PanelRightCloseIcon from '@hugeicons/core-free-icons/PanelRightCloseIcon';
@@ -436,6 +437,7 @@ export const HUGE_ICON_REGISTRY = {
     'note': NoteIcon,
     'note-pencil': PencilEdit01Icon,
     'octagon-x': OctagonXIcon,
+    'package': PackageIcon,
     'paint-brush': PaintBrush01Icon,
     'palette': PaintBoardIcon,
     'pane-arrangement': LayoutRightIcon,

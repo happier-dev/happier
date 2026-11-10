@@ -213,6 +213,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
                 <GlassView
                     glassEffectStyle={props.glassEffectStyle ?? (material.blur === 'light' ? 'clear' : 'regular')}
                     colorScheme={theme.dark ? 'dark' : 'light'}
+                    tintColor={solidColor}
                     style={StyleSheet.absoluteFillObject}
                 />
             );

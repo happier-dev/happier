@@ -52,6 +52,18 @@ describe('iOS material without blur', () => {
     expect(screen.findByType('GlassView').props.colorScheme).toBe('dark');
   });
 
+  it('grounds native floating glass in the app palette rather than the SDK default tint', async () => {
+    liquid.available = true;
+    const { darkTheme } = await import('@/theme');
+    const screen = await renderScreen(
+      <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
+        <GlassSurface><></></GlassSurface>
+      </GlassMaterialSettingsProvider>,
+    );
+    // UIKit chooses its own tint when omitted, independently of the app's floating surface paint.
+    expect(screen.findByType('GlassView').props.tintColor).toBe(darkTheme.colors.edge.floatingFill);
+  });
+
   it('keeps an authored translucent coat with Blur Off as a tint, while accessibility, an inactive window and Solid stay opaque', async () => {
     const { GlassSurface } = await import('./GlassSurface');
     const { GlassRuntimeEnvironmentProvider } =
