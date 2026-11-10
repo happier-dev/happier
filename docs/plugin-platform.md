@@ -11719,6 +11719,21 @@ screen's release, sharing and provenance model.
 
 ## Generated-output maintenance in development
 
+The canonical bundled-plugin publisher isolates per-plugin source and artifact
+failures in development writes. Healthy packages publish their new manifests;
+failed packages retain their last published catalog/UI declarations and installed
+artifact. Artifact inventory validation precedes replacement. The command returns
+`publishedPackageNames` and typed `failures` naming each package and its diagnostic;
+the existing publication-failure file supplies runtime diagnostics. Catalog-wide
+identity/reference admission remains strict. Required host packages may retain
+an existing publication; a cold required-package failure still refuses the build.
+Check mode still rejects failures, and release preparation still requires its complete
+runtime closure. No batch revision is shared across plugin manifests.
+
+To republish Triage through this same owner without preparing unrelated plugins,
+run `node --conditions=happier-source --import ./packages/cli-common/registerSourceRuntime.mjs apps/cli/scripts/build-owned/generateBundledPluginEntries.ts --mode write --package-artifacts --workspace plugins-triage`.
+The lifecycle owner then reloads the consuming stack before a live replay.
+
 The lane changing a generator's inputs runs its canonical writer under the
 writer's publication lease. Integration owns package-wide validation, rather
 than being the only publisher. Consumer-only edits do not require republishing

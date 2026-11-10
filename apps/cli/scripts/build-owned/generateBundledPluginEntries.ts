@@ -1995,7 +1995,8 @@ function comparePortablePathCodeUnits(left: string, right: string): number {
 function collectBundledArtifactPaths(
   packageRoot: string,
   packageFileEntries: readonly string[],
-): ReadonlySet<string> {
+  stagedFiles: ReadonlyMap<string, Uint8Array> = new Map(),
+): Set<string> {
   const files = new Set<string>();
   const visit = (path: string): void => {
     const relativePath = normalizeBundledArtifactRelativePath(packageRoot, path);
@@ -2025,8 +2026,12 @@ function collectBundledArtifactPaths(
       throw new Error(`Bundled artifact package files entry must be an exact portable path: '${entry}'`);
     }
     const path = resolve(packageRoot, entry);
-    if (!existsSync(path)) throw new Error(`Bundled artifact package file is missing: '${entry}'`);
-    visit(path);
+    const stagedPaths = [...stagedFiles.keys()].filter(name => name === entry || name.startsWith(`${entry}/`));
+    if (!existsSync(path) && stagedPaths.length === 0) {
+      throw new Error(`Bundled artifact package file is missing: '${entry}'`);
+    }
+    if (existsSync(path)) visit(path);
+    for (const name of stagedPaths) files.add(name);
   }
   return files;
 }
@@ -2387,6 +2392,10 @@ async function prepareBundledPluginPackageArtifacts(params: Readonly<{
     ).length > 0,
   });
   if (!requiresPackagedRuntime) {
+    if (!params.targetOwnedOnly) await synchronizeSerializedPluginManifest({
+      packageRoot: params.packageRoot, packageName: String(params.packageJson.name),
+      manifest: params.manifest, mode: params.mode,
+    });
     return;
   }
   const packageFiles = params.packageJson.files;
@@ -2451,30 +2460,18 @@ async function prepareBundledPluginPackageArtifacts(params: Readonly<{
     dependencies: params.dependencies,
     getCanonicalWorkspacePackageRoots: params.getCanonicalWorkspacePackageRoots,
   });
+  const files = collectBundledArtifactPaths(params.packageRoot, selectedEntries,
+    new Map<string, Uint8Array>([[BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH, installedManifestBytes], ...stagedRuntimeFiles]));
   if (daemonRelativePath && shouldEvaluateBundledRuntimeSource(params.scope)) {
-    await reconcileBundledPluginInstalledRuntime({
-      packageRoot: params.packageRoot,
-      pluginPackageId: params.pluginPackageId,
-      daemonRelativePath,
-      expectedFiles: new Map<string, Uint8Array>([
-        [BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH, installedManifestBytes],
-        ...stagedRuntimeFiles,
-      ]),
-      mode: params.mode,
-    });
-  } else if (params.mode === 'check') {
-    if (
-      !existsSync(installedManifestPath)
-      || !readFileSync(installedManifestPath).equals(installedManifestBytes)
-    ) {
-      throw new Error(
-        `Bundled plugin manifest artifact differs: ${installedManifestPath}`,
-      );
+    const { readPluginDaemonOutputManifest } = await loadPluginDaemonOutputManifestModule();
+    const priorOutputs = await readPluginDaemonOutputManifest(params.packageRoot);
+    for (const path of [
+      ...(priorOutputs?.outputs ?? []),
+      ...resolveRetiredUnmarkedBundledRuntimeOutputs(params.pluginPackageId),
+    ]) {
+      if (!stagedRuntimeFiles.has(path)) files.delete(path);
     }
-  } else {
-    writeFileAtomic(installedManifestPath, installedManifestBytes.toString('utf8'));
   }
-  const files = collectBundledArtifactPaths(params.packageRoot, selectedEntries);
   if (!files.has('package.json')) throw new Error(`Bundled package '${params.manifest.id}' artifact omits package.json`);
   if (!files.has(BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH)) {
     throw new Error(
@@ -2504,6 +2501,29 @@ async function prepareBundledPluginPackageArtifacts(params: Readonly<{
     if (!files.has(path)) {
       throw new Error(`Bundled package '${params.manifest.id}' artifact omits registry catalog '${path}'`);
     }
+  }
+  if (daemonRelativePath && shouldEvaluateBundledRuntimeSource(params.scope)) {
+    await reconcileBundledPluginInstalledRuntime({
+      packageRoot: params.packageRoot,
+      pluginPackageId: params.pluginPackageId,
+      daemonRelativePath,
+      expectedFiles: new Map<string, Uint8Array>([
+        [BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH, installedManifestBytes],
+        ...stagedRuntimeFiles,
+      ]),
+      mode: params.mode,
+    });
+  } else if (params.mode === 'check') {
+    if (
+      !existsSync(installedManifestPath)
+      || !readFileSync(installedManifestPath).equals(installedManifestBytes)
+    ) {
+      throw new Error(
+        `Bundled plugin manifest artifact differs: ${installedManifestPath}`,
+      );
+    }
+  } else {
+    writeFileAtomic(installedManifestPath, installedManifestBytes.toString('utf8'));
   }
   // The prepared package tree itself is the publication authority. Pack-time
   // staging compares these current bytes directly; no generated record mirrors
@@ -2652,10 +2672,17 @@ async function readBundledPluginPackages(
     dependencies,
     excludedArtifactPackageNames,
     packageArtifacts,
+    validateProviderVerifications: true,
   });
 }
 
 type BundledPluginPackageFailure = BundledPluginPublicationFailure;
+
+function retainsPublishedBundledPluginArtifact(repoRoot: string, packageName: string): boolean {
+  const packageId = pluginPackageNameToPackageId(packageName);
+  return existsSync(resolve(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(packageId)))
+    && existsSync(resolve(repoRoot, 'packages/plugins', packageId, BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH));
+}
 
 function mergeBundledPluginFailures(
   ...groups: readonly (readonly BundledPluginPackageFailure[])[]
@@ -2671,7 +2698,7 @@ function assertNoBundledPluginPublicationFailures(
   failures: readonly BundledPluginPackageFailure[],
   mode: Mode,
 ): void {
-  if (failures.length > 0 && (mode === 'check' || process.env.HAPPIER_WORKSPACE_BUNDLE_PUBLICATION_MODE === 'artifact')) {
+  if (failures.length > 0 && mode === 'check') {
     throwBundledPluginPackageFailures(failures);
   }
 }
@@ -2687,6 +2714,7 @@ export function readInheritedBundledPluginFailures(
   if (!raw) throw new Error('Missing inherited bundled plugin publication failures on stdin');
   const failures = mergeBundledPluginFailures(parseBundledPluginPublicationFailures(raw));
   for (const failure of failures) {
+    if (retainsPublishedBundledPluginArtifact(repoRoot, failure.packageName)) continue;
     assertHostCanExcludeBundledPlugin(
       repoRoot,
       failure.packageName,
@@ -2850,6 +2878,7 @@ async function collectBundledPluginSourcePackages(
     bundledPluginPackageNames: readonly string[];
     mode: Mode;
     synchronizeSerializedManifest: boolean;
+    validateProviderVerifications?: boolean;
     targetOwnedOnly?: boolean;
   }> & (
     | Readonly<{ daemonProjectionsOnly: true;
@@ -2900,13 +2929,21 @@ async function collectBundledPluginSourcePackages(
       // CI/package check also covers present serialized outputs (including
       // tracked plugin.json files), without requiring ignored artifacts in a
       // clean source checkout. Source writes derive and leave those peers alone.
-      if (params.synchronizeSerializedManifest || (params.mode === 'check'
-        && existsSync(resolve(packageRoot, BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH)))) {
+      if (params.mode === 'check' && (params.synchronizeSerializedManifest
+        || existsSync(resolve(packageRoot, BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH)))) {
         await synchronizeSerializedPluginManifest({
           packageRoot,
           packageName,
           manifest,
           mode: params.mode,
+        });
+      }
+      if (params.validateProviderVerifications) {
+        const providerContributions = readManifestContributionArray(manifest, 'providers');
+        if (providerContributions.length > 0) readAndAssertBundledProviderVerificationsV1({
+          buildQualifiedContributionKey: dependencies.protocol.buildQualifiedPluginContributionKey,
+          rootDir: params.repoRoot, pluginPackageId, pluginId: manifest.id,
+          contributions: providerContributions, todayUtc: new Date().toISOString().slice(0, 10),
         });
       }
       assertNoBundledAgentManifestUiBehavior(manifest, packageName);
@@ -2956,6 +2993,8 @@ async function collectBundledPluginSourcePackages(
         repoRoot: params.repoRoot,
         packageName,
         code: 'plugin_manifest_invalid',
+        retainsPublishedArtifact: params.mode === 'write'
+          && retainsPublishedBundledPluginArtifact(params.repoRoot, packageName),
         error,
       }) });
     }
@@ -3031,6 +3070,8 @@ async function materializeBundledPluginPackages(
           repoRoot: params.repoRoot,
           packageName: sourcePluginPackage.packageName,
           pluginId: sourcePluginPackage.pluginId,
+          retainsPublishedArtifact: params.mode === 'write'
+            && retainsPublishedBundledPluginArtifact(params.repoRoot, sourcePluginPackage.packageName),
           error,
         }) });
       }
@@ -3057,6 +3098,7 @@ async function collectBundledPluginPackages(
     dependencies: GeneratorWorkspaceDependencies | Promise<GeneratorWorkspaceDependencies>;
     excludedArtifactPackageNames?: ReadonlySet<string>;
     packageArtifacts?: boolean;
+    validateProviderVerifications?: boolean;
   }>,
 ): Promise<Readonly<{
   pluginPackages: readonly BundledPluginPackage[];
@@ -3067,6 +3109,7 @@ async function collectBundledPluginPackages(
     bundledPluginPackageNames: params.bundledPluginPackageNames,
     mode: params.mode,
     dependencies: params.dependencies,
+    validateProviderVerifications: params.validateProviderVerifications,
     synchronizeSerializedManifest: params.packageArtifacts === true && !params.targetOwnedOnly,
     targetOwnedOnly: params.targetOwnedOnly,
   });
@@ -3084,9 +3127,7 @@ async function collectBundledPluginPackages(
     dependencies: await params.dependencies,
   });
   return Object.freeze({
-    // Tracked declarations describe source membership, not this publication's
-    // runtime admission. Failed artifact preparation lives only in failures.json.
-    pluginPackages: sourceResult.sourcePluginPackages,
+    pluginPackages: materialized.pluginPackages,
     failures: Object.freeze([...sourceResult.failures, ...materialized.failures]),
   });
 }
@@ -3700,7 +3741,7 @@ export async function publishBundledPluginSemanticProjection(
   }>,
 ): Promise<readonly BundledPluginPackageFailure[]> {
   const bundledPluginPackageNames = readBundledPluginPackageNames(options.rootDir, {
-    requireManifestSource: options.mode !== 'write' || options.workspaceNames.length === 0,
+    requireManifestSource: options.mode !== 'write',
   });
   const serialized = sourceResult
     ?? readSerializedBundledPluginPackages(options.rootDir, bundledPluginPackageNames, dependencies);
@@ -4529,11 +4570,6 @@ async function generateBundledPluginEntries(
     timing.phase('selected-source-and-package-artifacts');
     const selectedPluginPackages = selectedResult.pluginPackages;
     dependencies = await dependencies;
-    // Invalid target declarations are fatal in both source and artifact writes.
-    // Optional runtime preparation failures retain their existing diagnostics policy.
-    const declarationFailures = selectedResult.failures.filter(failure => failure.diagnostic.code === 'plugin_manifest_invalid');
-    if (declarationFailures.length > 0) throwBundledPluginPackageFailures(declarationFailures);
-    if (!options.packageArtifacts && selectedResult.failures.length > 0) throwBundledPluginPackageFailures(selectedResult.failures);
     const failures = mergeBundledPluginFailures(inheritedFailures, selectedResult.failures);
     assertNoBundledPluginPublicationFailures(failures, options.mode);
     if (selectedPluginPackages.length > 0 || failures.length > 0) {
@@ -4542,7 +4578,7 @@ async function generateBundledPluginEntries(
         new Set(),
       );
       const sourceResult = options.mode === 'write'
-        ? { sourcePluginPackages: await readPublishedBundledPluginPackages(options.rootDir, new Set(selectedPackageNames)), failures: [] }
+        ? { sourcePluginPackages: await readPublishedBundledPluginPackages(options.rootDir, new Set(selectedPluginPackages.map(entry => entry.packageName))), failures: [] }
         : await collectBundledPluginSourcePackages({
         repoRoot: options.rootDir,
         // Selected declarations already passed the same source admission above.
@@ -4576,7 +4612,9 @@ async function generateBundledPluginEntries(
   // Discover and validate every package before mutating host membership. A rejected
   // first-party identity/export must not leave package.json or generated outputs in a
   // partially admitted state.
-  const bundledPluginPackageNames = readBundledPluginPackageNames(options.rootDir);
+  const bundledPluginPackageNames = readBundledPluginPackageNames(options.rootDir, {
+    requireManifestSource: options.mode !== 'write',
+  });
   const discoveredPluginPackages = await readBundledPluginPackages(
     options.rootDir,
     bundledPluginPackageNames,
@@ -4588,10 +4626,20 @@ async function generateBundledPluginEntries(
   );
   dependencies = await dependencies;
   let failures = mergeBundledPluginFailures(inheritedFailures, discoveredPluginPackages.failures);
-  // Full publication replaces shared Agent facts and UI cores together. A failed
-  // package cannot supply that complete projection; leave the existing outputs
-  // intact and report its preparation error instead of publishing a partial set.
-  if (failures.length > 0) throwBundledPluginPackageFailures(failures);
+  assertNoBundledPluginPublicationFailures(failures, options.mode);
+  if (failures.length > 0) {
+    // Reuse scoped publication's retained executable bindings and declarations.
+    // Failed packages supply only their last admitted manifests, never new source.
+    const peers = await readPublishedBundledPluginPackages(options.rootDir,
+      new Set(discoveredPluginPackages.pluginPackages.map(entry => entry.packageName)));
+    return await publishBundledPluginSemanticProjection({ ...options,
+      workspaceNames: bundledPluginPackageNames.map(name => name.replace('@happier-dev/', '')),
+    }, dependencies, publicationLease, [], failures, {
+      pluginPackages: [...discoveredPluginPackages.pluginPackages, ...peers]
+        .sort((a, b) => a.packageName.localeCompare(b.packageName)),
+      failures: [],
+    });
+  }
   const pluginPackages = discoveredPluginPackages.pluginPackages;
   await assertBundledPluginCatalog(pluginPackages);
   const builtInLegacyConnectedAccountCompatibility =
@@ -4601,19 +4649,6 @@ async function generateBundledPluginEntries(
       dependencies,
     );
   assertDescriptorConnectedServiceLabelTranslations(pluginPackages, options.rootDir);
-  const todayUtc = new Date().toISOString().slice(0, 10);
-  for (const entry of pluginPackages) {
-    const providerContributions = readManifestContributionArray(entry.manifest, 'providers');
-    if (providerContributions.length === 0) continue;
-    readAndAssertBundledProviderVerificationsV1({
-      buildQualifiedContributionKey: dependencies.protocol.buildQualifiedPluginContributionKey,
-      rootDir: options.rootDir,
-      pluginPackageId: entry.pluginPackageId,
-      pluginId: entry.pluginId,
-      contributions: providerContributions,
-      todayUtc,
-    });
-  }
   const bundledVoiceProjection = await collectBundledFirstPartyVoiceProjectionSources(
     options.rootDir,
     pluginPackages,
@@ -4856,10 +4891,15 @@ async function withGeneratorPublicationLock<T>(
   });
 }
 
-export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+export type BundledPluginPublicationResult = Readonly<{
+  publishedPackageNames: readonly string[];
+  failures: readonly BundledPluginPublicationFailure[];
+}>;
+
+export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<BundledPluginPublicationResult | void> {
   const parsed = parseGeneratorCliArgs(argv);
   const { options } = normalizeCanonicalGeneratorPublication(argv, parsed,
-    readBundledPluginPackageNames(parsed.rootDir, { requireManifestSource: !parsed.daemonOutputRoot && (parsed.mode !== 'write' || parsed.workspaceNames.length === 0) })
+    readBundledPluginPackageNames(parsed.rootDir, { requireManifestSource: !parsed.daemonOutputRoot && parsed.mode !== 'write' })
       .map((name) => name.replace('@happier-dev/', '')));
   const timing = createBundledPluginTimingReporter();
   if (options.daemonOutputRoot) {
@@ -4898,27 +4938,32 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         return;
       }
       const failures = readInheritedBundledPluginFailures(options.inheritedFailuresStdin, options.rootDir);
-      // Start isolated inspection while the host graph loads. Its admission
-      // promise still gates normalization and every publication path below.
-      const dependencies = Promise.all([
-        loadGeneratorWorkspaceDependencies(),
-        loadPluginAuthorRuntimeForScope(resolvePluginAuthorRuntimeLoadScope(options)),
-      ]).then(([dependencies]) => {
-        timing.phase('host-dependencies-ready');
-        return dependencies;
-      });
-      await Promise.all([
-        dependencies,
-        publishGeneratorEntries(options, dependencies, lease, failures),
-      ]);
+      return await publishBundledPluginEntries(options, lease, failures);
     };
     // Checks validate current source and projections without publishing. Only
     // writers participate in publication custody and its admission ordering.
-    if (options.mode === 'check') await generate();
-    else await withGeneratorPublicationLock(generate);
+    if (options.mode === 'check') return await generate();
+    return await withGeneratorPublicationLock(generate);
   } finally {
     timing.phase('generation-and-publication');
   }
+}
+
+/** The canonical publication operation; the caller supplies its existing writer lease. */
+export async function publishBundledPluginEntries(
+  options: GeneratorOptions,
+  lease: ProjectionPublicationLease | undefined,
+  failures: readonly BundledPluginPackageFailure[] = [],
+): Promise<BundledPluginPublicationResult> {
+  const dependencies = Promise.all([
+    loadGeneratorWorkspaceDependencies(),
+    loadPluginAuthorRuntimeForScope(resolvePluginAuthorRuntimeLoadScope(options)),
+  ]).then(([dependencies]) => dependencies);
+  const [, result] = await Promise.all([
+    dependencies,
+    publishGeneratorEntries(options, dependencies, lease, failures),
+  ]);
+  return result;
 }
 
 async function publishGeneratorEntries(
@@ -4926,7 +4971,11 @@ async function publishGeneratorEntries(
   dependencies: GeneratorWorkspaceDependencies | Promise<GeneratorWorkspaceDependencies>,
   lease: ProjectionPublicationLease | undefined,
   pluginFailures: readonly BundledPluginPackageFailure[],
-): Promise<void> {
+): Promise<BundledPluginPublicationResult> {
+  const bundledPackageNames = readBundledPluginPackageNames(options.rootDir, { requireManifestSource: false });
+  const evaluatedPackageNames = options.workspaceNames.length > 0
+    ? resolveSelectedBundledPluginPackageNames(bundledPackageNames, options.workspaceNames)
+    : bundledPackageNames;
   const publishedFailures = await generateBundledPluginEntries(options, dependencies, lease, pluginFailures);
   if (options.mode === 'write' && !options.aggregateOnly) {
     writeBundledPluginPublicationFailures(options.rootDir, publishedFailures,
@@ -4934,11 +4983,24 @@ async function publishGeneratorEntries(
         ? resolveSelectedBundledPluginPackageNames(readBundledPluginPackageNames(options.rootDir, { requireManifestSource: false }), options.workspaceNames)
         : undefined);
   }
+  const failedNames = new Set(publishedFailures.map(failure => failure.packageName));
+  return Object.freeze({
+    publishedPackageNames: Object.freeze(evaluatedPackageNames.filter(name => !failedNames.has(name))),
+    failures: publishedFailures,
+  });
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   try {
-    await main();
+    const result = await main();
+    if (result) {
+      console.log(JSON.stringify(result));
+      // Release callers still refuse an incomplete closure, after healthy
+      // packages have published and the typed mixed result has been reported.
+      if (process.env.HAPPIER_WORKSPACE_BUNDLE_PUBLICATION_MODE === 'artifact' && result.failures.length > 0) {
+        process.exitCode = 1;
+      }
+    }
   } finally {
     await (await generatorSourceLoader)?.unregister();
   }

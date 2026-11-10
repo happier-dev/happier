@@ -15,6 +15,7 @@ export declare function createBundledPluginPublicationFailure(input: Readonly<{
   packageName: string;
   pluginId?: string;
   code?: BundledPluginPublicationFailure['diagnostic']['code'];
+  retainsPublishedArtifact?: boolean;
   error: unknown;
 }>): BundledPluginPublicationFailure;
 

@@ -14,7 +14,7 @@ import * as ohMyPiDefinition from '../../../../packages/plugins/ohmypi/src/agent
 import { AGENT_DEFINITION as CUSTOM_ACP_DEFINITION } from '../../../../packages/plugins/custom-acp/src/agent/definition';
 import { KIRO_UI_DESCRIPTOR } from '../../../../packages/plugins/kiro/src/ui/descriptor';
 import { PLUGIN_MANIFEST as CUSTOM_ACP_MANIFEST } from '../../../../packages/plugins/custom-acp/src/manifest';
-import { collectBundledFirstPartyVoiceProjectionSources, collectBundledPluginUiTranslations, reconcileBundledPluginInstalledRuntime, readExternalSessionSourceDeclaration, renderRetainedCliBundledPluginImplementationEntriesTs, resolveGeneratorPackagedRuntimePreparation, selectCanonicalRuntimeWorkspacePackageRoots, publishBundledPluginSemanticProjection, readInheritedBundledPluginFailures } from './generateBundledPluginEntries.ts';
+import { collectBundledFirstPartyVoiceProjectionSources, collectBundledPluginUiTranslations, reconcileBundledPluginInstalledRuntime, readExternalSessionSourceDeclaration, renderRetainedCliBundledPluginImplementationEntriesTs, resolveGeneratorPackagedRuntimePreparation, selectCanonicalRuntimeWorkspacePackageRoots, publishBundledPluginEntries, publishBundledPluginSemanticProjection, readInheritedBundledPluginFailures } from './generateBundledPluginEntries.ts';
 import { renderBundledAgentDefinitionsTs } from './bundledPlugins/agentFacts.ts';
 import { renderBundledPluginTranslationsTs, renderUiBundledPluginEntriesTs } from './bundledPlugins/agentUi.ts';
 import { prepareAcpCatalogTransferV2, type AcpCatalogTransferAgentDeclarationV2 } from '@happier-dev/protocol/acp/catalog/transferAcpCatalogV2';
@@ -1326,7 +1326,7 @@ describe('CLI bundled plugin registry projection', () => {
     ['full', []],
     ['scoped', ['--workspace', 'plugins-inspector']],
     ['aggregate', ['--aggregate']],
-  ] as const)('%s publication rejects an invalid declaration without replacing usable membership', async (_label, selector) => {
+  ] as const)('%s publication rejects an invalid declaration when the retained catalog is unreadable', async (_label, selector) => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-invalid-projection-');
     const packageRoot = writeWorkspacePackageFixture({
       repoRoot, workspacePath: 'packages/plugins/inspector', packageName: '@happier-dev/plugins-inspector',
@@ -1352,8 +1352,11 @@ describe('CLI bundled plugin registry projection', () => {
     mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
     writeFileSync(join(packageRoot, '.happier-plugin/plugin.json'), JSON.stringify({ id: 'happier.inspector', schemaVersion: 0 }));
     try {
-      await expect(main(['--root', repoRoot, '--mode', 'write', ...selector]))
-        .rejects.toThrow(/plugins-inspector/u);
+      // PUBLISH-ISOLATE-1110 permits per-plugin recovery with a valid prior
+      // catalog. These deliberately unreadable prior bytes cannot be retained.
+      await expect(withWorkspaceBundleLock(lease => publishBundledPluginEntries(
+        parseGeneratorCliArgs(['--root', repoRoot, '--mode', 'write', ...selector]), lease,
+      ), { lockPath: join(repoRoot, 'publication.lock') })).rejects.toThrow();
       expect(readFileSync(outPath, 'utf8')).toBe('previous usable membership');
     } finally { cleanup(); }
   });
