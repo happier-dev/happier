@@ -1146,9 +1146,8 @@ export async function admitSessionTeamCredentialBindingInTx(
     });
 }
 
-/** The effect that uses a Team credential: a Session, Run, or finite platform operation. */
+/** The effect that uses a Team credential: a Session, or an Execution Run. */
 export type TeamCredentialOperationConsumer =
-    | Readonly<{ kind: "platform_operation"; resourceId: string }>
     | Readonly<{ kind: "session"; sessionId: string }>
     | Readonly<{
         kind: "execution_run";
@@ -1168,7 +1167,6 @@ export type TeamCredentialOperationConsumer =
  * not follow later parent edits. An attached Run still runs in its parent
  * Session's context, so the parent's ownership and Session-use policy (Team
  * context and visibility) apply to it; a detached Run has no Session context.
- * A finite platform operation uses that same resource admission without Session context.
  */
 export async function admitTeamCredentialOperationBindingInTx(
     tx: Tx,
@@ -1207,7 +1205,7 @@ export async function admitTeamCredentialOperationBindingInTx(
             ...placement,
         });
     }
-    return input.consumer.kind === "platform_operation" || input.consumer.parentSessionId === null
+    return input.consumer.parentSessionId === null
         ? await validatePlannedSessionTeamCredentialResourceInTx(tx, {
             accountId: input.accountId,
             resourceId: input.consumer.resourceId,

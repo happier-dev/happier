@@ -1459,15 +1459,10 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     sessionLease.dispose();
   });
 
-  it.each(['session', 'platform_operation'] as const)('opens a direct Team purpose target for %s materialization', async consumerKind => {
+  it('opens a direct Team purpose target at pre-spawn launch materialization through the Session it launches', async () => {
     const opened: unknown[] = [];
     const disclosedMember = { service: openAiService, accountId: 'source-member' };
     const { runtime, invokeDirectMaterial } = createInventoryRuntime({
-      ...(consumerKind === 'platform_operation' ? { invokeDirectMaterial: async (input: Parameters<QualifiedConnectedAccountEstablishedRuntimeOwner['invokeDirectMaterial']>[0]) => {
-        await input.isCurrent();
-        await input.isCurrent();
-        return { kind: 'environment' as const, env: { OPENAI_API_KEY: 'sk-team-direct' } };
-      } } : {}),
       openTeamDirect: async (request) => {
         opened.push({ consumer: request.consumer, resourceId: request.resourceId });
         return {
@@ -1502,10 +1497,10 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     // launch operation, whose direct material belongs to the committed Session.
     const launchLease = runtime.activatePurposeBindings({
       subject: {
-        kind: consumerKind === 'session' ? 'operation' : 'platform_operation',
+        kind: 'operation',
         operationId: 'materialization-identity-1',
         consumer: purpose.consumer,
-        ...(consumerKind === 'session' ? { sessionId: 'session-committed-before-launch' } : {}),
+        sessionId: 'session-committed-before-launch',
         isCurrent: () => true,
       },
       purposes: [purpose],
@@ -1524,13 +1519,10 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       signal: new AbortController().signal,
     })).resolves.toMatchObject({ env: { OPENAI_API_KEY: 'sk-team-direct' }, unsetEnvKeys: [] });
     expect(opened[0]).toEqual({
-      consumer: consumerKind === 'session'
-        ? { kind: 'session', sessionId: 'session-committed-before-launch' }
-        : { kind: 'platform_operation', operationId: 'materialization-identity-1' },
+      consumer: { kind: 'session', sessionId: 'session-committed-before-launch' },
       resourceId: 'resource-1',
     });
     expect(invokeDirectMaterial).toHaveBeenCalledOnce();
-    expect(opened).toHaveLength(1); // Admission is not repeated by finite-operation currentness checks.
     launchLease.dispose();
 
     // An operation that launches no Session has no Home-admitted consumer.

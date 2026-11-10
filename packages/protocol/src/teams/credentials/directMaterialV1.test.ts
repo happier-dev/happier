@@ -160,6 +160,9 @@ describe('Team credential direct material v1', () => {
       consumer: { kind: 'session', sessionId: 'session-provider' },
     })).toMatchObject({ slot: { kind: 'provider_model' }, sourceMemberKey: 'provider-member-key' });
     expect(TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse(common).success).toBe(false);
+    expect(TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse({
+      ...common, consumer: { kind: 'platform_operation', operationId: 'deploy-1' },
+    }).success).toBe(false);
   });
 
   it('keeps Provider runtime binding inside the strict recipient-private payload', () => {

@@ -677,7 +677,7 @@ export function registerTeamCredentialResourceRoutes(
             ...("sourceMemberKey" in body.data
                 ? { slot: body.data.slot, sourceMemberKey: body.data.sourceMemberKey }
                 : { slot: body.data.slot, disclosedMember: body.data.disclosedMember }),
-            consumer: body.data.consumer.kind !== "execution_run"
+            consumer: body.data.consumer.kind === "session"
                 ? body.data.consumer
                 : {
                     kind: "execution_run" as const,

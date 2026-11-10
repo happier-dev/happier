@@ -194,13 +194,6 @@ type ManagedCredentialConfigurations = NonNullable<ConnectedAccountInvocationPur
 
 export type ConnectedAccountPurposeBindingSubject =
   | Readonly<{
-      /** One finite host operation; Home admits its exact Team resource once. */
-      kind: 'platform_operation';
-      operationId: string;
-      consumer: PluginContributionIdentityV1;
-      isCurrent(): boolean;
-    }>
-  | Readonly<{
       /** Host-private issuance only, after authenticated Session resource admission. */
       kind: 'mcp_request_auth';
       operationId: string;
@@ -941,7 +934,7 @@ export function createConnectedAccountPurposeBindingOwner(
           directMaterialConsumer: null,
         };
       }
-      if (subject.kind === 'operation' || subject.kind === 'platform_operation') {
+      if (subject.kind === 'operation') {
         const operationId = subject.operationId.trim();
         const consumer = PluginContributionIdentityV1Schema.parse(subject.consumer);
         if (!operationId) {
@@ -949,18 +942,16 @@ export function createConnectedAccountPurposeBindingOwner(
             'connected_account_operation_binding_operation_id_required',
           );
         }
-        const launchSessionId = subject.kind === 'operation' ? subject.sessionId?.trim() ?? '' : '';
+        const launchSessionId = subject.sessionId?.trim() ?? '';
         return {
-          subjectKey: JSON.stringify([subject.kind, operationId]),
+          subjectKey: JSON.stringify(['operation', operationId]),
           subjectId:
-            `${subject.kind}:${operationId}/consumer:${consumer.pluginId}/${consumer.localId}`,
+            `operation:${operationId}/consumer:${consumer.pluginId}/${consumer.localId}`,
           isSubjectCurrent: subject.isCurrent,
           sessionId: null,
           errorPrefix: 'connected_account_operation_binding',
           expectedConsumer: Object.freeze({ ...consumer }),
-          directMaterialConsumer: subject.kind === 'platform_operation'
-            ? { kind: 'platform_operation' as const, operationId }
-            : launchSessionId
+          directMaterialConsumer: launchSessionId
             ? { kind: 'session' as const, sessionId: launchSessionId }
             : null,
         };
@@ -1048,7 +1039,7 @@ export function createConnectedAccountPurposeBindingOwner(
     >();
     // The materialization origin (lane 10 child 06 :506-508) is the one
     // carrier of direct Team material: it names the Team resource behind an
-    // exact disclosed-member binding, and its Session, Run or finite platform consumer
+    // exact disclosed-member binding, and the Session/Execution Run consumer
     // opens it only through the Home's Team-binding admission. A subject
     // without such a consumer can never serve one.
     for (const origin of input.directMaterialOrigins ?? []) {

@@ -1,13 +1,5 @@
 # Compatibility and version skew
 
-## Finite platform direct material (unreleased 0.3)
-
-The existing Team direct-material consumer union adds
-`{ kind: 'platform_operation', operationId }`. Matching CLI and Home readers
-consume this unreleased authority-bearing contract together; older strict Home
-readers refuse it. Session and execution Run consumers retain their shapes.
-No stored envelope, grant type, wire epoch or compatibility adapter is added.
-
 ## Machine Setup connector grant scope (unreleased 0.3)
 
 The existing Setup preparation admission optionally carries `connectorGrants`

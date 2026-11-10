@@ -1,4 +1,8 @@
 import { config, core } from 'zod/mini';
+// Protocol schemas share this import so source runtimes resolve Mini once,
+// rather than reparsing Protocol's large package export map for every schema.
+export * from 'zod/mini';
+export { z } from 'zod/mini';
 
 /**
  * Cycle-tolerant parsing is off for Protocol schemas, as it is by default under
