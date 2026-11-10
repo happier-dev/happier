@@ -206,6 +206,14 @@ returned IDs, including contributor variants and their native descriptions.
 An explicit unavailable default returns a typed model-selection failure rather
 than choosing another account or rewriting the model. Install/update uses the
 declared vendor recipe, while ordinary native launches disable auto-update.
+Native resume identity remains the existing runtime descriptor's provider Session
+ID. Reachability uses the declared native inspection hook, separately from
+file-copy authority. Forks retain the source workspace; a managed child allocation
+requiring relocation is unsupported. Message forks require an actual completed
+native turn checkpoint in the existing transcript anchor; imported messages without
+one return the existing typed invalid-request result. No host turn IDs or cuts are
+reconstructed from history text.
+
 These are unreleased development-source integrations, not stable-release or
 authenticated native-platform certification claims.
 

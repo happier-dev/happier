@@ -68,6 +68,23 @@ If you want to browse sessions from a different Codex home:
 1. change the Codex auth choice in the new-session flow (native vs connected service profile)
 2. reopen the Resume ID picker and browse again
 
+### Muse native history in 0.3 development
+
+The unreleased Muse integration uses the native conversation UUID as its Resume
+ID. Select the original Machine and the account/home containing that conversation
+before browsing or resuming. If that source is unavailable, resolve its setup or
+reachability error before continuing. Resuming does not copy history into another
+account or home, and browsing does not attach to a live native terminal.
+
+Native forks retain the source workspace. Ordinary workspace Sessions can fork
+in that directory; managed-workspace forks that require a new directory are
+unavailable. Forking at a message also requires a native checkpoint recorded for
+its completed turn. Older imported messages without that checkpoint cannot be
+used as a message cut; a whole-conversation fork remains a separate option.
+
+For installation and native account selection, see
+[Muse Agent setup](/agents/provider-integrations#muse-agent-in-03-development).
+
 ## Troubleshooting
 
 If you do not see the browse icon:
