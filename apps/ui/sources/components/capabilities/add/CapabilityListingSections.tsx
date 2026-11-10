@@ -46,6 +46,7 @@ export function CapabilityListingSections(
     <HappierCapabilityListingSections {...props} facts={facts} host={HOST}
       labels={{
         versionsTitle: t('capabilities.detail.listing.versionsTitle'),
+        sourceOnlyTitle: t('capabilities.detail.listing.sourceOnlyTitle'),
         sourceTitle: t('capabilities.detail.listing.sourceTitle'),
         current: t('capabilities.detail.listing.current'),
         currentIn: source => t('capabilities.detail.listing.currentIn', { source }),

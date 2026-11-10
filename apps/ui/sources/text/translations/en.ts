@@ -2164,6 +2164,8 @@ const enPromptLibrary = {
   registriesStatus: {
     limited: ({ time }: { time?: string }) => time === undefined ? 'Too many requests. Try again in a moment.' : `Too many requests. Try again at ${time}.`,
     unreachable: "Couldn’t reach this registry.",
+    unreachableSource: ({ source }: { source: string }) => `Couldn’t reach ${source}`,
+    unreachableAll: "Couldn’t reach the catalogs",
     authFailed: "Token rejected. Replace the token.",
     needsMachine: "Bring a machine online to browse this registry.",
     newerFormat: "This registry uses a newer format.",

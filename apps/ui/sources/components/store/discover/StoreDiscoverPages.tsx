@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { RegistrySourcesUnavailable } from '@/components/capabilities/add/RegistrySourcesUnavailable';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { View } from 'react-native';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -37,6 +39,9 @@ import { useNavigationFocusReturn } from '@/utils/navigation/useNavigationFocusR
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { StoreDiscover } from '../StoreDiscover';
+import { StoreSearch } from '../StoreSearch';
+import { StoreCatalogShelves } from '../StoreSearchPage';
+import { useStoreFilterFields } from '../catalog/useStoreFilterFields';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
 import { useStoreProjectScope } from '@/components/settings/plugins/model/useStoreProjectScope';
@@ -388,12 +393,15 @@ function CurationUnavailable(
     }, sourceId => props.curation.sources.find(source => source.id === sourceId)?.title);
     return state ? [{ ...state, sourceId: failure?.sourceId ?? null }] : [];
   });
+  // On a phone the line follows the pinned Installed group, so it starts one section gap below it like any block.
+  const phone = !useAppShellColumn().columnVisible;
   if (!unavailable.length) return null;
   return (
-    <View style={styles.stateLines}>
+    <View style={[styles.stateLines, phone ? styles.afterGroup : null]}>
       <RegistrySourcesUnavailable
         testID={props.testID}
-        failures={unavailable.map(state => ({ key: state.sourceId ?? 'sources', message: state.message, onRetry: state.onRetry }))}
+        failures={unavailable.map(state => ({ key: state.sourceId ?? 'sources', message: state.message,
+          ...(state.details ? { details: state.details } : {}), onRetry: state.onRetry }))}
       />
     </View>
   );
@@ -488,7 +496,7 @@ export const StoreDiscoverView = React.memo(function StoreDiscoverView(props: Re
         <DiscoverSearch onSubmit={nav.search} short={!columnVisible} />
         {/* A phone has no Store column: Installed, Updates and the kinds are pinned under the search. */}
         {columnVisible ? null : <PhoneInstalledRow onOpen={nav.openInstalled} onOpenUpdates={nav.openUpdates} onOpenKind={nav.openKind} />}
-        <DiscoverBody curation={props.curation} page={page} nav={nav} />
+        <DiscoverBody curation={props.curation} page={page} nav={nav} presented={props.presented === true} />
     </DiscoverFrame>
   );
 });
@@ -499,11 +507,14 @@ const DiscoverBody = React.memo(function DiscoverBody(
     curation: RegistryCuration;
     page: StoreDiscoverProjection;
     nav: ReturnType<typeof useStoreNavigation>;
+    presented: boolean;
   }>,
 ) {
   const { curation, nav, page } = props;
   const held =
     page.featured !== null || page.suggestions.length > 0 || page.jobs.length > 0 || page.sections.length > 0;
+  // No curated shelf to show because its catalogs failed: everything else the Store can read stays on the page.
+  const curationOut = !curation.loading && !held && (curation.error !== null || curation.sourceFailures.length > 0);
   const openJob = React.useCallback(
     (job: StoreDiscoverJob) => nav.openJob(job.id, job.sourceId),
     [nav],
@@ -516,6 +527,7 @@ const DiscoverBody = React.memo(function DiscoverBody(
         curation={curation}
         testID="store.discover.unavailable"
       />
+      {curationOut ? <DiscoverWithoutCuration curation={curation} presented={props.presented} onOpenKind={nav.openKind} /> : null}
       {page.featured ? (
         <RegistryShelf<StoreDiscoverItem>
           testID="store.discover.featured"
@@ -526,7 +538,7 @@ const DiscoverBody = React.memo(function DiscoverBody(
           projection={itemProjection}
           loading={false}
           where={(item) => storeKindWord(item.kind)}
-          glyph={(item) => <StoreDiscoverItemMark item={item} size={28} />}
+          glyph={(item) => <StoreDiscoverItemMark item={item} size={HAPPIER_COLLECTION_LIST_METRICS.catalogRow.identityMarkPx} />}
           action={noAction}
           onOpen={nav.openItem}
           columnTitle={t('capabilities.store.discover.featured')}
@@ -540,7 +552,7 @@ const DiscoverBody = React.memo(function DiscoverBody(
           projection={itemProjection}
           loading={false}
           where={item => t('capabilities.store.becauseRepository', { repository: item.because.repository.repository })}
-          glyph={item => <StoreDiscoverItemMark item={item} size={28} />}
+          glyph={item => <StoreDiscoverItemMark item={item} size={HAPPIER_COLLECTION_LIST_METRICS.catalogRow.identityMarkPx} />}
           action={noAction}
           onOpen={nav.openItem}
           columnTitle={t('capabilities.store.suggestionsTitle')}
@@ -589,6 +601,22 @@ const DiscoverBody = React.memo(function DiscoverBody(
     </>
   );
 });
+
+const NO_CURATION: RegistryCuration['curation'] = [];
+
+/** The healthy catalogs and built-ins, kind by kind, read through the same owners Search uses. */
+function DiscoverWithoutCuration(props: Readonly<{ curation: RegistryCuration; presented: boolean; onOpenKind: (kind: string) => void }>) {
+  const fields = useStoreFilterFields(NO_CURATION, props.presented);
+  const demand = React.useMemo(() => ({ presented: props.presented }), [props.presented]);
+  const failedSources = React.useMemo(() => props.curation.sourceFailures.map(failure => failure.sourceId),
+    [props.curation.sourceFailures]);
+  return (
+    <StoreSearch demand={demand} fields={fields} curation={NO_CURATION} curationComplete={false}>
+      {(state) => <StoreCatalogShelves state={state} presented={props.presented} softwareTarget={null}
+        onOpenKind={props.onOpenKind} excludeSourceIds={failedSources} />}
+    </StoreSearch>
+  );
+}
 
 /** Store → Browse by job: every job with at least one admitted choice. */
 export const StoreJobsPage = React.memo(function StoreJobsPage() {
@@ -821,6 +849,7 @@ const styles = StyleSheet.create((theme) => ({
   // A phone's scope chip sits on the page gutter beside nothing, hugging its label (as in a page header).
   // A source's state line sits where every Store page puts it: on the page edge, its Try again right after the words.
   stateLines: { marginBottom: theme.space.s8 },
+  afterGroup: { paddingTop: PAGE_LIST_METRICS.sectionGapPx },
   inset: {
     paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(),
     alignItems: 'flex-start',

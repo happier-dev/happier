@@ -212,7 +212,8 @@ export function StoreUpdatesScreen(): React.ReactNode {
                 <SkeletonRows rows={3} testID="store.updates.loading.rows" />
               </ItemGroup>
             ) : view.sections.length === 0 ? (
-              <View style={styles.inset}>
+              // While a kind is still loading or failed, its line above is the whole answer: no claim about what's waiting.
+              unresolved.length > 0 || check.failed ? null : <View style={styles.inset}>
                 <UpdatesEmpty
                   tracked={view.tracked}
                   current={view.count === 0}
@@ -250,7 +251,7 @@ export function StoreUpdatesScreen(): React.ReactNode {
   );
 }
 
-/** Nothing to review: claims "up to date" only after this page's check completed without a failed source. */
+/** Nothing to review: shown only when every kind loaded and the check didn't fail; "up to date" only after a check. */
 function UpdatesEmpty(
   props: Readonly<{ tracked: number; current: boolean; partial: boolean }>,
 ) {

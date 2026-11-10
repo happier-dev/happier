@@ -30,7 +30,7 @@ import { RegistrySourcesUnavailable } from '@/components/capabilities/add/Regist
 import { Text } from '@/components/ui/text/Text';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import { useRegistrySources } from '@/registries/useRegistrySources';
-import { describeRegistrySourceFailure, type RegistryFailureStatus } from '@/registries/describeRegistrySourceStatus';
+import { registrySourceFailureLine, type RegistryFailureStatus } from '@/registries/describeRegistrySourceStatus';
 import { useStoreDirectoryState } from '@/components/settings/plugins/model/usePluginsOpenItem';
 import { useMcpAdded, useSkillAdded, useAgentAdded, useProviderAdded } from './catalog/storeAdded';
 import { useStoreOpenReference } from './catalog/useStoreOpenReference';
@@ -144,11 +144,13 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
     </StoreKindFrame>
     </StoreRegistryIdentityProvider>
   );
-  // Recovery is another arrival: browsing stays held until its editorial positions are known.
-  // A failed cold read gets the same retry state as any unavailable directory; admitted layouts stay readable.
-  if (browsing && !props.curationRead.hasValue && props.kind !== 'provider') return frame(props.curationRead.loading
-    ? <SkeletonRows testID={`store.kind.${props.kind}.loading`} rows={5} accessibilityLabel={t('common.loading')} />
-    : <Directory kind={props.kind} rows={[]} groups={[]} list={{ ...props.curationRead, hasNextPage: false }} query={state.query} sourceTitle={null} />);
+  // Browsing stays held only while its editorial positions first arrive. A failed cold curation hides nothing: the
+  // kind's own catalogs and built-ins list below, with the curated source's outage line above them (J03).
+  // A retry after a settled failure is not a first arrival: the rows already shown stay (never flash back to loading).
+  const curationSettled = React.useRef(false);
+  if (!props.curationRead.loading) curationSettled.current = true;
+  if (kindPageWaitsForCuration({ browsing, kind: props.kind, curationRead: props.curationRead, settled: curationSettled.current })) return frame(
+    <SkeletonRows testID={`store.kind.${props.kind}.loading`} rows={5} accessibilityLabel={t('common.loading')} />);
   switch (props.kind) {
     case 'browserExtension':
       // A pasted Chrome Web Store link or ID installs that extension, whether or not the catalog lists it or is reachable.
@@ -185,6 +187,13 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
       break;
   }
   return frame(<Directory kind={props.kind} rows={[]} groups={[]} list={{ loading: false, hasNextPage: false }} query={state.query} sourceTitle={null} />);
+}
+
+/** The one decision on whether a kind page waits for curated positions: only while a cold curation is arriving. */
+export function kindPageWaitsForCuration(input: Readonly<{ browsing: boolean; kind: StoreDirectoryKind;
+  curationRead: Readonly<{ hasValue: boolean; loading: boolean }>; settled?: boolean }>): boolean {
+  return input.browsing && input.kind !== 'provider' && !input.curationRead.hasValue && input.curationRead.loading
+    && input.settled !== true;
 }
 
 /** A kind page's frame: header, search with its one condition beside it, the directory, and the listing pane. */
@@ -722,7 +731,8 @@ export function useProviderRows(items: StoreKindList<'provider'>['items'], prese
         (item: AccountProviderDeclarationV1): DirectoryRow => ({
           key: `provider|${item.contributionKey}`,
           title: item.definition.name,
-          description: null,
+          // Every Store row says what it is under its name; a Provider says its kind (the Providers settings' words).
+          description: t(`settingsProviders.kind.${item.definition.kind}`),
           group: 'provider',
           added: isAdded(item.contributionKey),
           open: () => openReference({ type: 'providerContribution', contributionKey: item.contributionKey }),
@@ -765,7 +775,8 @@ export type DirectoryList = Readonly<{
   nextPage?: () => Promise<void>;
   sourceFailures?: readonly Readonly<{
     sourceId: string | null;
-    message: string;
+    message?: string;
+    status?: RegistryFailureStatus | null;
     onRetry: () => void | Promise<void>;
   }>[];
 }>;
@@ -809,7 +820,12 @@ export function Directory(
     return key !== null && rows.some((row) => row.key === key) ? key : null;
   }, [rows, selection, props.selectedKey]);
   // A kind page clears its own search, the route condition it reads.
-  const clearQuery = useStoreDirectoryState().setQuery;
+  const directoryState = useStoreDirectoryState();
+  const clearQuery = directoryState.setQuery;
+  // The one catalog the route narrows to names a failed read that carries no source of its own.
+  const narrowed = directoryState.state?.filters.source;
+  const catalogId = narrowed?.include.length === 1 && narrowed.exclude.length === 0 ? narrowed.include[0]! : null;
+  const anyCatalogTitle = useSourceTitle();
   const onClear = props.onClear ?? (() => clearQuery(''));
   const onOpenChange = React.useCallback(
     (key: string | null) => rows.find((row) => row.key === key)?.open(),
@@ -866,7 +882,7 @@ export function Directory(
   // One line per failing catalog, however many kinds asked it.
   const sourceFailures = props.list.sourceFailures ?? [];
   const readFailures = props.list.error && !props.list.loading && sourceFailures.length === 0 && props.list.refresh
-    ? [{ sourceId: null, message: describeRegistrySourceFailure(props.list.status ?? null), onRetry: props.list.refresh }] : [];
+    ? [{ sourceId: null, status: props.list.status ?? null, onRetry: props.list.refresh }] : [];
   const failures = [...sourceFailures, ...readFailures].filter((failure, index, all) =>
     all.findIndex((other) => other.sourceId === failure.sourceId) === index);
   const empty =
@@ -880,12 +896,12 @@ export function Directory(
       <RegistrySourcesUnavailable
         testID={`store.kind.${props.kind}.failure`}
         size={pageFailure ? 'page' : 'line'}
+        // One owner for the words: "Couldn't reach {source}" (the failing catalog, else the one this page is
+        // narrowed to, else the catalogs), with what the source said behind Details (the Plugins pattern).
         failures={failures.map((failure) => ({
           key: failure.sourceId ?? 'index',
-          message: props.sourceTitle && failure.sourceId
-            ? `${props.sourceTitle(failure.sourceId)} · ${failure.message}`
-            : failure.message,
-          ...(props.sourceTitle && failure.sourceId ? { source: props.sourceTitle(failure.sourceId), reason: failure.message } : {}),
+          ...registrySourceFailureLine(failure, failure.sourceId
+            ? props.sourceTitle?.(failure.sourceId) ?? anyCatalogTitle(failure.sourceId) : catalogId ? anyCatalogTitle(catalogId) : null),
           onRetry: failure.onRetry,
         }))}
       />

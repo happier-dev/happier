@@ -2356,6 +2356,8 @@ export const ja: TranslationStructure = {
         registriesStatus: {
           limited: ({ time }: { time?: string }) => time === undefined ? 'リクエストが多すぎます。しばらくしてからもう一度お試しください。' : `リクエストが多すぎます。${time} 以降にもう一度お試しください。`,
           unreachable: "このレジストリに接続できません。",
+          unreachableSource: ({ source }: { source: string }) => `${source} に接続できません`,
+          unreachableAll: "カタログに接続できません",
           authFailed: "トークンが拒否されました。置き換えてください。",
           needsMachine: "このレジストリを閲覧するにはマシンをオンラインにしてください。",
           newerFormat: "このレジストリは新しい形式を使用しています。",

@@ -2210,6 +2210,8 @@ export const fr: TranslationStructure = {
         registriesStatus: {
           limited: ({ time }: { time?: string }) => time === undefined ? 'Trop de requêtes. Réessayez dans un instant.' : `Trop de requêtes. Réessayez à ${time}.`,
           unreachable: "Impossible de joindre ce registre.",
+          unreachableSource: ({ source }: { source: string }) => `Impossible de joindre ${source}`,
+          unreachableAll: "Impossible de joindre les catalogues",
           authFailed: "Jeton rejeté. Remplacez-le.",
           needsMachine: "Connectez une machine pour parcourir ce registre.",
           newerFormat: "Ce registre utilise un format plus récent.",

@@ -1994,6 +1994,8 @@ export const de: TranslationStructure = {
         registriesStatus: {
           limited: ({ time }: { time?: string }) => time === undefined ? 'Zu viele Anfragen. Gleich noch einmal versuchen.' : `Zu viele Anfragen. Um ${time} noch einmal versuchen.`,
           unreachable: "Diese Registry ist nicht erreichbar.",
+          unreachableSource: ({ source }: { source: string }) => `${source} ist nicht erreichbar`,
+          unreachableAll: "Die Kataloge sind nicht erreichbar",
           authFailed: "Token abgelehnt. Ersetzen Sie es.",
           needsMachine: "Bringen Sie einen Rechner online, um diese Registry zu durchsuchen.",
           newerFormat: "Diese Registry verwendet ein neueres Format.",

@@ -3,7 +3,7 @@ import { getMachineFirewallExposureInputSchemaV1, type MachineRecipeV1 } from '@
 /** P21 supplies the reviewed candidate; the native owner validates, stages and restores it. */
 export const firewall: Omit<MachineRecipeV1, 'id'> = {
   revision: '1', title: 'Firewall', software: true, icon: 'shield',
-  description: 'Apply the reviewed Happier-owned nftables policy while preserving foreign rules and management access.',
+  description: 'Blocks everything you didn’t open, and keeps your access to this machine.',
   inputSchema: { type: 'object', properties: {
     rules: { type: 'string', minLength: 1 },
     exposures: { type: 'array', items: getMachineFirewallExposureInputSchemaV1() },

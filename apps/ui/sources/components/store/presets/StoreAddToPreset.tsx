@@ -33,6 +33,7 @@ import {
 } from './storePresetDoor';
 import { useStorePresets } from './useStorePresets';
 import { StorePresetsReadFailure } from './StorePresetsReadFailure';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useStoreListingPaneTitle } from '../storeListingPaneTitle';
 
 const NO_SERVERS: readonly string[] = [];
@@ -135,7 +136,10 @@ export function StoreAddToPresetButton(
           : items
       }
       emptyLabel={null}
-      header={state?.error ? <StorePresetsReadFailure testID={`${props.testID}.state`} error={state.error} onRetry={presets.refresh} /> : undefined}
+      // While presets load, the menu says so: "New preset" alone would read as having none (and invite a duplicate).
+      header={state?.error ? <StorePresetsReadFailure testID={`${props.testID}.state`} error={state.error} onRetry={presets.refresh} />
+        : waiting ? <SurfaceStateCard testID={`${props.testID}.loading`} size="line" kind="loading" title={t('machinePresets.loading')} />
+          : undefined}
       separateCategories
       matchTriggerWidth={false}
       onSelect={(id) => {

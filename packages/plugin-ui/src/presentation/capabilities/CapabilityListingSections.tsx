@@ -13,6 +13,8 @@ export type HappierCapabilityListingFacts = Readonly<{
 export type HappierCapabilityListingSectionsLabels = Readonly<{
   versionsTitle: string;
   sourceTitle: string;
+  /** The same section when no licence is known: it names only what it holds. */
+  sourceOnlyTitle?: string;
   current: string;
   currentIn: (source: string) => string;
 }>;
@@ -69,7 +71,7 @@ export function HappierCapabilityListingSections(props: HappierCapabilityListing
         </Group>
       ) : null}
       {hasSource ? (
-        <Group testID={`${props.testID}.source`} title={props.labels.sourceTitle}>
+        <Group testID={`${props.testID}.source`} title={license ? props.labels.sourceTitle : props.labels.sourceOnlyTitle ?? props.labels.sourceTitle}>
           {sourceTitle ? <Row kind="source" title={sourceTitle} /> : null}
           {link ? (
             <Row kind="link" testID={`${props.testID}.source.link`} title={linkLabel(link)}

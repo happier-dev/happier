@@ -340,7 +340,10 @@ it('says failing curated sources on one line, names them on demand, and drops a 
   await waitForHomeGovernance(() => expect(lines()).toHaveLength(1));
   expect(screen.getTextContent()).not.toContain('Failure probe');
   await screen.pressByTestIdAsync('store.discover.unavailable.details');
-  expect(screen.getTextContent()).toContain('Failure probe');
+  expect(screen.findAllByTestId('store.discover.unavailable.sources').length).toBeGreaterThan(0);
+  const { RegistrySourcesUnavailable } = await import('@/components/capabilities/add/RegistrySourcesUnavailable');
+  // This harness's text owner renders the key alone, so the named lines are counted, not read.
+  expect(screen.root.findAllByType(RegistrySourcesUnavailable)[0]!.props.failures).toHaveLength(2);
   failureProbe.failing = false;
   await screen.pressByTestIdAsync('store.discover.unavailable.retry');
   // One source still fails: the line names it, and the recovered one is gone.

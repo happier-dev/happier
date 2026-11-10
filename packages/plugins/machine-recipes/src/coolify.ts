@@ -4,7 +4,7 @@ import { COOLIFY_INSTALL_SCRIPT } from './coolifyInstallScript.js';
 /** Vendor-owned resources only; shared Docker, images and networks are retained. */
 export const coolify: Omit<MachineRecipeV1, 'id'> = {
   revision: '1', title: 'Coolify', software: true, icon: 'desktop',
-  description: 'Deploy and manage your apps from your own server. Removing it also deletes Coolify’s data.',
+  description: 'Deploy and manage your apps from your own server.',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   steps: [
     { id: 'data-parent', kind: 'script', shell: 'sh', body: 'mkdir -p -- /data\n', affects: 'none' },
@@ -21,7 +21,8 @@ containers=$(docker container ls --all --format '{{.Names}}') || exit 2
 printf '%s\n' "$containers" | grep -Fxq coolify
 `, unsatisfiedExitCodes: [1] } },
   ],
-  removeSteps: [{ id: 'remove', kind: 'script', shell: 'sh', affects: 'dockerEngine', body: `set -eu
+  removeSteps: [{ id: 'remove', kind: 'script', shell: 'sh', affects: 'dockerEngine',
+    review: { title: 'Deletes Coolify’s data', description: 'Removing Coolify also deletes its apps’ settings and data under /data/coolify.' }, body: `set -eu
 [ "$(uname -s)" = Linux ] || exit 2
 docker info >/dev/null
 containers=$(docker container ls --all --format '{{.Names}}')

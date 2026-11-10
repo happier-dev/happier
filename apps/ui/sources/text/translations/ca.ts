@@ -2209,6 +2209,8 @@ export const ca: TranslationStructure = {
         registriesStatus: {
           limited: ({ time }: { time?: string }) => time === undefined ? 'Massa sol·licituds. Torna-ho a provar d’aquí a un moment.' : `Massa sol·licituds. Torna-ho a provar a partir de ${time}.`,
           unreachable: "No es pot contactar amb aquest registre.",
+          unreachableSource: ({ source }: { source: string }) => `No es pot contactar amb ${source}`,
+          unreachableAll: "No es pot contactar amb els catàlegs",
           authFailed: "Token rebutjat. Substitueix-lo.",
           needsMachine: "Connecta una màquina per explorar aquest registre.",
           newerFormat: "Aquest registre fa servir un format més nou.",

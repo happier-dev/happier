@@ -3,7 +3,7 @@ import { DOKPLOY_INSTALL_SCRIPT } from './dokployInstallScript.js';
 
 export const dokploy: Omit<MachineRecipeV1, 'id'> = {
   revision: '1', title: 'Dokploy', software: true, icon: 'desktop',
-  description: 'Deploy and manage your apps from your own server. Removing it also deletes Dokploy’s data.',
+  description: 'Deploy and manage your apps from your own server.',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   steps: [
     { id: 'data', kind: 'directory', path: '/etc/dokploy', owner: 'root', group: 'root', mode: 0o777 },
@@ -16,7 +16,8 @@ services=$(docker service ls --format '{{.Name}}') || exit 1
 printf '%s\n' "$services" | grep -Fxq dokploy
 `, unsatisfiedExitCodes: [1] } },
   ],
-  removeSteps: [{ id: 'remove', kind: 'script', shell: 'sh', affects: 'dockerEngine', body: `set -eu
+  removeSteps: [{ id: 'remove', kind: 'script', shell: 'sh', affects: 'dockerEngine',
+    review: { title: 'Deletes Dokploy’s data', description: 'Removing Dokploy also deletes its apps’ settings and data.' }, body: `set -eu
 [ "$(uname -s)" = Linux ] || exit 2
 swarm_manager=$(docker info --format '{{.Swarm.ControlAvailable}}')
 if [ "$swarm_manager" = true ]; then

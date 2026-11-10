@@ -34,8 +34,27 @@ export type RegistryFailureStatus = Exclude<RegistrySourceStatusV1, { state: 'ok
 /** Human-facing source identity and typed reason; transport exception text is never presentation input. */
 export function describeRegistrySourceFailure(status: RegistryFailureStatus | null, sourceTitle?: string | null): string {
     // A read that failed without a typed status still says what happened, never a bare "Unavailable".
+    if (sourceTitle && (!status || status.state === 'unreachable')) return t('promptLibrary.registriesStatus.unreachableSource', { source: sourceTitle });
     const reason = status ? describeRegistrySourceStatus(status) : t('promptLibrary.registriesStatus.unreachable');
     return sourceTitle ? `${sourceTitle} · ${reason}` : reason;
+}
+
+/**
+ * One outage line's words for every Store and Plugins surface: "Couldn't reach {source}" (or the catalogs, when no
+ * one source is known) as the line, and what the producer said plus the typed code behind Details.
+ */
+export function registrySourceFailureLine(
+    failure: Readonly<{ status?: RegistryFailureStatus | null; message?: string }>,
+    sourceTitle: string | null,
+): Readonly<{ message: string; details: readonly string[] }> {
+    const status = failure.status ?? null;
+    const message = sourceTitle ? describeRegistrySourceFailure(status, sourceTitle)
+        : status && status.state !== 'unreachable' ? describeRegistrySourceStatus(status)
+            : t('promptLibrary.registriesStatus.unreachableAll');
+    // The producer's sentence only when it adds something ("Updated earlier · …"), never the bare status again.
+    const said = failure.message && failure.message !== message
+        && failure.message !== (status ? describeRegistrySourceStatus(status) : t('promptLibrary.registriesStatus.unreachable')) ? [failure.message] : [];
+    return { message, details: [...said, t('settingsPlugins.diagnosticsTechnicalCode', { code: status?.state ?? 'unreachable' })] };
 }
 /** The registry owner's typed failure (rate limited, token rejected, …) as it crosses an Action failure's details. */
 export function readRegistryFailureStatus(details: unknown): RegistryFailureStatus | null {

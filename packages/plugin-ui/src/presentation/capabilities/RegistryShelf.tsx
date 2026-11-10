@@ -24,6 +24,8 @@ export type RegistryShelfProjection<Item> = Readonly<{
 }>;
 export type RegistryShelfUnavailable = Readonly<{
   message: string;
+  /** What the source said and its code, behind the line's Details. */
+  details?: readonly string[];
   onRetry: () => void | Promise<void>;
 }>;
 
@@ -182,7 +184,7 @@ export function HappierRegistryShelf<Item>(props: RegistryShelfProps<Item> & Rea
         // One verb for a source that did not answer, on every page (TASTE-S4060 D2), through the one outage line.
         <props.host.Unavailable
           testID={`${testID}.unavailable`}
-          failures={[{ key: 'source', message: props.unavailable.message, onRetry: props.unavailable.onRetry }]}
+          failures={[{ key: 'source', message: props.unavailable.message, ...(props.unavailable.details ? { details: props.unavailable.details } : {}), onRetry: props.unavailable.onRetry }]}
         />
       ) : null}
     </props.host.Section>

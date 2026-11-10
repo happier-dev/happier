@@ -25,7 +25,7 @@ export type StoreAppPageTranslation = Readonly<{
   addressBody: (params: Port) => string;
   internalTitle: (params: Port) => string;
   keptTitle: (params: Count) => string;
-  keptBody: string;
+  keptBody: (params: Readonly<{ count: number }>) => string;
   secretsTitle: (params: Count) => string;
   secretsBody: string;
   firstRunTitle: string;
@@ -99,7 +99,7 @@ const en: StoreAppPageTranslation = {
     count === 1
       ? 'One volume, kept across deploys'
       : `${count} volumes, kept across deploys`,
-  keptBody: 'Back them up from its environment once it runs',
+  keptBody: ({ count }) => (count === 1 ? 'Back it up from its environment once it runs' : 'Back them up from its environment once it runs'),
   secretsTitle: ({ count }) =>
     count === 1
       ? 'One secret, generated and saved for you'
@@ -180,7 +180,7 @@ const ca: StoreAppPageTranslation = {
     count === 1
       ? 'Un volum, conservat entre desplegaments'
       : `${count} volums, conservats entre desplegaments`,
-  keptBody: 'Fes-ne còpia des del seu entorn quan s’executi',
+  keptBody: ({ count }) => (count === 1 ? 'Fes-ne còpia des del seu entorn quan s’executi' : 'Fes-ne còpia des del seu entorn quan s’executi'),
   secretsTitle: ({ count }) =>
     count === 1
       ? 'Un secret, generat i desat per a tu'
@@ -261,7 +261,7 @@ const de: StoreAppPageTranslation = {
     count === 1
       ? 'Ein Volume, über Bereitstellungen erhalten'
       : `${count} Volumes, über Bereitstellungen erhalten`,
-  keptBody: 'Sichere sie in ihrer Umgebung, sobald sie läuft',
+  keptBody: ({ count }) => (count === 1 ? 'Sichere es in seiner Umgebung, sobald sie läuft' : 'Sichere sie in ihrer Umgebung, sobald sie läuft'),
   secretsTitle: ({ count }) =>
     count === 1
       ? 'Ein Geheimnis, für dich erzeugt und gespeichert'
@@ -343,7 +343,7 @@ const es: StoreAppPageTranslation = {
     count === 1
       ? 'Un volumen, conservado entre despliegues'
       : `${count} volúmenes, conservados entre despliegues`,
-  keptBody: 'Haz copia desde su entorno cuando esté en marcha',
+  keptBody: ({ count }) => (count === 1 ? 'Haz copia desde su entorno cuando esté en marcha' : 'Haz copia desde su entorno cuando esté en marcha'),
   secretsTitle: ({ count }) =>
     count === 1
       ? 'Un secreto, generado y guardado para ti'
@@ -424,7 +424,7 @@ const fr: StoreAppPageTranslation = {
     count === 1
       ? 'Un volume, conservé entre les déploiements'
       : `${count} volumes, conservés entre les déploiements`,
-  keptBody: 'Sauvegarde-les depuis son environnement une fois lancée',
+  keptBody: ({ count }) => (count === 1 ? 'Sauvegarde-le depuis son environnement une fois lancée' : 'Sauvegarde-les depuis son environnement une fois lancée'),
   secretsTitle: ({ count }) =>
     count === 1
       ? 'Un secret, généré et enregistré pour toi'
@@ -505,7 +505,7 @@ const it: StoreAppPageTranslation = {
     count === 1
       ? 'Un volume, conservato tra le distribuzioni'
       : `${count} volumi, conservati tra le distribuzioni`,
-  keptBody: 'Fanne il backup dal suo ambiente quando è in esecuzione',
+  keptBody: ({ count }) => (count === 1 ? 'Fanne il backup dal suo ambiente quando è in esecuzione' : 'Fanne il backup dal suo ambiente quando è in esecuzione'),
   secretsTitle: ({ count }) =>
     count === 1
       ? 'Un segreto, generato e salvato per te'
@@ -584,7 +584,7 @@ const ja: StoreAppPageTranslation = {
     `Happier が ${service} のポート ${port} にルーティングします`,
   internalTitle: ({ service, port }) => `${service}（ポート ${port}）`,
   keptTitle: ({ count }) => `${count} 個のボリューム、デプロイ間で保持`,
-  keptBody: '実行後、その環境からバックアップできます',
+  keptBody: ({ count }) => (count === 1 ? '実行後、その環境からバックアップできます' : '実行後、その環境からバックアップできます'),
   secretsTitle: ({ count }) => `${count} 個のシークレットを生成して保存`,
   secretsBody: 'ここには表示されません。保存済みシークレットで開けます',
   firstRunTitle: '最初に開いた人が管理者を作成します',
@@ -662,7 +662,7 @@ const pl: StoreAppPageTranslation = {
     count === 1
       ? 'Jeden wolumin, zachowany między wdrożeniami'
       : `Woluminy (${count}), zachowane między wdrożeniami`,
-  keptBody: 'Zrób kopię z jej środowiska, gdy już działa',
+  keptBody: ({ count }) => (count === 1 ? 'Zrób kopię z jej środowiska, gdy już działa' : 'Zrób kopię z jej środowiska, gdy już działa'),
   secretsTitle: ({ count }) =>
     count === 1
       ? 'Jeden sekret, wygenerowany i zapisany dla ciebie'
@@ -743,7 +743,7 @@ const pt: StoreAppPageTranslation = {
     count === 1
       ? 'Um volume, mantido entre implementações'
       : `${count} volumes, mantidos entre implementações`,
-  keptBody: 'Faz cópia a partir do seu ambiente quando estiver a correr',
+  keptBody: ({ count }) => (count === 1 ? 'Faz cópia a partir do seu ambiente quando estiver a correr' : 'Faz cópia a partir do seu ambiente quando estiver a correr'),
   secretsTitle: ({ count }) =>
     count === 1
       ? 'Um segredo, gerado e guardado para ti'
@@ -821,7 +821,7 @@ const ru: StoreAppPageTranslation = {
   internalTitle: ({ service, port }) => `${service}, порт ${port}`,
   keptTitle: ({ count }) =>
     `Томов: ${count}, сохраняются между развёртываниями`,
-  keptBody: 'Сделайте резервную копию из его окружения после запуска',
+  keptBody: ({ count }) => (count === 1 ? 'Сделайте резервную копию из его окружения после запуска' : 'Сделайте резервную копию из его окружения после запуска'),
   secretsTitle: ({ count }) =>
     `Секретов: ${count}, созданы и сохранены для вас`,
   secretsBody: 'Здесь не показываются; откройте их в «Сохранённых секретах»',
@@ -897,7 +897,7 @@ const zhHans: StoreAppPageTranslation = {
     `Happier 将其路由到 ${service} 的 ${port} 端口`,
   internalTitle: ({ service, port }) => `${service}，端口 ${port}`,
   keptTitle: ({ count }) => `${count} 个卷，部署之间保留`,
-  keptBody: '运行后可从其环境中备份',
+  keptBody: ({ count }) => (count === 1 ? '运行后可从其环境中备份' : '运行后可从其环境中备份'),
   secretsTitle: ({ count }) => `${count} 个密钥，已为你生成并保存`,
   secretsBody: '不会在此显示；在“已保存的密钥”中打开',
   firstRunTitle: '第一个打开它的人创建管理员',
@@ -969,7 +969,7 @@ const zhHant: StoreAppPageTranslation = {
     `Happier 將其路由到 ${service} 的 ${port} 埠`,
   internalTitle: ({ service, port }) => `${service}，埠 ${port}`,
   keptTitle: ({ count }) => `${count} 個磁碟區，部署之間保留`,
-  keptBody: '執行後可從其環境中備份',
+  keptBody: ({ count }) => (count === 1 ? '執行後可從其環境中備份' : '執行後可從其環境中備份'),
   secretsTitle: ({ count }) => `${count} 個密鑰，已為你產生並儲存`,
   secretsBody: '不會在此顯示；在「已儲存的密鑰」中開啟',
   firstRunTitle: '第一個開啟它的人建立管理員',

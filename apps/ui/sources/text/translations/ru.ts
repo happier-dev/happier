@@ -2203,6 +2203,8 @@ export const ru: TranslationStructure = {
         registriesStatus: {
           limited: ({ time }: { time?: string }) => time === undefined ? 'Слишком много запросов. Повторите попытку чуть позже.' : `Слишком много запросов. Повторите попытку в ${time}.`,
           unreachable: "Не удалось подключиться к реестру.",
+          unreachableSource: ({ source }: { source: string }) => `Не удалось подключиться к ${source}`,
+          unreachableAll: "Не удалось подключиться к каталогам",
           authFailed: "Токен отклонён. Замените его.",
           needsMachine: "Подключите машину, чтобы просматривать этот реестр.",
           newerFormat: "Этот реестр использует более новый формат.",

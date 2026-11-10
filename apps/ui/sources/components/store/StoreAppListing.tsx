@@ -1,3 +1,4 @@
+import { DeploymentTemplateMappingCorrection } from '@/components/projects/deployments/DeploymentTemplateMappingCorrection';
 import { useRegistrySources } from '@/registries/useRegistrySources';
 import { appListingCatalogFacts, appListingProse } from './catalog/storeAppListingFacts';
 import * as React from 'react';
@@ -31,6 +32,7 @@ import { t } from '@/text';
 import { catalogText, showStoreAppPreparation } from './StoreAppPreparation';
 import { StoreAddToPresetButton, StorePresetEditorHandoff, type StorePresetChoice } from './presets/StoreAddToPreset';
 import type { StorePresetDoorItem } from './presets/storePresetDoor';
+import { useStoreListingPaneTitle } from './storeListingPaneTitle';
 import {
   useStoreAppListing,
   type StoreAppListingSelection,
@@ -141,6 +143,9 @@ export function StoreAppListing(
   const presetItem = React.useMemo((): StorePresetDoorItem | null => templateRef ? { kind: 'app', definition: {
     name, project: { kind: 'create' }, definition: { from: 'catalogApp', templateRef } } } : null, [templateRef, name]);
   const [presetHandoff, setPresetHandoff] = React.useState<StorePresetChoice | null>(null);
+  // As its own page (a phone push) the bar names the App, as every pushed detail names its subject; a preset
+  // hand-off names its editor instead.
+  useStoreListingPaneTitle(props.pushed && !presetHandoff ? name : null);
   const returnFromPreset = React.useCallback(() => setPresetHandoff(null), []);
   // The listing that asked owns its install sheet: once it stops being presented (a route change, Back, a
   // closed pane) the sheet is withdrawn with it, never left open over another page.
@@ -259,9 +264,12 @@ export function StoreAppListing(
                 title={name}
                 {...(prose.purpose ? { purpose: prose.purpose } : {})}
                 facts={{
+                  // What it is and where it comes from, on one line: App · its catalog · that catalog's version.
                   extra: [
                     t('capabilities.store.kindWord.app'),
                     summary.publisher?.name,
+                    catalogFacts.sourceTitle,
+                    catalogPin,
                   ].filter((fact): fact is string => Boolean(fact)),
                 }}
               />
@@ -303,6 +311,8 @@ export function StoreAppListing(
             ))}
           </ItemGroup>
         ) : null}
+        {state.kind === 'needs_review' && state.reviewSource ? <DeploymentTemplateMappingCorrection
+          source={state.reviewSource} onReview={state.correctMappings} testID="store.app.mapping" /> : null}
         {app ? (
           <ItemGroup title={t('capabilities.store.appPage.reachTitle')}>
             {app.domains.map((domain) => (
@@ -333,7 +343,9 @@ export function StoreAppListing(
                   count: app.volumes.filter((volume) => volume.persistent)
                     .length,
                 })}
-                subtitle={t('capabilities.store.appPage.keptBody')}
+                subtitle={t('capabilities.store.appPage.keptBody', {
+                  count: app.volumes.filter((volume) => volume.persistent).length,
+                })}
               />
             ) : null}
             {app.generatedSecrets.length > 0 ? (

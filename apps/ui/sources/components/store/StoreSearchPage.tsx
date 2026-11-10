@@ -1,6 +1,5 @@
 import { rankByTitleMatch } from './catalog/storeSearchRank';
 import * as React from 'react';
-import { describeRegistrySourceFailure } from '@/registries/describeRegistrySourceStatus';
 import type { CollectionGroupAction } from '@happier-dev/plugin-ui';
 import { StoreProjectScopeChip } from './StoreProjectScopeChip';
 import { useStoreProjectScope } from '@/components/settings/plugins/model/useStoreProjectScope';
@@ -170,15 +169,14 @@ function useGo(
   );
 }
 
-function SearchResults(
-  props: Readonly<{ state: StoreSearchState; presented: boolean; softwareTarget: StoreSoftwareTarget | null }>,
-): React.ReactNode {
+type SearchSectionsInput = Readonly<{ state: StoreSearchState; presented: boolean; softwareTarget: StoreSoftwareTarget | null }>;
+
+/** Every kind's rows from its own owners, sectioned for one directory: Search's results, and Discover's shelves when its curation is out. */
+function useStoreSearchSections(props: SearchSectionsInput) {
   const { state } = props;
   const { lists, filter } = state;
   const allContributedKinds = useContributedStoreKinds();
   const contributedKinds = React.useMemo(() => selectContributedStoreKinds(allContributedKinds, filter.filters), [allContributedKinds, filter.filters]);
-  const localize = useProjectedPluginLocalizedTextResolver();
-  const phone = !useAppShellColumn().columnVisible;
   const visible = React.useMemo(
     () => new Set<unknown>(state.rows),
     [state.rows],
@@ -360,22 +358,60 @@ function SearchResults(
   const failures = [lists.app, lists.browserExtension, lists.mcpServer, lists.skill, lists.agent].flatMap(
     (list) => (list && 'sourceFailures' in list ? list.sourceFailures : []),
   );
-  const failedReads = ([['app', lists.app], ['browserExtension', lists.browserExtension], ['mcpServer', lists.mcpServer], ['skill', lists.skill], ['agent', lists.agent]] as const)
-    .flatMap(([kind, list]) => list?.error && !list.loading && list.sourceFailures.length === 0
-      ? [{ title: describeRegistrySourceFailure(list.status, kindCopy(kind).title), retry: list.refresh }] : []);
+  const failedReads = [lists.app, lists.browserExtension, lists.mcpServer, lists.skill, lists.agent]
+    .flatMap((list) => list?.error && !list.loading && list.sourceFailures.length === 0
+      ? [{ status: list.status, retry: list.refresh }] : []);
   const list: DirectoryList = {
       loading,
       hasNextPage: continuations.length > 0,
       nextPage: async () => {
         await Promise.all(continuations.map((next) => next()));
       },
-      sourceFailures: [...failures, ...(failedReads.length ? [{ sourceId: null,
-        message: failedReads.map(failure => failure.title).join(' · '),
+      // Reads that failed without naming a catalog are one "Couldn't reach the catalogs" line.
+      sourceFailures: [...failures, ...(failedReads.length ? [{ sourceId: null, status: failedReads[0]!.status,
         onRetry: async () => { await Promise.all(failedReads.map(failure => failure.retry())); } }] : [])],
   };
 
-  const query = state.query.trim();
   const count = sections.reduce((sum, kind) => sum + byKind[kind].length, 0);
+  return { allContributedKinds, contributedKinds, byKind, sections, selectedKind, setKind, totalKnown, preview, rows, groups,
+    groupAction, list, loading, count, sourceTitle };
+}
+
+/**
+ * Discover while its curated catalogs are out (lab h:unreachable, "everything else is here"): every healthy catalog and
+ * built-in, each kind previewing its first rows with All N › to its kind page. The same rows and directory as Search.
+ */
+export function StoreCatalogShelves(props: SearchSectionsInput & Readonly<{ onOpenKind: (kind: string) => void; excludeSourceIds: readonly string[] }>): React.ReactNode {
+  const { sections, groups, list, byKind, sourceTitle } = useStoreSearchSections(props);
+  // Shelves always preview, even when one kind is all that answered; its All › opens the whole kind.
+  const rows = sections.flatMap((kind) => byKind[kind].slice(0, STORE_SECTION_PREVIEW_ROWS).map((row) => ({ ...row, group: kind })));
+  const { onOpenKind, excludeSourceIds } = props;
+  const groupAction = React.useCallback((groupKey: string): CollectionGroupAction | null => {
+    const kind = KIND_ORDER.find((candidate) => candidate === groupKey);
+    return kind ? { label: t('capabilities.store.discover.all'), onPress: () => onOpenKind(kind), kind: 'link' } : null;
+  }, [onOpenKind]);
+  // The curated outage is already said once above; only other named catalogs' failures speak here. A kind read that
+  // failed without naming a catalog is that same outage reaching it, so it doesn't get a second line.
+  // Shelves preview; each kind's All › pages the rest, so there is no Load more here.
+  const shown: DirectoryList = { ...list, hasNextPage: false, sourceFailures: (list.sourceFailures ?? [])
+    .filter(failure => failure.sourceId !== null && !excludeSourceIds.includes(failure.sourceId)) };
+  if (Object.values(byKind).every(kindRows => kindRows.length === 0) && !list.loading) return null;
+  return (
+    <Directory kind="search" label={t('capabilities.store.discover.title')} rows={rows} groups={groups} list={shown}
+      query="" sourceTitle={sourceTitle} showEmptyState={false} groupAction={groupAction} />
+  );
+}
+
+function SearchResults(
+  props: SearchSectionsInput,
+): React.ReactNode {
+  const { state } = props;
+  const { lists, filter } = state;
+  const { allContributedKinds, contributedKinds, selectedKind, setKind, preview, rows, groups,
+    groupAction, list, loading, count, sourceTitle } = useStoreSearchSections(props);
+  const localize = useProjectedPluginLocalizedTextResolver();
+  const phone = !useAppShellColumn().columnVisible;
+  const query = state.query.trim();
   // A warm read changes activity, not what the held rows cover or the page's height.
   const partial = filter.result.coverage === 'partial' && count > 0;
   const clearAll = () => {
@@ -441,17 +477,14 @@ function SearchResults(
                   id: 'all',
                   label: t('capabilities.store.search.all'),
                   testID: 'store.search.kind.all',
-                  ...(query && selectedKind === 'all' && !loading && contributedKinds.length === 0 && KIND_ORDER.every(totalKnown) ? { count: String(count) } : {}),
                 },
                 ...KIND_ORDER.map((kind) => ({
                   id: kind,
                   label: kindCopy(kind).title,
+                  // No counts on the kinds: only some kinds can know theirs (paged or unreached catalogs can't), and a
+                  // count on just those reads as a fact about the others. The field says how many matched; each
+                  // section's All N › says its own.
                   testID: `store.search.kind.${kind}`,
-                  // Only what was searched has a count: a kind outside the chosen one, or Software before a Machine is
-                  // chosen, was not fetched.
-                  ...(query && (selectedKind === 'all' || selectedKind === kind) && lists[kind] && !lists[kind].loading && totalKnown(kind)
-                    && (kind !== 'software' || props.softwareTarget !== null)
-                    ? { count: String(byKind[kind].length) } : {}),
                 })),
                 ...allContributedKinds.map(kind => ({ id: kind.key,
                   label: localize(kind.pluginId, kind.definition.title), testID: `store.search.kind.${kind.key}` })),

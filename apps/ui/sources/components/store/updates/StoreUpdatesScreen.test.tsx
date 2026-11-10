@@ -54,14 +54,13 @@ async function renderExtensionUpdate(partial = false) {
     return { screen, rowId, scope, machineId, extensionId, inventory, extension };
 }
 
-it('shows a qualified empty state for partial inventory and retries its real inventory read', async () => {
-    const { screen, rowId, inventory, extension } = await renderExtensionUpdate(true);
-    expect(screen.findHostByTestId('store.updates.notChecked')).not.toBeNull();
+it('while inventory is still loading, says only that, never "nothing waiting" or a Retry', async () => {
+    const { screen } = await renderExtensionUpdate(true);
+    expect(screen.findHostByTestId('store.updates.coverage.partial')).not.toBeNull();
+    expect(screen.findHostByTestId('store.updates.coverage.partial.retry')).toBeNull();
+    expect(screen.findHostByTestId('store.updates.notChecked')).toBeNull();
     expect(screen.findHostByTestId('store.updates.noSources')).toBeNull();
     expect(screen.findHostByTestId('store.updates.upToDate')).toBeNull();
-    inventory.entries = [extension];
-    await screen.pressByTestIdAsync('store.updates.coverage.partial.retry');
-    await vi.waitFor(() => expect(screen.findHostByTestId(rowId)).not.toBeNull());
 });
 
 it('renders an actionable review for an available extension update without inventing a destination', async () => {

@@ -14,7 +14,7 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { Text } from '@/components/ui/text/Text';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { describeRegistrySourceFailure, type RegistryFailureStatus } from '@/registries/describeRegistrySourceStatus';
+import { registrySourceFailureLine, type RegistryFailureStatus } from '@/registries/describeRegistrySourceStatus';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 
 export type { RegistryShelfProjection, RegistryShelfUnavailable, RegistryShelfAddState };
@@ -41,7 +41,7 @@ export function resolveRegistryShelfUnavailable(
     sourceId: string | null;
     error: string | null;
     status: RegistryFailureStatus | null;
-    sourceFailures: readonly Readonly<{ sourceId: string; message: string }>[];
+    sourceFailures: readonly Readonly<{ sourceId: string; message: string; status?: RegistryFailureStatus }>[];
     refresh: () => Promise<void>;
   }>,
   sourceName: (sourceId: string) => string | undefined | null,
@@ -51,8 +51,7 @@ export function resolveRegistryShelfUnavailable(
   const sourceId = failure?.sourceId ?? shelf.sourceId;
   const name = sourceId ? sourceName(sourceId) : null;
   return {
-    message: failure ? name ? `${name} · ${failure.message}` : failure.message
-      : describeRegistrySourceFailure(shelf.status, name),
+    ...registrySourceFailureLine(failure ?? { status: shelf.status }, name ?? null),
     onRetry: shelf.refresh,
   };
 }

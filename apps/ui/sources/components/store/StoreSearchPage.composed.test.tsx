@@ -110,17 +110,19 @@ it.each(['populated', 'empty', 'failed', 'partial'] as const)('holds the initial
     if (outcome === 'failed') {
         await waitForHomeGovernance(() => expect(screen.root.findAllByType(SurfaceStateCard)
             .some(node => node.props.testID === 'store.kind.app.failure')).toBe(true));
-        // A failed first read is not an empty editorial layout. Its later recovery must not move templates.
-        expect(screen.findAllByType(Directory).flatMap(node => node.props.rows)).toEqual([]);
+        // A failed cold curation hides nothing (J03): the catalog's own rows list under the curated source's line.
+        await waitForHomeGovernance(() => expect(screen.findAllByType(Directory).flatMap(node => node.props.rows)).toHaveLength(2));
         const failure = screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'store.kind.app.failure');
         expect(failure).toBeDefined();
-        retryCuration = screen.findAllByType(Directory)[0]!.props.list.refresh;
+        const { RegistrySourcesUnavailable } = await import('@/components/capabilities/add/RegistrySourcesUnavailable');
+        retryCuration = screen.root.findAllByType(RegistrySourcesUnavailable)[0]!.props.failures
+            .find((entry: { key: string }) => entry.key === sourceId)!.onRetry;
         failCuration = false;
         pending = new Promise<void>(resolve => { releaseCuration = resolve; });
         const beforeRetry = curationReads;
         await act(async () => { void failure!.props.action.onPress(); });
         await waitForHomeGovernance(() => expect(curationReads).toBeGreaterThan(beforeRetry));
-        expect(screen.findAllByType(Directory).flatMap(node => node.props.rows)).toEqual([]);
+        expect(screen.findAllByType(Directory).flatMap(node => node.props.rows)).toHaveLength(2);
         await act(async () => { releaseCuration(); });
     }
     await waitForHomeGovernance(() => expect(screen.findAllByType(Directory).flatMap(node => node.props.rows)).toHaveLength(2));

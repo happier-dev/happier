@@ -5,7 +5,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
-const { Directory } = await import('./StoreKindPage');
+const { Directory, kindPageWaitsForCuration } = await import('./StoreKindPage');
 const { EmptyState } = await import('@/components/ui/empty/EmptyState');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 
@@ -16,6 +16,16 @@ const render = (list: object, query = '') => renderScreen(<Directory kind="bot" 
 afterEach(standardCleanup);
 
 describe('Store directory states', () => {
+    it('waits for curated positions only while they arrive: a failed cold curation never hides the kind\'s own rows (J03)', () => {
+        const cold = { hasValue: false, loading: false };
+        expect(kindPageWaitsForCuration({ browsing: true, kind: 'app', curationRead: { ...cold, loading: true } })).toBe(true);
+        expect(kindPageWaitsForCuration({ browsing: true, kind: 'app', curationRead: cold })).toBe(false);
+        expect(kindPageWaitsForCuration({ browsing: true, kind: 'agent', curationRead: cold })).toBe(false);
+        expect(kindPageWaitsForCuration({ browsing: false, kind: 'app', curationRead: { ...cold, loading: true } })).toBe(false);
+        // Retrying a settled failure keeps the shown rows instead of flashing back to loading.
+        expect(kindPageWaitsForCuration({ browsing: true, kind: 'app', curationRead: { ...cold, loading: true }, settled: true })).toBe(false);
+    });
+
     it('gives an empty directory the standard page state, with what belongs here', async () => {
         const screen = await render({});
         const state = screen.findAllByType(EmptyState)[0]!;
@@ -48,8 +58,11 @@ describe('Store directory states', () => {
         const { RegistrySourcesUnavailable } = await import('@/components/capabilities/add/RegistrySourcesUnavailable');
         const outage = screen.findAllByType(RegistrySourcesUnavailable)[0]!;
         expect(outage.props.size).toBe('line');
+        // "Couldn't reach {catalog}" on the line; what each source said waits behind Details.
         expect(outage.props.failures.map((failure: { message: string }) => failure.message))
-            .toEqual(['Happier catalog · A failed', 'Team catalog · B failed']);
+            .toEqual(['promptLibrary.registriesStatus.unreachableSource(source=Happier catalog)',
+                'promptLibrary.registriesStatus.unreachableSource(source=Team catalog)']);
+        expect(outage.props.failures.map((failure: { details: readonly string[] }) => failure.details[0])).toEqual(['A failed', 'B failed']);
     });
 
     it('says an outage above the results, so rows arriving under it never move it', async () => {

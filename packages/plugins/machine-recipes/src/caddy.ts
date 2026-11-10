@@ -3,7 +3,7 @@ import { createCaddyContainerSetupDeclarations, type MachineRecipeV1 } from '@ha
 /** P20 prepares owned state only; P41 supplies and runs the reviewed container topology. */
 export const caddy: Omit<MachineRecipeV1, 'id'> = {
   revision: '1', title: 'Caddy', software: true, icon: 'desktop',
-  description: 'Prepare durable proxy state and daemon-only access to its Unix admin socket. Deployment owns listeners and routes.',
+  description: 'Serves your apps over HTTPS.',
   inputSchema: { type: 'object', properties: {
     initialConfig: { type: 'string', minLength: 1 },
   }, required: ['initialConfig'], additionalProperties: false },

@@ -15,11 +15,11 @@ export function useStoreListingPaneTitleOverride(selectionKey: string | null) {
   return { title: override && override.key === selectionKey ? override.title : null, set };
 }
 
-/** While mounted, the surrounding listing pane or page is titled `title`; leaving restores the listing's own. */
-export function useStoreListingPaneTitle(title: string) {
+/** While mounted, the surrounding listing pane or page is titled `title`; leaving restores the listing's own. Null leaves it. */
+export function useStoreListingPaneTitle(title: string | null) {
   const set = React.useContext(StoreListingPaneTitleContext);
   React.useEffect(() => {
-    if (!set) return;
+    if (!set || title === null) return;
     set(title);
     return () => set(null);
   }, [set, title]);

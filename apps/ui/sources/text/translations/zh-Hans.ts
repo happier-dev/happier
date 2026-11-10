@@ -2187,6 +2187,8 @@ export const zhHans: TranslationStructure = {
         registriesStatus: {
           limited: ({ time }: { time?: string }) => time === undefined ? '请求过多。请稍后重试。' : `请求过多。请在 ${time} 后重试。`,
           unreachable: "无法连接此注册表。",
+          unreachableSource: ({ source }: { source: string }) => `无法连接 ${source}`,
+          unreachableAll: "无法连接目录",
           authFailed: "令牌被拒绝。请替换令牌。",
           needsMachine: "请将机器连接到网络以浏览此注册表。",
           newerFormat: "此注册表使用较新的格式。",

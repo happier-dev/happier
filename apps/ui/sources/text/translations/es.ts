@@ -2375,6 +2375,8 @@ export const es: TranslationStructure = {
         registriesStatus: {
           limited: ({ time }: { time?: string }) => time === undefined ? 'Demasiadas solicitudes. Vuelve a intentarlo en un momento.' : `Demasiadas solicitudes. Vuelve a intentarlo a partir de ${time}.`,
           unreachable: "No se pudo contactar con este registro.",
+          unreachableSource: ({ source }: { source: string }) => `No se pudo contactar con ${source}`,
+          unreachableAll: "No se pudo contactar con los catálogos",
           authFailed: "Token rechazado. Sustitúyelo.",
           needsMachine: "Conecta una máquina para explorar este registro.",
           newerFormat: "Este registro utiliza un formato más reciente.",

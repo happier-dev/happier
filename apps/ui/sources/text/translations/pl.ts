@@ -2202,6 +2202,8 @@ export const pl: TranslationStructure = {
         registriesStatus: {
           limited: ({ time }: { time?: string }) => time === undefined ? 'Zbyt wiele żądań. Spróbuj ponownie za chwilę.' : `Zbyt wiele żądań. Spróbuj ponownie o ${time}.`,
           unreachable: "Nie można połączyć się z tym rejestrem.",
+          unreachableSource: ({ source }: { source: string }) => `Nie można połączyć się z ${source}`,
+          unreachableAll: "Nie można połączyć się z katalogami",
           authFailed: "Token odrzucony. Zastąp go.",
           needsMachine: "Połącz maszynę, aby przeglądać ten rejestr.",
           newerFormat: "Ten rejestr używa nowszego formatu.",
