@@ -17,6 +17,8 @@ export type MainAppTabBarDestinations = Readonly<{
     onPress: (id: string) => void;
     /** A held tab, main tabs included: the destinations owner holds the placement menu. */
     onTabLongPress?: (id: string, anchor: unknown, label: string) => void;
+    /** The main tabs that ride the bar (the same placement as every Bar item); absent, all of them. */
+    mainTabKeys?: readonly TabType[];
 }>;
 
 type MainAppTabBarProps = Readonly<{
@@ -45,7 +47,9 @@ const NO_DESTINATIONS: readonly CockpitTabBarTabDefinition<string>[] = [];
  * Sessions fixed.
  */
 export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
-    const definitions = useMainAppTabDefinitions();
+    const allDefinitions = useMainAppTabDefinitions();
+    const mainTabKeys = props.destinations?.mainTabKeys;
+    const definitions = mainTabKeys ? allDefinitions.filter((tab) => mainTabKeys.includes(tab.key)) : allDefinitions;
     const windowWidth = useWindowDimensions().width;
     const baseMetrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
     const destinations = props.destinations?.tabs ?? NO_DESTINATIONS;

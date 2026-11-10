@@ -1,3 +1,4 @@
+import * as React from 'react';
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { TabType } from '@/components/ui/navigation/tabTypes';
 import { resolveTabBarTabs } from '@/components/ui/navigation/resolveTabBarTabs';
@@ -25,20 +26,31 @@ export type MainAppTabDefinition = Readonly<{
     badge?: Readonly<{ kind: 'count'; value: number }> | Readonly<{ kind: 'dot' }> | Readonly<{ kind: 'attention' }>;
 }>;
 
+/** The bar's own tabs this Home offers, in their order (placement then decides which ride the bar). */
+export function useMainAppTabKeys(): readonly TabType[] {
+    const workflowsEnabled = useWorkflowsDestinationAccess().discoverable;
+    const inboxEnabled = useInboxAvailable();
+    return React.useMemo(() => resolveTabBarTabs({ inboxEnabled, workflowsEnabled }), [inboxEnabled, workflowsEnabled]);
+}
+
+/** A main tab's name and glyph, for rows that list it outside the bar (More). */
+export function resolveMainAppTabFacts(key: TabType): Readonly<{ label: string; icon: IconName }> {
+    return { label: t(MAIN_TAB_FACTS[key].label), icon: MAIN_TAB_FACTS[key].icon };
+}
+
 /** Shared presentation facts; the main-tab state provider remains navigation authority. */
 const DOT_BADGE = Object.freeze({ kind: 'dot' as const });
 const ATTENTION_BADGE = Object.freeze({ kind: 'attention' as const });
 
 export function useMainAppTabDefinitions(): readonly MainAppTabDefinition[] {
-    const workflowsEnabled = useWorkflowsDestinationAccess().discoverable;
-    const inboxEnabled = useInboxAvailable();
+    const keys = useMainAppTabKeys();
     // The rail's one Inbox rule: amber while something needs the person, else a quiet dot.
     const inboxSignal = resolveAppRailInboxBadge(useSharedInboxSummary());
     const sessionsHaveAttention = useSessionsHaveAttention();
     const inboxBadgeEnabled = useSetting('tabBarInboxBadgeEnabled');
     const sessionsBadgeEnabled = useSetting('tabBarSessionsBadgeEnabled');
     const showSessionsAttentionBadge = sessionsBadgeEnabled && sessionsHaveAttention;
-    return resolveTabBarTabs({ inboxEnabled, workflowsEnabled }).map(key => ({
+    return keys.map(key => ({
         key, label: t(MAIN_TAB_FACTS[key].label), icon: MAIN_TAB_FACTS[key].icon,
         sfSymbol: MAIN_TAB_FACTS[key].sfSymbol,
         accessibilityLabel: t(key === 'sessions' && showSessionsAttentionBadge ? 'tabs.sessionsNeedsAttention' : MAIN_TAB_FACTS[key].label),

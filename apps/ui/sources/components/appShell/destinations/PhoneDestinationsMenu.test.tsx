@@ -20,6 +20,7 @@ import { NavigationSurfacePlacementsV1Schema, type NavigationSurfacePlacementsV1
 
 const routeState = vi.hoisted(() => ({ push: vi.fn(), pathname: '/' }));
 const openUniversalSearch = vi.hoisted(() => vi.fn());
+const mainTabPress = vi.hoisted(() => vi.fn());
 const surfaceState = vi.hoisted(() => ({
     platformOS: 'web' as 'web' | 'ios' | 'android',
     isTablet: false,
@@ -143,7 +144,7 @@ async function renderMenu() {
         return usePhoneDestinationsMore({ native: true }).menu;
     }
     return render(surfaceState.platformOS === 'web'
-        ? <PhoneMainAppTabBar activeTab="sessions" onTabPress={() => {}} />
+        ? <PhoneMainAppTabBar activeTab="sessions" onTabPress={mainTabPress} />
         : <NativeMore />);
 }
 
@@ -194,7 +195,10 @@ describe('PhoneDestinationsMenu', () => {
             tabs: [reviewTab],
         });
         const menu = await renderMenu();
-        expect(groups(menu)).toEqual({
+        // Pinned holds the bar's own tabs here (nothing else is pinned); the rest of More is unchanged.
+        const { onBar, ...sections } = groups(menu);
+        expect(onBar?.every(id => id.startsWith('phone-launcher-main:'))).toBe(true);
+        expect(sections).toEqual({
             // Home leads More. Other destinations remain in More until the person places them on Bar.
             home: ['phone-launcher-home'],
             more: [
@@ -218,7 +222,7 @@ describe('PhoneDestinationsMenu', () => {
     });
 
     // UI refinements 11-07: every bar's held tab opens the one placement menu; a fixed tab can only Customize.
-    it('opens the placement menu from a held destination on the bar, and only Customize from a main tab', async () => {
+    it('opens the placement menu from a held destination on the bar, and bar-or-More from a main tab', async () => {
         surfaceState.platformOS = 'web';
         // An open web popover listens for window resizes; this suite has no DOM.
         vi.stubGlobal('window', { location: { pathname: '/', search: '', hash: '' }, addEventListener: () => {}, removeEventListener: () => {} });
@@ -230,7 +234,9 @@ describe('PhoneDestinationsMenu', () => {
         expect(tabMenu()?.props.items.map((item: { id: string }) => item.id)).toEqual(['pinned', 'overflow', 'hidden', 'customize']);
         await act(async () => { tabMenu()?.props.onOpenChange(false); });
         await act(async () => { screen.findHostByTestId('tabbar-tab-sessions')?.props.onLongPress(); });
-        expect(tabMenu()?.props.items.map((item: { id: string }) => item.id)).toEqual(['customize']);
+        // A main tab moves between the bar and More; it is never hidden.
+        expect(tabMenu()?.props.items.map((item: { id: string }) => item.id)).toEqual(['pinned', 'overflow', 'hidden', 'customize']);
+        expect(tabMenu()?.props.items.find((item: { id: string }) => item.id === 'hidden')?.disabled).toBe(true);
     });
 
     it("honours the launcher's own placements, never the desktop rail's", async () => {
@@ -259,14 +265,33 @@ describe('PhoneDestinationsMenu', () => {
         const menu = await renderMenu();
         const sections = groups(menu);
         expect(Object.keys(sections)).toEqual(['home', 'more', 'onBar', 'customize']);
-        expect(sections.onBar).toEqual(['compact-app-destination:artifacts']);
+        // The bar's own tabs lead Pinned (open only: they are the fixed tabs), then what the person pinned.
+        expect(sections.onBar?.[0]).toBe('phone-launcher-main:sessions');
+        expect(sections.onBar?.at(-1)).toBe('compact-app-destination:artifacts');
         expect(sections.more).not.toContain('compact-app-destination:artifacts');
         expect(menuOf(menu).props.categoryTitles).toEqual({ onBar: t('phoneNav.bar.pinnedSection') });
         await act(async () => { menuOf(menu).props.onOpenChange(true); });
         expect(menu.findHostByTestId('phone-launcher-pin:artifacts')?.props.accessibilityState?.checked).toBe(true);
         expect(menu.findHostByTestId('phone-launcher-pin:friends')?.props.accessibilityState?.checked).toBe(false);
+        // The bar's own tabs are placements like any other: their pin takes them off the bar (owner 11-10).
+        expect(menu.findHostByTestId('phone-launcher-pin:tab:sessions')?.props.accessibilityState?.checked).toBe(true);
         await select(menu, 'compact-app-destination:artifacts');
         expect(routeState.push).toHaveBeenLastCalledWith('/artifacts');
+        mainTabPress.mockReset();
+        await select(menu, 'phone-launcher-main:sessions');
+        expect(mainTabPress).toHaveBeenCalledWith('sessions');
+    });
+
+    it('takes a main tab off the bar into More, where it still opens', async () => {
+        setCatalog({ pages: [], navigationPlacements: { phoneLauncher: { orderedIds: [], placements: { 'tab:projects': 'overflow' } } } });
+        const menu = await renderMenu();
+        expect(menu.findHostByTestId('tabbar-tab-projects')).toBeNull();
+        expect(menu.findHostByTestId('tabbar-tab-sessions')).not.toBeNull();
+        expect(groups(menu).more).toContain('phone-launcher-main:projects');
+        expect(groups(menu).onBar).not.toContain('phone-launcher-main:projects');
+        mainTabPress.mockReset();
+        await select(menu, 'phone-launcher-main:projects');
+        expect(mainTabPress).toHaveBeenCalledWith('projects');
     });
 
     it('shows the open destination from More on the bar just before More, which stays More', async () => {
