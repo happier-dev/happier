@@ -29,7 +29,7 @@ import { machinePresetCollectionHref } from '@/components/settings/machines/coll
 import { machineSetupItemReadRow } from '@/components/settings/machines/managed/MachineSetupSection';
 import { machineSetupItemPresentation } from '@/components/settings/machines/managed/machineSetupItems';
 import { buildStoreListingRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
-import { useSoftwareOptions } from '@/components/store/catalog/storeSoftware';
+import { useMachineSetupRecipeOptions, useSoftwareOptions } from '@/components/store/catalog/storeSoftware';
 import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -143,6 +143,9 @@ function MachineSetupRoot(
     () => readMachineSetupRecipes(setup.plan, setup.observation),
     [setup.plan, setup.observation],
   );
+  const recipeTarget = React.useMemo(() => saveScope ? { scope: saveScope, machine: null } : null, [saveScope]);
+  const recipeOptions = useMachineSetupRecipeOptions(recipeTarget, { presented: presented && recipes.length > 0 });
+  const recipeOffers = recipeOptions.state.status === 'ready' ? recipeOptions.state.options : null;
   const drifted = recipes.filter(
     (recipe) => recipe.status === 'drifted',
   ).length;
@@ -380,11 +383,7 @@ function MachineSetupRoot(
                   <RecipeRow
                     key={recipe.key}
                     recipe={recipe}
-                    title={
-                      recipe.title
-                        ? localize(recipe.ref.pluginId, recipe.title)
-                        : null
-                    }
+                    presentation={machineSetupItemPresentation(recipe.item, recipeOffers)}
                     presetName={
                       setup.plan && recipe.fromPreset
                         ? nameOf(setup.plan.sources[recipe.sourceIndex] as AttachedSource)
@@ -681,7 +680,7 @@ function MachineSetupReviewInPlace(
 function RecipeRow(
   props: Readonly<{
     recipe: MachineSetupRecipeRow;
-    title: string | null;
+    presentation: ReturnType<typeof machineSetupItemPresentation>;
     presetName: string | null;
     editable: boolean;
     busy: boolean;
@@ -689,7 +688,6 @@ function RecipeRow(
     onRemove?: () => void;
   }>,
 ) {
-  const { theme } = useUnistyles();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const { recipe } = props;
   const source = recipe.fromPreset
@@ -711,14 +709,7 @@ function RecipeRow(
   return (
     <Item
       testID={`machine-setup-recipe:${recipe.key}`}
-      icon={
-        <Icon
-          name="wrench"
-          size={ICON_SIZE.md}
-          color={theme.colors.text.secondary}
-        />
-      }
-      title={props.title ?? t('machinePresets.setup.tab.recipeUnnamed')}
+      {...machineSetupItemReadRow(recipe.item, props.presentation)}
       subtitle={why ? `${state} · ${source}\n${why}` : state ? `${state} · ${source}` : source}
       subtitleLines={why ? 0 : undefined}
       showChevron={false}

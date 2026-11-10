@@ -425,6 +425,48 @@ describe('Machine → Setup tab (P-M1)', () => {
     await screen.pressByTestIdAsync('store.software.review.cancel');
     await screen.unmount();
   });
+  it('names unsupported recipes from Account declarations even when the Machine plan has no title', async () => {
+    const home = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example',
+      serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
+    const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId);
+    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+    harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
+    const { DOCKER_ENGINE_RECIPE_REF_V1: ref } = await import('@happier-dev/protocol/machines/setup/machineRecipeReferenceV1');
+    const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/machine-recipes/src/manifest');
+    const { PluginAccountAvailabilityIntentReadResponseV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+    const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    // Supply the real declaration at the Account availability boundary; no Machine support or internal resolver is mocked.
+    const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+      availabilityCursor: 1, hostingCapability: { enabled: false },
+      intent: { pluginId: PLUGIN_MANIFEST.id, desiredVersion: PLUGIN_MANIFEST.version, enabled: true,
+        offlineUiHosting: 'disabled', writableCollections: [], revision: 'intent-1' },
+      release: { ref: { pluginId: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+        archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: PLUGIN_MANIFEST,
+        collectionContracts: [], uiSlots: [],
+        packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+      packageAssets: [], uiArtifacts: [],
+    });
+    replacePluginAccountAvailabilityProjection({ scope: { serverId, accountId: 'owner' },
+      snapshot: { availabilityCursor: 1, intentReads: [{ pluginId: PLUGIN_MANIFEST.id, response }], materializations: [], snapshots: [] } });
+    const current = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 1, exclusions: [],
+      sources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: { ref, inputs: {} } }] } }],
+      support: [{ sourceIndex: 0, itemIndex: 0, status: 'unsupported', reason: 'required_fact_unavailable' }],
+    });
+    harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+      return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true, result: current } } };
+    } });
+    const { MachineSetupTab } = await import('./MachineSetupTab');
+    const screen = await renderScreen(<MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
+      params={{ id: 'setup' }} setParams={vi.fn()} />);
+    await waitForHomeGovernance(() => {
+      const row = screen.tree.findAll(node => node.props?.testID === 'machine-setup-recipe:0.0' && node.props.title !== undefined)[0];
+      expect(row?.props.title).toBe('Docker Engine');
+      expect(row?.props.subtitle).toContain('Not supported on this machine');
+    });
+    await screen.unmount();
+  });
   it('lists bundled setup presets beside saved presets and reviews their exact source through the existing tab', async () => {
     const home = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example',
       serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });

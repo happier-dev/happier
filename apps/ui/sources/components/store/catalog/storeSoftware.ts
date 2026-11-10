@@ -23,9 +23,10 @@ export function useSoftwareOptions(target: StoreSoftwareTarget | null | undefine
     return useMachineSetupOptions(SOFTWARE_FIELD, target, demand, values, refreshKey);
 }
 
-/** Preset presentation names every declared recipe, including Setup recipes outside Software browsing. */
+/** Attached recipe presentation uses Account declarations, independently of a Machine's support or presence. */
 export function useMachineSetupRecipeOptions(target: StoreSoftwareTarget | null | undefined, demand: StoreDemand) {
-    return useMachineSetupOptions(RECIPE_FIELD, target, demand);
+    const declarationTarget = React.useMemo(() => target ? { scope: target.scope, machine: null } : null, [target?.scope]);
+    return useMachineSetupOptions(RECIPE_FIELD, declarationTarget, demand);
 }
 
 function useMachineSetupOptions(field: typeof SOFTWARE_FIELD | typeof RECIPE_FIELD,
