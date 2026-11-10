@@ -676,6 +676,7 @@ async function handleRegisterPreviewRequest(
         const result = options.registerPreview({
             resource: parsedResource.data,
             accountId,
+            ...(serviceAdmission ? { custodianAccountId: serviceAdmission.custodianAccountId } : {}),
             ...(serviceAdmission ? { viewerAccountId: userId } : {}),
             machineAccessSignal: mintAccess?.signal,
             nativeDirectSupported: options.resolveNativeDirectTarget
@@ -793,6 +794,7 @@ export function registerLocalServicePreviewRoutes(
             if ('kind' in parsed.data) {
                 if (!accountId || !options.registerPreview) return sendError(reply, 503, 'preview_transport_unavailable', 'server_preview_unavailable');
                 const admission = options.registerPreview({ resource, accountId,
+                    ...(serviceAdmission ? { custodianAccountId: serviceAdmission.custodianAccountId } : {}),
                     machineAccessSignal: mintAccess?.signal,
                     ...(serviceAdmission && actorAccountId ? { viewerAccountId: actorAccountId } : {}) });
                 if (!admission.ok) return sendMintRefusal(reply, admission.reasonCode, 'transport');

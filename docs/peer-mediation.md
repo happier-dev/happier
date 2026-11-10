@@ -954,6 +954,11 @@ The native registration channel
 retains the daemon credential. Guest preview metadata uses the existing requester Service
 projection and omits viewer URLs; observing it does not require forwarding credentials
 or minting access. Inventory preview remains under the custodian's credential scope.
+For isolated server previews in unreleased 0.3, the runtime retains the Machine custodian
+from that admission separately from the Service starter and viewer. The Home opens its
+internal relay as the custodian, with the exact registered Service binding and destination;
+the viewer token remains scoped to the admitted viewer. Relay admission refusals settle
+pending preview reads with the producer's reason instead of waiting for Machine bytes.
 
 Only that admitted service binding supplies the product-service exception. Passive inventory
 and caller-supplied ports do not. Both native and server-preview access use this port decision

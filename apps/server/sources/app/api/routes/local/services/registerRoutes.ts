@@ -238,7 +238,7 @@ export function registerLocalServiceRoutes(
             routeApp.createPeerTcpTunnelRelayTransport
                 ? createLocalServicePreviewTunnelOpener({
                     env,
-                    resolvePreviewAccountId: (previewId) => runtimes.preview.resolvePreviewContext(previewId)?.accountId ?? null,
+                    resolvePreviewAccountId: (previewId) => runtimes.preview.resolvePreviewContext(previewId)?.custodianAccountId ?? null,
                     createRelayTransport: routeApp.createPeerTcpTunnelRelayTransport,
                 })
                 : undefined

@@ -79,13 +79,13 @@ describe("local service preview runtime", () => {
             } finally { restored.release(); }
         } finally { attempt.release(); other.release(); }
     });
-    it('keeps native disclosure bound to each admitted viewer and retires all viewers on starter loss', () => {
+    it.each(['starter_1', 'custodian_1'])('keeps native disclosure bound to each admitted viewer and retires all viewers on %s loss', (lostAccountId) => {
         const native = { ...resource, sessionId: undefined, owner: { kind: 'user' as const, id: 'starter_1' },
             serviceTarget: { kind: 'managed_service' as const, managedServiceId: 'instance_1', machineId: resource.machineId, cwd: '/workspace/app',
                 declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } } };
         const runtime = createLocalServicePreviewRuntime({ tokenSecret: 'secret', publicBaseUrl: 'https://app.happier.test',
             hostOriginBaseDomain: null, env: nativeGrantEnv });
-        expect(runtime.registerPreview({ resource: native, accountId: 'starter_1' }).ok).toBe(true);
+        expect(runtime.registerPreview({ resource: native, accountId: 'starter_1', custodianAccountId: 'custodian_1' }).ok).toBe(true);
         const mint = (actorAccountId: string) => {
             const result = runtime.mintNativeDirectAccess({ previewId: native.previewId, actorAccountId,
                 target: { endpointId: 'b'.repeat(64), revision: 1 }, request: { v: 1,
@@ -103,7 +103,7 @@ describe("local service preview runtime", () => {
         runtime.retireMachineAccess({ machineId: native.machineId, accountId: 'viewer_1' });
         expect(first.signal.aborted).toBe(true);
         expect(second.signal.aborted).toBe(false);
-        runtime.retireMachineAccess({ machineId: native.machineId, accountId: 'starter_1' });
+        runtime.retireMachineAccess({ machineId: native.machineId, accountId: lostAccountId });
         expect(second.signal.aborted).toBe(true);
         expect(runtime.resolvePreview(native.previewId)).toBeNull();
     });
@@ -212,7 +212,7 @@ describe("local service preview runtime", () => {
             ok: true, resource, accessUrl: null, expiresAt: null,
             accessUnavailableReasonCode: 'preview_private_route_unavailable',
         });
-        expect(runtime.resolvePreviewContext(resource.previewId)).toEqual({ resource, accountId: 'account_1' });
+        expect(runtime.resolvePreviewContext(resource.previewId)).toEqual({ resource, accountId: 'account_1', custodianAccountId: 'account_1' });
         expect(runtime.validateAccess({ previewId: resource.previewId, rawToken: 'not-issued', sessionId: resource.sessionId, machineId: resource.machineId }).ok).toBe(false);
         expect(runtime.registerPreview({ resource, accountId: 'other_account' })).toEqual({ ok: false, reasonCode: 'invalid_preview_resource' });
     });
@@ -284,6 +284,7 @@ describe("local service preview runtime", () => {
         expect(runtime.resolvePreviewContext("preview_1")).toEqual({
             resource,
             accountId: "account_1",
+            custodianAccountId: "account_1",
         });
         expect(runtime.validateAccess({
             previewId: "preview_1",

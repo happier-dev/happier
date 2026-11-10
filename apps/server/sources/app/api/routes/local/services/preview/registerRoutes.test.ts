@@ -32,6 +32,7 @@ import { resolveRpcForwardTimeoutMs } from '@/app/api/socket/rpc/rpcForwardTimeo
 import { auth } from '@/app/auth/auth';
 import type { Server } from 'socket.io';
 import * as logging from '@/utils/logging/log';
+import { createPreviewRelayDeliveryBoundary } from './relayDelivery.testkit';
 
 // Only database, HTTP router/socket and network tunnel boundaries are replaced.
 const machineFindFirst = vi.hoisted(() => vi.fn(async (_query: unknown): Promise<{
@@ -307,9 +308,12 @@ describe('local service preview routes', () => {
             [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: '1', [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: '',
             [FEATURE_ENV_KEYS.machinesTunnelDirectPeerEnabled]: '1' };
         const runtimes = createLocalServiceRouteRuntimes(env);
+        const relay = observation === 'retired' ? createPreviewRelayDeliveryBoundary({ env, machineId: 'machine_1',
+            custodianAccountId: 'user_1', installationId: 'installation_1' }) : undefined;
         const closeHooks: Array<() => Promise<void>> = [];
         const upgradeHandlers: Array<(request: unknown, socket: unknown, head: Uint8Array) => unknown> = [];
         const app = Object.assign(createFakeRouteApp(), {
+            createPeerTcpTunnelRelayTransport: relay?.createRelayTransport,
             server: { on(event: string, handler: (request: unknown, socket: unknown, head: Uint8Array) => unknown) {
                 if (event === 'upgrade') upgradeHandlers.push(handler);
             } },
@@ -367,6 +371,37 @@ describe('local service preview routes', () => {
             }, serverAccess);
             expect(serverAccess.statusCode).toBe(200);
             expect(LocalServicePreviewServerAccessV1Schema.safeParse(serverAccess.send.mock.calls[0]?.[0]).success).toBe(true);
+            if (relay) {
+                const loadDocument = async (accessUrl: string) => {
+                    const url = new URL(accessUrl);
+                    const exchange = createReplyStub();
+                    await getRouteHandler(app, 'GET', '/*')({ method: 'GET', params: { '*': '' },
+                        query: Object.fromEntries(url.searchParams), headers: { host: url.host } }, exchange);
+                    expect(exchange.statusCode).toBe(303);
+                    const cookie = String(exchange.headers['Set-Cookie']).split(';')[0];
+                    const chunks: string[] = [];
+                    const document = Object.assign(createReplyStub(), { raw: {
+                        writeHead(statusCode: number) { document.statusCode = statusCode; },
+                        write(bytes: Uint8Array) { chunks.push(new TextDecoder().decode(bytes)); return true; },
+                        end() {},
+                    } });
+                    await getRouteHandler(app, 'GET', '/*')({ method: 'GET', params: { '*': '' },
+                        query: {}, headers: { host: url.host, cookie } }, document);
+                    expect(document.statusCode).toBe(200);
+                    expect(chunks.join('')).toContain('<html>guest bytes</html>');
+                };
+                // Guest's own Service and custodian viewing it use the admitted relay;
+                // Service ownership and viewer authorization remain distinct.
+                for (const userId of ['starter_1', 'user_1']) {
+                    const access = createReplyStub();
+                    await getRouteHandler(app, 'POST', '/v1/local-services/preview/:previewId/access')({
+                        ...serverAccessRequest, userId }, access);
+                    expect(access.statusCode).toBe(200);
+                    await loadDocument(LocalServicePreviewServerAccessV1Schema.parse(access.send.mock.calls[0]?.[0]).accessUrl);
+                }
+                expect(relay.requests).toHaveLength(2);
+                expect(relay.requests.every(request => request.startsWith('GET / HTTP/1.1'))).toBe(true);
+            }
             for (const removedPrincipal of ['viewer_1', 'starter_1']) {
                 machineFindUnique.mockResolvedValue({ ...facts,
                     accountGrants: facts.accountGrants.filter(grant => grant.accountId !== removedPrincipal) });
@@ -542,6 +577,7 @@ describe('local service preview routes', () => {
         } finally {
             retire();
             for (const hook of closeHooks) await hook();
+            await relay?.close();
             eventRouter.clearIo();
             vi.useRealTimers();
         }

@@ -172,6 +172,15 @@ export function createLocalServicePreviewTunnelOpener(
         };
         session.unsubscribe = transport.subscribe((envelope) => {
             if (envelope.scopeUserId !== accountId) return;
+            // The relay sends its own admission refusal back to this exact local
+            // transport with the original user -> Machine envelope, not a Machine reply.
+            if (envelope.v === 1 && envelope.frame.kind === 'abort'
+                && envelope.sender.kind === 'user' && envelope.sender.socketId === transport.relaySocketId
+                && envelope.recipient.kind === 'machine' && envelope.recipient.machineId === preview.machineId
+                && envelope.frame.tunnelId === session.tunnelId) {
+                closeSession(key, session, envelope.frame.reasonCode);
+                return;
+            }
             if (envelope.sender.kind !== "machine" || envelope.sender.machineId !== preview.machineId) return;
             if (envelope.recipient.kind !== "user") return;
             if (envelope.v === 1) {

@@ -57,6 +57,7 @@ export type LocalServicePreviewRuntimeRegistrationResult =
 export type LocalServicePreviewRuntimeRegistrationInput = Readonly<{
     resource: LocalServicePreviewResourceV1;
     accountId: string;
+    custodianAccountId?: string;
     nativeDirectSupported?: boolean;
     viewerAccountId?: string;
     machineAccessSignal?: AbortSignal;
@@ -67,6 +68,7 @@ export type LocalServicePreviewMachineAccessAttempt = Readonly<{ signal: AbortSi
 export type LocalServicePreviewRuntimeContext = Readonly<{
     resource: LocalServicePreviewResourceV1;
     accountId: string;
+    custodianAccountId: string;
 }>;
 
 export type LocalServicePreviewRuntimeValidationResult =
@@ -123,6 +125,7 @@ export type CreateLocalServicePreviewRuntimeInput = Readonly<{
 type PreviewRuntimeEntry = Readonly<{
     resource: LocalServicePreviewResourceV1;
     accountId: string;
+    custodianAccountId: string;
     tokenRecords: Map<string, LocalServicePreviewTokenRecord>;
     nativeRegistrations: Map<string, { controller: AbortController; claimed: boolean; actorAccountId?: string }>;
     connections: Set<Readonly<{ close: () => void; actorAccountId?: string }>>;
@@ -189,12 +192,14 @@ export function createLocalServicePreviewRuntime(
         if (!accountId) {
             return { ok: false, reasonCode: "invalid_preview_resource" };
         }
+        const custodianAccountId = input.custodianAccountId ?? accountId;
         const previous = resources.get(parsed.data.previewId);
         // Minting another viewer URL does not replace the registration observed by in-flight admissions.
         const resource = previous && isDeepStrictEqual(previous.resource, parsed.data) ? previous.resource : parsed.data;
         const nativeDirect: LocalServicePreviewNativeDirectDescriptorV1 | undefined = input.nativeDirectSupported
             ? { v: 1, kind: 'iroh_preview', previewId: resource.previewId, machineId: resource.machineId } : undefined;
         if (previous && (previous.accountId !== accountId
+            || previous.custodianAccountId !== custodianAccountId
             || previous.resource.machineId !== parsed.data.machineId
             || previous.resource.sessionId !== parsed.data.sessionId
             || !isDeepStrictEqual(previous.resource.owner, parsed.data.owner)
@@ -243,7 +248,7 @@ export function createLocalServicePreviewRuntime(
                 if (previous && !isDeepStrictEqual(previous.resource.policy, resource.policy)) {
                     retireConnections(previous);
                 }
-                resources.set(resource.previewId, { resource, accountId, tokenRecords: new Map(), nativeRegistrations: previous?.nativeRegistrations ?? new Map(), connections: previous?.connections ?? new Set() });
+                resources.set(resource.previewId, { resource, accountId, custodianAccountId, tokenRecords: new Map(), nativeRegistrations: previous?.nativeRegistrations ?? new Map(), connections: previous?.connections ?? new Set() });
                 return { ok: true, resource, accessUrl: null, expiresAt: null, ...(nativeDirect ? { nativeDirect } : {}), accessUnavailableReasonCode: 'preview_private_route_unavailable' };
             }
             return resolvedUrl;
@@ -277,6 +282,7 @@ export function createLocalServicePreviewRuntime(
         resources.set(parsed.data.previewId, {
             resource,
             accountId,
+            custodianAccountId,
             tokenRecords,
             nativeRegistrations: previous?.nativeRegistrations ?? new Map(),
             connections: previous?.connections ?? new Set(),
@@ -308,6 +314,7 @@ export function createLocalServicePreviewRuntime(
             ? {
                 resource: entry.resource,
                 accountId: entry.accountId,
+                custodianAccountId: entry.custodianAccountId,
             }
             : null;
     }
@@ -439,7 +446,7 @@ export function createLocalServicePreviewRuntime(
             }
             for (const entry of resources.values()) {
                 if (!entry.resource.serviceTarget || entry.resource.machineId !== machineId) continue;
-                if (entry.accountId === accountId) { unregisterPreview(entry.resource.previewId); continue; }
+                if (entry.accountId === accountId || entry.custodianAccountId === accountId) { unregisterPreview(entry.resource.previewId); continue; }
                 for (const [hash, record] of entry.tokenRecords) if (record.actorAccountId === accountId) entry.tokenRecords.delete(hash);
                 for (const registration of entry.nativeRegistrations.values()) if (registration.actorAccountId === accountId) registration.controller.abort();
                 for (const connection of entry.connections) if (connection.actorAccountId === accountId) {

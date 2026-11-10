@@ -21,6 +21,7 @@ import { createLocalServicePublicRateLimitChecker } from '../public/rateLimits';
 import { registerMachinePeerTcpTunnelRelayRuntime } from '../../../../../../cli/src/daemon/machine/registerMachinePeerTcpTunnelRelayRuntime';
 import { createLocalServicePreviewRuntime } from './runtime';
 import { createLocalServicePreviewTunnelOpener } from './tunnel';
+import type { PeerTcpTunnelRelayTransportFactory } from '@/app/machines/peer/mediation/tunnel/peerRelayStreamTransport';
 import { createLocalServicePreviewRegistry, registerLocalServicePreview, resolveLocalServicePreviewApplication } from '../../../../../../cli/src/daemon/local/services/preview/registry';
 import { createLocalServicePreviewRoutes } from '../../../../../../cli/src/daemon/local/services/preview/routes';
 import { createDeferred } from '../../../../../../cli/src/testkit/async/deferred';
@@ -35,7 +36,8 @@ describe('preview HTTP and public WebSocket through the server relay and daemon 
     it.each([
         { publicBaseUrl: 'https://home.example.test:8443', hostOriginBaseDomain: 'example.test' },
         { publicBaseUrl: 'http://home.localhost:8181', hostOriginBaseDomain: 'localhost' },
-    ])('serves private/public HTTP and revokes a real public websocket ($publicBaseUrl)', async ({ publicBaseUrl, hostOriginBaseDomain }) => {
+        { publicBaseUrl: 'https://guest-home.example.test:8443', hostOriginBaseDomain: 'example.test', guest: true },
+    ])('serves private/public HTTP and revokes a real public websocket ($publicBaseUrl)', async ({ publicBaseUrl, hostOriginBaseDomain, guest = false }) => {
         const paths: string[] = [];
         const wireTrace: string[] = [];
         const closeTransports: (() => void)[] = [];
@@ -104,7 +106,10 @@ describe('preview HTTP and public WebSocket through the server relay and daemon 
         client.onAnyOutgoing((event, payload: unknown) => { if (event === PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT) recordFrame('daemon-to-server', payload); });
         const preview: LocalServicePreviewResourceV1 = {
             previewId: 'preview_fixture', sessionId: 'session_fixture', machineId: 'machine_1',
-            owner: { kind: 'session', id: 'session_fixture' },
+            owner: guest ? { kind: 'user', id: 'guest_1' } : { kind: 'session', id: 'session_fixture' },
+            ...(guest ? { sessionId: undefined, serviceTarget: { kind: 'managed_service' as const,
+                machineId: 'machine_1', managedServiceId: 'guest_service', cwd: '/workspace/guest',
+                declaration: { workspaceRefId: 'guest_workspace', selection: { kind: 'manifest' as const, name: 'web' } } } } : {}),
             target: { scheme: 'http', host: '127.0.0.1', port: address.port },
             initialPath: { pathname: '/body', search: '' }, display: { title: 'fixture', addressLabel: 'fixture' }, originMode: 'host',
         };
@@ -127,13 +132,11 @@ describe('preview HTTP and public WebSocket through the server relay and daemon 
         client.connect();
         await once(client, 'connect');
         const runtime = createLocalServicePreviewRuntime({ tokenSecret: 'fixture-secret', publicBaseUrl, hostOriginBaseDomain });
-        const registered = runtime.registerPreview({ resource: preview, accountId: 'user_1' });
+        const registered = runtime.registerPreview({ resource: preview, accountId: guest ? 'guest_1' : 'user_1',
+            custodianAccountId: 'user_1', viewerAccountId: guest ? 'guest_1' : 'user_1' });
         if (!registered.ok || !registered.accessUrl) throw new Error('fixture registration failed');
         const tunnelEnv = { HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: 'true', HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: String(address.port), HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: 'fixture-key', HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: Buffer.from(key.secretKey).toString('base64url') };
-        const openTunnel = createLocalServicePreviewTunnelOpener({
-            env: tunnelEnv,
-            resolvePreviewAccountId: id => runtime.resolvePreviewContext(id)?.accountId,
-            createRelayTransport: ({ accountId }) => {
+        const createRelayTransport: PeerTcpTunnelRelayTransportFactory = ({ accountId }) => {
                 const transport = bridge.createTransport({ accountId });
                 const handlers = new Map<string, (payload?: unknown) => void | Promise<void>>();
                 registerPeerTcpTunnelRelaySocketHandler(accountId, {
@@ -143,9 +146,13 @@ describe('preview HTTP and public WebSocket through the server relay and daemon 
                 const close = () => { void handlers.get('disconnect')?.(); transport.close(); };
                 closeTransports.push(close);
                 return { ...transport, send: (event, payload) => { recordFrame('preview-to-server', payload); void handlers.get(event)?.(payload); }, close };
-            },
+        };
+        const openTunnel = createLocalServicePreviewTunnelOpener({
+            env: tunnelEnv,
+            resolvePreviewAccountId: id => runtime.resolvePreviewContext(id)?.custodianAccountId,
+            createRelayTransport,
         });
-        const app = Fastify();
+        const app = Object.assign(Fastify(), { createPeerTcpTunnelRelayTransport: createRelayTransport });
         app.decorate('authenticate', async () => {});
         const publicRuntime = createLocalServicePublicRuntime({
             publicBaseUrl, hostOriginBaseDomain,
@@ -172,7 +179,7 @@ describe('preview HTTP and public WebSocket through the server relay and daemon 
                 HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: Buffer.from(key.secretKey).toString('base64url'),
             },
             runtimes: { preview: runtime, public: publicRuntime },
-            openTunnel,
+            ...(guest ? {} : { openTunnel }),
         });
         let cleanupPromise: Promise<void> | undefined;
         const cleanup = () => cleanupPromise ??= (async () => {
@@ -220,6 +227,8 @@ describe('preview HTTP and public WebSocket through the server relay and daemon 
             expect(asset.statusCode).toBe(200);
             expect(asset.body).toBe('fixture:/asset.js');
             expect(paths).toEqual(['/body', '/asset.js']);
+
+            if (guest) { completed = true; return; }
 
             markPhase('public.exchange');
             const created = publicRuntime.createExposure({

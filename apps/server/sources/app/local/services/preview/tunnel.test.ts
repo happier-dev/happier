@@ -109,6 +109,30 @@ async function flushAsyncIteratorResume(): Promise<void> {
 }
 
 describe("local service preview PMS tunnel opener", () => {
+    it("settles a server relay admission refusal instead of waiting for Machine bytes", async () => {
+        const relay = createRelayHarness();
+        const { createLocalServicePreviewTunnelOpener } = await import('./tunnel');
+        const { peerMediationGrantSigningEnv } = await import('@/testkit/env');
+        const openTunnel = createLocalServicePreviewTunnelOpener({
+            env: { ...peerMediationGrantSigningEnv(), [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: '1',
+                [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: '5173' },
+            resolvePreviewAccountId: () => 'account_1', createRelayTransport: relay.createTransport,
+        });
+        const stream = await openTunnel({ preview });
+        const opening = relay.sent[0];
+        if (!opening || opening.v !== 1) throw new Error('Expected parent relay open');
+        const reading = stream.read()[Symbol.asyncIterator]().next();
+        // The real relay addresses its rejection to both participants but preserves
+        // the original sender/recipient in the envelope (registerRelay emitAbort).
+        relay.receive({ ...opening, frame: { v: 1, kind: 'abort', tunnelId: stream.tunnelId, reasonCode: 'route_unavailable' } });
+        try {
+            // Scheduling one turn distinguishes a settled refusal from an immortal read,
+            // without imposing a duration budget on product work.
+            expect(await Promise.race([reading.then(() => 'eof', error => error.message),
+                new Promise(resolve => setImmediate(() => resolve('pending')))] )).toBe('route_unavailable');
+        } finally { await stream.abort('test_cleanup'); await reading.catch(() => undefined); }
+    });
+
     it("opens a signed binary server-relay tunnel and carries preview bytes over a PMS substream", async () => {
         const mod = await loadPreviewTunnelModule();
         expect(mod?.createLocalServicePreviewTunnelOpener).toBeTypeOf("function");
