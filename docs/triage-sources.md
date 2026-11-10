@@ -250,7 +250,19 @@ Triage's [`administerConfiguredSourceInstance.ts`](../packages/plugins/triage/sr
 
 In 0.3 development, the aggregate list catalog returns each source's existing opaque Collection row address. Selected refreshes carry that address back to the configured-row owner, which reads just that row and checks its stable source id and active lifecycle; built-in Tasks still resolves through its static source owner. Refreshing K selected connections therefore reads K configured rows rather than K copies of the catalog.
 
-The required row address increases the finite result's fixed framing, so the existing host-envelope-derived presentation/control allocation is 7,181 UTF-8 bytes rather than 7,184; retained configured-instance fields keep their 7,336-byte contract and identity/native bounds remain unchanged.
+The presentation/control allocation is derived from the actual shared source
+and aggregate result constructors in
+[`listSourceSchemas.ts`](../packages/triage-protocol/src/v1/listSourceSchemas.ts)
+and [`listResultSchemas.ts`](../packages/triage-protocol/src/v1/listResultSchemas.ts),
+using the canonical public Action response envelope. The aggregate keeps its
+business inputs and provider-owned adjunct schemas private; only pure result
+construction moves upstream so adding a projected field also changes its
+allocation. The finite witness covers 56 rows, 32 lanes and their continuations,
+with explicit provider-fact examples rather than provider collection quotas.
+The browser-safe maximal-value derivation has one owner in
+[`maximumEncodedValue.ts`](../packages/triage-protocol/src/v1/maximumEncodedValue.ts);
+the existing testing subpath re-exports it. Retained configured-instance fields
+keep their 7,336-byte contract, and identity/native bounds remain unchanged.
 
 Triage's built-in **Happier tasks** source is always part of that catalog and is
 the default create target, including when no external source is connected.

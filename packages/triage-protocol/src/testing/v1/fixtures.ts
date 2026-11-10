@@ -1,3 +1,4 @@
+import { SOURCE_CONTRIBUTION, LOCAL_REF, ENTRY_REF } from '../../v1/entryReferenceSeed.js';
 import {
     TriageSourceDescriptorV1Schema,
     type TriageSourceDescriptorV1,
@@ -54,22 +55,12 @@ export type TriageSourceV1Fixture = Readonly<{
     detailInput: TriageDetailSurfaceInputV1;
 }>;
 
-const SOURCE_CONTRIBUTION = Object.freeze({
-    pluginId: 'happier.example.source',
-    localId: 'example-forge',
-});
 const SOURCE_INSTANCE_ID = '2f1c9c4e-8c1f-4a53-9c2a-4c9a7b1d3e05';
 const ACCOUNT_PURPOSE = 'example.api';
 const ACCOUNT_REF = Object.freeze({
     service: Object.freeze({ pluginId: 'happier.example.source', localId: 'example-account' }),
     accountId: 'account-1',
 });
-const LOCAL_REF = Object.freeze({
-    kindId: 'pull-request',
-    collisionScope: 'example:41231',
-    entryId: '17',
-});
-const ENTRY_REF = Object.freeze({ source: SOURCE_CONTRIBUTION, ...LOCAL_REF });
 const DRAFT = Object.freeze({
     v: 1,
     binding: Object.freeze({ purpose: ACCOUNT_PURPOSE, account: ACCOUNT_REF }),

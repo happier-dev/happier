@@ -1,10 +1,10 @@
+import { triageListSourceSchemasV1 } from './listSourceSchemaInstances.js';
 import {
     defineProtocolLiteral,
     defineProtocolObject,
     defineProtocolString,
     defineProtocolUnion,
     TriageIdentifierV1ProtocolSchema,
-    TriageCollisionScopeV1ProtocolSchema,
     TriageSourceInstanceIdV1Schema,
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
@@ -12,9 +12,7 @@ import {
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 
 import {
-    MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
     MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
-    MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1,
     TRIAGE_ACTION_SUBJECTS_V1,
@@ -56,9 +54,7 @@ export const TriageTextV1ProtocolSchema = defineTriageSingleLineStringV1(
 );
 
 /** Selection and snapshot joins share one opaque source-native key, including retained repository paths. */
-export const TriageSourceScopeUnitIdV1Schema = defineTriageSingleLineStringV1(
-    MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
-);
+export const { TriageSourceScopeUnitIdV1Schema } = triageListSourceSchemasV1;
 export type TriageSourceScopeUnitIdV1 = ReturnType<typeof TriageSourceScopeUnitIdV1Schema.parse>;
 
 /**
@@ -97,11 +93,7 @@ export type TriageActionSubjectV1 = (typeof TRIAGE_ACTION_SUBJECTS_V1)[number];
  * grammar: each source owns the native parser and the collision-scope
  * derivation, and the target validates the grammar plus the declared kind.
  */
-export const TriageSourceEntryLocalRefV1Schema = defineProtocolObject({
-    kindId: TriageIdentifierV1ProtocolSchema,
-    collisionScope: TriageCollisionScopeV1ProtocolSchema,
-    entryId: TriageIdentifierV1ProtocolSchema,
-}, { policy: 'closed' });
+export const { TriageSourceEntryLocalRefV1Schema } = triageListSourceSchemasV1;
 export type TriageSourceEntryLocalRefV1 = ReturnType<
     typeof TriageSourceEntryLocalRefV1Schema.parse
 >;
@@ -122,12 +114,5 @@ export type TriageSourceInstanceRefV1 = ReturnType<typeof TriageSourceInstanceRe
  * replaceable by a later observation without rekeying the entry, and
  * `routingToken` is a bounded source-private string the target never parses.
  */
-export const TriageEntryLocatorV1Schema = defineProtocolObject({
-    v: defineProtocolLiteral(1),
-    webUrl: TriageLocationV1ProtocolSchema.optional(),
-    displayPath: TriageTextV1ProtocolSchema.optional(),
-    routingToken: defineTriageSingleLineStringV1(
-        MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
-    ).optional(),
-}, { policy: 'closed' });
+export const { TriageEntryLocatorV1Schema } = triageListSourceSchemasV1;
 export type TriageEntryLocatorV1 = ReturnType<typeof TriageEntryLocatorV1Schema.parse>;

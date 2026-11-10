@@ -1,29 +1,16 @@
+import { triageListSourceSchemasV1 } from './listSourceSchemaInstances.js';
 import {
     defineProtocolLiteral,
-    defineProtocolNumber,
     defineProtocolObject,
     defineProtocolString,
     defineProtocolUnion,
     type ProtocolComposableSchema,
 } from '@happier-dev/plugin-sdk/protocol';
 
-import {
-    MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1,
-    TRIAGE_SOURCE_FAILURE_CLASSES_V1,
-} from './bounds.js';
 import { TriageIdentifierV1ProtocolSchema } from './identity.js';
-import { defineTriageSingleLineStringV1 } from './strings.js';
 
 /** @internal Relative-only closed failure classification. */
-export const TriageSourceFailureClassV1ProtocolSchema = defineProtocolUnion([
-    defineProtocolLiteral(TRIAGE_SOURCE_FAILURE_CLASSES_V1[0]),
-    defineProtocolLiteral(TRIAGE_SOURCE_FAILURE_CLASSES_V1[1]),
-    defineProtocolLiteral(TRIAGE_SOURCE_FAILURE_CLASSES_V1[2]),
-    defineProtocolLiteral(TRIAGE_SOURCE_FAILURE_CLASSES_V1[3]),
-    defineProtocolLiteral(TRIAGE_SOURCE_FAILURE_CLASSES_V1[4]),
-    defineProtocolLiteral(TRIAGE_SOURCE_FAILURE_CLASSES_V1[5]),
-]);
-
+export const { TriageSourceFailureClassV1ProtocolSchema } = triageListSourceSchemasV1;
 /**
  * One bounded, non-secret source failure.
  *
@@ -38,24 +25,11 @@ export const TriageSourceFailureClassV1ProtocolSchema = defineProtocolUnion([
  * the aggregate that honours it, so a skewed or rewritten header is bounded once
  * for every source rather than in each of them, differently.
  */
-export const TriageSourceFailureV1Schema = defineProtocolObject({
-    class: TriageSourceFailureClassV1ProtocolSchema,
-    code: TriageIdentifierV1ProtocolSchema,
-    /** Originating host-issued Action request identity, diagnostic only. */
-    requestId: TriageIdentifierV1ProtocolSchema.optional(),
-    detail: defineTriageSingleLineStringV1(MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1).optional(),
-    /** Provider-reported permission requirement, diagnostic only, never admission authority. */
-    requiredPermissions: defineTriageSingleLineStringV1(MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1).optional(),
-    retryNotBeforeMs: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
-}, { policy: 'closed' });
+export const { TriageSourceFailureV1Schema } = triageListSourceSchemasV1;
 export type TriageSourceFailureV1 = ReturnType<typeof TriageSourceFailureV1Schema.parse>;
 
 /** Invocation diagnostics only; arbitrary exception messages/data never cross this wire. */
-export const TriageListInvocationErrorV1Schema = defineProtocolObject({
-    code: TriageIdentifierV1ProtocolSchema,
-    retryable: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
-    requestId: TriageIdentifierV1ProtocolSchema.optional(),
-}, { policy: 'closed' });
+export const { TriageListInvocationErrorV1Schema } = triageListSourceSchemasV1;
 export type TriageListInvocationErrorV1 = ReturnType<typeof TriageListInvocationErrorV1Schema.parse>;
 
 

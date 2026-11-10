@@ -110,10 +110,26 @@ describe('worst-case JSON escaping', () => {
         expect(jsonEscapedByteCost(String.fromCharCode(0x1f))).toBe(WORST_CASE_JSON_ESCAPE_BYTES);
     });
 
-    it('names every field whose grammar admits the sixfold escape', () => {
-        const sixfold = [...reachableStringFields()]
-            .filter(([name, fragment]) => codePointsOf(buildMaximalSchemaString(fragment, name))
-                .some((character) => jsonEscapedByteCost(character) === WORST_CASE_JSON_ESCAPE_BYTES))
+    it('names every bounded field whose grammar admits the sixfold escape', () => {
+        const boundedFields = [...reachableStringFields()]
+            // Provider-native strings without a finite bound are governed by
+            // the Action envelope, so they have no maximum fill to inventory.
+            .filter(([_name, fragment]) => fragment.maxLength !== undefined
+                || fragment['x-happier-max-utf8-bytes'] !== undefined);
+        // One evaluation shares work across equal grammars, just like a real
+        // operation value containing these fields.
+        const fills = buildMaximalSchemaValue({
+            type: 'object',
+            properties: Object.fromEntries(boundedFields),
+            additionalProperties: false,
+        }, 'bounded fields');
+        if (fills === null || typeof fills !== 'object') throw new Error('Expected string-field inventory');
+        const sixfold = Object.entries(fills)
+            .filter(([name, fill]) => {
+                if (typeof fill !== 'string') throw new Error(`${name}: expected string fill`);
+                return codePointsOf(fill)
+                    .some((character) => jsonEscapedByteCost(character) === WORST_CASE_JSON_ESCAPE_BYTES);
+            })
             .map(([name]) => name)
             .sort();
 
@@ -290,9 +306,11 @@ describe('maximum encoded value derivation', () => {
         // derivation instead of silently consuming the remaining headroom.
         // The shared presentation/control allocation is derived from the real
         // Action envelope, not the retired independent display field quotas.
+        // Its allocation follows the current shared result schemas; retained
+        // configured-instance fields keep their separate storage bound.
         expect(derivedMaxima).toEqual({
-            getInput: 106_266,
-            prepareReviewWorkspaceInput: 122_619,
+            getInput: 103_399,
+            prepareReviewWorkspaceInput: 118_755,
             administrationInput: 62_149,
         });
     });

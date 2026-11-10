@@ -1,3 +1,4 @@
+import { triageListSourceSchemasV1 } from './listSourceSchemaInstances.js';
 import {
     defineProtocolLiteral,
     defineProtocolJsonValue,
@@ -48,16 +49,8 @@ export type TriageSelectedWorkspaceScopeV1 = ReturnType<
  * snapshot carries this exact three-field projection and preparation combines
  * it with the target stamp below.
  */
-const triagePullRequestReviewRevisionFieldsV1 = {
-    baseSha: TriageIdentifierV1ProtocolSchema,
-    headSha: TriageIdentifierV1ProtocolSchema,
-    nativeRevision: TriageIdentifierV1ProtocolSchema,
-} as const;
-
-export const TriagePullRequestReviewRevisionV1Schema = defineProtocolObject(
-    triagePullRequestReviewRevisionFieldsV1,
-    { policy: 'closed' },
-);
+const { triagePullRequestReviewRevisionFieldsV1 } = triageListSourceSchemasV1;
+export const { TriagePullRequestReviewRevisionV1Schema } = triageListSourceSchemasV1;
 export type TriagePullRequestReviewRevisionV1 = ReturnType<
     typeof TriagePullRequestReviewRevisionV1Schema.parse
 >;

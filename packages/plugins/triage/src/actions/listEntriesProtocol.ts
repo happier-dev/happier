@@ -9,6 +9,7 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 import {
+    createTriageListResultSchemasV1,
     MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1,
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
@@ -55,7 +56,9 @@ export { MAX_TRIAGE_LIST_SOURCE_BATCH_V1 } from '@happier-dev/triage-protocol/v1
  * The strict input and result contract of the one aggregate PRs & Issues list
  * Action.
  *
- * It is declared here rather than in `@happier-dev/triage-protocol` on purpose.
+ * Business inputs stay here; pure result construction is shared with the
+ * source protocol's envelope allocation so its schema cannot drift. Originally
+ * this entire Action was declared here rather than in `@happier-dev/triage-protocol`.
  * The published package exists for the *cross-plugin* seams — the source role
  * contract and the source-administration Action a source's own Settings page
  * invokes. This Action has exactly one caller family, the aggregate's own
@@ -227,17 +230,21 @@ const TriageListSourceSelectionV1Schema = defineProtocolUnion([
  * A token is opaque here and stays opaque: nothing in this target decodes it,
  * orders by it, or derives anything from it.
  */
-const TriageLaneContinuationV1Schema = defineProtocolObject({
-    sourceInstanceId: TriageSourceInstanceIdV1Schema,
-    /** The per-page geometry retained for this lane's next request. */
-    pageLimit: defineProtocolNumber({
-        integer: true,
-        minimum: 1,
-        maximum: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
-    }),
-    /** Absent when the previous window had no capacity to start this lane. */
-    continuation: TriageScanContinuationV1Schema.optional(),
-}, { policy: 'closed' });
+const { TriageLaneContinuationV1Schema, TriageProjectedObservationV1Schema, TriageListEntriesResultV1Schema } = createTriageListResultSchemasV1(
+    MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
+    {
+        TriageEntryLocatorV1Schema, TriageEntryRepositoryRefV1Schema,
+        TriageSourceEntrySnapshotV1Schema, TriageSourceFailureV1Schema,
+        TriageListInvocationErrorV1Schema, TriageScanContinuationV1Schema,
+        TriageSourceScanEvidenceV1Schema, TriageSourceViewerFactsV1Schema,
+    },
+    defineProtocolObject({
+        unit: TriageSourceScopeUnitDescriptorV1Schema,
+        projection: TriageListScopeUnitsResultV1Schema,
+    }, { policy: 'closed' }),
+    InternalTaskListProjectionSchema,
+);
+export { TriageProjectedObservationV1Schema, TriageListEntriesResultV1Schema };
 
 /**
  * The explicit page-size contract, independent of how many lane continuations
@@ -322,227 +329,10 @@ export type TriageListEntriesInputV1 = ReturnType<typeof TriageListEntriesInputV
  * shape at exactly `{ kind, localRef }` and makes the operation the basis,
  * because only an authoritative `get` may answer `absent` at all.
  */
-export const TriageProjectedObservationV1Schema = defineProtocolObject({
-    sourceInstanceId: TriageSourceInstanceIdV1Schema,
-    observedAtMs: defineProtocolNumber({ integer: true, minimum: 0 }),
-    outcome: defineProtocolUnion([
-        defineProtocolObject({
-            kind: defineProtocolLiteral('present'),
-            locator: TriageEntryLocatorV1Schema,
-            snapshot: TriageSourceEntrySnapshotV1Schema,
-            viewer: TriageSourceViewerFactsV1Schema,
-            sourceUpdatedAtMs: defineProtocolNumber({ integer: true }).optional(),
-            // The forge repository this entry belongs to, carried because the
-            // mounted surface resolves launch placement from the row it is
-            // looking at: the detail Action carries no observation, so a press
-            // that had to fetch this separately would resolve placement from a
-            // second read of the same entry. `nativeRevision` stays off this
-            // wire for the opposite reason — nothing on a list row reads it.
-            repository: TriageEntryRepositoryRefV1Schema.optional(),
-        }, { policy: 'closed' }),
-        defineProtocolObject({
-            kind: defineProtocolLiteral('absent'),
-        }, { policy: 'closed' }),
-        defineProtocolObject({
-            kind: defineProtocolLiteral('merged'),
-            successor: TriageEntryRefV1Schema,
-        }, { policy: 'closed' }),
-        defineProtocolObject({
-            kind: defineProtocolLiteral('unresolved'),
-            failure: TriageSourceFailureV1Schema,
-        }, { policy: 'closed' }),
-    ]),
-}, { policy: 'closed' });
 export type TriageProjectedObservationV1 = ReturnType<
     typeof TriageProjectedObservationV1Schema.parse
 >;
 
-/**
- * The complete folded answer from every connection other than the one the row
- * renders from.
- *
- * `REQ-03` makes this member necessary: an entry observed through two configured
- * connections is one entry with two observations. The mounted store receives
- * one mixed Action result and rehydrates it through the canonical fold, so a
- * compact marker would erase the facts that determine attention and selection
- * for every non-rendered connection.
- *
- * It remains bounded by the source batch this one Action invocation carries.
- * The fixed batch is measured against the host Action response transport rather
- * than being a configured-source product ceiling.
- */
-const TriageListRowV1Schema = defineProtocolObject({
-    entryRef: TriageEntryRefV1Schema,
-    lane: defineProtocolUnion([
-        defineProtocolLiteral('1-open'),
-        defineProtocolLiteral('2-done'),
-    ]),
-    sortAtMs: defineProtocolNumber({ integer: true }),
-    presence: defineProtocolObject({
-        kind: defineProtocolUnion([
-            defineProtocolLiteral('present'),
-            defineProtocolLiteral('absent'),
-            defineProtocolLiteral('unresolved'),
-        ]),
-        /** Absent exactly when an unresolved roll-up observed nothing at all. */
-        observedAtMs: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
-    }, { policy: 'closed' }),
-    attention: defineProtocolObject({
-        level: defineProtocolUnion([
-            defineProtocolLiteral('required'),
-            defineProtocolLiteral('suggested'),
-        ]),
-        fromSourceInstanceId: TriageSourceInstanceIdV1Schema,
-        reasonId: triageIdentifier,
-        reasonLabel: triageText,
-    }, { policy: 'closed' }).optional(),
-    /** Which connection this row's detail and Actions run under, and why. */
-    selected: defineProtocolUnion([
-        defineProtocolObject({
-            kind: defineProtocolLiteral('selected'),
-            sourceInstanceId: TriageSourceInstanceIdV1Schema,
-            reason: defineProtocolUnion([
-                defineProtocolLiteral('override'),
-                defineProtocolLiteral('attention'),
-                defineProtocolLiteral('onlyPresent'),
-                defineProtocolLiteral('deterministicTieBreak'),
-            ]),
-        }, { policy: 'closed' }),
-        defineProtocolObject({
-            kind: defineProtocolLiteral('none'),
-            reason: defineProtocolUnion([
-                defineProtocolLiteral('noPresentObservation'),
-                defineProtocolLiteral('allInstancesRetired'),
-            ]),
-        }, { policy: 'closed' }),
-    ]),
-    /**
-     * The one connection's complete answer this row is rendered from: the
-     * `selected` connection's when one was selectable, the newest present one
-     * when none was, and otherwise the newest answer of any kind. A row exists
-     * because some connection answered for it, so this member is never absent.
-     */
-    observation: TriageProjectedObservationV1Schema,
-    /** Every other connection's complete folded answer. */
-    otherObservations: defineProtocolArray(TriageProjectedObservationV1Schema, {
-        maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 - 1,
-    }),
-    /**
-     * How many distinct connections answered for this entry.
-     */
-    observedByCount: defineProtocolNumber({
-        integer: true,
-        minimum: 1,
-        maximum: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
-    }),
-}, { policy: 'closed' });
-
-const TriageListLaneV1Schema = defineProtocolObject({
-    sourceInstanceId: TriageSourceInstanceIdV1Schema,
-    source: PluginContributionIdentityV1Schema,
-    health: defineProtocolUnion([
-        TriageSourceScanEvidenceV1Schema,
-        defineProtocolObject({
-            kind: defineProtocolLiteral('failed'),
-            failure: TriageSourceFailureV1Schema,
-        }, { policy: 'closed' }),
-        defineProtocolObject({
-            kind: defineProtocolLiteral('unavailable'),
-            error: TriageListInvocationErrorV1Schema.optional(),
-        }, { policy: 'closed' }),
-    ]),
-    exhausted: defineProtocolUnion([
-        defineProtocolLiteral(true),
-        defineProtocolLiteral(false),
-    ]),
-}, { policy: 'closed' });
-
-/**
- * One active or retired configured source instance, as the aggregate knows it.
- *
- * It deliberately carries no account ref, local instance key or routing
- * configuration: those stay inside the private configured payload and never
- * reach a caller of this Action.
- */
-const TriageConfiguredSourceSummaryV1Schema = defineProtocolObject({
-    sourceInstanceId: TriageSourceInstanceIdV1Schema,
-    /** Existing opaque Collection row address; no configured payload is disclosed. */
-    configurationRowId: triageIdentifier,
-    source: PluginContributionIdentityV1Schema,
-    /**
-     * Server-authoritative revision of the exact configured Collection row.
-     *
-     * The mounted acquisition owner compares this with the revision that minted
-     * its rows/frontier. It exposes no configured payload and creates no new
-     * generation: it is the currentness identity the Collection already owns.
-     * Optional only for older in-process fixtures; the canonical Action always
-     * publishes it.
-     */
-    configurationRevision: defineProtocolNumber({ integer: true, minimum: 1 }).optional(),
-    displayLabel: triageText.optional(),
-    projectionTruncated: defineProtocolLiteral(true).optional(),
-    scope: defineProtocolObject({
-        unit: TriageSourceScopeUnitDescriptorV1Schema,
-        projection: TriageListScopeUnitsResultV1Schema,
-    }, { policy: 'closed' }).optional(),
-    /** Whether an admitted V1 source contribution can currently be invoked for it. */
-    available: defineProtocolUnion([
-        defineProtocolLiteral(true),
-        defineProtocolLiteral(false),
-    ]),
-}, { policy: 'closed' });
-
-export const TriageListEntriesResultV1Schema = defineProtocolObject({
-    v: defineProtocolLiteral(1),
-    configuredSources: defineProtocolArray(TriageConfiguredSourceSummaryV1Schema, {
-        maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
-    }),
-    /**
-     * Whether this Action invocation names the whole configured-source
-     * Collection, or only its current transport batch.
-     */
-    configuredSourcesStatus: defineProtocolUnion([
-        defineProtocolLiteral('complete'),
-        defineProtocolLiteral('truncated'),
-    ]),
-    /** The opaque Collection cursor for the next configured-source batch. */
-    configuredSourcesNextCursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
-    window: defineProtocolObject({
-        v: defineProtocolLiteral(1),
-        taskProjection: InternalTaskListProjectionSchema.optional(),
-        rows: defineProtocolArray(TriageListRowV1Schema, {
-            maxItems: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
-        }),
-        lanes: defineProtocolArray(TriageListLaneV1Schema, {
-            maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
-        }),
-        coverage: defineProtocolUnion([
-            defineProtocolLiteral('complete'),
-            defineProtocolLiteral('partial'),
-        ]),
-        /**
-         * Where each walked connection stopped, for every lane that stopped with
-         * more to give and nothing wrong.
-         *
-         * One entry per such lane, so a mixed multi-source window is paged the
-         * same way it was loaded rather than one connection at a time. A lane
-         * that exhausted, failed, timed out or broke the page contract offers
-         * none: resuming a walk that broke is not paging, and the next cycle
-         * asks it again from the first page.
-         *
-         * The array is bounded by the admitted lane count and nothing cuts its
-         * tail. The shared static allocation includes every frontier alongside
-         * the bounded presentation/control fields. Unbounded provider
-         * collections remain governed by the host envelope, not this finite
-         * witness. Dropping a tail token would restart and starve that lane
-         * (`PLAN.md` §0a A9a), so it is never used as an overflow workaround.
-         */
-        continuations: defineProtocolArray(TriageLaneContinuationV1Schema, {
-            maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
-        }).optional(),
-        assembledAtMs: defineProtocolNumber({ integer: true, minimum: 0 }),
-    }, { policy: 'closed' }),
-}, { policy: 'closed' });
 export type TriageListEntriesResultV1 = ReturnType<typeof TriageListEntriesResultV1Schema.parse>;
 
 /** The one aggregate list Action's plugin-local contribution id. */
