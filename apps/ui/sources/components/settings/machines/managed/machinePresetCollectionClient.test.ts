@@ -4,10 +4,11 @@ import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
-import type { ManagedMachinePresetV1, PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1, type ManagedMachinePresetV1, type PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { publishHomeAccountChange, publishHomeAccountChangeWake } from '@/sync/runtime/orchestration/homeAccountChange';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import type { MachinePresetEditDraft } from './machinePresetEditDraft';
@@ -25,7 +26,11 @@ beforeEach(async () => {
     await harness.reset();
     (await import('@/sync/ops/actions/scopedHomeActionExecutor')).resetScopedHomeActionExecutorsForTests();
 });
-afterEach(() => standardCleanup());
+afterEach(async () => {
+    standardCleanup();
+    // Withdraw fixture credentials through their owner before device isolation clears its listeners.
+    await harness.reset();
+});
 
 const preset = { id: 'preset', homeId: 'srv_history', revision: 3, name: 'Current launch', archivedAt: 0,
     owner: { kind: 'account', accountId: 'owner' },
@@ -37,6 +42,206 @@ const resource = { id: 'resource', homeId: 'srv_history', custodianAccountId: 'o
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, archivedAt: 0 } as const;
 
 describe('preset collection and history through Actions', () => {
+    it('shares one preset list across concurrent and repeated Store, Software and Add-to-preset visits', async () => {
+        const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
+        const first = await renderHook(() => useMachinePresets([serverId]));
+        const second = await renderHook(() => useMachinePresets(['srv_history']));
+        await waitForHomeGovernance(() => expect(first.getCurrent().presetsByServerId[serverId]).toEqual([preset]));
+        await waitForHomeGovernance(() => expect(second.getCurrent().presetsByServerId.srv_history).toEqual([preset]));
+        const rows = first.getCurrent().presetsByServerId[serverId];
+        const visitedRows: Array<readonly ManagedMachinePresetV1[] | undefined> = [];
+        const warmLoading: boolean[] = [];
+        await first.unmount();
+        await second.unmount();
+        for (let visit = 0; visit < 3; visit += 1) {
+            const hook = await renderHook(() => {
+                const collection = useMachinePresets([serverId]);
+                warmLoading.push(collection.statesByServerId[serverId]?.loading ?? true);
+                return collection;
+            });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().statesByServerId[serverId]?.loading).toBe(false));
+            visitedRows.push(hook.getCurrent().presetsByServerId[serverId]);
+            await hook.unmount();
+        }
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(1);
+        expect(warmLoading.every(loading => !loading)).toBe(true);
+        for (const visited of visitedRows) expect(visited).toBe(rows);
+    });
+
+    it('invalidates the shared preset list only for real preset content changes, including remote creates while closed', async () => {
+        const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
+        const first = await renderHook(() => useMachinePresets([serverId]));
+        const second = await renderHook(() => useMachinePresets([serverId]));
+        await waitForHomeGovernance(() => expect(second.getCurrent().presetsByServerId[serverId]).toEqual([preset]));
+        const before = harness.requestsFor('/v1/machines/presets/list').length;
+        for (let index = 0; index < 5; index += 1) {
+            await act(async () => {
+                publishHomeAccountChange(serverId, [preset.controller.machineId], { changeKinds: ['machine'] });
+                publishHomeAccountChange(serverId, [`unrelated-account-${index}`], { changeKinds: ['account'] });
+            });
+            await flushHookEffects({ cycles: 10 });
+        }
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before);
+        await first.unmount();
+        await second.unmount();
+        const created = { ...preset, id: 'remote-created', revision: 1 };
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset, created] } });
+        // A disconnected Home has delivered nothing yet. Reopening retains its last answer.
+        const reopened = await renderHook(() => useMachinePresets([serverId]));
+        expect(reopened.getCurrent().presetsByServerId[serverId]).toEqual([preset]);
+        await act(async () => {
+            publishHomeAccountChange(serverId, undefined, { source: 'connected', changesCatchUp: true });
+            publishHomeAccountChangeWake(serverId, { t: 'account-change',
+                entityIds: [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], changeKinds: ['account'] }, 'catch-up-pending');
+        });
+        await flushHookEffects();
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before);
+        // The incumbent catch-up owner publishes the consumed feed page, including unseen row ids.
+        await act(async () => publishHomeAccountChange(serverId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1],
+            { feedPageConsumed: true, changeKinds: ['account'] }));
+        await waitForHomeGovernance(() => expect(reopened.getCurrent().presetsByServerId[serverId]).toEqual([preset, created]));
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1);
+        const archived = { ...created, revision: 2, archivedAt: 42 };
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset, archived] } });
+        // Secondary Homes publish their existing socket receipt directly.
+        await act(async () => publishHomeAccountChangeWake(serverId, { t: 'account-change',
+            entityIds: [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], changeKinds: ['account'] }, 'socket'));
+        await waitForHomeGovernance(() => expect(reopened.getCurrent().presetsByServerId[serverId]).toEqual([preset, archived]));
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 2);
+        await reopened.unmount();
+        const restored = { ...created, revision: 3 };
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset, restored] } });
+        await act(async () => publishHomeAccountChange(serverId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+        await flushHookEffects();
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 2);
+        const restoredVisit = await renderHook(() => useMachinePresets([serverId]));
+        await waitForHomeGovernance(() => expect(restoredVisit.getCurrent().presetsByServerId[serverId]).toEqual([preset, restored]));
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 3);
+        await restoredVisit.unmount();
+    });
+
+    it('refreshes retained Team preset visibility after removal, addition and archive while ignoring connection wakes', async () => {
+        const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        const shared = { ...preset, id: 'team-preset', owner: { kind: 'team' as const, teamId: 'team' } };
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset, shared] } });
+        const initial = await renderHook(() => useMachinePresets([serverId]));
+        await waitForHomeGovernance(() => expect(initial.getCurrent().presetsByServerId[serverId]).toEqual([preset, shared]));
+        await initial.unmount();
+        const before = harness.requestsFor('/v1/machines/presets/list').length;
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
+        await act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+        await flushHookEffects();
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before);
+        const reopened = await renderHook(() => useMachinePresets([serverId]));
+        try {
+            await waitForHomeGovernance(() => expect(reopened.getCurrent().presetsByServerId[serverId]).toEqual([preset]));
+            expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1);
+            harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset, shared] } });
+            await act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+            await waitForHomeGovernance(() => expect(reopened.getCurrent().presetsByServerId[serverId]).toEqual([preset, shared]));
+            // Archiving the Team removes its presets from the visible collection.
+            harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
+            await act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+            await waitForHomeGovernance(() => expect(reopened.getCurrent().presetsByServerId[serverId]).toEqual([preset]));
+            expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 3);
+            await act(async () => publishHomeAccountChange(serverId, undefined, { source: 'connected', changesCatchUp: true }));
+            await flushHookEffects();
+            expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 3);
+        } finally { await reopened.unmount(); }
+    });
+
+    it('retries an unavailable shared preset read on reconnect while ready rows stay quiet', async () => {
+        const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        const unavailable = createDeferred<void>();
+        harness.answer(serverId, '/v1/machines/presets/list', { status: 503, body: { error: 'unavailable' }, respondAfter: unavailable.promise });
+        const hook = await renderHook(() => useMachinePresets([serverId]));
+        try {
+            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(1));
+            await act(async () => {
+                publishHomeAccountChange(serverId, undefined, { source: 'connected', changesCatchUp: true });
+                publishHomeAccountChange(serverId, undefined, { source: 'connected' });
+            });
+            await flushHookEffects();
+            expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(1);
+            unavailable.resolve();
+            await waitForHomeGovernance(() => expect(hook.getCurrent().statesByServerId[serverId]).toMatchObject({ loading: false, error: expect.any(String) }));
+            const before = harness.requestsFor('/v1/machines/presets/list').length;
+            harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
+            await act(async () => publishHomeAccountChange(serverId, undefined, { source: 'connected', changesCatchUp: true }));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().presetsByServerId[serverId]).toEqual([preset]));
+            expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1);
+            await act(async () => publishHomeAccountChange(serverId, undefined, { source: 'connected', changesCatchUp: true }));
+            await flushHookEffects();
+            expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1);
+        } finally { unavailable.resolve(); await hook.unmount(); }
+    });
+
+    it('recovers retained presets from the canonical snapshot boundary while ordinary reconnects stay quiet', async () => {
+        const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
+        const initial = await renderHook(() => useMachinePresets([serverId]));
+        await waitForHomeGovernance(() => expect(initial.getCurrent().presetsByServerId[serverId]).toEqual([preset]));
+        await initial.unmount();
+        const before = harness.requestsFor('/v1/machines/presets/list').length;
+        const created = { ...preset, id: 'created-before-snapshot-base' };
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset, created] } });
+        await act(async () => publishHomeAccountChange(serverId, undefined, { source: 'snapshot' }));
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before);
+        const reopened = await renderHook(() => useMachinePresets([serverId]));
+        try {
+            await waitForHomeGovernance(() => expect(reopened.getCurrent().presetsByServerId[serverId]).toEqual([preset, created]));
+            expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1);
+            await act(async () => {
+                publishHomeAccountChange(serverId, undefined, { source: 'connected', changesCatchUp: true });
+                publishHomeAccountChange(serverId, [preset.controller.machineId], { changeKinds: ['machine'] });
+                publishHomeAccountChangeWake(serverId, { t: 'account-change', entityIds: undefined,
+                    changeKinds: ['account'] }, 'catch-up-pending');
+            });
+            await flushHookEffects();
+            expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1);
+        } finally { await reopened.unmount(); }
+    });
+
+    it('refreshes shared content from the authoritative push after local writes, without rereading its own writes', async () => {
+        const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
+        const hook = await renderHook(() => useMachinePresets([serverId]));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().presetsByServerId[serverId]).toEqual([preset]));
+        const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, preset.homeId);
+        const before = harness.requestsFor('/v1/machines/presets/list').length;
+        const updated = { ...preset, name: 'Saved edit', revision: 4 };
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [updated] } });
+        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: updated } });
+        await act(async () => { await client.execute('machines.presets.update', {
+            homeId: preset.homeId, id: preset.id, expectedRevision: 3, patch: { name: updated.name },
+        }); });
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before);
+        // The HTTP fixture emits the same committed Account change as the real writer.
+        await act(async () => publishHomeAccountChange(serverId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().presetsByServerId[serverId]).toEqual([updated]));
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1);
+        const rows = hook.getCurrent().presetsByServerId[serverId];
+        await act(async () => { await client.execute('machines.presets.update', {
+            homeId: preset.homeId, id: preset.id, expectedRevision: 4, patch: { name: updated.name },
+        }); });
+        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'refused', code: 'permission_denied' } });
+        await act(async () => { await client.execute('machines.presets.update', {
+            homeId: preset.homeId, id: preset.id, expectedRevision: 4, patch: { name: 'Refused edit' },
+        }); });
+        await flushHookEffects();
+        expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1);
+        expect(hook.getCurrent().presetsByServerId[serverId]).toBe(rows);
+        await hook.unmount();
+    });
+
     it('parks retained Machine settings facts and catches up without retaining withdrawn Account data', async () => {
         const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
             serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
@@ -148,7 +353,7 @@ describe('preset collection and history through Actions', () => {
             presented = false;
             await hook.rerender();
             for (let index = 0; index < 20; index += 1) {
-                await act(async () => publishHomeAccountChange(serverId));
+                await act(async () => publishHomeAccountChange(serverId, kind === 'collection' ? [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1] : undefined));
             }
             await flushHookEffects({ cycles: 30 });
             expect(harness.requestsFor(path)).toHaveLength(before);
@@ -175,13 +380,13 @@ describe('preset collection and history through Actions', () => {
             expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before);
             const updated = { ...preset, revision: preset.revision + 1 };
             harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [updated] } });
-            await act(async () => publishHomeAccountChange(serverId, [preset.id], { source: 'socket', changeKinds: ['account'] }));
+            await act(async () => publishHomeAccountChange(serverId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], { source: 'socket', changeKinds: ['account'] }));
             await waitForHomeGovernance(() => expect(hook.getCurrent().presetsByServerId[serverId]).toEqual([updated]));
             expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1);
         } finally { await hook.unmount(); }
     });
 
-    it('refreshes a preset collection for its controller changes without reading for other Machines', async () => {
+    it('keeps preset content independent of controller presence and reloads only a saved preset change', async () => {
         const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
             serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
         harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
@@ -197,10 +402,11 @@ describe('preset collection and history through Actions', () => {
             expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before);
             await act(async () => publishHomeAccountChange(serverId, [preset.controller.machineId],
                 { source: 'socket', changeKinds: ['machine'] }));
-            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1));
-            await act(async () => publishHomeAccountChange(serverId, ['new-preset'],
+            await flushHookEffects({ cycles: 10 });
+            expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before);
+            await act(async () => publishHomeAccountChange(serverId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1],
                 { source: 'socket', changeKinds: ['account'] }));
-            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 2));
+            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1));
         } finally { await hook.unmount(); }
     });
 
@@ -331,7 +537,7 @@ describe('preset collection and history through Actions', () => {
         expect(result).toEqual({ kind: 'succeeded', value: { kind: 'saved', preset: saved } });
         expect(harness.requestsFor(`/v1/machines/presets/${mode}`).map(request => request.input)).toEqual([mode === 'update' ? {
             homeId: 'srv_history', id: saved.id, expectedRevision: 8,
-            patch: { name: draft.name, setup, launch: null, controller: null, teamAcquireDelegated: false,
+            patch: { name: draft.name, setup, launch: null, controller: null, controllerPoolId: null, teamAcquireDelegated: false,
                 retention: null, wakeOnAcceptedMessage: null, simultaneousLimit: null },
         } : { homeId: 'srv_history', id: saved.id, owner: saved.owner, name: draft.name, setup }]);
         expect(harness.requests.filter(request => request.path.includes('/actions/machines.provisioners.')
@@ -369,7 +575,8 @@ describe('preset collection and history through Actions', () => {
             const updated = { ...preset, revision: preset.revision + 1 };
             harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [updated] } });
             harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: updated } });
-            await act(async () => publishHomeAccountChange(serverId, [preset.id], { changeKinds: ['account'] }));
+            await act(async () => publishHomeAccountChangeWake(serverId, { t: 'account-change',
+                entityIds: [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], changeKinds: ['account'] }, 'socket'));
             await waitForHomeGovernance(() => {
                 expect(hook.getCurrent().collection.presetsByServerId[serverId]).toEqual([updated]);
                 expect(hook.getCurrent().detail.state.value?.preset.revision).toBe(updated.revision);
@@ -380,20 +587,20 @@ describe('preset collection and history through Actions', () => {
             harness.answer(serverId, '/v1/machines/managed/actions/list', { body: { machines: [changedResource] } });
             await act(async () => publishHomeAccountChange(serverId, [resource.id], { changeKinds: ['machine'] }));
             await waitForHomeGovernance(() => expect(hook.getCurrent().detail.state.value?.machines).toEqual([changedResource]));
-            expect(counts()).toEqual({ list: initial.list + 2, preset: initial.preset + 2, history: initial.history + 4 });
+            expect(counts()).toEqual({ list: initial.list + 1, preset: initial.preset + 2, history: initial.history + 4 });
 
             await act(async () => publishHomeAccountChange(serverId));
             await waitForHomeGovernance(() => expect(counts()).toEqual(
-                { list: initial.list + 3, preset: initial.preset + 3, history: initial.history + 6 }));
+                { list: initial.list + 1, preset: initial.preset + 3, history: initial.history + 6 }));
 
             harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'refused', code: 'permission_denied' } });
             harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'refused', code: 'permission_denied' } });
-            await act(async () => publishHomeAccountChange(serverId, ['workflow-run:run', 'teams'], { changeKinds: ['account'] }));
+            await act(async () => publishHomeAccountChange(serverId, ['workflow-run:run', TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
             await waitForHomeGovernance(() => {
                 expect(hook.getCurrent().collection.statesByServerId[serverId]).toMatchObject({ value: null, error: 'permission_denied' });
                 expect(hook.getCurrent().detail.state).toMatchObject({ value: null, error: 'permission_denied' });
             });
-            expect(counts()).toEqual({ list: initial.list + 4, preset: initial.preset + 4, history: initial.history + 6 });
+            expect(counts()).toEqual({ list: initial.list + 2, preset: initial.preset + 4, history: initial.history + 6 });
         } finally { await hook.unmount(); }
     });
     it('retains a failed preset configuration during Retry and publishes only its changed answer', async () => {
@@ -593,7 +800,7 @@ describe('preset collection and history through Actions', () => {
         expect(harness.artifacts(serverId).list()).toHaveLength(1);
         const otherReads = () => harness.requestsFor('/v1/machines/presets/list').filter(request => request.serverId === otherId);
         const readsBefore = otherReads().length;
-        await act(async () => publishHomeAccountChange(otherId));
+        await act(async () => publishHomeAccountChange(otherId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
         await waitForHomeGovernance(() => expect(otherReads()).toHaveLength(readsBefore + 1));
         expect(rendered.getCurrent().approval.approvalId).toBe(approvalId);
         expect(harness.artifacts(serverId).list()).toHaveLength(1);
@@ -601,7 +808,7 @@ describe('preset collection and history through Actions', () => {
         await waitForHomeGovernance(() => expect(state()).toMatchObject({ loading: false, error: null }));
         const retained = state()?.value;
         expect(retained).toEqual(kind === 'collection' ? [preset] : { preset, machines: [resource] });
-        await act(async () => publishHomeAccountChange(serverId, [preset.id], { changeKinds: ['artifact', 'account'] }));
+        await act(async () => publishHomeAccountChange(serverId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['artifact', 'account'] }));
         await waitForHomeGovernance(() => expect(rendered.getCurrent().approval.approvalStatus).toBe('open'));
         const rejectedId = rendered.getCurrent().approval.approvalId;
         if (!rejectedId || rejectedId === approvalId) throw new Error('Expected the fresh read approval');
@@ -703,6 +910,26 @@ describe('preset collection and history through Actions', () => {
         expect(harness.requests.some(request => request.path.includes('/machines/'))).toBe(false);
         await rendered.unmount();
     });
+    it('isolates shared preset rows by Home and retires only the replaced Account', async () => {
+        const firstId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        const secondId = await harness.addHome({ name: 'Other', serverUrl: 'https://other.example',
+            serverIdentityId: 'srv_other', accountId: 'other-owner', currentAccount: true });
+        const other = { ...preset, id: 'other-preset', homeId: 'srv_other', owner: { kind: 'account' as const, accountId: 'other-owner' } };
+        harness.answer(firstId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
+        harness.answer(secondId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [other] } });
+        const hook = await renderHook(() => useMachinePresets([firstId, secondId]));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().presetsByServerId).toEqual({ [firstId]: [preset], [secondId]: [other] }));
+            const retainedOther = hook.getCurrent().presetsByServerId[secondId];
+            harness.answer(firstId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
+            await act(async () => { await harness.switchAccount(firstId, 'replacement'); });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().presetsByServerId[firstId]).toEqual([]));
+            expect(hook.getCurrent().presetsByServerId[secondId]).toBe(retainedOther);
+            expect(harness.requestsFor('/v1/machines/presets/list').filter(request => request.serverId === secondId)).toHaveLength(1);
+        } finally { await hook.unmount(); }
+    });
+
     it('withdraws protected collection rows when the captured credential is replaced', async () => {
         const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example', serverIdentityId: 'srv_history', accountId: 'owner' });
         harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });

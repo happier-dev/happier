@@ -9,7 +9,7 @@ import { qualifyPluginContributionReferenceV1 } from "@happier-dev/protocol/plug
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
 import { isMachineProvisionerCredentialPurposeRequiredV1, MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
-import { hasManagedMachinePresetCreationV1, type ManagedMachinePresetCreationV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1, hasManagedMachinePresetCreationV1, type ManagedMachinePresetCreationV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
 import { inReadSnapshot, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -22,7 +22,6 @@ import {
     resolveTeamActorContextInTx, qualifyTeamOperationAuthenticationInTx,
     resolveTeamActorContextsInTx, qualifyTeamOperationAuthenticationsInTx,
     readActiveTeamMembershipsInTx,
-    type TeamOperationAuthenticationContext,
 } from "@/app/teams/actorContext";
 import { listQualifiedConnectedAccountsInTx } from "@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository";
 import { createQualifiedConnectedAccountIdentityDigest } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
@@ -36,12 +35,10 @@ import { readManagedPresetPoolCandidatesInTx, buildManagedPoolPresetReview } fro
 import { selectMachinePoolCandidate } from '@happier-dev/protocol/machines/pools';
 import type { ManagedControllerV1, ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { MachineDaemonPresenceInventory } from '@/app/machines/machineDaemonPresence';
+import { authorizeMachinePresetCreationSaveInTx, requireManagedLaunchManagerInTx, validateManagedPresetLaunchChoices, type PresetContext, type PresetCreation } from './machinePresetSave';
 
 type StoredPreset = Prisma.ManagedMachinePresetGetPayload<Record<string, never>>;
-type PresetCreation = Pick<ManagedMachinePresetV1, 'homeId'> & ManagedMachinePresetCreationV1
-    & Partial<Pick<ManagedMachinePresetV1, 'owner'>>;
 type PresetRefusal = Extract<PresetMutationResultV1, { kind: "refused" }>;
-type PresetContext = Readonly<{ accountId: string; authentication?: Partial<TeamOperationAuthenticationContext> }>;
 type PresetCredentialProfiles = ReadonlyMap<string, ReadonlyMap<string, QualifiedConnectedAccountProfileV4>>;
 
 /** Split the known storage-only presentation field; the existing Preset reader validates launch. */
@@ -195,7 +192,7 @@ async function requireHomeInTx(tx: Tx, homeId: string): Promise<void> {
 
 export async function invalidatePresetInTx(tx: Tx, row: StoredPreset): Promise<void> {
     const accountIds = await readMachinePresetPublicationAudienceInTx(tx, ownerOf(row));
-    await markAccountsChanged(tx, { accountIds, entityId: row.id });
+    await markAccountsChanged(tx, { accountIds, entityId: MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 });
 }
 
 export async function readMachinePresetPublicationAudienceInTx(tx: Tx, owner: ManagedMachinePresetV1['owner']): Promise<string[]> {
@@ -221,14 +218,7 @@ async function acquirePresetMutationAccountsInTx(tx: Tx, input: Readonly<{
     beforeAccountChangePublication(tx, accountIds, async () => assertAccountChangePublicationAudienceInTx(tx, await read()));
 }
 
-async function requireManagedLaunchManagerInTx(tx: Tx, context: PresetContext, machineId: string): Promise<void> {
-    if ((await tx.account.findUnique({ where: { id: context.accountId }, select: { status: true } }))?.status !== AccountStatus.active
-        || await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: context.accountId, machineId }) !== 'manage') {
-        throw new ManagedMachineError('permission_denied');
-    }
-}
-
-/** Save and acquire consume the same current declaration and credential-source readers. No material is read. */
+/** Acquisition consumes current declarations and credential-source readers. No material is read. */
 export async function validateManagedLaunchInTx(tx: Tx, context: PresetContext, preset: PresetCreation,
     reviewedFacts?: unknown): Promise<Readonly<{ declaration: ManagedDeclaration | null; custodianAccountId: string }>> {
     if (preset.controllerPoolId) {
@@ -268,10 +258,7 @@ export async function validateStoredManagedLaunchInTx(tx: Tx, preset: PresetCrea
     const input = { homeId: preset.homeId, custodianAccountId, controller: preset.controller, provider: preset.launch.provider };
     const declaration = facts ? facts.declarationFor(input) : await resolveManagedDeclarationInTx(tx, input);
     if (!declaration || declaration.schemaVersion !== preset.launch.schemaVersion) throw new ManagedMachineError("provider_unavailable");
-    const schema = createManagedMachinePresetV1Schema(createPluginJsonSchemaZodValueAdapter(declaration.launchSchema));
-    const validated = schema.safeParse({ ...preset, id: "validation", name: "validation", revision: 0, owner: { kind: "account", accountId: custodianAccountId } });
-    if (!validated.success || !validated.data.launch || !validated.data.controller) throw new ManagedMachineError("invalid_request");
-    const validatedLaunch = validated.data.launch;
+    const validatedLaunch = validateManagedPresetLaunchChoices(preset, declaration);
     const credentials = preset.launch.credentials ?? [];
     const requests = declaration.acquireCredentialRequests.filter(binding => isMachineProvisionerCredentialPurposeRequiredV1(
         declaration, binding.request.id, validatedLaunch.choices));
@@ -327,7 +314,7 @@ export async function createMachinePreset(params: PresetContext & Readonly<{ inp
                 ? { kind: "saved", preset: await projectPresetForActorInTx(tx, existing, params.accountId, params.authentication) } as const
                 : { kind: "conflict", currentRevision: current.revision } as const;
         }
-        if (hasManagedMachinePresetCreationV1(input)) await validateManagedLaunchInTx(tx, params, input);
+        if (hasManagedMachinePresetCreationV1(input)) await authorizeMachinePresetCreationSaveInTx(tx, params, input);
         const row = await tx.managedMachinePreset.create({ data: {
             id: input.id, homeId: input.homeId, name: input.name,
             custodianAccountId: input.owner.kind === "account" ? input.owner.accountId : null,
@@ -461,8 +448,8 @@ export async function updateMachinePreset(params: PresetContext & Readonly<{ inp
             || next.teamAcquireDelegated === true && !row.teamAcquireDelegated;
         const nextCreation = hasManagedMachinePresetCreationV1(next) ? next : undefined;
         const delegatedControllerMachineId = requiresDelegationManager ? row.controllerMachineId ?? next.controller?.machineId : undefined;
-        if (validateLaunch && nextCreation) await validateManagedLaunchInTx(tx, params, nextCreation);
-        else if (requiresDelegationManager && nextCreation?.controllerPoolId) await validateManagedLaunchInTx(tx, params, nextCreation);
+        if (validateLaunch && nextCreation) await authorizeMachinePresetCreationSaveInTx(tx, params, nextCreation);
+        else if (requiresDelegationManager && nextCreation?.controllerPoolId) await authorizeMachinePresetCreationSaveInTx(tx, params, nextCreation);
         else if (delegatedControllerMachineId) await requireManagedLaunchManagerInTx(tx, params, delegatedControllerMachineId);
         if (sameManagedInput(next, current)) return { kind: "saved", preset: await projectPresetForActorInTx(tx, row, params.accountId, params.authentication) } as const;
         const result = await tx.managedMachinePreset.updateMany({ where: { id: row.id, revision: input.expectedRevision }, data: {

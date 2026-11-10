@@ -16,6 +16,9 @@ export { MachineSetupV1Schema, MachineSetupV1ReadSchema, MachineSetupScriptV1Sch
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const revision = () => z.number().check(z.int(), z.nonnegative());
 
+/** Existing Account-change routing for saved preset content, including newly created records. */
+export const MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'machine-presets' as const;
+
 export const ManagedMachinePresetOwnerV1Schema = lazyZodSchema(() => z.union([
   AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema,
 ]));

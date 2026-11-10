@@ -81,6 +81,41 @@ describe("Machine preset relational owner", () => {
 
     afterAll(async () => { if (harness) await harness.close(); });
 
+    it('publishes the shared preset collection discriminator only for real content mutations', async () => {
+        const accountId = 'preset-collection-publication-owner';
+        const homeId = await getOrCreateServerIdentityId();
+        await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
+        const id = 'preset-collection-publication';
+        const changes = () => db.accountChange.findMany({ where: { accountId }, select: { kind: true, entityId: true, cursor: true } });
+        let cursor = -1;
+        const mutations = [
+            { operation: 'create', input: { homeId, id, owner: { kind: 'account', accountId }, name: 'Before', setup: { scripts: [{ body: 'echo ready' }] } } },
+            { operation: 'update', input: { homeId, id, expectedRevision: 0, patch: { name: 'After' } } },
+            { operation: 'archive', input: { homeId, id, expectedRevision: 1 } },
+            { operation: 'restore', input: { homeId, id, expectedRevision: 2 } },
+        ];
+        for (const mutation of mutations) {
+            const response = await requestPreset(accountId, mutation.operation, mutation.input);
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json().kind).toBe('saved');
+            const rows = await changes();
+            expect(rows).toEqual([{ kind: 'account', entityId: 'machine-presets', cursor: expect.any(Number) }]);
+            expect(rows[0]!.cursor).toBeGreaterThan(cursor);
+            cursor = rows[0]!.cursor;
+            if (mutation.operation === 'create') {
+                const repeated = await requestPreset(accountId, 'create', mutation.input);
+                expect(repeated.json()).toMatchObject({ kind: 'saved', preset: { revision: 0 } });
+                expect((await changes())[0]!.cursor).toBe(cursor);
+            }
+        }
+        const unchanged = await requestPreset(accountId, 'update', { homeId, id, expectedRevision: 3, patch: { name: 'After' } });
+        expect(unchanged.json()).toMatchObject({ kind: 'saved', preset: { revision: 3 } });
+        expect((await changes())[0]!.cursor).toBe(cursor);
+        const conflict = await requestPreset(accountId, 'update', { homeId, id, expectedRevision: 0, patch: { name: 'Rejected' } });
+        expect(conflict.statusCode).toBe(409);
+        expect((await changes())[0]!.cursor).toBe(cursor);
+    });
+
     it('reveals only the exact current enrollment installation to its creation controller', async () => {
         const homeId = await getOrCreateServerIdentityId();
         const owner = 'preset-child-codec-owner';
@@ -335,7 +370,8 @@ describe("Machine preset relational owner", () => {
         expect((await requestPreset(accountId, 'update', { homeId, id: input.id, expectedRevision: 0,
             patch: { setup: null } })).statusCode).toBe(400);
         expect((await requestPreset(accountId, 'get', { homeId, id: input.id })).json()).toEqual({ kind: 'found', preset: created.json().preset });
-        expect((await requestPreset(accountId, 'create', { ...input, id: 'preset-half-creation', launch })).statusCode).toBe(400);
+        expect((await requestPreset(accountId, 'create', { ...input, id: 'preset-half-creation',
+            controller: { machineId: 'missing-controller', installationId: 'missing-installation' } })).statusCode).toBe(400);
         const team = await db.team.create({ data: { name: 'Setup-only Team' } });
         await db.teamMembership.createMany({ data: [
             { teamId: team.id, accountId, role: 'admin' }, { teamId: team.id, accountId: memberId, role: 'member' },
@@ -378,12 +414,13 @@ describe("Machine preset relational owner", () => {
         expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 1,
             patch: { setup: null } })).statusCode).toBe(400);
         expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 1,
-            patch: { launch, controller } })).json()).toEqual({ kind: 'refused', code: 'provider_unavailable' });
-        expect((await requestPreset(accountId, 'list', { homeId })).json()).toEqual({ kind: 'listed', presets: [setupOnly] });
-        const archived = await requestPreset(accountId, 'archive', { homeId, id: definition.id, expectedRevision: 1 });
-        expect(archived.json()).toMatchObject({ kind: 'saved', preset: { revision: 2, setup, archivedAt: expect.any(Number) } });
-        expect((await requestPreset(accountId, 'restore', { homeId, id: definition.id, expectedRevision: 2 })).json())
-            .toEqual({ kind: 'saved', preset: { ...setupOnly, revision: 3 } });
+            patch: { launch, controller } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 2, launch, controller } });
+        expect((await requestPreset(accountId, 'list', { homeId })).json()).toEqual({ kind: 'listed',
+            presets: [{ ...setupOnly, revision: 2, launch, controller }] });
+        const archived = await requestPreset(accountId, 'archive', { homeId, id: definition.id, expectedRevision: 2 });
+        expect(archived.json()).toMatchObject({ kind: 'saved', preset: { revision: 3, setup, archivedAt: expect.any(Number) } });
+        expect((await requestPreset(accountId, 'restore', { homeId, id: definition.id, expectedRevision: 3 })).json())
+            .toEqual({ kind: 'saved', preset: { ...setupOnly, revision: 4, launch, controller } });
     });
 
     it('captures the exact admitted setup revision and retains it when the preset changes or is archived', async () => {
@@ -470,7 +507,9 @@ describe("Machine preset relational owner", () => {
         const coordinatorLaunch = { ...localLaunch, choices: { backendId: 'aws', transport: 'coordinator', namespace: 'remote', target: 'linux',
             nativeImageId: 'ami-selected', nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800 } };
         expect((await requestPreset(accountId, 'create', { ...input, id: 'preset-crabbox-coordinator', launch: coordinatorLaunch })).json())
-            .toEqual({ kind: 'refused', code: 'credential_unavailable' });
+            .toMatchObject({ kind: 'saved', preset: { launch: coordinatorLaunch } });
+        await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId, homeId,
+            id: 'preset-crabbox-coordinator', revision: 0 }))).rejects.toMatchObject({ code: 'credential_unavailable' });
     });
 
     it("lists accessible future launchs through the authenticated Machine route owner", async () => {
@@ -489,6 +528,47 @@ describe("Machine preset relational owner", () => {
         } finally {
             await app.close();
         }
+    });
+
+    it.each([
+        { team: false, pool: false }, { team: true, pool: false },
+        { team: false, pool: true }, { team: true, pool: true },
+    ])('saves unavailable creation configuration for team=$team pool=$pool and checks availability at acquisition', async scenario => {
+        const accountId = `preset-offline-${scenario.team}-${scenario.pool}`;
+        const homeId = await getOrCreateServerIdentityId();
+        await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
+        const controller = await seedCurrentProvisioner(accountId, homeId);
+        const team = scenario.team ? await db.team.create({ data: { name: accountId,
+            memberships: { create: { accountId, role: 'admin' } } } }) : null;
+        const pool = scenario.pool ? await db.machinePool.create({ data: { id: crypto.randomUUID(), accountId, name: accountId,
+            ...(team ? { teamId: team.id } : {}),
+            members: { create: { machineId: controller.machineId, priorityTier: 0, enabled: false } } } }) : null;
+        // The saved Docker configuration is useful before its provider is installed
+        // or its selected Connected Account is available on the controller.
+        const unavailableLaunch = { ...launch, provider: { pluginId: 'happier.devcontainer', localId: 'devcontainer' },
+            choices: { runtime: 'docker', reviewedEffectDigest: 'a'.repeat(64), configuration: { kind: 'image', image: 'node:22-bookworm' } }, credentials: [{
+                purpose: { consumer: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, purpose: 'registry' },
+                account: { service: { pluginId: 'happier.devcontainer', localId: 'registry' }, accountId: 'retired-profile' },
+            }] };
+        const definition = { id: accountId, homeId, name: 'Saved Docker', launch: unavailableLaunch,
+            owner: team ? { kind: 'team', teamId: team.id } : { kind: 'account', accountId },
+            ...(pool ? { controllerPoolId: pool.id } : { controller }),
+            ...(team ? { teamAcquireDelegated: true } : {}) };
+        const before = await db.managedMachine.count();
+        const created = await requestPreset(accountId, 'create', definition);
+        expect(created.statusCode, created.body).toBe(200);
+        expect(created.json()).toMatchObject({ kind: 'saved', preset: { id: definition.id, revision: 0 } });
+        const editedLaunch = { ...unavailableLaunch, choices: { ...unavailableLaunch.choices,
+            configuration: { kind: 'image', image: 'node:24-bookworm' } } };
+        const edited = await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 0,
+            patch: { launch: editedLaunch } });
+        expect(edited.statusCode, edited.body).toBe(200);
+        expect(edited.json()).toMatchObject({ kind: 'saved', preset: { revision: 1 } });
+        expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } })).launch)
+            .toMatchObject(editedLaunch);
+        await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId, homeId, id: definition.id, revision: 1 })))
+            .rejects.toMatchObject({ code: pool ? 'pool_no_available_machine' : 'provider_unavailable' });
+        expect(await db.managedMachine.count()).toBe(before);
     });
 
     it("saves only declared choices without allocation and projects future stored choice fields away", async () => {
@@ -510,16 +590,22 @@ describe("Machine preset relational owner", () => {
         await db.managedMachinePreset.update({ where: { id: input.id }, data: { launch: { ...launch, choices: { image: "linux", futureChoice: true } } } });
         expect((await requestPreset(accountId, "get", { homeId, id: input.id })).json().preset.launch.choices).toEqual({ image: "linux" });
         await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId, pluginId: launch.provider.pluginId } }, data: { enabled: false } });
-        expect((await requestPreset(accountId, "create", { ...input, id: "preset-stale-provider" })).json()).toEqual({ kind: "refused", code: "provider_unavailable" });
+        expect((await requestPreset(accountId, "create", { ...input, id: "preset-stale-provider" })).json())
+            .toMatchObject({ kind: "saved", preset: { launch } });
+        await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId, homeId,
+            id: 'preset-stale-provider', revision: 0 }))).rejects.toMatchObject({ code: 'provider_unavailable' });
     });
 
-    it("requires the acquire role's actual credential purpose and denies removed profiles without material disclosure", async () => {
+    it("saves credential selections without availability and requires the actual credential purpose at acquisition", async () => {
         const accountId = "preset-credential-owner";
         const homeId = await getOrCreateServerIdentityId();
         await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: "plain" } });
         const controller = await seedCurrentProvisioner(accountId, homeId, "acquire-authentication");
         const input = { id: "preset-credential", homeId, owner: { kind: "account", accountId }, name: "Credential launch", launch, controller };
-        expect((await requestPreset(accountId, "create", input)).json()).toEqual({ kind: "refused", code: "credential_unavailable" });
+        expect((await requestPreset(accountId, "create", { ...input, id: 'preset-missing-credential' })).json())
+            .toMatchObject({ kind: 'saved' });
+        await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId, homeId,
+            id: 'preset-missing-credential', revision: 0 }))).rejects.toMatchObject({ code: 'credential_unavailable' });
         const ref = { service: { pluginId: launch.provider.pluginId, localId: "native-account" }, accountId: "native-profile" };
         const written = await mutateQualifiedConnectedServiceCredential({ accountId, ref, expectedCredentialRevision: null,
             authenticationModeId: "api-key", content: { t: "plain", v: { token: "must-not-disclose" } }, metadata: { displayName: "Native profile", scopes: [] } });
@@ -546,7 +632,8 @@ describe("Machine preset relational owner", () => {
         const reviewed = { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, selection: { kind: "preset" as const, homeId, id: input.id, revision: 0 }, controller, retention: { kind: "until-delete" as const }, wakeOnAcceptedMessage: false };
         if (written.status !== "written") throw new Error("Credential fixture was not written");
         expect(await deleteQualifiedConnectedServiceCredential({ accountId, ref, expectedCredentialRevision: written.credentialRevision, expectedStorageMode: 'plain', cleanupGroupReferences: false })).toMatchObject({ status: "deleted" });
-        expect((await requestPreset(accountId, "create", { ...input, id: "preset-removed-profile", launch: selected })).json()).toEqual({ kind: "refused", code: "credential_unavailable" });
+        expect((await requestPreset(accountId, "create", { ...input, id: "preset-removed-profile", launch: selected })).json())
+            .toMatchObject({ kind: 'saved', preset: { launch: selected } });
         await expect(admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: accountId, requestEnvelopeDigest: "verified-removed-profile", input: { input: reviewed, requestId: "removed-profile", continuationPresent: false } }))
             .rejects.toMatchObject({ code: "credential_unavailable" });
         await expect(admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: memberId,
@@ -569,8 +656,10 @@ describe("Machine preset relational owner", () => {
             metadata: { displayName: credential.account.accountId, scopes: [] } })));
         const selected = { ...launch, credentials };
         const definition = { id: 'preset-plural-credential', homeId, owner: { kind: 'account', accountId }, name: 'Plural launch', launch: selected, controller };
-        expect((await requestPreset(accountId, 'create', { ...definition, launch: { ...selected, credentials: credentials.slice(0, 1) } })).json())
-            .toEqual({ kind: 'refused', code: 'credential_unavailable' });
+        expect((await requestPreset(accountId, 'create', { ...definition, id: 'preset-plural-incomplete',
+            launch: { ...selected, credentials: credentials.slice(0, 1) } })).json()).toMatchObject({ kind: 'saved' });
+        await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId, homeId,
+            id: 'preset-plural-incomplete', revision: 0 }))).rejects.toMatchObject({ code: 'credential_unavailable' });
         const saved = await requestPreset(accountId, 'create', definition);
         expect(saved.json()).toMatchObject({ kind: 'saved', preset: { launch: selected } });
         expect(saved.body).not.toContain('private-native');
@@ -858,17 +947,18 @@ describe("Machine preset relational owner", () => {
         expect((await requestPreset(owner, 'update', { homeId, id: definition.id, expectedRevision: 1,
             patch: { teamAcquireDelegated: false } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 2 } });
         expect((await requestPreset(owner, 'update', { homeId, id: definition.id, expectedRevision: 2,
-            patch: { teamAcquireDelegated: true } })).json()).toEqual({ kind: 'refused', code: 'provider_unavailable' });
+            patch: { teamAcquireDelegated: true } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 3 } });
         const current = (await requestPreset(owner, 'get', { homeId, id: definition.id })).json().preset;
-        expect(current.teamAcquireDelegated ?? false).toBe(false);
-        expect((await requestPreset(owner, 'create', { ...definition, teamAcquireDelegated: false })).json())
-            .toMatchObject({ kind: 'saved', preset: { revision: 2 } });
+        expect(current.teamAcquireDelegated).toBe(true);
+        expect(await select(3)).toEqual({ kind: 'refused', code: 'preset_limit_reached' });
+        expect((await requestPreset(owner, 'create', { ...definition, teamAcquireDelegated: true })).json())
+            .toMatchObject({ kind: 'saved', preset: { revision: 3 } });
         expect((await requestPreset(owner, 'create', { ...definition, id: 'preset-delegation-account',
             owner: { kind: 'account', accountId: owner }, teamAcquireDelegated: true })).json())
             .toEqual({ kind: 'refused', code: 'invalid_request' });
-        expect((await requestPreset(owner, 'archive', { homeId, id: definition.id, expectedRevision: 2 })).json())
-            .toMatchObject({ kind: 'saved', preset: { revision: 3 } });
-        expect(await select(3)).toEqual({ kind: 'refused', code: 'preset_archived' });
+        expect((await requestPreset(owner, 'archive', { homeId, id: definition.id, expectedRevision: 3 })).json())
+            .toMatchObject({ kind: 'saved', preset: { revision: 4 } });
+        expect(await select(4)).toEqual({ kind: 'refused', code: 'preset_archived' });
         await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: member } }, data: { status: 'suspended' } });
         expect(await select(3)).toEqual({ kind: 'refused', code: 'preset_not_found' });
     });
@@ -1035,7 +1125,7 @@ describe("Machine preset relational owner", () => {
         } finally { await app.close(); }
     });
 
-    it('refuses controller pools for Account-hosted provisioning', async () => {
+    it('saves Account-hosted configuration but refuses acquisition through a controller pool', async () => {
         const homeId = await getOrCreateServerIdentityId();
         const owner = 'preset-pool-account-provisioner';
         await db.account.create({ data: { id: owner, publicKey: null, encryptionMode: 'plain' } });
@@ -1061,7 +1151,10 @@ describe("Machine preset relational owner", () => {
             members: { create: { machineId: controller.machineId, priorityTier: 0 } } } });
         const result = await requestPreset(owner, 'create', { id: `${owner}-preset`, homeId, name: 'Account provisioning',
             owner: { kind: 'account', accountId: owner }, controllerPoolId: poolId, launch });
-        expect(result.json(), result.body).toMatchObject({ kind: 'refused', code: 'provider_unavailable' });
+        expect(result.json(), result.body).toMatchObject({ kind: 'saved',
+            preset: { delegatedAcquire: { kind: 'unavailable', code: 'provider_unavailable' } } });
+        await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId: owner, homeId,
+            id: `${owner}-preset`, revision: 0 }))).rejects.toMatchObject({ code: 'provider_unavailable' });
     });
 
     it.each(['billing', 'retention'] as const)('refuses pool review when eligible installations disagree on %s', async difference => {
@@ -1099,7 +1192,10 @@ describe("Machine preset relational owner", () => {
             members: { create: [controller, second].map(value => ({ machineId: value.machineId, priorityTier: 0 })) } } });
         const result = await requestPreset(owner, 'create', { id: `${owner}-preset`, homeId, name: 'Mixed facts',
             owner: { kind: 'account', accountId: owner }, controllerPoolId: poolId, launch });
-        expect(result.json(), result.body).toMatchObject({ kind: 'refused', code: 'provider_unavailable' });
+        expect(result.json(), result.body).toMatchObject({ kind: 'saved',
+            preset: { delegatedAcquire: { kind: 'unavailable', code: 'provider_unavailable' } } });
+        await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId: owner, homeId,
+            id: `${owner}-preset`, revision: 0 }))).rejects.toMatchObject({ code: 'provider_unavailable' });
     });
 
     it("counts uncertain and retained stopped resources until confirmed absence, independent of archive", async () => {

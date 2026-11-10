@@ -69,11 +69,9 @@ export function settleManagedConfiguratorRead(draft: ManagedConfiguratorDraft,
 export function refreshManagedConfiguratorProvisioner(draft: ManagedConfiguratorDraft,
     provisioner: ManagedConfiguratorDraft['provisioner'], controller?: ManagedControllerV1): ManagedConfiguratorDraft {
     if (!pluginJsonValuesEqual(draft.controller ?? null, controller ?? null)) return draft;
-    const selections = managedConfiguratorCredentialSelections(draft, provisioner);
-    const next = setManagedConfiguratorCredentials(draft, selections);
-    if (next.provisioner === provisioner) return next;
-    return { ...next, provisioner, choicesSchema: createManagedConfiguratorDraft({ provisioner,
-        controller: next.controller, name: next.name }).choicesSchema, optionStatus: 'loading', check: undefined };
+    if (draft.provisioner === provisioner) return draft;
+    return { ...draft, provisioner, choicesSchema: createManagedConfiguratorDraft({ provisioner,
+        controller: draft.controller, name: draft.name }).choicesSchema, optionStatus: 'loading', check: undefined };
 }
 const dimensions = MACHINE_PROVISIONER_DIMENSIONS_V1;
 type Projection = ReturnType<typeof projectMachineProvisionerSelectionV1>;

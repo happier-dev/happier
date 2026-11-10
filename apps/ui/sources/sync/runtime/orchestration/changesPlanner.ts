@@ -33,6 +33,7 @@ import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1, CONNECTED_ACKNOWLEDGEMENTS_AC
 import { parseConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { isSessionSystemRecordChangeKind } from '@/sync/domains/sessionSystemRecords/changeWatch';
 import type { HomeAccountChangeEvent } from './homeAccountChange';
 import type { SessionListRowMembershipFacets } from '@/sync/domains/session/listing/sessionListQuerySelection';
@@ -743,6 +744,12 @@ export function planSyncActionsFromChanges(
             }
             if (change.entityId === ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID) {
                 if (requiresFollowSessionRefresh(change)) invalidateSessions = true;
+                continue;
+            }
+            // Saved recipes are materialized by the shared presets resource. Preserve
+            // their exact routing key without refreshing unrelated Account settings.
+            if (change.entityId === MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1) {
+                machineResourcesAffect = true;
                 continue;
             }
             if (

@@ -8,9 +8,12 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 
 import { getServerProfileById, areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerCredentialAccountScopeStates, useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { publishHomeAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
+import { invalidateMachinePresets, isMachinePresetAccessLost, readMachinePresetsSnapshot, retainMachinePresets, subscribeMachinePresets, type MachinePresetQueryState } from '@/sync/engine/machines/machinePresetsResource';
+export { isMachinePresetAccessLost, type MachinePresetQueryState } from '@/sync/engine/machines/machinePresetsResource';
 import { createMachinePresetCollectionClient, type MachinePresetHistoryData, type MachinePresetCollectionResult, type MachinePresetCollectionSettledResult, type MachinePresetCollectionOptions } from './machinePresetCollectionClient';
 import { buildManagedPresetHistory } from './managedPresetHistory';
 import type { createManagedProvisionerClient } from './managedProvisionerClient';
@@ -21,32 +24,13 @@ import { describeManagedNativeFailureDiagnostic } from './managedNativeFailurePr
 import { readManagedConfiguration } from './readManagedConfiguration';
 import { refreshManagedProvisionerAvailability } from './managedProvisionerAvailability';
 
-export type MachinePresetQueryState<T> = Readonly<{
-    value: T | null;
-    loading: boolean;
-    error: string | null;
-    approval?: ActionApprovalRegistration;
-}>;
-type ScopedQueryState<T> = MachinePresetQueryState<T> & Readonly<{ homeId: string | null; accountId: string }>;
 type MachinePresetQueryValue = Pick<ManagedMachinePresetV1, 'id' | 'controller'> | Pick<MachinePresetHistoryData, 'preset'>;
-type PresetCollectionRead = {
-    binding: ServerCredentialAccountScopeBinding;
-    homeId: string;
-    controller: AbortController;
-    retirement: { dispose(): void };
-    awaitingApproval: boolean;
-};
-
 /** Readiness and data are facts; starting another read does not replace a ready receipt. */
 function retainQueryReceipt<T, S extends MachinePresetQueryState<T>>(previous: S, next: S): S {
     const value = sameStrictJsonValue(previous.value, next.value) ? previous.value : next.value;
     const retained = { ...next, value };
     return Object.keys(previous).length === Object.keys(retained).length
         && Object.entries(retained).every(([key, value]) => Object.is(Reflect.get(previous, key), value)) ? previous : retained;
-}
-
-export function isMachinePresetAccessLost(code: string): boolean {
-    return code === 'permission_denied' || code === 'preset_not_found' || code === 'action_account_scope_changed';
 }
 
 /** One scoped read lifetime for preset detail and editing, including approvals and Home invalidation. */
@@ -132,17 +116,6 @@ export function useMachinePresetQuery<T extends MachinePresetQueryValue>(input: 
         ? binding?.isCurrent() ? state : { ...state, loading: !!presetId }
         : { queryKey, value: null, loading: !!presetId && (resolution.kind === 'bound' || resolution.kind === 'resolving'),
             error: resolution.kind === 'bound' || resolution.kind === 'resolving' ? null : resolution.kind }, setState, queryKey, refresh, refreshRevision: revision, withdraw };
-}
-
-function reconcilePresets(previous: readonly ManagedMachinePresetV1[] | null | undefined,
-    incoming: readonly ManagedMachinePresetV1[]): readonly ManagedMachinePresetV1[] {
-    if (!previous) return incoming;
-    const byId = new Map(previous.map(preset => [preset.id, preset]));
-    const next = incoming.map(preset => {
-        const existing = byId.get(preset.id);
-        return existing && stableJsonStringify(existing) === stableJsonStringify(preset) ? existing : preset;
-    });
-    return next.length === previous.length && next.every((preset, index) => preset === previous[index]) ? previous : next;
 }
 
 /** Current future-launch facts use the same native selection and policy model as its editor. */
@@ -239,158 +212,58 @@ export function useMachinePresetConfiguration(input: Readonly<{
         creationDisabled: settings.settings?.managedMachineCreationEnabled === false, refresh: delegated ? input.refreshPreset ?? refresh : refresh };
 }
 
-/** Exact-Home collection projection; it owns no launch or resource persistence. */
+/** Every collection surface projects the one Account-owned machines-sync resource. */
 export function useMachinePresets(serverIds: readonly string[], onApprovalPending?: (approval: ActionApprovalRegistration, serverId: string) => void) {
     const presented = useLayoutPresentationActive();
     const accountScopes = useServerCredentialAccountScopeStates(serverIds);
-    const bindings = React.useMemo(() => new Map([...accountScopes].flatMap(([serverId, entry]) => entry.binding ? [[serverId, entry.binding] as const] : [])), [accountScopes]);
     const requestedIdsKey = JSON.stringify(serverIds);
-    const [state, setState] = React.useState<Readonly<Record<string, ScopedQueryState<readonly ManagedMachinePresetV1[]>>>>({});
-    const stateRef = React.useRef(state);
-    stateRef.current = state;
-    const [refreshRevision, setRefreshRevision] = React.useState(0);
-    const presetsProjectionRef = React.useRef<Readonly<Record<string, readonly ManagedMachinePresetV1[]>>>({});
+    const requestedIds = React.useMemo(() => JSON.parse(requestedIdsKey) as string[], [requestedIdsKey]);
     const approvalRef = React.useRef(onApprovalPending);
     approvalRef.current = onApprovalPending;
-    const refresh = React.useCallback(() => setRefreshRevision(value => value + 1), []);
-    const reads = React.useRef(new Map<string, PresetCollectionRead>());
-    const refreshTargets = React.useRef(new Set<string>());
-    const refreshAll = React.useCallback(() => {
-        for (const serverId of bindings.keys()) refreshTargets.current.add(serverId);
-        refresh();
-    }, [bindings, refresh]);
-    React.useEffect(() => () => {
-        for (const read of reads.current.values()) { read.controller.abort(); read.retirement.dispose(); }
-        reads.current.clear();
-    }, []);
-    React.useEffect(() => {
-        if (!presented) {
-            for (const read of reads.current.values()) { read.controller.abort(); read.retirement.dispose(); }
-            reads.current.clear();
-            refreshTargets.current.clear();
-            return;
-        }
-        setState(current => {
-            const retained = Object.entries(current).filter(([serverId, entry]) => {
-                const resolution = accountScopes.get(serverId)?.resolution;
-                return resolution?.kind === 'bound' && resolution.scope.accountId === entry.accountId
-                    && getServerProfileById(serverId)?.serverIdentityId === entry.homeId;
-            });
-            return retained.length === Object.keys(current).length ? current : Object.fromEntries(retained);
-        });
-        for (const [serverId, read] of reads.current) {
-            const binding = bindings.get(serverId);
-            if (binding?.accountId === read.binding.accountId && binding.revision === read.binding.revision
-                && binding.isCurrent() && read.binding.isCurrent()
-                && getServerProfileById(serverId)?.serverIdentityId === read.homeId && !refreshTargets.current.has(serverId)) continue;
-            read.controller.abort(); read.retirement.dispose(); reads.current.delete(serverId);
-        }
-        for (const [serverId, binding] of bindings) {
-            if (reads.current.has(serverId)) continue;
-            const homeId = getServerProfileById(serverId)?.serverIdentityId;
-            if (!homeId) {
-                setState(current => ({ ...current, [serverId]: { homeId: null, accountId: binding.accountId,
-                    value: null, loading: false, error: 'server_identity_unavailable' } }));
-                continue;
-            }
-            const controller = new AbortController();
-            const retirement = binding.onRetire(() => controller.abort());
-            const pendingRead: PresetCollectionRead = { binding, homeId, controller, retirement, awaitingApproval: false };
-            reads.current.set(serverId, pendingRead);
-            setState(current => {
-                const previous = current[serverId];
-                if (previous?.homeId === homeId && previous.accountId === binding.accountId) {
-                    if (!previous.approval) return current;
-                    const { approval: _approval, ...retained } = previous;
-                    return { ...current, [serverId]: retained };
-                }
-                const value = previous?.homeId === homeId && previous.accountId === binding.accountId ? previous.value : null;
-                return { ...current, [serverId]: { homeId, accountId: binding.accountId, value, loading: value === null, error: null } };
-            });
-            const client = createMachinePresetCollectionClient(binding.scope, homeId);
-            void client.list({ signal: controller.signal, onApprovalPending: approval => {
-                if (!binding.isCurrent() || controller.signal.aborted) return;
-                pendingRead.awaitingApproval = true;
-                setState(current => ({ ...current, [serverId]: { ...current[serverId]!, approval } }));
-                approvalRef.current?.(approval, serverId);
-            }, onApprovalSettled: () => {
-                pendingRead.awaitingApproval = false;
-            } }).then(result => {
-                if (controller.signal.aborted || !binding.isCurrent()) return;
-                setState(current => {
-                    const previous = current[serverId];
-                    const next = { homeId, accountId: binding.accountId, loading: false,
-                        value: result.kind === 'succeeded' ? reconcilePresets(previous?.value, result.value)
-                            : isMachinePresetAccessLost(result.code) ? null : previous?.value ?? null,
-                        error: result.kind === 'failed' ? result.code : null };
-                    const retained = previous ? retainQueryReceipt(previous, next) : next;
-                    return retained === previous ? current : { ...current, [serverId]: retained };
-                });
-            }).catch(() => {
-                if (controller.signal.aborted || !binding.isCurrent()) return;
-                setState(current => {
-                    const previous = current[serverId];
-                    const next = { homeId, accountId: binding.accountId,
-                        value: previous?.value ?? null, loading: false, error: 'request_failed' };
-                    const retained = previous ? retainQueryReceipt(previous, next) : next;
-                    return retained === previous ? current : { ...current, [serverId]: retained };
-                });
-            }).finally(() => {
-                pendingRead.awaitingApproval = false;
-                retirement.dispose();
-            });
-        }
-        refreshTargets.current.clear();
-    }, [presented, accountScopes, bindings, refreshRevision]);
-    React.useEffect(() => presented ? subscribeHomeAccountChange(event => {
-        if (event.machineResourcesAffect === false) return;
-        const serverId = [...bindings.keys()].find(id => areServerProfileIdentifiersEquivalent(id, event.serverId));
-        if (!serverId || reads.current.get(serverId)?.awaitingApproval) return;
-        // Only controller Machines contribute live availability to this collection.
-        // Unknown and mixed-domain wakes still repair the complete projection.
-        const presets = stateRef.current[serverId]?.value;
-        if (presets && event.source === 'socket' && event.changeKinds?.length
-            && event.changeKinds.every(kind => kind === 'machine') && event.entityIds?.length
-            && !presets.some(preset => preset.controller && event.entityIds!.includes(preset.controller.machineId))) return;
-        refreshTargets.current.add(serverId);
-        refresh();
-    }, { reconnect: { readNotCurrent: () => [...bindings.keys()].some(serverId => {
-        const entry = stateRef.current[serverId];
-        return !entry || entry.error !== null || entry.value === null;
-    }) } }) : undefined, [presented, bindings, refresh]);
-    return React.useMemo(() => {
-        const presetsByServerId: Record<string, readonly ManagedMachinePresetV1[]> = {};
-        const statesByServerId: Record<string, MachinePresetQueryState<readonly ManagedMachinePresetV1[]>> = {};
-        for (const serverId of JSON.parse(requestedIdsKey) as string[]) {
+    const snapshots = React.useRef<Readonly<Record<string, MachinePresetQueryState<readonly ManagedMachinePresetV1[]>>>>({});
+    const readSnapshot = React.useCallback(() => {
+        const next: Record<string, MachinePresetQueryState<readonly ManagedMachinePresetV1[]>> = {};
+        for (const serverId of requestedIds) {
             const demo = getDemoMachinePresets(serverId);
-            if (demo) {
-                presetsByServerId[serverId] = demo;
-                statesByServerId[serverId] = { value: demo, loading: false, error: null };
-                continue;
-            }
-            const scopeId = resolveServerProfileScopeIdForIdentifier(serverId) || serverId;
-            const scope = accountScopes.get(scopeId);
-            const binding = scope?.binding;
-            const entry = state[scopeId];
-            const sameScope = scope?.resolution.kind === 'bound' && entry?.accountId === scope.resolution.scope.accountId
-                && entry.homeId === getServerProfileById(serverId)?.serverIdentityId;
-            if (!getServerProfileById(serverId)?.serverIdentityId) {
-                statesByServerId[serverId] = { value: null, loading: false, error: 'server_identity_unavailable' };
-            } else if (!binding?.isCurrent()) {
-                const resolving = !scope || scope.resolution.kind === 'resolving' || scope.resolution.kind === 'bound';
-                statesByServerId[serverId] = { value: sameScope ? entry.value : null, loading: resolving, error: resolving ? null : scope!.resolution.kind };
-                if (sameScope && entry.value) presetsByServerId[serverId] = entry.value;
-            } else if (sameScope) {
-                statesByServerId[serverId] = entry;
-                if (entry.value) presetsByServerId[serverId] = entry.value;
-            } else statesByServerId[serverId] = { value: null, loading: true, error: null };
+            const homeId = getServerProfileById(serverId)?.serverIdentityId;
+            const scope = accountScopes.get(resolveServerProfileScopeIdForIdentifier(serverId) || serverId);
+            const resolution = scope?.resolution;
+            let entry: MachinePresetQueryState<readonly ManagedMachinePresetV1[]>;
+            if (demo) entry = { value: demo, loading: false, error: null };
+            else if (!homeId) entry = { value: null, loading: false, error: 'server_identity_unavailable' };
+            else if (resolution && resolution.kind !== 'bound' && resolution.kind !== 'resolving') {
+                entry = { value: null, loading: false, error: resolution.kind };
+            } else entry = readMachinePresetsSnapshot(serverId, homeId,
+                resolution?.kind === 'bound' ? resolution.scope.accountId : undefined);
+            next[serverId] = retainShallow(snapshots.current[serverId], entry);
         }
-        const previous = presetsProjectionRef.current;
-        const unchanged = Object.keys(previous).length === Object.keys(presetsByServerId).length
-            && Object.entries(presetsByServerId).every(([serverId, presets]) => previous[serverId] === presets);
-        if (!unchanged) presetsProjectionRef.current = presetsByServerId;
-        return { presetsByServerId: presetsProjectionRef.current, statesByServerId, refresh: refreshAll };
-    }, [state, accountScopes, requestedIdsKey, refreshAll]);
+        snapshots.current = retainShallow(snapshots.current, next);
+        return snapshots.current;
+    }, [requestedIds, accountScopes]);
+    const subscribe = React.useCallback((notify: () => void) => presented
+        ? subscribeMachinePresets(requestedIds, notify) : () => {}, [presented, requestedIds]);
+    const statesByServerId = React.useSyncExternalStore(subscribe, readSnapshot, readSnapshot);
+    React.useEffect(() => {
+        if (!presented) return;
+        const releases: Array<() => void> = [];
+        for (const [serverId, scope] of accountScopes) {
+            const homeId = getServerProfileById(serverId)?.serverIdentityId;
+            if (scope.binding?.isCurrent() && homeId && !getDemoMachinePresets(serverId)) {
+                releases.push(retainMachinePresets(scope.binding, homeId, approval => approvalRef.current?.(approval, serverId)));
+            }
+        }
+        return () => { for (const release of releases) release(); };
+    }, [presented, accountScopes]);
+    const refresh = React.useCallback(() => {
+        for (const serverId of requestedIds) invalidateMachinePresets(serverId);
+    }, [requestedIds]);
+    const projection = React.useRef<Readonly<Record<string, readonly ManagedMachinePresetV1[]>>>({});
+    return React.useMemo(() => {
+        const next: Record<string, readonly ManagedMachinePresetV1[]> = {};
+        for (const [serverId, state] of Object.entries(statesByServerId)) if (state.value) next[serverId] = state.value;
+        projection.current = retainShallow(projection.current, next);
+        return { presetsByServerId: projection.current, statesByServerId, refresh };
+    }, [statesByServerId, refresh]);
 }
 
 type PresetDetailMutation =
@@ -448,7 +321,6 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
             if (value.kind === 'saved') {
                 setState(current => current.queryKey === queryKey && current.value
                     ? { ...current, value: { ...current.value, preset: value.preset } } : current);
-                publishHomeAccountChange(serverId);
             } else if (value.kind === 'refused' && isMachinePresetAccessLost(value.code)) {
                 setState({ queryKey, value: null, loading: false, error: value.code });
             }

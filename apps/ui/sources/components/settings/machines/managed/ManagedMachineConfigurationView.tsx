@@ -646,10 +646,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         : !setupInputsValid ? t('managedMachines.creationReview.inputsHelp') : null;
     const mayCreate = creationUnavailableReason === null;
     // A retained launch can still be saved, but explicit field edits must satisfy the declared input schema.
-    const maySave = (pooledDraft ? !!draft?.controllerPoolId && draft.check?.available === true && facts?.optionStatus === 'current'
-        : catalogCurrent && catalogPlacementAvailable && (!(teamId || preset?.owner.kind === 'team') || !!catalogController)) && !!catalogProvisioner && !!facts
-        && credentialsReady && (!credentialPurposes?.length || facts.optionStatus === 'current')
-        && (draft?.optionsSelectors === undefined || selectors !== null && facts.optionStatus === 'current') && !!activeBinding?.isCurrent() && teamWritable && !busy;
+    const maySave = !!facts && (pooledDraft ? !!draft?.controllerPoolId
+        : !(teamId || preset?.owner.kind === 'team') || !!draft?.controller)
+        && draft?.optionsSelectorsEdited !== true && (draft?.optionsSelectors === undefined || selectors !== null)
+        && !!activeBinding?.isCurrent() && teamWritable && !busy;
     // Why Save is off, in the words Create uses; only who may write the Preset is Save's alone.
     const saveUnavailableReason = maySave ? null : creationUnavailableReason ?? (teamWritable ? t('managedMachines.options.unavailable')
         : team.kind === 'bound' && team.state.kind === 'ready' ? t('machinePresets.memberCreateManagersOnly', { team: team.state.team.name })
