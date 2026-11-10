@@ -7,6 +7,7 @@ import { View } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  installWebLayoutBridge,
   measureWebLayout,
   type WebLayoutRect,
 } from '@/dev/testkit/render/measureWebLayout';
@@ -190,5 +191,34 @@ describe("a phone header's wrapped facts, as a browser lays them out", () => {
     expect(sameLine(mark, fact)).toBe(true);
     expect(fact.left - mark.right).toBeGreaterThanOrEqual(4);
     expect(fact.left - mark.right).toBeLessThanOrEqual(8);
+  });
+  it.each([false, true])('keeps whole lines of facts when the browser enlarges text (large header: %s)', async (large) => {
+    // A phone sheet header at Chrome's minimum font size 24 (DARK-1109-L1, row 32): the clip follows
+    // the line the browser lays out, so its facts are never cut through the middle of a line.
+    installWebLayoutBridge();
+    const { PaneHeaderLineView } = await import('./PaneHeader');
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <View testID="column" style={{ width: 360 }}>
+          <PaneHeaderLineView large={large} testID="header" line={{ segments: FACTS }} />
+        </View>,
+      );
+    });
+    const layout = await measureWebLayout(host, {
+      viewport: { width: 400, height: 300 },
+      texts: [...FACTS],
+      minimumFontSize: 24,
+      settle: (replay) => act(replay),
+    });
+    const clip = layout.rect('header.subtitle');
+    const first = layout.textRects(FACTS[0])[0]!;
+    expect(first.fontSize).toBeGreaterThanOrEqual(24);
+    expect(first.height, 'the fact keeps a line taller than its glyphs').toBeGreaterThanOrEqual(24);
+    expect(clip.height, 'the clip holds the fact\'s whole line').toBeGreaterThanOrEqual(first.height - 0.5);
+    const lines = clip.height / first.height;
+    expect(Math.abs(lines - Math.round(lines)), 'the clip ends between lines, never through one').toBeLessThan(0.05);
   });
 });

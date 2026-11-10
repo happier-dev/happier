@@ -8,7 +8,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-const LINK_SLOT_STYLE = { height: Typography.variant('meta').lineHeight, justifyContent: 'center' } as const;
+const LINK_SLOT_STYLE = { minHeight: Typography.variant('meta').lineHeight, justifyContent: 'center' } as const;
 
 /**
  * Brings an archived Session this one led back to Inactive: the row's one operation, written as words

@@ -50,7 +50,8 @@ export function HappierTextLinkButton(props: HappierTextLinkButtonProps): ReactN
       style={(state) => ({
         alignSelf: 'flex-start',
         // The label is one line: its drawn height is known before layout, which is what the hit area reaches from.
-        height: props.labelStyle.lineHeight,
+        // A minimum, so text the browser or OS enlarges past that line keeps its room.
+        minHeight: props.labelStyle.lineHeight,
         opacity: state.disabled ? 0.4 : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
       })}
     >

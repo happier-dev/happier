@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { relativeLineHeight } from '@/components/ui/text/webUnistylesFontOverrides';
+
 /**
  * Real browser geometry for a react-native-web tree rendered in jsdom.
  *
@@ -132,6 +134,21 @@ export function resolveChromiumExecutable(): string | undefined {
     return undefined;
 }
 
+/**
+ * The shipped web app renders each element's styles as one Unistyles class, and the font override
+ * owner rewrites a pixel line height beside a pixel font size into a multiple of that font size.
+ * Under the test runtime the same styles arrive as react-native-web inline styles, so the browser
+ * receives the owner's rewrite here; without it, enlarged text would lay out unlike the app.
+ */
+function shippedLineHeights(container: HTMLElement): HTMLElement {
+    const clone = container.cloneNode(true) as HTMLElement;
+    for (const element of Array.from(clone.querySelectorAll<HTMLElement>('[style]'))) {
+        const ratio = relativeLineHeight({ fontSize: element.style.fontSize, lineHeight: element.style.lineHeight });
+        if (ratio !== null) element.style.lineHeight = ratio;
+    }
+    return clone;
+}
+
 function serialize(container: HTMLElement, width: number): string {
     // react-native-web inserts its rules through the CSSOM (`insertRule`), so a style element's text
     // can be empty while its sheet holds every rule.
@@ -147,7 +164,7 @@ function serialize(container: HTMLElement, width: number): string {
     const openingHtml = html.outerHTML.replace(/<\/html>$/u, '');
     return `<!doctype html>${openingHtml}<head><meta charset="utf-8"><style>${styles}</style>`
         + '<style>html,body{margin:0;font-family:Inter,Arial,sans-serif;-webkit-font-smoothing:antialiased}</style>'
-        + `</head><body><div id="root" style="display:flex;flex-direction:column;width:${width}px">${container.innerHTML}</div></body></html>`;
+        + `</head><body><div id="root" style="display:flex;flex-direction:column;width:${width}px">${shippedLineHeights(container).innerHTML}</div></body></html>`;
 }
 
 export async function measureWebLayout(container: HTMLElement, options: Readonly<{

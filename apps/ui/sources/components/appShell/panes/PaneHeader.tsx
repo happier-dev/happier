@@ -1,7 +1,7 @@
 import { PaneMainRestoreChip, usePaneMainRestoreChipVisible } from './mainColumn/PaneMainColumnControls';
 import { useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurface';
 import * as React from 'react';
-import { Platform, View, type StyleProp, type TextStyle } from 'react-native';
+import { Platform, View, type LayoutChangeEvent, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HAPPIER_PAGE_METRICS, HAPPIER_PRESS_FEEDBACK_V1, happierPageTextMetrics, useHappierMaterialColorResolver, useHappierTextPresentation } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiDetailsPanePresentation } from '@happier-dev/plugin-ui/advanced';
@@ -58,18 +58,29 @@ const PENDING_FACT_STYLE = { opacity: 0 } as const;
 const LARGE_FACTS_LINES = 2;
 
 /**
- * The height of one line of facts as the facts' own text renders it. The row clips to this height,
- * so it follows the same effective line height as the child `Text`: the in-app text size
- * (web scales Text through a CSS variable the View's height never sees, native pre-scales the
- * style) and, on native, the OS font scale the host applies on top.
+ * The height of one line of facts as the facts' own text lays out. The row clips to whole lines of
+ * this height, so it must follow everything that enlarges that text: the in-app text size, the OS
+ * font scale and a browser's minimum font size, which no style value sees. A hidden one-line probe
+ * in the facts' style reports the laid-out line; until its first layout the row uses the
+ * type-scale line at the known scales, which is the same height at the default text size.
  */
-function useFactsLineHeight(large: boolean): number {
+function useFactsLine(large: boolean, probeStyle: StyleProp<TextStyle>): Readonly<{ lineHeight: number; probe: React.ReactNode }> {
     const uiFontScale = useLocalSetting('uiFontScale');
     const { metricScale } = useHappierTextPresentation({ textScale: uiFontScale });
     const { fontScale } = usePresentationWindowDimensions();
     const hostScale = Platform.OS === 'web' ? 1 : fontScale;
-    const lineHeight = large ? happierPageTextMetrics('pageDescription').lineHeight : HEADER_BAND_SUBTITLE_TEXT.lineHeight;
-    return lineHeight * metricScale * hostScale;
+    const estimate = (large ? happierPageTextMetrics('pageDescription').lineHeight : HEADER_BAND_SUBTITLE_TEXT.lineHeight) * metricScale * hostScale;
+    const [measured, setMeasured] = React.useState<number | null>(null);
+    // A hidden pane reads 0; keep the last laid-out line.
+    const onLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const { height } = event.nativeEvent.layout;
+        if (height > 0) setMeasured(height);
+    }, []);
+    const probe = (
+        <Text aria-hidden accessible={false} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden
+            numberOfLines={1} onLayout={onLayout} style={[probeStyle, stylesheet.factsProbe]}>{NO_BREAK_SPACE}</Text>
+    );
+    return { lineHeight: measured ?? estimate, probe };
 }
 
 /**
@@ -89,10 +100,10 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
     const { theme } = useUnistyles();
     const { line, large } = props;
     const testID = props.testID ?? 'pane-header';
-    const factsLineHeight = useFactsLineHeight(large === true);
     const leadingSeparated = line?.leadingSeparated === true && line.segments.length > 0;
     const hasLink = line?.segments.some(isLinkSegment) === true;
     const subtitleStyle = [styles.subtitle, large ? styles.largeSubtitle : null];
+    const factsLine = useFactsLine(large === true, subtitleStyle);
     // One fact, after the `separator` that joins it to the one before (the band's " · ", or none).
     const renderFact = (segment: PaneHeaderLineSegment, index: number, separator: string): React.ReactNode => {
         if (isPendingSegment(segment)) {
@@ -190,7 +201,7 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
                     testID={`${testID}.subtitle`}
                     accessible={!hasLink && !line.leading}
                     accessibilityLabel={hasLink || line.leading ? undefined : readSpokenLine(line.segments)}
-                    style={[styles.facts, styles.largeFacts, { maxHeight: factsLineHeight * LARGE_FACTS_LINES }]}
+                    style={[styles.facts, styles.largeFacts, { maxHeight: factsLine.lineHeight * LARGE_FACTS_LINES }]}
                 >
                     <View style={styles.largeFlow}>
                         {items.map((nodes, index) => (
@@ -200,6 +211,7 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
                             </View>
                         ))}
                     </View>
+                    {factsLine.probe}
                 </View>
             </View>
         );
@@ -220,9 +232,10 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
                     // One spoken line, unless a fact on it is a link of its own to reach.
                     accessible={!hasLink}
                     accessibilityLabel={hasLink ? undefined : readSpokenLine(line.segments)}
-                    style={[styles.facts, { height: factsLineHeight }]}
+                    style={[styles.facts, { height: factsLine.lineHeight }]}
                 >
                     {line.segments.map((segment, index) => renderFact(segment, index, bandSeparator(index)))}
+                    {factsLine.probe}
                 </View>
             ) : null}
             {props.lineEnd}
@@ -498,7 +511,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         color: theme.colors.chrome.header.foreground,
     },
-    // The facts' row is exactly one line tall (height set from useFactsLineHeight), two at most on a phone's
+    // The facts' row is exactly one line tall (height set from useFactsLine), two at most on a phone's
     // large header: what wraps beneath that is clipped.
     facts: {
         flexShrink: 1,
@@ -507,6 +520,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         overflow: 'hidden',
         marginTop: HEADER_BAND_SUBTITLE_TEXT.marginTop,
+    },
+    // Out of the flow and unseen: it only reports the facts' laid-out line height.
+    factsProbe: {
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        opacity: 0,
+        pointerEvents: 'none',
     },
     largeFacts: {
         marginTop: 0,

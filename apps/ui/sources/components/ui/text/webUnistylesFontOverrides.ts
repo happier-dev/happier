@@ -125,7 +125,7 @@ function ensureOverrideStyleElement(document: Document): HTMLStyleElement {
  * the browser actually uses. Rounding up at the sixth decimal keeps the exact
  * pixel line at the specified size, where the plain quotient lands 1/64 px short.
  */
-function relativeLineHeight(metric: UnistylesFontMetric): string | null {
+export function relativeLineHeight(metric: UnistylesFontMetric): string | null {
     if (!metric.fontSize || !metric.lineHeight || !isPx(metric.fontSize) || !isPx(metric.lineHeight)) return null;
     const fontSize = parseFloat(metric.fontSize);
     if (!(fontSize > 0)) return null;
