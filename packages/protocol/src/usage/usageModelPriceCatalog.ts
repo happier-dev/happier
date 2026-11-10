@@ -90,7 +90,7 @@ export function resolveUsageModelPrice(modelId: string | null | undefined, catal
     const alias = /^(openai|anthropic)\/(.+)$/.exec(current);
     const entry = alias && Object.hasOwn(catalog.models, alias[2]!) ? catalog.models[alias[2]!] : undefined;
     if (entry && entry.provider === alias![1]) { current = canonicalUsageModelPriceId(alias![2]!)!; continue; }
-    const baseId = current.endsWith('[1m]') ? current.slice(0, -4).trim() : null;
+    const baseId: string | null = current.endsWith('[1m]') ? current.slice(0, -4).trim() : null;
     const base = baseId && Object.hasOwn(catalog.models, baseId) ? catalog.models[baseId] : undefined;
     if (base?.provider === 'anthropic') { current = canonicalUsageModelPriceId(baseId)!; continue; }
     return null;
