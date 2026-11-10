@@ -161,12 +161,33 @@ describe('MachineSummaryStrip', () => {
         expect(named()).toBe(MACHINE_SUMMARY_METRICS.length);
     });
 
-    it('keeps its slots without figures while the values are not held yet, never saying zero', async () => {
-        const screen = await renderScreen(<MachineSummaryStrip testID="strip" availability={{ kind: 'reporting', summary: null, freshness: 'live' }}
-            style="numbers" metrics={['cpu', 'memory']} layout="under" />);
-        expect(screen.findByTestId('strip')).not.toBeNull();
-        expect(screen.getTextContent()).not.toContain('0%');
-        expect(screen.getTextContent()).toContain('–');
+    it.each(['under', 'inline', 'cells', 'tiles'] as const)('draws no placeholder in %s layout while no value is held: the row keeps its room, empty, never a dash or zero', async layout => {
+        for (const availability of [{ kind: 'reporting', summary: null, freshness: 'live' }, { kind: 'never_sampled' }] as const) {
+            const screen = await renderScreen(<MachineSummaryStrip testID="strip" availability={availability}
+                style="numbers" metrics={['cpu', 'memory', 'disk']} layout={layout} />);
+            // The strip stays mounted so its row keeps its height and its live demand can measure it.
+            expect(screen.findByTestId('strip')).not.toBeNull();
+            expect(screen.getTextContent()).not.toMatch(/[–—]/u);
+            expect(screen.getTextContent()).not.toContain('0%');
+            expect(screen.findAll(node => node.type === Tooltip)).toHaveLength(0);
+        }
+    });
+
+    it('omits a fact the machine did not report and shows the ones it did (no dash for unknown CPU or disk)', async () => {
+        const calm = MACHINE_SUMMARY_PREVIEW.calm;
+        if (calm.kind !== 'reporting' || !calm.summary) throw new Error('preview must report');
+        const summary = { ...calm.summary,
+            cpu: { ...calm.summary.cpu, busyPct: null, series: [] },
+            disk: { ...calm.summary.disk, availableBytes: null, totalBytes: null } };
+        const screen = await renderScreen(<MachineSummaryStrip testID="strip" availability={{ ...calm, summary }}
+            style="numbers" metrics={['cpu', 'memory', 'disk']} layout="under" />);
+        expect(screen.getTextContent()).toContain('19 GB');
+        expect(screen.getTextContent()).not.toMatch(/[–—]/u);
+        expect(screen.findAll(node => node.type === Tooltip)).toHaveLength(1);
+        const label = String(screen.findByTestId('strip')?.props.accessibilityLabel);
+        expect(label).toContain('19 GB');
+        expect(label).not.toContain(t('machineSummary.metrics.cpu'));
+        expect(label).not.toContain(t('machineSummary.metrics.disk'));
     });
 
     it('labels ring-tile memory and disk amounts with their free-space units', async () => {

@@ -351,6 +351,28 @@ it('keeps Collection row owners quiet across unchanged Machine publications and 
   } finally { spy.mockRestore(); }
 });
 
+it('gives a phone index row no title meta while the machine has nothing to say there (offline), and its work when online', async () => {
+  const ReactNative = await import('react-native');
+  // The window is the boundary that makes this a phone.
+  const dimensions = vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 3, fontScale: 1 });
+  try {
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
+      machine('live', 'Live', 'live.local'),
+      { ...machine('idle', 'Idle', 'idle.local'), active: false },
+    ] }]);
+    const tree = await renderPage();
+    const row = (id: string) => tree.findAll(node => node.props.testID === `machines.index.row.machine:srv_a:${id}`);
+    await waitForHomeGovernance(() => expect(row('idle').length).toBeGreaterThan(0));
+    // The work cell is the phone row's title meta (the bundler may suffix the function's name).
+    const titleMeta = (id: string) => tree.findAll(node => typeof node.type === 'function'
+      && /^MachineWorkCell\d*$/u.test(node.type.name) && node.props.item?.key === `machine:srv_a:${id}`);
+    expect(titleMeta('live').length).toBeGreaterThan(0);
+    expect(titleMeta('idle')).toHaveLength(0);
+  } finally {
+    dimensions.mockRestore();
+  }
+});
+
 it.each(['index', 'rail'] as const)('re-renders no %s content when its retained surface hides or shows, and computes nothing for Session churn while hidden', async surface => {
   await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
     machine('a', 'Alpha', 'alpha.local'), machine('b', 'Beta', 'beta.local'),

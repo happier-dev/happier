@@ -485,8 +485,9 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         titleSuffix: (item) => item.facts,
         // The list's second line (phones): the strip, or why the machine shows none.
         byline: (item) => <MachineIndexListLine item={item} style={style} metrics={metrics} />,
-        // A phone's list says the work on the name's line, where the table gives it a column.
-        ...(phone ? { titleMeta: (item: MachineIndexItem) => <MachineWorkCell item={item} /> } : {}),
+        // A phone's list says the work on the name's line, where the table gives it a column. A machine that is not
+        // online passes no meta (its byline says its presence), as the table's Work cell gives it to the presence too.
+        ...(phone ? { titleMeta: (item: MachineIndexItem) => item.online ? <MachineWorkCell item={item} /> : null } : {}),
         fields: [
             // A machine that is not online says why once, from its Work cell across the figures it cannot report.
             { key: 'work', title: t('allMachines.columnWork'), minWidth: 104, priority: 2,

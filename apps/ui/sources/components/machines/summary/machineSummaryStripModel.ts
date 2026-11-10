@@ -157,6 +157,20 @@ export function buildMachineSummaryInstruments(summary: MachineResourceSummaryV1
 }
 
 /**
+ * The chosen metrics this summary can draw: a figure it holds, or a recent line it holds while the figure drops
+ * for a sample. A metric the machine did not measure is omitted, never drawn as a placeholder; with no summary
+ * yet, none is drawn.
+ */
+export function selectMeasuredMachineSummaryMetrics(
+    metrics: readonly MachineSummaryMetric[],
+    instruments: Readonly<Record<MachineSummaryMetric, MachineSummaryInstrument>> | null,
+): readonly MachineSummaryMetric[] {
+    if (!instruments) return [];
+    const measured = metrics.filter(metric => instruments[metric].figure !== null || instruments[metric].line.some(y => y !== null));
+    return measured.length === metrics.length ? metrics : measured;
+}
+
+/**
  * Which metrics fit, given room for `capacity` of them: calm metrics yield first, a toned metric never
  * drops (MPG-20). The kept ones stay in canonical order.
  */

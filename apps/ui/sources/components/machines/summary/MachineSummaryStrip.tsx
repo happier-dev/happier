@@ -19,6 +19,7 @@ import {
     buildMachineSummaryInstruments,
     fitMachineSummaryMetrics,
     resolveMachineResourceToneColor,
+    selectMeasuredMachineSummaryMetrics,
     type MachineSummaryInstrument,
     type MachineSummaryMetric,
     type MachineSummaryStyle,
@@ -105,16 +106,19 @@ export const MachineSummaryStrip = React.memo(function MachineSummaryStrip(props
     if (props.layout === 'fact') return <MachineMemoryFact instruments={instruments} stale={stale} testID={props.testID} />;
     // Held in a const so the narrowing reaches the instruments drawn below.
     const layout = props.layout;
+    // Only what the machine measured is drawn; an unknown fact leaves no dash or empty track. The row itself stays
+    // (empty while nothing is held) so it keeps its height and its live demand can measure where it stands.
+    const measured = selectMeasuredMachineSummaryMetrics(props.metrics, instruments);
     const shown = props.layout === 'inline' && props.style === 'numbers'
-        ? fitMachineSummaryMetrics(props.metrics, instruments, INLINE_NUMBERS_CAPACITY)
+        ? fitMachineSummaryMetrics(measured, instruments, INLINE_NUMBERS_CAPACITY)
         : props.layout === 'under'
-            ? fitMachineSummaryMetrics(props.metrics, instruments, machineSummaryUnderCapacity(props.style, underWidth, theme.space.s12))
-            : props.metrics;
+            ? fitMachineSummaryMetrics(measured, instruments, machineSummaryUnderCapacity(props.style, underWidth, theme.space.s12))
+            : measured;
     const accessibilityLabel = describeMachineSummary(instruments, shown);
     return (
         <View
             testID={props.testID}
-            accessible
+            accessible={shown.length > 0}
             accessibilityLabel={accessibilityLabel}
             onLayout={props.layout === 'under' ? onLayout : undefined}
             style={[props.layout === 'tiles' ? styles.tiles : styles.row, props.layout === 'tiles' && props.fill ? styles.tilesFill : null, props.layout === 'inline' ? styles.inlineRow : null,
@@ -130,8 +134,6 @@ export const MachineSummaryStrip = React.memo(function MachineSummaryStrip(props
                     fill={props.fill === true}
                     // One caption names the instruments; labels return only where one or four metrics show (MPG-20).
                     labelled={(props.layout === 'tiles' && props.fill !== true) || ((props.layout === 'under' || props.layout === 'preview') && (shown.length === 1 || shown.length === 4))}
-                    neverSampled={props.availability?.kind === 'never_sampled'
-                        || props.availability?.kind === 'reporting' && !instruments?.[metric]?.figure}
                     color={theme.colors.text.secondary}
                 />
             ))}
@@ -166,7 +168,6 @@ const MachineSummaryInstrumentView = React.memo(function MachineSummaryInstrumen
     layout: Exclude<MachineSummaryStripLayout, 'fact'>;
     fill: boolean;
     labelled: boolean;
-    neverSampled: boolean;
     color: string;
 }>) {
     const { theme } = useUnistyles();
@@ -177,7 +178,7 @@ const MachineSummaryInstrumentView = React.memo(function MachineSummaryInstrumen
     // A filling line is the Metric chart's own ink: the signature accent while calm, the tone otherwise.
     const inkColor = tone === 'calm' ? (layout === 'tiles' && props.fill ? usageSignatureAccent(theme) : props.color) : toneColor;
     const showFigure = (layout !== 'inline' || props.style === 'numbers') && (props.style !== 'rings' || layout === 'tiles' || layout === 'cells');
-    const figure = instrument?.figure ?? (props.neverSampled ? '–' : null);
+    const figure = instrument?.figure ?? null;
     if (layout === 'tiles' && props.style === 'rings' && props.metric !== 'network') {
         const ring = (
             <View style={styles.ringFigure}>

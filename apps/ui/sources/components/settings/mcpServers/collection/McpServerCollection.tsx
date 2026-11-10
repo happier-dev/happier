@@ -8,6 +8,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -158,7 +159,7 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
                 }}
                 status={status}
                 count={toolCount ?? null}
-                density="rail"
+                density={rail ? 'rail' : 'page'}
                 selected={rail ? selected : undefined}
                 onPress={() => navigate(mcpServerRoute(row.server.id))}
                 // Beside the homepage, pointing at a server lights its tether there (lab hm-A2h).
@@ -182,7 +183,7 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
                 extra: [item.transport === 'stdio' ? t('capabilities.mcp.local') : t('capabilities.mcp.remote')],
             }}
             status={null}
-            density="rail"
+            density={rail ? 'rail' : 'page'}
             selected={rail ? item.id === props.selectedServerId : undefined}
             onPress={() => navigate(mcpServerRoute(item.id))}
         />
@@ -195,11 +196,13 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
             testID="settings.mcpServers.builtIn.happier"
             title={t('capabilities.mcp.builtInHappier')}
             subtitle={t('capabilities.mcp.builtInHappierDescription')}
-            icon={<HappierCollectionListMark><AskHappierMark size={20} /></HappierCollectionListMark>}
+            // On a standalone page it is a catalog row, on the servers' text edge above it.
+            {...(rail ? {} : { rowRole: 'catalogRow' as const })}
+            icon={<HappierCollectionListMark {...(rail ? {} : { rowRole: 'catalogRow' as const })}><AskHappierMark size={20} /></HappierCollectionListMark>}
             detail={t('capabilities.mcp.builtInActions')}
             density="compact"
             showChevron
-            pressableStyle={collectionListStyles.row}
+            {...(rail ? { pressableStyle: collectionListStyles.row } : {})}
             onPress={() => {
                 const result = runGuardedNavigation(() => router.push(SETTINGS_ROUTES.actions as never));
                 if (result !== true) fireAndForget(result, { tag: 'McpServerCollection.builtIn' });
@@ -226,6 +229,13 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
         placeholder: t('mcpSettings.searchPlaceholder'),
     };
     const draftOpen = pathname === MCP_NEW_SERVER_ROUTE;
+    // Beside a detail a group is the rail's light label over its rows; standalone it is a Settings section (R6).
+    const group = (title: string, rows: readonly React.ReactElement[], counted = true) => rows.length === 0 ? null : rail ? (
+        <React.Fragment key={title}>
+            <CollectionListGroupLabel title={title} {...(counted ? { count: rows.length } : {})} />
+            {rows}
+        </React.Fragment>
+    ) : <ItemGroup key={title} title={title}>{rows}</ItemGroup>;
 
     // The column's rows, one list for the rail and for a phone's page: the servers you added In use and Off,
     // plugins' own, then Happier's built-in server, which a condition on the servers leaves out.
@@ -242,14 +252,10 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
                     />
                 ) : <McpServersEmpty />
             ) : null}
-            {shownInUse.length > 0 ? <CollectionListGroupLabel title={t('capabilities.mcp.inUse')} count={shownInUse.length} /> : null}
-            {shownInUse.map(renderServerRow)}
-            {shownOff.length > 0 ? <CollectionListGroupLabel title={t('capabilities.mcp.off')} count={shownOff.length} /> : null}
-            {shownOff.map(renderServerRow)}
-            {shownPlugins.length > 0 ? <CollectionListGroupLabel title={t('capabilities.mcp.fromPlugins')} count={shownPlugins.length} /> : null}
-            {shownPlugins.map(renderPluginRow)}
-            {filter.active || loading ? null : <CollectionListGroupLabel title={t('capabilities.mcp.builtIn')} />}
-            {filter.active || loading ? null : builtInRow}
+            {group(t('capabilities.mcp.inUse'), shownInUse.map(renderServerRow))}
+            {group(t('capabilities.mcp.off'), shownOff.map(renderServerRow))}
+            {group(t('capabilities.mcp.fromPlugins'), shownPlugins.map(renderPluginRow))}
+            {filter.active || loading ? null : group(t('capabilities.mcp.builtIn'), [builtInRow], false)}
         </>
     );
     const list = (

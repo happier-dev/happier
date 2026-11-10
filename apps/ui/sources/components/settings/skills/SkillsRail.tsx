@@ -13,6 +13,11 @@ import { useWhereItsOnNames } from '@/components/capabilities/where/useWhereItsO
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { SettingsCollectionPage } from '@/components/settings/shell/SettingsCollectionPage';
 import { CollectionIndexRow } from '@/components/ui/lists/collection/CollectionIndexRow';
+import { Icon } from '@/components/ui/icons/Icon';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { useUnistyles } from 'react-native-unistyles';
 import { CollectionViewSwitch } from '@/components/ui/lists/collection/CollectionViewSwitch';
 import {
   CollectionList,
@@ -140,6 +145,7 @@ export const SkillsListView = React.memo(function SkillsListView(
   props: Readonly<{ variant: 'rail' | 'page'; library: SkillsLibrary; reach: SkillsHomeReach }>,
 ) {
   const pluginUiProjection = useAppShellPluginUiDeclarationProjection();
+  const { theme } = useUnistyles();
   const sourceNameFor = useSkillSourceNames();
   const router = useRouter();
   const pathname = usePathname().replace(/\/+$/, '');
@@ -261,7 +267,7 @@ export const SkillsListView = React.memo(function SkillsListView(
       names={names}
       makerFace={makerFor(item).face}
       statusKind={pickMostBlockingCapabilityStatus(skillStatus(item, { nowMs: Date.now(), usageObservedSince: library.usageObservedSince }), 'row')?.kind ?? null}
-      rail
+      rail={rail}
       selected={rail ? selectedId === item.skillId : undefined}
       open={open}
     />
@@ -272,6 +278,32 @@ export const SkillsListView = React.memo(function SkillsListView(
   const noMatch = !loading && shown.length === 0 && library.items.length > 0;
   // The built-in skill stays listed under In use; the line says none of the person's own exist yet (P6 §4.1).
   const empty = !loading && !unavailable && !hasOwnSkills(library.items);
+
+  // Pinned destinations (P6 §4.1): rail index rows beside a detail; on a standalone page, Settings navigation rows.
+  const pinned: React.ReactElement[] = [];
+  if (firstVisit) {
+    const choose = {
+      testID: 'skills.rail.choose',
+      title: t('capabilities.skills.home.choose'),
+      detail: t('capabilities.skills.home.chooseOff', { count: firstVisit.off }),
+      onPress: () => open(SKILLS_CHOOSE_ROUTE),
+    };
+    pinned.push(rail
+      ? <CollectionIndexRow key="choose" {...choose} icon="sparkle" selected={atChoose} />
+      : <Item key="choose" {...choose} icon={<Icon name="sparkle" size={HAPPIER_PAGE_METRICS.rowIconGlyphPx} color={theme.colors.text.secondary} />} />);
+  }
+  // Pinned while it has something, and while it is the open page so the rail always marks where you are.
+  if (updateCount > 0 || atUpdates) {
+    const updates = {
+      testID: 'skills.rail.updates',
+      title: t('capabilities.skills.updates'),
+      ...(updateCount > 0 ? { detail: String(updateCount) } : {}),
+      onPress: () => open(SKILLS_UPDATES_ROUTE),
+    };
+    pinned.push(rail
+      ? <CollectionIndexRow key="updates" {...updates} icon="arrow-up" selected={atUpdates} />
+      : <Item key="updates" {...updates} icon={<Icon name="arrow-up" size={HAPPIER_PAGE_METRICS.rowIconGlyphPx} color={theme.colors.text.secondary} />} />);
+  }
 
   // Two views of one column (P8): what you added, and what other agents already run on your machines.
   const viewSwitch = machines.length > 0 ? (
@@ -297,27 +329,7 @@ export const SkillsListView = React.memo(function SkillsListView(
           onPress={() => open(SKILLS_COLLECTION_ROUTE)}
         />
       )}
-      {firstVisit ? (
-        <CollectionIndexRow
-          testID="skills.rail.choose"
-          icon="sparkle"
-          title={t('capabilities.skills.home.choose')}
-          detail={t('capabilities.skills.home.chooseOff', { count: firstVisit.off })}
-          selected={atChoose}
-          onPress={() => open(SKILLS_CHOOSE_ROUTE)}
-        />
-      ) : null}
-      {/* Pinned while it has something, and while it is the open page so the rail always marks where you are. */}
-      {updateCount > 0 || atUpdates ? (
-        <CollectionIndexRow
-          testID="skills.rail.updates"
-          icon="arrow-up"
-          title={t('capabilities.skills.updates')}
-          detail={updateCount > 0 ? String(updateCount) : undefined}
-          selected={atUpdates}
-          onPress={() => open(SKILLS_UPDATES_ROUTE)}
-        />
-      ) : null}
+      {rail ? pinned : pinned.length > 0 ? <ItemGroup testID="skills.page.pinned">{pinned}</ItemGroup> : null}
       {unavailable && (rail || library.items.length > 0) ? (
         <View style={collectionListStyles.stateLine}>
           <SurfaceStateCard
@@ -353,7 +365,14 @@ export const SkillsListView = React.memo(function SkillsListView(
           />
         </View>
       ) : null}
-      {sections.flatMap((section, index) => [
+      {/* Standalone, each group is a Settings section (R6); beside a detail the rail keeps its light labels. */}
+      {/* Sections are keyed by place: a regrouping (folder names lost and recovered) keeps each row mounted, as the
+          rail's flat list does. */}
+      {!rail ? sections.map((section, index) => (
+        <ItemGroup key={`section.${index}`} testID={`skills.rail.group.${section.key}`} title={section.title}>
+          {section.rows.map(renderRow)}
+        </ItemGroup>
+      )) : sections.flatMap((section, index) => [
           <CollectionListGroupLabel
             key={`group.${section.key}`}
             testID={`skills.rail.group.${section.key}`}

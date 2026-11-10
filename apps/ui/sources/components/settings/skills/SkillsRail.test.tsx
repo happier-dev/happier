@@ -245,6 +245,30 @@ it('moves rendered rows from use groups to personal folders, filters by the rout
     } finally { await standardCleanup(); await home.dispose(); }
 });
 
+it('draws the standalone page as Settings sections and keeps the rail\'s light group labels beside a detail (R6)', async () => {
+    const home = await createSkillsSurfaceHarness('https://skills-page-sections.test');
+    const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
+    const { CollectionListGroupLabel } = await import('@/components/ui/lists/collection/CollectionList');
+    const items = [skill('on'), skill('off', { rules: [] })];
+    try {
+        const page = await renderScreen(<SkillsList variant="page" library={library(items)} />);
+        await vi.waitFor(() => expect(page.findByTestId('skills.rail.row.on')).not.toBeNull());
+        const sections = page.findAllByType(ItemGroup);
+        const inUse = sections.find(group => group.props.testID === 'skills.rail.group.inUse');
+        expect(inUse?.props.title).toBe(t('capabilities.skills.inUse'));
+        expect(sections.find(group => group.props.testID === 'skills.rail.group.off')?.props.title).toBe(t('capabilities.skills.off'));
+        expect(page.findAllByType(CollectionListGroupLabel)).toHaveLength(0);
+        const row = inUse!.findAll(node => node.props.testID === 'skills.rail.row.on' && node.props.density !== undefined)[0];
+        expect(row?.props.density).toBe('page');
+        await page.unmount();
+
+        const rail = await renderScreen(<SkillsList variant="rail" library={library(items)} />);
+        await vi.waitFor(() => expect(rail.findByTestId('skills.rail.row.on')).not.toBeNull());
+        expect(rail.findAllByType(CollectionListGroupLabel).length).toBeGreaterThan(0);
+        expect(rail.findAll(node => node.props.testID === 'skills.rail.row.on' && node.props.density !== undefined)[0]?.props.density).toBe('rail');
+    } finally { await standardCleanup(); await home.dispose(); }
+});
+
 it.each(['rail', 'page'] as const)('keeps an unknown route Machine as a removable condition instead of widening the %s collection', async variant => {
     const home = await createSkillsSurfaceHarness('https://skills-unknown-machine-filter.test');
     const items = [skill('on'), skill('off', { rules: [] })];
@@ -514,7 +538,7 @@ it.each(['rail', 'page'] as const)('anchors the %s filter editor on the search f
     } finally { vi.unstubAllGlobals(); await standardCleanup(); await home.dispose(); }
 });
 
-it("keeps the shared reach overview and rail rows in the phone page's single list", async () => {
+it("keeps the shared reach overview and the collection's rows in the phone page's single list", async () => {
     const home = await createSkillsSurfaceHarness('https://skills-page-anatomy.test');
     try {
         const screen = await renderScreen(<SkillsList variant="page" library={library([skill('on'), skill('off', { rules: [] })])} />);
@@ -522,7 +546,7 @@ it("keeps the shared reach overview and rail rows in the phone page's single lis
         const header = screen.findAll(node => node.props.testID === 'skills.page.header' && node.props.titleAccessory !== undefined)[0];
         expect(header?.props.titleAccessory).toBeTruthy();
         expect(screen.findByTestId('skills.home.reach')).not.toBeNull();
-        expect(screen.findAll(node => node.props.testID === 'skills.rail.row.on' && node.props.density !== undefined)[0]?.props.density).toBe('rail');
+        expect(screen.findAll(node => node.props.testID === 'skills.rail.row.on' && node.props.density !== undefined)[0]?.props.density).toBe('page');
         expect(groupOf(screen, 'on')).toBe('inUse');
         await screen.unmount();
     } finally { await home.dispose(); }

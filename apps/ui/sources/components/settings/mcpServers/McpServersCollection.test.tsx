@@ -955,10 +955,15 @@ describe('MCP servers collection and tools', () => {
         // The legend stays beneath the phone's map (lab np:home).
         expect(screen.findByTestId('mcp.home.legend')).not.toBeNull();
         expect(screen.findByTestId('settings.mcpServers.tool.onMachine')).toBeNull();
-        expect(screen.findGroup('capabilities.mcp.off')).not.toBeNull();
-        const row = screen.find(node => node.props.testID === 'mcp.server.card.server-1' && typeof node.props.whereSummary === 'string');
-        expect(row!.props.density).toBe('rail');
-        expect(row!.props.selected).toBeUndefined();
+        // Standalone, the collection is a Settings page (R6): each group is a section sheet, never the rail's light labels.
+        const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
+        const { CollectionListGroupLabel } = await import('@/components/ui/lists/collection/CollectionList');
+        const offSection = screen.findAllByType(ItemGroup).find(group => group.props.title === 'capabilities.mcp.off');
+        expect(offSection).toBeDefined();
+        expect(screen.findAllByType(CollectionListGroupLabel)).toHaveLength(0);
+        const row = offSection!.find(node => node.props.testID === 'mcp.server.card.server-1' && typeof node.props.whereSummary === 'string');
+        expect(row.props.density).toBe('page');
+        expect(row.props.selected).toBeUndefined();
 
         await act(async () => { screen.findByTestId('settings.mcpServers.page.view:found')!.props.onPress(); });
         await vi.waitFor(() => expect(routerPushSpy).toHaveBeenLastCalledWith('/settings/mcp/found'));
