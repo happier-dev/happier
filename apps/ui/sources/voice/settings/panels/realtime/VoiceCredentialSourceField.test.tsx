@@ -674,16 +674,19 @@ describe('VoiceCredentialSourceField → admitted Account purpose transaction', 
         ...(expectedRecipientContractDigest ? { expectedRecipientContractDigest } : {}),
         ...(machineId ? { machineId } : {}),
       } }, { ...context, actionsSettings: storage.getState().settings.actionsSettingsV1 });
-      expect(result.ok).toBe(true);
+      expect(result.ok, JSON.stringify(result)).toBe(true);
       if (!result.ok) throw new Error('Expected typed credential operation result');
       const receipt = SettingsDeclarationActionOutputSchemasV1['settings.invoke'].parse(result.result);
       expect(JSON.stringify(receipt)).not.toContain('private-fixture-material');
       return receipt;
     };
     const initialVersion = storage.getState().settingsVersion;
-    confirmation.mockResolvedValueOnce(false);
     expect(await invoke('bind', null)).toMatchObject({ status: 'completed', value: { status: 'applied' } });
-    expect(confirmation).not.toHaveBeenCalled();
+    // The person's Action confirmation stays; linking an owned key adds no recipient review.
+    if (surface === 'ui') {
+      expect(confirmation).toHaveBeenCalledOnce();
+      expect(confirmation.mock.calls[0]?.[0]).toBe(t('settingsVoice.local.voiceCredential.useSavedSecretTitle'));
+    } else expect(confirmation).not.toHaveBeenCalled();
     confirmation.mockReset().mockResolvedValue(true);
     expect(binding()).toMatchObject({ credentialSource: { kind: 'savedSecret' }, credentialBindings: { account: { api_key: secretId } } });
     const writesAfterBinding = writes.length;
@@ -707,9 +710,36 @@ describe('VoiceCredentialSourceField → admitted Account purpose transaction', 
     expect(await invoke('remove', secretId, undefined, undefined, 'machine-a')).toMatchObject({ value: { status: 'applied' } });
     expect(binding()?.credentialBindings.account?.api_key).toBe(secretId);
     expect(binding()?.credentialBindings.byMachineId?.['machine-a']?.api_key).toBeUndefined();
-    expect(await invoke('remove', secretId)).toMatchObject({ status: 'completed', value: { status: 'applied' } });
+    const alternate = await account!.addOwnerResource('plain');
+    const beforeChangedSlot = account!.persistedSettings;
+    confirmation.mockImplementationOnce(async () => {
+      account!.replaceSettings(settingsParse({ ...beforeChangedSlot, voiceSettingsV1: {
+        ...beforeChangedSlot.voiceSettingsV1, credentialBindings: [{ contribution,
+          credentialSlotId: credentials.slot.id, credentialSource: { kind: 'savedSecret' },
+          credentialBindings: { account: { api_key: alternate.entry.ref } },
+        }],
+      } }));
+      return true;
+    });
+    const changedSlotRemoval = await executor.execute('settings.invoke', { anchor, input: {
+      kind: 'voice_saved_secret', operation: 'remove', credentialSlotId: credentials.slot.id,
+      expectedSettingsVersion: storage.getState().settingsVersion,
+      expectedSecretId: secretId, expectedSecretUpdatedAt: 1,
+    } }, { ...context, actionsSettings: storage.getState().settings.actionsSettingsV1 });
+    expect(changedSlotRemoval).not.toMatchObject({ ok: true, result: { status: 'completed', value: { status: 'applied' } } });
+    expect(binding()?.credentialBindings.account?.api_key).toBe(alternate.entry.ref);
+    account!.replaceSettings(beforeChangedSlot);
+    const removalVersion = storage.getState().settingsVersion;
+    confirmation.mockImplementationOnce(async () => {
+      // Another preference can change while the person confirms this exact slot.
+      account!.replaceSettings(settingsParse({ ...account!.persistedSettings, analyticsOptOut: true }),
+        { version: (storage.getState().settingsVersion ?? 0) + 1 });
+      return true;
+    });
+    expect(await invoke('remove', secretId, removalVersion)).toMatchObject({ status: 'completed', value: { status: 'applied' } });
+    expect(account!.persistedSettings.analyticsOptOut).toBe(true);
     expect(binding()?.credentialBindings.account?.api_key).toBeUndefined();
-    expect(account!.resources).toHaveLength(1);
+    expect(account!.resources).toHaveLength(2);
     expect(confirmation).toHaveBeenCalled();
   });
   it('refuses the exact source operation before either write while adjacent Settings writes remain allowed', async () => {

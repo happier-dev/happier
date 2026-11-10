@@ -71,6 +71,7 @@ export async function invokeVoiceSavedSecretSettingsOperation(
         { destructive: true, confirmText: t('common.remove') });
     if (!confirmed) return { status: 'cancelled' };
     const result = await sync.mutateAccountSettingsOnce({ expectedSettingsScope: scope, expectedSettingsVersion: input.expectedSettingsVersion,
+        rebaseOnConflict: true,
         mutate: raw => {
             const updated = removeAccountVoiceCredential({ ...binding, settings: settingsParse(raw), expectedSecretId: selectedId,
                 expectedSecretUpdatedAt: selected.revision! });

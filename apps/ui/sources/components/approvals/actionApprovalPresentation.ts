@@ -11,6 +11,7 @@ import { RoleActionInputSchemasV1 } from '@happier-dev/protocol/prompts/roles/ro
 import { WidgetLayoutFragmentActionIdV1Schema, readWidgetApprovalPresentationV1 } from '@happier-dev/protocol/widgets';
 import { presentLocalServiceControlApproval, readLocalServiceControlSubject } from './localServiceControlApprovalPresentation';
 import type { ApprovalRequest, ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { SettingsDeclarationActionInputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
 export type ActionApprovalPresentationInput = Readonly<{
     actionId: string;
@@ -99,6 +100,18 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         return { title, summary: input.authoredSummary?.trim() || null, confirmLabel: input.kind === 'confirmation' ? title : null };
     }
     const spec = getActionSpec(parsed.data);
+    if (spec.id === 'settings.invoke') {
+        const operation = SettingsDeclarationActionInputSchemasV1['settings.invoke'].safeParse(input.actionArgs);
+        const credential = operation.success ? operation.data.input : null;
+        if (credential?.kind === 'voice_saved_secret'
+            && (credential.operation === 'bind' || credential.operation === 'remove')) {
+            const removing = credential.operation === 'remove';
+            const title = t(removing ? 'settingsVoice.local.voiceCredential.deleteTitle'
+                : 'settingsVoice.local.voiceCredential.useSavedSecretTitle');
+            return { title, summary: null, confirmLabel: input.kind === 'confirmation'
+                ? removing ? t('common.remove') : title : t('approvals.approve') };
+        }
+    }
     // Create names a new machine, not its routing Home. The review owner projects the same name for pending and retained asks.
     const createdMachineName = spec.id === 'machines.managed.acquire'
         ? describeApprovalActionFields({ actionId: spec.id, actionArgs: input.actionArgs, status: input.status }).rows
