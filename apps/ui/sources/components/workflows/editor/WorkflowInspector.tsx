@@ -115,8 +115,11 @@ export type WorkflowInspectorProps = Readonly<{
     testIDPrefix: string;
 }>;
 
-/** Workflow settings expose the shared engine picker and Permissions (04 §5.2). */
-const WORKFLOW_AGENT_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget', 'modelSelection', 'permissionMode'];
+/**
+ * Workflow settings expose the shared engine picker, the chosen Agent's connected service and Permissions
+ * (04 §5.2), the same choices a Session's composer offers (owner 25).
+ */
+const WORKFLOW_AGENT_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget', 'modelSelection', 'connectedServices', 'permissionMode'];
 
 
 export function WorkflowInspector(props: WorkflowInspectorProps): React.ReactElement | null {

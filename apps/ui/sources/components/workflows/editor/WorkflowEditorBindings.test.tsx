@@ -130,6 +130,20 @@ describe('workflow editor declared bindings', () => {
         expect(agent.findAll(node => String(node.type) === 'Text'
             && node.children.includes('workflows.page.sections.agentTitle'))).toHaveLength(1);
     });
+    it('offers the chosen Agent\'s connected service in the workflow\'s Agent and model', async () => {
+        const claude = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+        const base = buildWorkflowEditorDraftFromDefinition({ draftId: 'services', name: 'Workflow', definition });
+        const draft = { ...base, defaults: { ...base.defaults, agentTarget: claude } };
+        const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane"
+            draft={draft} machineName={null} testIDPrefix="services" onChange={() => {}}
+            groupDisclosure={new Map([['agent', true]])}
+            authoringFacts={{
+                agentTargets: [{ id: 'agent:happier.agent.claude/claude', label: 'Claude Code', target: claude, agentId: 'claude',
+                    connectedAccounts: [{ service: { pluginId: 'happier.connect.github', localId: 'github' }, purpose: 'auth' }] }],
+                connectedServices: { serverId },
+            }} />);
+        expect(screen.findByTestId('services-defaults-connectedServices-row')).not.toBeNull();
+    });
     it('keeps Recent runs quiet for an unsaved workflow and demands only summaries until opened', async () => {
         const definitionId = '00000000-0000-4000-8000-000000000019';
         const requests: string[] = [];
