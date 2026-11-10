@@ -34,7 +34,7 @@ function noticeOutcome(response: unknown, attempted = true): string | null {
   const handoff = result.handoff;
   switch (handoff.kind) {
     case 'uncertain': return uncertain;
-    case 'selectionRequired': return "Automatic investigation couldn't start. Choose the required Machine, workspace, Session or Agent in Investigate.";
+    case 'selectionRequired': case 'placement_choice_required': return "Automatic investigation couldn't start. Choose the required Machine, workspace, Session or Agent in Investigate.";
     case 'cancelled': return "Automatic investigation couldn't start: it was cancelled.";
     case 'composed': return "Automatic investigation couldn't start: its input is waiting in a draft.";
     case 'unavailable':
@@ -86,11 +86,22 @@ export async function requestTriageIssueAutomaticInvestigationV1(
   input: Readonly<{ selection: TriageSessionHandoffSelectionV1; entry: Extract<TriageSessionHandoffInputV1['context'], { kind: 'entry' }>['entry'] }>,
   options: Readonly<{ signal: AbortSignal }>,
 ): Promise<string | null> {
+  return requestTriageAutomaticInvestigationV1(host, { selection: input.selection,
+    context: { kind: 'entry', entry: input.entry }, evidence: [{ kind: 'alertEntry', entry: input.entry }],
+  }, options);
+}
+
+/** Issues and host health alerts share Triage's one admission and safe outcome projection. */
+export async function requestTriageAutomaticInvestigationV1(
+  host: TriageSessionHandoffHostV1,
+  input: Readonly<{ selection: TriageSessionHandoffSelectionV1 }
+    & Pick<TriageSessionHandoffInputV1, 'context' | 'evidence'>>,
+  options: Readonly<{ signal: AbortSignal }>,
+): Promise<string | null> {
   try {
     options.signal.throwIfAborted();
     const response = await requestTriageSessionHandoffV1(host, {
-      task: 'investigate', ...input.selection, delivery: 'send', context: { kind: 'entry', entry: input.entry },
-      evidence: [{ kind: 'alertEntry', entry: input.entry }],
+      task: 'investigate', ...input.selection, delivery: 'send', context: input.context, evidence: input.evidence,
     }, options);
     options.signal.throwIfAborted();
     return noticeOutcome(response);

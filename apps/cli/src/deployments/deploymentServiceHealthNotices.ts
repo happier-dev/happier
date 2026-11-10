@@ -16,11 +16,14 @@ import type { MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/ma
 import { HealthCheckSourceConfigV1Schema, HealthCheckTransitionV1Schema,
     type ServiceHealthNoticePageV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readTriageAutomaticInvestigationChoiceV1, requestTriageAutomaticInvestigationV1,
+    type TriageSessionHandoffHostV1 } from '@happier-dev/triage-sources/runtime';
 
 export type ConfiguredHealthCheckNoticeHost = Readonly<{
     credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string; machineId: string;
     readService(subject: Readonly<{ machineId: string; serviceId: string }>, signal: AbortSignal): Promise<MachineServiceRowV1 | null>;
     readEnvironment(environmentId: string, signal: AbortSignal): Promise<Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>>;
+    executeAction?: TriageSessionHandoffHostV1['executeAction'];
 }>;
 
 /** The observer already settled thresholds and E2 admitted this occurrence.
@@ -36,7 +39,7 @@ export function createConfiguredHealthCheckNotices(host: ConfiguredHealthCheckNo
         if (!source.success) return { kind: 'notApplicable' as const };
         const transition = HealthCheckTransitionV1Schema.parse(input.observation.payload);
         const check = source.data.checks.find(check => check.checkId === transition.checkId);
-        if (!check || check.binding.kind !== 'healthCheck') return { kind: 'notApplicable' as const };
+        if (!check || check.binding.kind === 'environmentHealth') return { kind: 'notApplicable' as const };
         if (input.definition.sourceInstanceId !== transition.sourceInstanceId
             || !sameStrictJsonValue(source.data.subject, transition.subject)) return unavailable();
         input.signal.throwIfAborted();
@@ -50,7 +53,8 @@ export function createConfiguredHealthCheckNotices(host: ConfiguredHealthCheckNo
         if (subject.kind === 'environment') {
             const detail = await host.readEnvironment(subject.environmentId, input.signal);
             if (detail.environment.id !== subject.environmentId || !detail.environment.capabilities.read) return unavailable();
-            page = { kind: 'host', page: 'environment', targetLinkId: detail.environment.runtimeTargetLinkId,
+            page = { kind: 'host', page: 'environment', targetLinkId: check.binding.kind === 'domain'
+                ? check.binding.targetLinkId : detail.environment.runtimeTargetLinkId,
                 environment: { serverId: host.serverId, projectSourceId: detail.environment.projectSourceId,
                     environmentId: subject.environmentId } };
             protection = detail.environment.protection;
@@ -76,19 +80,45 @@ export function createConfiguredHealthCheckNotices(host: ConfiguredHealthCheckNo
         }
         input.signal.throwIfAborted();
         const recovered = transition.transition === 'recovered';
-        const committed = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => store.writeNotice({
-            accountId, source: { kind: 'host', topic: 'service_health', subject: { kind: 'healthCheck', subject,
-                checkId: check.checkId } }, page,
+        const notice = {
+            accountId, source: { kind: 'host', topic: 'service_health', subject: check.binding.kind === 'domain'
+                && subject.kind === 'environment'
+                ? { kind: 'domain', environmentId: subject.environmentId, targetLinkId: check.binding.targetLinkId,
+                    domainId: check.binding.domainId, condition: check.binding.condition }
+                : { kind: 'healthCheck', subject, checkId: check.checkId } }, page,
             title: `${name}: ${check.checkId} ${recovered ? 'recovered' : 'needs attention'}`,
             type: !recovered && protection === 'production' ? 'blocked' : 'update',
             healthPhase: recovered ? 'recovered' : 'open', resolved: false,
             body: `Saved health check ${recovered ? 'recovered' : 'failed'}.`, signal: input.signal,
-        }));
+        } satisfies Parameters<typeof store.writeNotice>[0];
+        const committed = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => store.writeNotice(notice));
         try { await deliver({ receipt: committed, signal: input.signal, controllerMachineId }); }
         catch (error) {
             if (!input.signal.aborted) logger.infoFile('[deploymentHealth] Check notice delivery unavailable', {
                 errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_delivery_failed',
             });
+        }
+        if (input.admitted && committed.opened === true && source.data.investigation?.mode === 'auto_start') {
+            const triage: TriageSessionHandoffHostV1 = { executeAction: host.executeAction ?? (async () => ({
+                ok: false, errorCode: 'target_unavailable', effectAttempted: false,
+            })) };
+            const selection = await readTriageAutomaticInvestigationChoiceV1(triage,
+                source.data.investigation.configuredActionId, { signal: input.signal });
+            const reference = { kind: 'host' as const, artifactId: committed.artifactId, source: notice.source };
+            const outcome = typeof selection === 'string' ? selection : await requestTriageAutomaticInvestigationV1(triage, {
+                selection, context: { kind: 'healthAlert', notice: reference, target: page },
+                evidence: [{ kind: 'alert', notice: reference }],
+            }, { signal: input.signal });
+            if (outcome !== null) {
+                try {
+                    await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => store.writeNotice({ ...notice,
+                        body: `${notice.body}\n${outcome}` }));
+                } catch (error) {
+                    if (!input.signal.aborted) logger.infoFile('[deploymentHealth] Investigation notice update unavailable', {
+                        errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_write_failed',
+                    });
+                }
+            }
         }
         return { kind: 'consumed' as const, changed: committed.changed, artifactId: committed.artifactId };
     };

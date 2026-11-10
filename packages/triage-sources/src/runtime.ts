@@ -70,6 +70,10 @@ export {
   type TriageSessionHandoffHostV1,
   type TriageSessionHandoffChoicesReadOutcomeV1,
 } from './sessionHandoff.js';
+export {
+  readTriageIssueAutomaticInvestigationChoiceV1 as readTriageAutomaticInvestigationChoiceV1,
+  requestTriageAutomaticInvestigationV1,
+} from './observations/issueInvestigation.js';
 export { publishTriageAttentionV1 } from './observations/attention.js';
 export { shouldCompleteTriagePostMutation, completeTriagePostMutationIfNeeded } from './invocation/postMutation.js';
 export {

@@ -5,8 +5,51 @@ import { MachineServiceRowV1Schema } from '@happier-dev/protocol/actions/specs/m
 import { createConfiguredHealthCheckNotices } from './deploymentServiceHealthNotices';
 import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountArtifactStore.testkit';
 import { AutomationEventSourceDefinitionV1Schema, AutomationEventAdmitInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 afterEach(() => vi.restoreAllMocks());
+
+it('keeps Domain probe and certificate conditions independent and recovers only the matching condition', async () => {
+    const f = createPlainAccountArtifactHttpBoundary();
+    const environment = createDeploymentEnvironmentDetailV1();
+    environment.environment.protection = 'production';
+    const targetLinkId = environment.environment.runtimeTargetLinkId!;
+    const subject = { kind: 'environment' as const, environmentId: environment.environment.id };
+    const caller = { pluginId: 'happier.machine.services', machineId: environment.environment.controllerMachineId!, materializationId: 'installed' };
+    const sourceConfig: HealthCheckSourceConfigV1 = { v: 1, subject, checks: [
+        { checkId: 'http', kind: { pluginId: caller.pluginId, localId: 'http' },
+            binding: { kind: 'domain', domainId: 'domain', targetLinkId, condition: 'domain_probe_failed' },
+            config: { domainId: 'domain' }, periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 },
+        { checkId: 'certificate', kind: { pluginId: caller.pluginId, localId: 'certificate' },
+            binding: { kind: 'domain', domainId: 'domain', targetLinkId, condition: 'certificate_renewal_failed' },
+            config: { domainId: 'domain' }, periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 },
+    ] };
+    const definition = AutomationEventSourceDefinitionV1Schema.parse({ observationOnly: { kind: 'observationOnly' },
+        automationId: '11111111-1111-4111-8111-111111111111', triggerId: 'health', triggerRevision: 1,
+        sourceSelectorId: '22222222-2222-4222-8222-222222222222', sourceContractVersion: 1,
+        filter: null, maximumObservationAgeMs: null, eventRef: { pluginId: caller.pluginId, localId: 'health-status' },
+        sourceConfig, sourceInstanceId: 'saved-domain', observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: caller } });
+    const consume = async (checkId: string, transition: 'failed' | 'recovered', time: number) => createConfiguredHealthCheckNotices({
+        credentials: f.credentials, serverId: environment.environment.serverId, serverHttpBaseUrl: 'https://domain-notices.test',
+        machineId: caller.machineId, readService: async () => null, readEnvironment: async () => environment,
+    })({ caller, definition, admitted: true, signal: new AbortController().signal,
+        observation: AutomationEventAdmitInputV1Schema.parse({ eventRef: definition.eventRef, occurrenceId: `${checkId}-${time}`,
+            occurredAt: time, observationReceivedAt: time, definitions: [{ automationId: definition.automationId,
+                triggerId: definition.triggerId, triggerRevision: definition.triggerRevision, sourceSelectorId: definition.sourceSelectorId }],
+            payload: HealthCheckTransitionV1Schema.parse({ sourceInstanceId: definition.sourceInstanceId, subject, checkId, transition, observedAt: time }) }) });
+    expect(await consume('http', 'failed', 100)).toMatchObject({ kind: 'consumed', changed: true });
+    expect(await consume('certificate', 'failed', 200)).toMatchObject({ kind: 'consumed', changed: true });
+    expect(await consume('http', 'recovered', 300)).toMatchObject({ kind: 'consumed', changed: true });
+    expect(await consume('http', 'recovered', 400)).toMatchObject({ kind: 'consumed', changed: false });
+    const headers = [...f.rows.values()].map(row => decodePlainArtifactStoredContent(String(row.header)));
+    expect(headers).toHaveLength(2);
+    expect(headers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'update', healthPhase: 'recovered', source: expect.objectContaining({ subject: {
+            kind: 'domain', environmentId: subject.environmentId, targetLinkId, domainId: 'domain', condition: 'domain_probe_failed' } }) }),
+        expect.objectContaining({ type: 'blocked', healthPhase: 'open', source: expect.objectContaining({ subject: {
+            kind: 'domain', environmentId: subject.environmentId, targetLinkId, domainId: 'domain', condition: 'certificate_renewal_failed' } }) }),
+    ]));
+});
 
 it('commits one configured-check condition, keeps equal failures silent, and recovers it once after reload', async () => {
     const f = createPlainAccountArtifactHttpBoundary();
@@ -36,7 +79,7 @@ it('commits one configured-check condition, keeps equal failures silent, and rec
             sourceSelectorId: definition.sourceSelectorId }], payload: HealthCheckTransitionV1Schema.parse({ sourceInstanceId: definition.sourceInstanceId,
             subject, checkId: 'public-http', transition, observedAt }) });
     const consume = (transition: 'failed' | 'recovered', time: number) => createConfiguredHealthCheckNotices(host)({
-        caller, definition, observation: observation(transition, time), signal: new AbortController().signal });
+        caller, definition, admitted: true, observation: observation(transition, time), signal: new AbortController().signal });
     expect(await consume('failed', 100)).toMatchObject({ kind: 'consumed', changed: true });
     expect(f.rows.size).toBe(1);
     expect(f.writes).toHaveBeenCalledTimes(1);
