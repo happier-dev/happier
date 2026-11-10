@@ -264,15 +264,16 @@ describe("Team credential direct material consumed boundary (SQLite integration)
                 slot: { kind: "provider_model" },
                 sourceMemberKey,
             })).resolves.toEqual({ ok: false, reason: "access_removed" });
-            // Unsupported finite-operation consumers must fail at the HTTP boundary.
-            const unsupported = await app.inject({
+            // Finite platform work has no Session context; the same visibility policy still refuses it.
+            const standalone = await app.inject({
                 method: "POST",
                 url: `/v2/teams/${team.id}/credential-resources/${resource.id}/direct-material`,
                 payload: { resourceId: resource.id,
-                    consumer: { kind: "platform_operation", operationId: "deploy-1" },
+                    consumer: { kind: "platform_operation", deploymentId: "receipt-1", environmentId: "environment-1", operationId: "deploy-1" },
                     slot: { kind: "provider_model" }, sourceMemberKey },
             });
-            expect(unsupported.statusCode).toBe(400);
+            expect(standalone.statusCode).toBe(200);
+            expect(standalone.json()).toEqual({ status: 'unavailable', reason: 'access_removed' });
             const resolved = await resolveProviderCredentialPlaintextAsync({
                 reference: {
                     kind: "team_direct",

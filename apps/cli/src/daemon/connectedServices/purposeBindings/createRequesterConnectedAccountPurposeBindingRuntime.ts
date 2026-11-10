@@ -1,3 +1,4 @@
+import { createRequesterTeamCredentialDirectMaterialClient } from '../directMaterial/teamCredentialDirectMaterialClient';
 import { listQualifiedConnectedAccountsV4, listQualifiedConnectedAccountGroupsV4, readQualifiedConnectedAccountGroupV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { ApiClient } from '@/api/api';
@@ -22,6 +23,7 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
   resolveQualifiedConnectedAccountV4Support: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['resolveQualifiedConnectedAccountV4Support'];
   allowNativeAccountCredentials: boolean;
   openTeamDirect?: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['openTeamDirect'];
+  resolvePlatformOperationRequestHeaders?: Parameters<typeof createRequesterTeamCredentialDirectMaterialClient>[0]['resolvePlatformOperationRequestHeaders'];
 }>) {
   const operationContext = input.operationContext;
   const credentials = operationContext.credentials;
@@ -60,10 +62,15 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
         requestPurpose: 'connected-accounts:requester-qualification', ...(signal ? { signal } : {}) }));
     },
   };
+  const directMaterial = createRequesterTeamCredentialDirectMaterialClient({ credentials,
+    serverHttpBaseUrl: operationContext.serverHttpBaseUrl,
+    resolvePlatformOperationRequestHeaders: input.resolvePlatformOperationRequestHeaders,
+    readAccountEncryptionMode: signal => withHome(() => input.getAccountEncryptionMode({ usage: 'fresh-authority', signal }), signal),
+  });
   const purposes = createDaemonConnectedAccountPurposeBindingRuntime({ establishedRuntimeOwner: established,
     credentialOwnerAccountId: input.accountId, workerMachineId: input.machineId, store, reloadController: input.reloadController,
     allowNativeAccountCredentials: input.allowNativeAccountCredentials,
-    ...(input.openTeamDirect ? { openTeamDirect: input.openTeamDirect } : {}),
+    openTeamDirect: input.openTeamDirect ?? (request => directMaterial.open(request)),
     resolveQualifiedConnectedAccountV4Support: input.resolveQualifiedConnectedAccountV4Support,
     resolveConnectedAccountEndpoints: async request => await withHome(() => established.readConfiguredEndpoints(request)),
     qualifiedApi: {

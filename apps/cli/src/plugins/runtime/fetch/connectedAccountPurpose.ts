@@ -30,11 +30,12 @@ function readMaterialSourceFailureDetails(details: unknown) {
 /** Host-kept headers spend the invocation's existing exact purpose selection. */
 export function createConnectedAccountPluginHttpPurposeHost(owner: StablePluginConnectedAccountsOwner,
     redaction: Pick<StablePluginConnectedAccountsHostOptions, 'registerRawForRedaction'>): StablePluginHttpPurposeHost {
-    const host = createStablePluginConnectedAccountsHost(owner, {
+    const createHost = (selectedOwner: StablePluginConnectedAccountsOwner) => createStablePluginConnectedAccountsHost(selectedOwner, {
         registerRawForRedaction: redaction.registerRawForRedaction,
         // This adapter requests only httpHeaders; file-byte registration is unreachable.
         registerExactForRedaction: redaction.registerRawForRedaction,
     });
+    const host = createHost(owner);
     const sanitizeFailure = (error: unknown, entered: boolean,
         containsSensitiveValue: (value: string) => boolean): never => {
         if (error instanceof CredentialRequestRedirectError) throw error;
@@ -58,7 +59,8 @@ export function createConnectedAccountPluginHttpPurposeHost(owner: StablePluginC
         captureSubject: binding => binding.exactPurposeBindingSubjectId,
         bind({ seed, serviceBinding, purpose }) {
             if (!serviceBinding.connectedAccountScopes?.some(scope => scope.purpose === purpose)) return refused();
-            return host.bind(seed, serviceBinding.connectedAccountScopes, {
+            const selectedHost = serviceBinding.connectedAccountsOwner ? createHost(serviceBinding.connectedAccountsOwner) : host;
+            return selectedHost.bind(seed, serviceBinding.connectedAccountScopes, {
                 exactPurposeBindingSubjectId: serviceBinding.exactPurposeBindingSubjectId,
             });
         },

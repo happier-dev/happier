@@ -78,7 +78,7 @@ import type { StablePluginMcpHost } from './mcp';
 import type { StablePluginNotificationsOwner } from './notifications';
 import type { StablePluginResourcesOwner } from './resources';
 import type { StablePluginSettingsHost } from './settings';
-import type { StablePluginConnectedAccountsHost } from './connectedAccounts';
+import { createStablePluginConnectedAccountsHost, type StablePluginConnectedAccountsHost } from './connectedAccounts';
 import type { StableTargetedContributionsOwner } from './targetedContributions';
 import type { StablePluginComposerContentOwner } from './composerContent';
 import { createMachineProvisionersInvocationService } from './machineProvisioners';
@@ -1058,9 +1058,18 @@ export function createPluginInvocationServicesFromDescriptors(
                 : {}),
         })
         : PLUGIN_SERVICE_DESCRIPTORS.exec.createUnavailable();
+    const connectedAccountsHost = binding.connectedAccountsOwner
+        ? createStablePluginConnectedAccountsHost(binding.connectedAccountsOwner, {
+            registerRawForRedaction: (current, value) => params.secretRedactor?.registerRaw({
+                pluginId: current.plugin.id, occurrenceId: current.occurrenceId, correlationId: current.correlationId,
+            }, value),
+            registerExactForRedaction: (current, value) => params.secretRedactor?.registerExact({
+                pluginId: current.plugin.id, occurrenceId: current.occurrenceId, correlationId: current.correlationId,
+            }, value),
+        }) : params.connectedAccounts;
     const connectedAccounts =
-        params.connectedAccounts !== undefined
-            ? params.connectedAccounts.bind(
+        connectedAccountsHost !== undefined
+            ? connectedAccountsHost.bind(
                 seed,
                 binding.connectedAccountScopes ?? [],
                 binding.exactPurposeBindingSubjectId

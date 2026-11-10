@@ -218,6 +218,8 @@ export type PluginInvocationServiceBinding = Readonly<{
      * Plugin code never receives or chooses this identifier.
      */
     exactPurposeBindingSubjectId?: string;
+    /** Same requester purpose owner that admitted this operation and produced its subject. */
+    connectedAccountsOwner?: import('./connectedAccounts').StablePluginConnectedAccountsOwner;
     /** Host-private managed bootstrap output observer; not an SDK capability. */
     execOutputObserver?: (output: import('@happier-dev/plugin-sdk/exec').PluginProcessOutput) => void;
     /** Containing task's budget; only an explicitly selected invocation process consumes it. */

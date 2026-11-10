@@ -843,8 +843,9 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     async materializeTeamDirect(input) {
       if (!params.openTeamDirect) throw listedAccountOutOfScope();
       const open = async () => await params.openTeamDirect!({
+        ...(input.origin.teamId ? { teamId: input.origin.teamId } : {}),
         resourceId: input.origin.resourceId,
-        consumer: input.consumer.kind === 'session'
+        consumer: input.consumer.kind !== 'execution_run'
           ? input.consumer
           : {
               ...input.consumer,
@@ -875,6 +876,11 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
         operation: Object.freeze({ kind: 'materialize', request: input.request,
           ...(input.existingFiles ? { existingFiles: input.existingFiles } : {}) }),
         isCurrent: async () => {
+          // Finite platform work keeps its admission until completion or local cancel.
+          if (input.consumer.kind === 'platform_operation') {
+            input.signal.throwIfAborted();
+            return true;
+          }
           const current = await open();
           if (!current.ok) {
             if ('operationError' in current) throw teamDirectMaterialOperationFailure(current.operationError);

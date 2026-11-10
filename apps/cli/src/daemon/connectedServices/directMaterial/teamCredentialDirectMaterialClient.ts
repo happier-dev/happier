@@ -1,3 +1,5 @@
+import type { StoredCredentials } from '@/persistence';
+import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import { computeTeamCredentialSourceMemberKeyV1, materializeTeamCredentialDirectMaterialV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import type { TeamCredentialDirectMaterialExpected, TeamCredentialDirectMaterialPayloadV1, TeamCredentialDirectMaterialStoredV1, TeamCredentialDirectMaterialOpenRequestV1, TeamCredentialDirectMaterialMineResponseV1, TeamCredentialErrorCodeV1 } from '@happier-dev/protocol/teams';
 import {
@@ -120,6 +122,7 @@ export function createHttpTeamCredentialDirectMaterialClient(params: Readonly<{
   token: string;
   teamId?: string;
   serverUrl?: string;
+  resolvePlatformOperationRequestHeaders?: Parameters<typeof fetchTeamCredentialDirectMaterial>[0]['resolvePlatformOperationRequestHeaders'];
   readRecipientEncryptionMaterial(signal?: AbortSignal): Promise<RecipientEncryptionMaterial>;
 }>): TeamCredentialDirectMaterialClient {
   return createTeamCredentialDirectMaterialClient({
@@ -130,6 +133,7 @@ export function createHttpTeamCredentialDirectMaterialClient(params: Readonly<{
       try {
         const result = await fetchTeamCredentialDirectMaterial({
           token: params.token,
+          resolvePlatformOperationRequestHeaders: params.resolvePlatformOperationRequestHeaders,
           teamId,
           resourceId: input.resourceId,
           request: {
@@ -162,6 +166,26 @@ export function createHttpTeamCredentialDirectMaterialClient(params: Readonly<{
         }
         throw error;
       }
+    },
+  });
+}
+
+/** Requester composition shared by purpose services and retained operation material. */
+export function createRequesterTeamCredentialDirectMaterialClient(input: Readonly<{
+  credentials: StoredCredentials;
+  serverHttpBaseUrl: string;
+  resolvePlatformOperationRequestHeaders?: Parameters<typeof fetchTeamCredentialDirectMaterial>[0]['resolvePlatformOperationRequestHeaders'];
+  readAccountEncryptionMode(signal?: AbortSignal): Promise<ConnectedServiceAccountEncryptionMode>;
+}>): TeamCredentialDirectMaterialClient {
+  return createHttpTeamCredentialDirectMaterialClient({ token: input.credentials.token,
+    serverUrl: input.serverHttpBaseUrl,
+    resolvePlatformOperationRequestHeaders: input.resolvePlatformOperationRequestHeaders,
+    readRecipientEncryptionMaterial: async signal => {
+      const mode = await input.readAccountEncryptionMode(signal);
+      const encryption = input.credentials.encryption;
+      return mode === 'plain' ? { mode: 'plain' } : mode === 'e2ee' && encryption
+        ? { mode: 'e2ee', secretKeyOrSeed: encryption.type === 'dataKey' ? encryption.machineKey : encryption.secret }
+        : { mode: 'e2ee_unavailable' };
     },
   });
 }

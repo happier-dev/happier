@@ -652,6 +652,9 @@ export function registerTeamCredentialResourceRoutes(
         const body = TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse(request.body);
         if (request.validationError || !params.success || !body.success
             || body.data.resourceId !== params.data.resourceId) return fail(reply, "invalid_resource_input");
+        if (body.data.consumer.kind === 'platform_operation' && !request.externalActionPlatformMaterialAdmission) {
+            return reply.send(TeamCredentialDirectMaterialMineResponseV1Schema.parse({ status: 'unavailable', reason: 'access_removed' }));
+        }
         const run = body.data.consumer.kind === "execution_run"
             ? await resolveExecutionRunCurrentness({
                 executionRunId: body.data.consumer.executionRunId,
@@ -677,7 +680,7 @@ export function registerTeamCredentialResourceRoutes(
             ...("sourceMemberKey" in body.data
                 ? { slot: body.data.slot, sourceMemberKey: body.data.sourceMemberKey }
                 : { slot: body.data.slot, disclosedMember: body.data.disclosedMember }),
-            consumer: body.data.consumer.kind === "session"
+            consumer: body.data.consumer.kind !== "execution_run"
                 ? body.data.consumer
                 : {
                     kind: "execution_run" as const,

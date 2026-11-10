@@ -90,6 +90,8 @@ export type ConnectedAccountPurposeBindingIntentSelection = Readonly<{
 
 /** Admission pointer to one exact recipient-scoped Team material row. */
 export type ConnectedAccountTeamDirectMaterialOrigin = Readonly<{
+  /** Team routing captured by the admitting owner, never inferred from the source member. */
+  teamId?: string;
   purpose: QualifiedConnectedAccountPurposeV1;
   resourceId: string;
   disclosedMember: QualifiedConnectedAccountRef;
@@ -193,6 +195,11 @@ export type ConnectedAccountPurposeAuthorizationScope = Readonly<{
 type ManagedCredentialConfigurations = NonNullable<ConnectedAccountInvocationPurposeBinding['managedOperation']>['credentialConfigurations'];
 
 export type ConnectedAccountPurposeBindingSubject =
+  | Readonly<Extract<TeamCredentialDirectMaterialConsumerV1, { kind: 'platform_operation' }> & {
+      /** One finite host operation spends its accepted Deployment receipt. */
+      consumer: PluginContributionIdentityV1;
+      isCurrent(): boolean;
+    }>
   | Readonly<{
       /** Host-private issuance only, after authenticated Session resource admission. */
       kind: 'mcp_request_auth';
@@ -577,6 +584,7 @@ function teamResourceUnavailable(): PluginError {
  * brokered selection is served by its broker and has no purpose binding here.
  */
 export function projectTeamResourceSelectionToSessionPurposeBinding(input: Readonly<{
+  teamId?: string;
   purpose: QualifiedConnectedAccountPurposeV1;
   service: PluginContributionIdentityV1;
   selection: TeamResourceConnectedServiceSelectionV2;
@@ -602,7 +610,7 @@ export function projectTeamResourceSelectionToSessionPurposeBinding(input: Reado
       purpose,
       target: Object.freeze({ kind: 'account' as const, account: disclosedMember }),
     }),
-    origin: Object.freeze({ purpose, resourceId: selection.resourceId, disclosedMember }),
+    origin: Object.freeze({ ...(input.teamId ? { teamId: input.teamId } : {}), purpose, resourceId: selection.resourceId, disclosedMember }),
   });
 }
 
@@ -934,7 +942,7 @@ export function createConnectedAccountPurposeBindingOwner(
           directMaterialConsumer: null,
         };
       }
-      if (subject.kind === 'operation') {
+      if (subject.kind === 'operation' || subject.kind === 'platform_operation') {
         const operationId = subject.operationId.trim();
         const consumer = PluginContributionIdentityV1Schema.parse(subject.consumer);
         if (!operationId) {
@@ -942,16 +950,19 @@ export function createConnectedAccountPurposeBindingOwner(
             'connected_account_operation_binding_operation_id_required',
           );
         }
-        const launchSessionId = subject.sessionId?.trim() ?? '';
+        const launchSessionId = subject.kind === 'operation' ? subject.sessionId?.trim() ?? '' : '';
         return {
-          subjectKey: JSON.stringify(['operation', operationId]),
+          subjectKey: JSON.stringify([subject.kind, operationId]),
           subjectId:
-            `operation:${operationId}/consumer:${consumer.pluginId}/${consumer.localId}`,
+            `${subject.kind}:${operationId}/consumer:${consumer.pluginId}/${consumer.localId}`,
           isSubjectCurrent: subject.isCurrent,
           sessionId: null,
           errorPrefix: 'connected_account_operation_binding',
           expectedConsumer: Object.freeze({ ...consumer }),
-          directMaterialConsumer: launchSessionId
+          directMaterialConsumer: subject.kind === 'platform_operation'
+            ? { kind: 'platform_operation' as const, deploymentId: subject.deploymentId,
+                environmentId: subject.environmentId, operationId }
+            : launchSessionId
             ? { kind: 'session' as const, sessionId: launchSessionId }
             : null,
         };
@@ -1329,6 +1340,7 @@ export function createConnectedAccountPurposeBindingOwner(
           ));
           const projected = service
             ? projectTeamResourceSelectionToSessionPurposeBinding({
+                teamId: teamSelection.teamId,
                 purpose: scope.purpose,
                 service,
                 selection,

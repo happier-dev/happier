@@ -116,10 +116,13 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 ...(role !== 'observe' && !role.includes('.') && descriptor.actions.observe
                     ? [{ action: readAction('observe').action, role: 'observe' }] : [])];
             const principal = row.content?.credentialPrincipal;
-            if (principal?.kind !== 'account' || principal.target.kind !== 'account') return refuse('deployment_target_role_unavailable');
+            const credentialRef = principal?.kind === 'team' && principal.selection.deliveryMode === 'direct'
+                ? principal.selection.disclosedMember
+                : principal?.kind === 'account' && principal.target.kind === 'account' ? principal.target.account : undefined;
+            if (!principal || !credentialRef) return refuse('deployment_target_role_unavailable');
             const common = { ...DeploymentTargetRoleCommonInputV1Schema.parse({ v: 1, serverId: host.serverId,
                 environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
-                credentialRef: principal.target.account, credentialPrincipal: principal,
+                credentialRef, credentialPrincipal: principal,
                 providerIdentity: row.content?.providerIdentity, providerEnvironment: row.content?.providerEnvironment,
                 ...(row.content?.repositoryAccess ? { repositoryAccess: row.content.repositoryAccess } : {}),
                 ...(row.content?.preparedNative ? { preparedNative: row.content.preparedNative } : {}) }),

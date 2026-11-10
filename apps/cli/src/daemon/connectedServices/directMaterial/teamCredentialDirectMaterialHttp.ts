@@ -32,20 +32,32 @@ function config(token: string, signal?: AbortSignal) {
   };
 }
 
+/** Existing requester HTTP projection; only finite platform consumers require it. */
+type TeamCredentialPlatformMaterialRequestHeaders = (request: Readonly<{
+  method: 'POST'; path: string; body: TeamCredentialDirectMaterialOpenRequestV1; signal?: AbortSignal;
+}>) => Promise<Readonly<Record<string, string>> | null>;
+
 export async function fetchTeamCredentialDirectMaterial(params: Readonly<{
   token: string;
   serverUrl?: string;
   teamId: string;
   resourceId: string;
   request: TeamCredentialDirectMaterialOpenRequestV1;
+  resolvePlatformOperationRequestHeaders?: TeamCredentialPlatformMaterialRequestHeaders;
   signal?: AbortSignal;
 }>) {
   const request = TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse(params.request);
   if (!request.success) throw new TeamCredentialDirectMaterialHttpContractError();
+  const platformHeaders = request.data.consumer.kind === 'platform_operation'
+    ? await params.resolvePlatformOperationRequestHeaders?.({ method: 'POST', path: new URL(route(params)).pathname,
+      body: request.data, ...(params.signal ? { signal: params.signal } : {}) }) : undefined;
+  if (request.data.consumer.kind === 'platform_operation' && !platformHeaders)
+    return { status: 'unavailable' as const, reason: 'access_removed' as const };
   let response: AxiosResponse<unknown>;
   try {
     response = await axios.post(route(params), request.data, {
       ...config(params.token, params.signal),
+      ...(platformHeaders ? { headers: platformHeaders } : {}),
       validateStatus: () => true,
     });
   } catch {

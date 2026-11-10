@@ -4,7 +4,7 @@ import type { RequesterAccountActionContext, RetainedRequesterAccountCustody } f
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createRequesterConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createRequesterConnectedAccountPurposeBindingRuntime';
-import { createHttpTeamCredentialDirectMaterialClient } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
+import { createRequesterTeamCredentialDirectMaterialClient } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { resolveQualifiedConnectedAccountAtomicV4Negotiation } from '@/api/client/qualifiedConnectedAccountApi';
 import { fetchServerFeaturesSnapshot, readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -84,16 +84,8 @@ export async function prepareRequesterOperationMaterial(input: Readonly<{
     await assertCurrent(signal);
     if (readServerIdentityIdFromFeaturesSnapshot(featureSnapshot) !== selected.homeServerIdentityId) throw unavailable();
     const support = resolveQualifiedConnectedAccountAtomicV4Negotiation(featureSnapshot);
-    const directMaterial = createHttpTeamCredentialDirectMaterialClient({ token: account.credentials.token,
-      serverUrl: account.serverHttpBaseUrl,
-      readRecipientEncryptionMaterial: async signal => {
-        const mode = await readMode(signal);
-        const encryption = account.credentials.encryption;
-        return mode === 'plain' ? { mode: 'plain' } : mode === 'e2ee' && encryption
-          ? { mode: 'e2ee', secretKeyOrSeed: encryption.type === 'dataKey' ? encryption.machineKey : encryption.secret }
-          : { mode: 'e2ee_unavailable' };
-      },
-    });
+    const directMaterial = createRequesterTeamCredentialDirectMaterialClient({ credentials: account.credentials,
+      serverHttpBaseUrl: account.serverHttpBaseUrl, readAccountEncryptionMode: readMode });
     const runtime = createRequesterConnectedAccountPurposeBindingRuntime({
       operationContext, accountId: selected.requester.accountId,
       machineId: selected.requester.machineId, reloadController: input.reloadController,

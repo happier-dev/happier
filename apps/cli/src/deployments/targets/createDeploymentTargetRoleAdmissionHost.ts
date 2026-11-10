@@ -23,6 +23,11 @@ import type { AdmittedDeploymentSourceV1 } from './ownServer/exactCommitRelease'
 import { resolveOwnServerDeploymentIdentityForHost } from './ownServer/paths';
 import { readDeploymentSourceIntentForHost } from '../readDeploymentSourceIntentForHost';
 import { configuration } from '@/configuration';
+import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
+import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { resolveQualifiedConnectedAccountAtomicV4Negotiation } from '@/api/client/qualifiedConnectedAccountApi';
+import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { createRequesterConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createRequesterConnectedAccountPurposeBindingRuntime';
 import { join } from 'node:path';
 
 const refuse = (code: string, phase = 'deployment.target.admission.host_read', failureCause?: unknown): never => {
@@ -44,6 +49,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
         isCurrent(): Promise<boolean>;
     }>;
     acquireServiceExportForward?: DeploymentTargetRoleAdmissionHost['acquireServiceExportForward'];
+    connectedAccountRuntimeRegistry?: Parameters<typeof createRequesterConnectedAccountPurposeBindingRuntime>[0]['reloadController'];
     readCurrentMachineId(): string | null;
 }>): Promise<DeploymentTargetRoleAdmissionHost | null> {
     const authorization = context.externalActionExecutionAuthorization;
@@ -95,8 +101,30 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
             ?? refuse('action_forbidden'),
     }));
     const installationId = readInstallationIdentityIfExistsSync()?.installationId;
+    let requesterPurposes: ReturnType<typeof createRequesterConnectedAccountPurposeBindingRuntime> | undefined;
+    const readConnectedAccountPurposes = () => {
+        if (!saved || !config.connectedAccountRuntimeRegistry) return null;
+        if (!requesterPurposes) {
+            const credentialApi = createConnectedServiceCredentialApi(credentials);
+            requesterPurposes = createRequesterConnectedAccountPurposeBindingRuntime({
+                operationContext: saved, accountId: credentialOwnerAccountId, machineId,
+                resolvePlatformOperationRequestHeaders: request => headers(context, authorization?.binding.actionId ?? '', request),
+                reloadController: config.connectedAccountRuntimeRegistry,
+                getAccountEncryptionMode: options => runWithServerHttpBaseUrl(serverHttpBaseUrl,
+                    () => credentialApi.getAccountEncryptionMode(options)),
+                isCurrent: signal => saved.isCurrent(signal),
+                allowNativeAccountCredentials: saved.machineAdmission?.actorAccountId === credentialOwnerAccountId
+                    && isCustodianMachineAdmission(saved.machineAdmission),
+                ...(context.signal ? { signal: context.signal } : {}),
+                resolveQualifiedConnectedAccountV4Support: async () => resolveQualifiedConnectedAccountAtomicV4Negotiation(
+                    await fetchServerFeaturesSnapshot({ serverUrl: serverHttpBaseUrl, token: credentials.token,
+                        ...(context.signal ? { signal: context.signal } : {}) })),
+            });
+        }
+        return requesterPurposes.purposes;
+    };
     return {
-        serverId, machineId, credentialOwnerAccountId, credentials, serverHttpBaseUrl,
+        serverId, machineId, credentialOwnerAccountId, credentials, serverHttpBaseUrl, readConnectedAccountPurposes,
         resolveRequesterIdentity: config.resolveRequesterIdentity,
         ...(config.acquireServiceExportForward ? { acquireServiceExportForward: config.acquireServiceExportForward } : {}),
         resolveEnvironmentApprovalScope: deployment.resolveEnvironmentApprovalScope,

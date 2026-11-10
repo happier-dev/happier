@@ -24,7 +24,9 @@ import { resolveManifestHostAccessRequests } from '@/plugins/runtime/hostAccess/
 import type { PluginActionConnectedAccountUseRequestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { projectTeamResourceSelectionToSessionPurposeBinding } from './ConnectedAccountPurposeBindingOwner';
 import type {
+  ConnectedAccountTeamDirectMaterialOrigin,
   ConnectedAccountPurposeAuthorizationScope,
   ConnectedAccountPurposeBindingOwner,
 } from './ConnectedAccountPurposeBindingOwner';
@@ -115,6 +117,7 @@ export type RegistryConnectedAccountActionFormPurposeAuthorization = Readonly<{
 export type RegistryConnectedAccountActionPurposeBindingSnapshot = Readonly<{
   purposes: readonly QualifiedConnectedAccountPurposeV1[];
   bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
+  directMaterialOrigins?: readonly ConnectedAccountTeamDirectMaterialOrigin[];
   bindingSelections?: readonly Awaited<ReturnType<ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection']>>[];
 }>;
 
@@ -351,6 +354,7 @@ export async function revalidateRegistryConnectedAccountActionFormInput(input: R
   value: unknown;
   /** Present only after the deployment owner opened and admitted the stored principal. */
   admittedPurposeTarget?: QualifiedConnectedAccountPurposeBindingTargetV1;
+  admittedTeamPrincipal?: Extract<import('@happier-dev/protocol/plugins/contributions/v2').DeploymentTargetRoleCommonInputV1['credentialPrincipal'], { kind: 'team' }>;
   resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
   actionFormConnectedAccounts?: ActionFormConnectedAccountBindings;
   signal: AbortSignal;
@@ -384,6 +388,7 @@ export async function revalidateRegistryConnectedAccountActionFormInput(input: R
     if (selected.kind === 'inherit') return actionFormUnavailable();
     if (selected.kind === 'native') continue;
     try {
+      if (mapping.path === 'credentialRef' && input.admittedTeamPrincipal) continue;
       if (mapping.path === 'credentialRef' && input.admittedPurposeTarget?.kind === 'group') {
         const resolve = input.actionFormConnectedAccounts.resolveBindingIntentSelection;
         if (!resolve) return actionFormUnavailable();
@@ -425,6 +430,7 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
   value: unknown;
   /** Host-local validated target, never read from authored input. */
   admittedPurposeTarget?: QualifiedConnectedAccountPurposeBindingTargetV1;
+  admittedTeamPrincipal?: Extract<import('@happier-dev/protocol/plugins/contributions/v2').DeploymentTargetRoleCommonInputV1['credentialPrincipal'], { kind: 'team' }>;
   resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
   actionFormConnectedAccounts?: ActionFormConnectedAccountBindings;
   resolveAutomationEventHistoryGapSource?: ResolveRegistryCurrentAutomationEventHistoryGapSource;
@@ -458,6 +464,7 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
 
   const purposes: QualifiedConnectedAccountPurposeV1[] = [];
   const bindings: QualifiedConnectedAccountPurposeBindingV1[] = [];
+  const directMaterialOrigins: ConnectedAccountTeamDirectMaterialOrigin[] = [];
   const bindingSelections: Awaited<ReturnType<ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection']>>[] = [];
   const purposeKeys = new Set<string>();
   for (const mapping of mappings) {
@@ -488,6 +495,15 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
 
     if (selected.kind === 'native') continue;
     try {
+      if (mapping.path === 'credentialRef' && input.admittedTeamPrincipal) {
+        const projected = projectTeamResourceSelectionToSessionPurposeBinding({ purpose: authorization.purpose,
+          teamId: input.admittedTeamPrincipal.teamId, service: selected.account.service,
+          selection: input.admittedTeamPrincipal.selection });
+        if (!projected) return actionFormUnavailable();
+        bindings.push(projected.binding);
+        directMaterialOrigins.push(projected.origin);
+        continue;
+      }
       if (mapping.path === 'credentialRef' && input.admittedPurposeTarget?.kind === 'group') {
         const resolve = actionFormConnectedAccounts.resolveBindingIntentSelection;
         if (!resolve) return actionFormUnavailable();
@@ -588,6 +604,7 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
   return Object.freeze({
     purposes: Object.freeze(purposes),
     bindings: Object.freeze(bindings),
+    ...(directMaterialOrigins.length ? { directMaterialOrigins: Object.freeze(directMaterialOrigins) } : {}),
     ...(bindingSelections.length ? { bindingSelections: Object.freeze(bindingSelections) } : {}),
   });
 }

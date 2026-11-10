@@ -12,6 +12,18 @@ import type { Tx } from '@/storage/inTx';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { isDeploymentCandidatePublicationHttpPurposeInTx } from '@/app/deployments/deploymentPreparationAuthorization';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+
+/** Native source materialization selects workspace metadata; the row owner retains Account isolation. */
+export function isDeploymentWorkspaceListHttpPurpose(serverId: string,
+    proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
+): boolean {
+    if (proof.method.toUpperCase() !== 'POST' || proof.path !== `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return false;
+    const selection = ProjectAccountRowListRequestV1Schema.safeParse(proof.body);
+    return selection.success && selection.data.serverId === serverId
+        && selection.data.kinds?.length === 1 && selection.data.kinds[0] === 'workspace-ref'
+        && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, selection.data));
+}
 
 function readArtifactId(path: string): string | null {
     const match = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(path);
@@ -134,6 +146,8 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
     const native = proof.nativeIncumbentSource;
     if (native && (routing.kind !== 'review' || native.environmentId !== input.environmentId
         || method !== 'GET' || proof.body !== undefined)) return false;
+    if (!native && (routing.kind === 'prepare' || routing.kind === 'review' || routing.kind === 'build' || routing.kind === 'member')
+        && isDeploymentWorkspaceListHttpPurpose(input.serverId, proof)) return true;
     if (method === 'POST') {
         if (routing.kind === 'prepare' || routing.kind === 'retention') return false;
         const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);

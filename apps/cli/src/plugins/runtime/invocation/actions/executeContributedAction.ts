@@ -884,6 +884,7 @@ export async function executeContributedAction(params: Readonly<{
       ?? params.admittedConnectedAccountPurposeBinding?.exactPurposeBindingSubjectId;
     const nativeCredentials = params.admittedManagedProviderOperation?.managedNativeCredentials;
     const targetInvocation = {
+      ...(params.context.operationRequestId === undefined ? {} : { requestId: params.context.operationRequestId }),
       pluginId,
       localId: action.definition.id,
       input: validatedInput === null ? params.input : validatedInput.value,

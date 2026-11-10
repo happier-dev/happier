@@ -72,6 +72,7 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
                 activatePurposeBindings: purposeRuntime.purposes.activatePurposeBindings,
             } } : {}),
             accountExecution: authority,
+            runtimeRegistryController: credentialRegistryAccess,
         });
         return { registry, purposeRuntime };
     });

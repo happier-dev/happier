@@ -32,6 +32,7 @@ export type DeploymentTargetRoleAdmissionHost = Readonly<{
     machineId: string;
     installationId?: string;
     credentialOwnerAccountId: string;
+    readConnectedAccountPurposes?(): ReturnType<typeof import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').createDaemonConnectedAccountPurposeBindingRuntime> | null;
     credentials: StoredCredentials;
     serverHttpBaseUrl: string;
     resolveRequesterIdentity: import('../readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver;
@@ -198,7 +199,7 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
         if (!link || !content || link.environmentId !== environment.id
             || link.deletedAtMs !== undefined || link.detachedAtMs !== undefined || link.source.kind !== 'plugin')
             return refuse('target_mismatch', 'deployment.target.admission.link_identity');
-        if (!retained && link.createdByAccountId !== principal.accountId)
+        if (!retained && link.createdByAccountId !== host.credentialOwnerAccountId)
             return refuse('deployment_access_denied', 'deployment.target.admission.link_author');
         candidates = candidates.filter(({ binding }) => link.role === (isDeploymentTargetRuntimeRoleV1(binding.role) ? 'runtime' : 'data')
             && link.source.kind === 'plugin'

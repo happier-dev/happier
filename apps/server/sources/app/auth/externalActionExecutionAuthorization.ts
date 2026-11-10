@@ -116,6 +116,8 @@ import { readManagedCredentialDeliveryAuthorityInTx, readManagedCredentialDelive
 import { inReadSnapshot, type Tx } from "@/storage/inTx";
 import { enforceLoginEligibility } from "./enforceLoginEligibility";
 import { narrowCredentialAuthority } from './effectiveCredentialAuthority';
+import { readExternalActionBindingAuthority } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+export { readExternalActionBindingAuthority } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { hasCurrentSessionActionRpcSourceBinding, hasCurrentSessionActionRpcSourceBindingInTx,
     hasCurrentSessionScopedMachineAccessInTx, hasCurrentMachineAccessForSessionInTx } from '@/app/api/socket/sessionScopedBinding';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowReadRequestV1Schema,
@@ -412,13 +414,6 @@ export function readExternalActionCredentialActionId(binding: ExternalActionExec
 export { isExternalActionAuthorizationBoundToEnvelope };
 
 /** The signed credential owner projects provenance once for admission and principals. */
-export function readExternalActionBindingAuthority(binding: ExternalActionExecutionAuthorizationBindingV1,
-    accountAuthority: ActionRequiredAuthority = 'present_user'): ActionRequiredAuthority {
-    return narrowCredentialAuthority(accountAuthority, !('authentication' in binding)
-        || binding.sessionActionOrigin || binding.workflowActionOrigin || binding.nativeCredentialSpawnChild || binding.authentication.kind === 'terminal'
-        ? 'account_automation' : undefined);
-}
-
 /** Project the signed root's authority, narrowed only by the authenticated invocation ceiling. */
 export function projectExternalActionBoundPrincipal(binding: ExternalActionExecutionAuthorizationBindingV1,
     current: ExternalActionServerPrincipalV1,

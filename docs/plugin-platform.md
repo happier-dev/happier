@@ -11684,6 +11684,8 @@ preparation and source-free lifecycle reads do not invent a receipt or source.
 Platform receipts carry real source provenance without a fabricated native
 builder or member; own-server receipts retain their native proof requirements.
 
+In 0.3 development, a Direct Team platform principal uses the same requester-scoped Connected Account purpose owner as the admitted deploy. The private host carries the actual Deployment receipt, Environment and operation identity into material acquisition. The requester's existing signed execution headers bind that acquisition to the Home's accepted, active receipt; an Account bearer or an arbitrary operation label supplies no platform authority. Home consumes the existing accepted-receipt lookup once and passes its typed result to the Team material route. Receipt-free platform Actions remain unavailable for Direct Team material. Session and Run purpose bindings retain their existing owners and lifetimes, and finite deploy material ends with the operation's existing cancellation and disposal paths.
+
 In unreleased 0.3 source, Vercel promotion and rollback observe the acknowledged
 alias operation, including its selected deployment and operation kind. An old
 deployment's ready build does not establish that traffic moved. Workers traffic

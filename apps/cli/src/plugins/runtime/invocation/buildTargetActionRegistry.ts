@@ -418,6 +418,9 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             const definition = contribution?.definition;
             const roles = contribution?.admittedTarget?.deploymentTargetRoles;
             let admittedPurposeTarget: import('@happier-dev/protocol').QualifiedConnectedAccountPurposeBindingTargetV1 | undefined;
+            let admittedTeamPrincipal: Extract<import('@happier-dev/protocol/plugins/contributions/v2').DeploymentTargetRoleCommonInputV1['credentialPrincipal'], { kind: 'team' }> | undefined;
+            let admittedPlatformOperation: Extract<import('@happier-dev/protocol/teams/credentials/directMaterialV1').TeamCredentialDirectMaterialConsumerV1, { kind: 'platform_operation' }> | undefined;
+            let admittedPurposeRuntime: ReturnType<typeof import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').createDaemonConnectedAccountPurposeBindingRuntime> | undefined;
             let deploymentSource: PluginInvocationServicesSeed['deploymentSource'];
             let managedWorkloads: PluginInvocationServicesSeed['managedWorkloads'];
             if (roles?.length) {
@@ -435,6 +438,13 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                     const admitted = await admitDeploymentTargetRoleForHost({ pluginId: input.pluginId, localId: input.localId,
                         bindings: roles, executionTarget, input: input.input, context, purposeAuthorization }, host);
                     if (admitted.input.credentialPrincipal.kind === 'account') admittedPurposeTarget = admitted.input.credentialPrincipal.target;
+                    else {
+                        admittedTeamPrincipal = admitted.input.credentialPrincipal;
+                        if (admitted.receipt) admittedPlatformOperation = { kind: 'platform_operation', deploymentId: admitted.receipt.deployment.id,
+                            environmentId: admitted.receipt.deployment.environmentId, operationId: admitted.receipt.deployment.actionOperationId };
+                    }
+                    admittedPurposeRuntime = host.readConnectedAccountPurposes?.() ?? undefined;
+                    if (admittedTeamPrincipal && !admittedPurposeRuntime) return unavailable();
                     if (executionTarget === 'daemon' && params.ensureEnvironmentServices) {
                         managedWorkloads = createDeploymentTargetRoleWorkloadBindingForHost({ admission: admitted, host, context,
                             ensureEnvironmentServices: params.ensureEnvironmentServices,
@@ -468,9 +478,13 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 const host = await params.readDeploymentTargetRoleAdmissionHost?.({ ...input.approvalContext, signal: input.signal });
                 if (!host) return unavailable('deployment_target_role_unavailable');
                 try {
-                    admittedPurposeTarget = admitDeploymentTargetCredentialPrincipalForHost({
+                    const admitted = admitDeploymentTargetCredentialPrincipalForHost({
                         credentialPrincipal: principal.data, credentialRef: credentialRef.data,
-                    }, host.credentialOwnerAccountId).target;
+                    }, host.credentialOwnerAccountId);
+                    if (admitted.kind === 'account') admittedPurposeTarget = admitted.target;
+                    else admittedTeamPrincipal = admitted;
+                    admittedPurposeRuntime = host.readConnectedAccountPurposes?.() ?? undefined;
+                    if (admittedTeamPrincipal && !admittedPurposeRuntime) return unavailable('deployment_target_role_unavailable');
                 } catch (error) {
                     if (input.signal.aborted) throw error;
                     if (isPluginError(error)) throw error;
@@ -528,23 +542,28 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 ),
                 value: input.input,
                 ...(admittedPurposeTarget ? { admittedPurposeTarget } : {}),
+                ...(admittedTeamPrincipal ? { admittedTeamPrincipal } : {}),
                 ...(params.resolveOptionalAccess
                     ? { resolveOptionalAccess: params.resolveOptionalAccess }
                     : {}),
-                ...(params.actionFormConnectedAccounts
-                    ? { actionFormConnectedAccounts: params.actionFormConnectedAccounts }
+                ...((admittedPurposeRuntime ?? params.actionFormConnectedAccounts)
+                    ? { actionFormConnectedAccounts: admittedPurposeRuntime ?? params.actionFormConnectedAccounts }
                     : {}),
                 signal: input.signal,
                 isCurrent: input.isCurrent,
             });
             if (revalidation) return revalidation;
-            return admittedPurposeTarget || managedWorkloads
+            return admittedPurposeTarget || admittedTeamPrincipal || managedWorkloads
                 ? { status: 'admitted' as const,
                     ...(admittedPurposeTarget ? { connectedAccountPurposeTarget: admittedPurposeTarget } : {}),
+                    ...(admittedTeamPrincipal ? { connectedAccountTeamPrincipal: admittedTeamPrincipal } : {}),
+                    ...(admittedPurposeRuntime ? { connectedAccountPurposeRuntime: admittedPurposeRuntime } : {}),
+                    ...(admittedPlatformOperation ? { connectedAccountPlatformOperation: admittedPlatformOperation } : {}),
                     ...(deploymentSource ? { deploymentSource } : {}),
                     ...(managedWorkloads ? { managedWorkloads } : {}) } : null;
         },
         bindConnectedAccountActionOperation: async (input) => {
+            const actionFormConnectedAccounts = input.admittedPurposeRuntime ?? params.actionFormConnectedAccounts;
             const snapshot = await resolveRegistryConnectedAccountActionPurposeBindingSnapshot({
                 registry: params.contributes,
                 qualifiedActionId: buildQualifiedPluginContributionKey(
@@ -555,12 +574,11 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 ),
                 value: input.input,
                 ...(input.admittedPurposeTarget ? { admittedPurposeTarget: input.admittedPurposeTarget } : {}),
+                ...(input.admittedTeamPrincipal ? { admittedTeamPrincipal: input.admittedTeamPrincipal } : {}),
                 ...(params.resolveOptionalAccess
                     ? { resolveOptionalAccess: params.resolveOptionalAccess }
                     : {}),
-                ...(params.actionFormConnectedAccounts
-                    ? { actionFormConnectedAccounts: params.actionFormConnectedAccounts }
-                    : {}),
+                ...(actionFormConnectedAccounts ? { actionFormConnectedAccounts } : {}),
                 ...(params.resolveAutomationEventHistoryGapSource
                     ? {
                         resolveAutomationEventHistoryGapSource:
@@ -572,17 +590,21 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             });
             if ('status' in snapshot) return snapshot;
             if (snapshot.purposes.length === 0) return null;
-            if (!params.actionFormConnectedAccounts?.activatePurposeBindings) {
+            if (!actionFormConnectedAccounts?.activatePurposeBindings) {
                 return Object.freeze({
                     status: 'unavailable' as const,
                     code: 'plugin_action_form_connected_account_options_unavailable',
                     message: 'Connected Account operation binding is unavailable for this Action',
                 });
             }
-            const lease = params.actionFormConnectedAccounts.activatePurposeBindings({
+            if (snapshot.directMaterialOrigins?.length && !input.admittedPlatformOperation) {
+                return Object.freeze({ status: 'unavailable' as const, code: 'deployment_target_role_unavailable',
+                    message: 'The platform Action has no admitted Deployment receipt' });
+            }
+            const lease = actionFormConnectedAccounts.activatePurposeBindings({
                 subject: {
-                    kind: 'operation',
-                    operationId: input.correlationId,
+                    ...(snapshot.directMaterialOrigins?.length && input.admittedPlatformOperation
+                        ? input.admittedPlatformOperation : { kind: 'operation' as const, operationId: input.correlationId }),
                     consumer: {
                         pluginId: input.pluginId,
                         localId: input.localId,
@@ -591,6 +613,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 },
                 purposes: snapshot.purposes,
                 bindings: snapshot.bindings,
+                ...(snapshot.directMaterialOrigins ? { directMaterialOrigins: snapshot.directMaterialOrigins } : {}),
                 ...(snapshot.bindingSelections ? { bindingSelections: snapshot.bindingSelections } : {}),
                 ...(input.recordOperationCredentialUse ? { recordOperationCredentialUse: input.recordOperationCredentialUse } : {}),
             });
@@ -604,6 +627,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             }
             return Object.freeze({
                 exactPurposeBindingSubjectId: lease.subjectId,
+                ...(input.admittedPurposeRuntime ? { connectedAccountsOwner: input.admittedPurposeRuntime.owner } : {}),
                 dispose: () => lease.dispose(),
             });
         },

@@ -134,7 +134,7 @@ describe('Team credential direct material v1', () => {
     expect(matchesTeamCredentialSourceVersionBasisV1('v1:["basis"]', 'basis')).toBe(false);
   });
 
-  it('requires an exact Session or Execution Run consumer and connected-service purpose to open material', () => {
+  it('requires an exact admitted consumer and connected-service purpose to open material', () => {
     const common = {
       resourceId: 'resource-1',
       slot: { kind: 'connected_service_purpose' as const, purpose: {
@@ -160,6 +160,9 @@ describe('Team credential direct material v1', () => {
       consumer: { kind: 'session', sessionId: 'session-provider' },
     })).toMatchObject({ slot: { kind: 'provider_model' }, sourceMemberKey: 'provider-member-key' });
     expect(TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse(common).success).toBe(false);
+    expect(TeamCredentialDirectMaterialOpenRequestV1Schema.parse({
+      ...common, consumer: { kind: 'platform_operation', deploymentId: 'receipt-1', environmentId: 'environment-1', operationId: 'deploy-1' },
+    }).consumer).toEqual({ kind: 'platform_operation', deploymentId: 'receipt-1', environmentId: 'environment-1', operationId: 'deploy-1' });
     expect(TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse({
       ...common, consumer: { kind: 'platform_operation', operationId: 'deploy-1' },
     }).success).toBe(false);

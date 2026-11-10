@@ -148,16 +148,22 @@ type TargetActionPreDispatchResult = Readonly<{
 type TargetActionFormAdmission = Readonly<{
     status: 'admitted';
     connectedAccountPurposeTarget?: import('@happier-dev/protocol').QualifiedConnectedAccountPurposeBindingTargetV1;
+    connectedAccountTeamPrincipal?: Extract<import('@happier-dev/protocol/plugins/contributions/v2').DeploymentTargetRoleCommonInputV1['credentialPrincipal'], { kind: 'team' }>;
+    connectedAccountPlatformOperation?: Extract<import('@happier-dev/protocol/teams/credentials/directMaterialV1').TeamCredentialDirectMaterialConsumerV1, { kind: 'platform_operation' }>;
+    connectedAccountPurposeRuntime?: ReturnType<typeof import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').createDaemonConnectedAccountPurposeBindingRuntime>;
     deploymentSource?: PluginInvocationServicesSeed['deploymentSource'];
     managedWorkloads?: PluginInvocationServicesSeed['managedWorkloads'];
 }>;
 
 type TargetActionConnectedAccountOperationBinding = Readonly<{
     exactPurposeBindingSubjectId: string;
+    connectedAccountsOwner?: import('./services/connectedAccounts').StablePluginConnectedAccountsOwner;
     dispose(): void;
 }>;
 
 export type InvokeTargetActionParams = Readonly<{
+    /** Existing originating operation identity, diagnostic only. */
+    requestId?: string;
     /** Host-private sink captured from an admitted Domain's controller and receiver. */
     machineConnectorSecrets?: PluginServices['machineConnectorSecrets'];
     pluginId: string;
@@ -367,6 +373,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         isCurrent(): boolean;
         recordOperationCredentialUse?: import('@happier-dev/protocol').ActionExecutorContext['recordOperationCredentialUse'];
         admittedPurposeTarget?: import('@happier-dev/protocol').QualifiedConnectedAccountPurposeBindingTargetV1;
+        admittedTeamPrincipal?: Extract<import('@happier-dev/protocol/plugins/contributions/v2').DeploymentTargetRoleCommonInputV1['credentialPrincipal'], { kind: 'team' }>;
+        admittedPlatformOperation?: Extract<import('@happier-dev/protocol/teams/credentials/directMaterialV1').TeamCredentialDirectMaterialConsumerV1, { kind: 'platform_operation' }>;
+        admittedPurposeRuntime?: ReturnType<typeof import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').createDaemonConnectedAccountPurposeBindingRuntime>;
     }>): Promise<TargetActionConnectedAccountOperationBinding | TargetActionPreDispatchResult | null>;
 }>): Readonly<{
     expects(pluginId: string, localId: string): boolean;
@@ -532,6 +541,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         let operationSettled = false;
         const invokePrepared = invocation.readObservation ? preparedInput.observe : preparedInput.invoke;
         let admittedPurposeTarget: import('@happier-dev/protocol').QualifiedConnectedAccountPurposeBindingTargetV1 | undefined;
+        let admittedTeamPrincipal: Extract<import('@happier-dev/protocol/plugins/contributions/v2').DeploymentTargetRoleCommonInputV1['credentialPrincipal'], { kind: 'team' }> | undefined;
+        let admittedPlatformOperation: Extract<import('@happier-dev/protocol/teams/credentials/directMaterialV1').TeamCredentialDirectMaterialConsumerV1, { kind: 'platform_operation' }> | undefined;
+        let admittedPurposeRuntime: ReturnType<typeof import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').createDaemonConnectedAccountPurposeBindingRuntime> | undefined;
         let deploymentSource: PluginInvocationServicesSeed['deploymentSource'];
         let managedWorkloads: PluginInvocationServicesSeed['managedWorkloads'];
         const result = await invokePrepared({
@@ -553,6 +565,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         });
                         if (admission?.status === 'admitted') {
                             admittedPurposeTarget = admission.connectedAccountPurposeTarget;
+                            admittedTeamPrincipal = admission.connectedAccountTeamPrincipal;
+                            admittedPurposeRuntime = admission.connectedAccountPurposeRuntime;
+                            admittedPlatformOperation = admission.connectedAccountPlatformOperation;
                             deploymentSource = admission.deploymentSource;
                             managedWorkloads = admission.managedWorkloads;
                             return null;
@@ -637,6 +652,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         ? {}
                         : { sourceCustody: registration.sourceCustody }),
                     correlationId,
+                    ...(invocation.requestId === undefined ? {} : { requestId: invocation.requestId }),
                     surface: invocation.surface,
                     ...(invocation.caller ? { caller: invocation.caller } : {}),
                     ...(invocation.initiatingActionCaller ? { initiatingActionCaller: invocation.initiatingActionCaller } : {}),
@@ -717,6 +733,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         input,
                         correlationId,
                         ...(admittedPurposeTarget ? { admittedPurposeTarget } : {}),
+                        ...(admittedTeamPrincipal ? { admittedTeamPrincipal } : {}),
+                        ...(admittedPurposeRuntime ? { admittedPurposeRuntime } : {}),
+                        ...(admittedPlatformOperation ? { admittedPlatformOperation } : {}),
                         ...(seed.approvalContext?.recordOperationCredentialUse
                             ? { recordOperationCredentialUse: seed.approvalContext.recordOperationCredentialUse }
                             : {}),
@@ -748,6 +767,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         ? Object.freeze({
                             ...serviceBinding,
                             ...(exactPurposeBindingSubjectId === undefined ? {} : { exactPurposeBindingSubjectId }),
+                            ...(connectedAccountOperationBinding?.connectedAccountsOwner
+                                ? { connectedAccountsOwner: connectedAccountOperationBinding.connectedAccountsOwner } : {}),
                             ...(invocation.execOutputObserver === undefined ? {} : { execOutputObserver: invocation.execOutputObserver }),
                             ...(invocation.execInvocationTimeoutMs === undefined ? {} : { execInvocationTimeoutMs: invocation.execInvocationTimeoutMs }),
                         })
@@ -759,6 +780,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         surface: seed.surface,
                         invokedAtMs: lifetime.invokedAtMs,
                         invocationId: seed.correlationId,
+                        ...(seed.requestId === undefined ? {} : { requestId: seed.requestId }),
                         ...(seed.caller ? { caller: seed.caller } : {}),
                         ...(seed.session ? { session: seed.session } : {}),
                         ...(invocation.approvalContext?.sessionTargetsV1
