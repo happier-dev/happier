@@ -29,39 +29,55 @@ export async function createClaudeForegroundConnectedAccountFixture(accountIds: 
   return await createForegroundConnectedAccountFixture(accountIds, 'claude');
 }
 
-async function createForegroundConnectedAccountFixture(accountIds: readonly string[], agentId: 'codex' | 'claude') {
+export async function createMuseForegroundConnectedAccountFixture(accountIds: readonly string[] = ['work']) {
+  return await createForegroundConnectedAccountFixture(accountIds, 'muse');
+}
+
+async function createForegroundConnectedAccountFixture(accountIds: readonly string[], agentId: 'codex' | 'claude' | 'muse') {
   const accountId = accountIds[0]!;
   const pluginId = `happier.agent.${agentId}`;
-  const service = { pluginId, localId: agentId === 'claude' ? 'claude-subscription' : 'openai-codex' };
+  const service = { pluginId, localId: agentId === 'claude' ? 'claude-subscription' : agentId === 'muse' ? 'muse-account' : 'openai-codex' };
+  const authenticationModeId = agentId === 'muse' ? 'api-key' : 'oauth';
   const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
   const content = sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
-    payload: { v: 1, values: { accessToken: 'work-access', refreshToken: 'work-refresh', idToken: 'work-id', providerAccountId: 'work-account' } },
+    payload: { v: 1, values: agentId === 'muse'
+      ? { credentialMode: 'manual', inferenceKey: 'synthetic-selected-muse-key' }
+      : { accessToken: 'work-access', refreshToken: 'work-refresh', idToken: 'work-id', providerAccountId: 'work-account' } },
     randomBytes: length => new Uint8Array(length),
   });
+  const otherMuseContent = agentId === 'muse' ? sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
+    payload: { v: 1, values: { credentialMode: 'manual', inferenceKey: 'synthetic-other-muse-key' } },
+    randomBytes: length => new Uint8Array(length),
+  }) : content;
   const accounts = QualifiedConnectedAccountListResponseV4Schema.parse({
     service, accounts: accountIds.map(id => ({
-      ref: { service, accountId: id }, status: 'connected', authenticationModeId: 'oauth',
+      ref: { service, accountId: id }, status: 'connected', authenticationModeId,
       revisionSemantics: 'revisioned', credentialRevision: revision,
       configurationReady: true, configurationRevision: 'configuration-1', scopes: [],
     })),
   });
   const requestPaths: string[] = [];
-  vi.spyOn(axios, 'get').mockImplementation(async (url): Promise<AxiosResponse<unknown>> => {
+  const originalGet = axios.get.bind(axios);
+  vi.spyOn(axios, 'get').mockImplementation(async (url, config): Promise<AxiosResponse<unknown>> => {
     const parsedUrl = new URL(String(url));
     const path = parsedUrl.pathname;
     requestPaths.push(path);
+    const credentialRef = path === '/v4/connect/qualified/credential'
+      ? parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema, parsedUrl.searchParams.get('ref')) : null;
     const data = path === '/v4/connect/qualified/accounts' ? accounts
       : path === '/v1/account/encryption' ? { mode: 'plain', updatedAt: 0 }
         : path === `/v2/connect/${service.localId}/profiles`
           ? { serviceId: service.localId, profiles: accountIds.map(id => ({ profileId: id, status: 'connected', kind: 'oauth' })) }
           : path === '/v4/connect/qualified/credential'
             ? {
-                ref: parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema, parsedUrl.searchParams.get('ref')),
-                authenticationModeId: 'oauth', configurationRevision: null,
-                content, metadata: { providerIdentity: { accountId: 'work-account' }, displayName: 'work', scopes: [] },
+                ref: credentialRef,
+                authenticationModeId, configurationRevision: null,
+                content: credentialRef?.accountId === accountId ? content : otherMuseContent, metadata: { providerIdentity: { accountId: 'work-account' }, displayName: 'work', scopes: [] },
                 revisionSemantics: 'revisioned', credentialRevision: revision,
               }
-            : (() => { throw new Error(`Unexpected Account HTTP request: ${path}`); })();
+            : agentId === 'muse' && parsedUrl.hostname === '127.0.0.1'
+              ? (await originalGet(url, config)).data
+              : (() => { throw new Error(`Unexpected Account HTTP request: ${path}`); })();
     return { status: 200, statusText: 'OK', data, headers: {}, config: { headers: new AxiosHeaders() } };
   });
   const credentials = { token: 'account-token', encryption: null } as const;
@@ -70,13 +86,13 @@ async function createForegroundConnectedAccountFixture(accountIds: readonly stri
   const readCredential = async (selectedAccountId = accountId) => {
     const credential = await readQualifiedConnectedAccountCredentialV4({ token: credentials.token, ref: { service, accountId: selectedAccountId } });
     if (!credential) throw new Error('Exact Account credential unavailable');
-    if (credential.authenticationModeId !== 'oauth') throw new Error('Exact Account OAuth credential unavailable');
+    if (credential.authenticationModeId !== authenticationModeId) throw new Error('Exact Account credential mode unavailable');
     return { ...credential, authenticationModeId: credential.authenticationModeId };
   };
   let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
   const account = createForegroundPurposeOwnerFixture({
     consumer: { pluginId, localId: agentId }, service, accountId,
-    ...(agentId === 'claude' ? { purpose: 'model_upstream' } : {}),
+    ...(agentId === 'claude' ? { purpose: 'model_upstream' } : agentId === 'muse' ? { purpose: 'muse-native' } : {}),
     resolveTarget: async (target) => {
       if (target.kind !== 'account') return null;
       const found = (await readAccounts()).accounts.find(candidate => candidate.ref.accountId === target.account.accountId);
@@ -101,7 +117,7 @@ async function createForegroundConnectedAccountFixture(accountIds: readonly stri
         operation: { kind: 'materialize', request },
         context: {
           account,
-          configuration: { target: { kind: 'account', account, modeId: 'oauth' }, revision: 'configuration-1', values: {}, getSecret: async () => null },
+          configuration: { target: { kind: 'account', account, modeId: authenticationModeId }, revision: 'configuration-1', values: {}, getSecret: async () => null },
           credentials: { get: async (key) => values[key] ?? null },
         },
         isConfigurationCurrent: async () => (await readAccounts()).accounts.some(candidate => candidate.ref.accountId === account.accountId && candidate.configurationRevision === 'configuration-1'),
@@ -127,6 +143,12 @@ async function createForegroundConnectedAccountFixture(accountIds: readonly stri
       return {
         activatePurposeBindings: account.owner.activatePurposeBindings,
         activateSessionPurposeBindings: account.owner.activateSessionPurposeBindings,
+        ...(agentId === 'muse' ? {
+          resolveExternalAgentSessionPurposeBindingSnapshot: async ({ authorizedPurposes, signal }) => (
+            await account.owner.resolveCurrentSessionPurposeBindingSnapshot({ authorizedPurposes, signal })
+          ),
+          connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
+        } satisfies Partial<PrepareForegroundAgentRuntimeAdmissionDependencies> : {}),
         resolveConnectedServiceAuthForSpawn: async (input) => {
           const materialized = await resolveConnectedServiceAuthForSpawn({
             ...input, credentials, api, activeServerDir: configuration.activeServerDir, baseDir: join(directory, 'materialized'),

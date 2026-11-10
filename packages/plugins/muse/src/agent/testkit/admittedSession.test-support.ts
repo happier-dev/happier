@@ -44,6 +44,12 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
   systemRecords?: boolean;
   sessionId?: string;
   createSessionSocketTransport?: ApiSessionClientOptions['transport']['createSessionSocketTransport'];
+  /** Reuse the actual foreground-admitted registry, retaining its Account owner. */
+  admittedRuntime?: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
+  /** The host's independently claimed launch environment seeds scoped Exec. */
+  environment?: Readonly<Record<string, string>>;
+  /** Optional physical native executable; only OS resolution is substituted. */
+  nativeExecutable?: string;
 }> = {}) {
   const cwd = options.cwd ?? process.cwd();
   const pluginId = 'happier.agent.muse';
@@ -55,8 +61,12 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
   const auditPath = join(scratch, 'native-audit.json');
   const native = await createMuseMspProcessFixture({ ...options.native, auditPath, cwd });
   let launched = 0;
-  const exec = createStablePluginExecService({ ...native, signal, isOccurrenceCurrent: () => true,
-    async resolveExecutable() { launched++; return native.resolveExecutable(); },
+  const exec = createStablePluginExecService({ ...native, environment: options.environment, signal, isOccurrenceCurrent: () => true,
+    async resolveExecutable() {
+      launched++;
+      const resolved = await native.resolveExecutable();
+      return options.nativeExecutable ? { ...resolved, command: options.nativeExecutable, args: [] } : resolved;
+    },
   });
   const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.sig`;
   const credentials = { token, encryption: null };
@@ -185,13 +195,13 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
     if (!address || typeof address === 'string') throw new Error('Expected local HTTP boundary');
     const serverUrl = `http://127.0.0.1:${address.port}`;
     return await runWithServerHttpBaseUrl(serverUrl, async () => {
-    untouched = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [],
+    if (!options.admittedRuntime) untouched = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [],
       scopedActionRuntime: { credentials: null, actionsSettingsProvider: createActionSettingsProvider() },
     } });
-    const untouchedHasMuse = untouched.registry.agentRuntimesByAgentId.has(agentId);
+    const untouchedHasMuse = untouched?.registry.agentRuntimesByAgentId.has(agentId) ?? false;
     const untouchedLaunchCount = launched;
-    admitted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: untouched.happyHomeDir,
-      controller: untouched.controller, runtimeOptions: { pluginIds: [pluginId],
+    admitted = options.admittedRuntime ?? await createAdmittedPluginRuntimeFixture({ happyHomeDir: untouched!.happyHomeDir,
+      controller: untouched!.controller, runtimeOptions: { pluginIds: [pluginId],
       scopedActionRuntime: { credentials: null, actionsSettingsProvider: createActionSettingsProvider() },
     } });
     const registry = admitted.registry;
@@ -292,7 +302,7 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
         return await waitForMuseMspProcessAudit(auditPath, accept, { signal: options?.signal ?? signal });
       },
       async retire() { await selectedRegistry.dispose(); },
-      get retiredHasMuse() { return untouchedRegistry.controller.getState().activeRegistry?.agentRuntimesByAgentId.has(agentId) ?? false; },
+      get retiredHasMuse() { return untouchedRegistry?.controller.getState().activeRegistry?.agentRuntimesByAgentId.has(agentId) ?? false; },
       async dispose() { await dispose(); },
     };
     });
@@ -309,7 +319,7 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
       finally {
         try { await host?.close(); }
         finally {
-          try { await admitted?.dispose(); }
+          try { if (!options.admittedRuntime) await admitted?.dispose(); }
           finally {
             try { await untouched?.dispose(); }
             finally {
