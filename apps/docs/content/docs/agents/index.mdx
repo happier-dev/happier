@@ -117,9 +117,10 @@ happier agents install codex --machine <machine-id>
 `--dry-run` previews the local plan without starting an install job. Real installs
 and updates run through Actions on the selected machine; without `--machine`,
 the CLI selects this Account's local machine. Its daemon must be running.
-CLI requests ask for approval according to your Actions settings. Vendor install or update recipes additionally require
-`--yes`, `--allow-vendor-recipe`, or confirmation in an interactive terminal.
-Those flags provide recipe consent; they do not waive Action approval.
+In 0.3 development, approving installation also approves running the vendor installer
+when required. CLI requests follow your Actions approval settings, just like the UI
+install button. `--yes` and `--allow-vendor-recipe` remain available for explicit
+recipe consent; they do not waive Action approval.
 Use `--force` with `agents install` when you intend to reinstall an existing CLI.
 Ctrl+C requests cancellation and waits for the daemon's final outcome.
 

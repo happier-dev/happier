@@ -73,7 +73,7 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
         const current = agentRef.current;
         if (!current) return;
         // The form itself reviews the install and any vendor-recipe consent; its press confirms.
-        fireAndForget(installJob.start(intent, { consent: { vendorRecipe: current.install.requiresVendorConsent } }), { tag: 'AgentSetupForm.install' });
+        fireAndForget(installJob.start(intent), { tag: 'AgentSetupForm.install' });
     }, [installJob]);
 
     const openTerminal = React.useCallback(() => {

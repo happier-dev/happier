@@ -64,14 +64,15 @@ describe('readiness user intents through mounted Actions', () => {
         });
     }
 
-    it.each(['install', 'update', 'uninstall'] as const)('a rejected %s confirmation starts no daemon job', async (intent) => {
-        const addressed = await target(`rejected-${intent}`);
+    it.each(['install', 'update', 'uninstall'] as const)('the reviewed form admits %s without a second confirmation', async (intent) => {
+        const addressed = await target(`reviewed-form-${intent}`);
         installation(addressed.agentId);
         const hook = await renderHook(() => useAgentInstallJob(addressed));
-        await act(async () => { await hook.getCurrent().start(intent, { consent: { vendorRecipe: true } }); });
-        expect(boundary.confirm).toHaveBeenCalledOnce();
-        expect(boundary.rpc.mock.calls.some(([request]) => request.method === 'daemon.agents.install.start')).toBe(false);
-        expect(hook.getCurrent().job).toBeNull();
+        await act(async () => { await hook.getCurrent().start(intent); });
+        expect(boundary.confirm).not.toHaveBeenCalled();
+        expect(boundary.rpc).toHaveBeenCalledWith(expect.objectContaining({ method: 'daemon.agents.install.start',
+            payload: expect.objectContaining({ intent, consent: { vendorRecipe: intent !== 'uninstall' } }) }));
+        expect(hook.getCurrent().job?.jobId).toBe('readiness-job');
         expect(boundary.alert).not.toHaveBeenCalled();
     });
 
@@ -80,7 +81,7 @@ describe('readiness user intents through mounted Actions', () => {
         installation(addressed.agentId); boundary.confirm.mockResolvedValue(true);
         const first = await renderHook(() => useAgentInstallJob(addressed));
         const second = await renderHook(() => useAgentInstallJob(addressed));
-        await act(async () => { await first.getCurrent().start('install', { consent: { vendorRecipe: false } }); });
+        await act(async () => { await first.getCurrent().start('install'); });
         expect(second.getCurrent().job?.jobId).toBe('readiness-job');
         await waitForHomeGovernance(() => expect(second.getCurrent().job).toMatchObject({ jobId: 'readiness-job', steps: [{ bytesDone: 3 }] }));
         home.answer(addressed.serverId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
@@ -127,16 +128,16 @@ describe('readiness user intents through mounted Actions', () => {
         }));
         await act(async () => {
             if (surface === 'row') hook.getCurrent().row(machineAgentInventoryStore.read(key).agents[0], { kind: 'install' });
-            else await hook.getCurrent().form.start('install', { consent: { vendorRecipe: false } });
+            else await hook.getCurrent().form.start('install');
         });
         await waitForHomeGovernance(() => expect(boundary.rpc).toHaveBeenCalledWith(expect.objectContaining({ method: 'daemon.agents.install.start' })));
         await flushHookEffects();
         expect(boundary.alert).toHaveBeenCalled();
         expect(machineAgentInventoryStore.read(key).agents[0].job).toBeNull();
-        expect(boundary.confirm).toHaveBeenCalledOnce();
+        expect(boundary.confirm).toHaveBeenCalledTimes(surface === 'row' ? 1 : 0);
     });
 
-    it.each(['row', 'form'] as const)('opens the actual policy-required %s install approval before any daemon job', async surface => {
+    it.each(['row', 'form'] as const)('uses the present-user %s install confirmation instead of an inbox approval', async surface => {
         const addressed = await target(`approval-${surface}`);
         installation(addressed.agentId);
         await home.requireUiApproval(addressed.serverId, 'machines.agents.install');
@@ -154,13 +155,14 @@ describe('readiness user intents through mounted Actions', () => {
         let pending: Promise<unknown> | undefined;
         await act(async () => {
             if (surface === 'row') hook.getCurrent().row(machineAgentInventoryStore.read(key).agents[0], { kind: 'install' });
-            else pending = hook.getCurrent().form.start('install', { consent: { vendorRecipe: false } });
+            else pending = hook.getCurrent().form.start('install');
         });
-        await waitForHomeGovernance(() => expect(home.artifacts(addressed.serverId).list()).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(boundary.rpc).toHaveBeenCalledWith(expect.objectContaining({ method: 'daemon.agents.install.start',
+            payload: expect.objectContaining({ consent: { vendorRecipe: true } }) })));
         await flushHookEffects();
-        const artifact = home.artifacts(addressed.serverId).list()[0];
-        expect(router.push).toHaveBeenCalledWith(`/inbox/approvals/${artifact.id}?serverId=${encodeURIComponent(addressed.serverId)}`);
-        expect(boundary.rpc.mock.calls.some(([request]) => request.method === 'daemon.agents.install.start')).toBe(false);
+        expect(home.artifacts(addressed.serverId).list()).toHaveLength(0);
+        expect(router.push).not.toHaveBeenCalled();
+        expect(boundary.confirm).toHaveBeenCalledTimes(surface === 'row' ? 1 : 0);
         await hook.unmount();
         await pending;
     });
@@ -186,9 +188,9 @@ describe('readiness user intents through mounted Actions', () => {
         const second = await renderHook(() => useAgentSignIn(addressed));
         await act(async () => { await first.getCurrent().start(); });
         expect(boundary.rpc).not.toHaveBeenCalled();
-        expect(second.getCurrent().phase).toBe('idle');
+        expect(second.getCurrent()).toMatchObject({ phase: 'failed', failure: 'action_disabled', terminalId: null });
         home.answer(addressed.serverId, '/v2/account/settings', { body: { version: 2, content: { t: 'plain', v: {} } } });
-        await act(async () => { await first.getCurrent().start(); });
+        await act(async () => { await first.getCurrent().checkAgain(); });
         expect(second.getCurrent()).toMatchObject({ phase: 'waiting', terminalId: 'first-login' });
         home.answer(addressed.serverId, '/v2/account/settings', { body: { version: 3, content: { t: 'plain', v: {
             actionsSettingsV1: { v: 1, actions: { 'machines.agents.signIn.cancel': { enabled: false },

@@ -19,6 +19,8 @@ import { AgentModelsProbeObservationSchema, AgentSessionModesProbeObservationSch
 import { ProbedCatalogOptionValueSchema } from '../../capabilities/probedCatalogOption.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 import { ScmDiffSummaryModelCatalogObservationV1Schema } from '../settings/scmDiffSummarySettings.js';
+import { LlmTaskRunnerChoiceV1Schema } from '../../llm/tasks/llmTaskRunnerConfigV1.js';
+import { LlmTaskIdV1Schema, LlmTaskRunnerResolutionWireV1Schema } from '../../llm/tasks/llmTaskRunnerSelection.js';
 import { SessionMcpSelectionV1Schema } from '../../mcp/servers/sessionSelectionV1.js';
 import { RuntimeDescriptorV1Schema } from '../../sessions/metadata/runtimeDescriptorV1.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
@@ -71,7 +73,13 @@ export function inventoryOutputWithProbeObservation(observationSchema: z.ZodMini
 }
 
 export const AgentsModelsListInputSchema = lazyZodSchema(() => z.strictObject({
-  purpose: z.optional(z.literal('scm_diff_summary')),
+  purpose: z.optional(z.enum(['scm_diff_summary', 'llm_task_runner'])),
+  /** `llm_task_runner`: the background task whose runner to resolve on the machine. */
+  task: z.optional(LlmTaskIdV1Schema),
+  /** `llm_task_runner`: the person's stored choice; omitted means Auto. */
+  choice: z.optional(LlmTaskRunnerChoiceV1Schema),
+  /** `llm_task_runner`: the Session's own Agent, preferred for tasks that read Session text. */
+  sessionAgentTargetKey: z.optional(BackendTargetKeyV2Schema),
   discoveryTargetKey: z.optional(BackendTargetKeyV2Schema),
   modelSelector: z.optional(ScmDiffSummaryModelSelectorSchema),
   agentId: z.optional(z.string().check(z.minLength(1))),
@@ -82,6 +90,14 @@ export const AgentsModelsListInputSchema = lazyZodSchema(() => z.strictObject({
   limit: z.optional(z.number().check(z.int(), z.minimum(1))),
   probe: z.optional(AgentInventoryProbeInputSchema),
 }).check(z.superRefine((value, ctx) => {
+  if (value.purpose === 'llm_task_runner') {
+    if (!value.machineId || !value.task || value.agentId || value.backendTargetKey || value.probe || value.limit !== undefined
+      || value.discoveryTargetKey || value.modelSelector) {
+      ctx.addIssue({ code: 'custom', message: 'Task runner resolution requires only a task and an exact machine target', path: ['task'] });
+    }
+    return;
+  }
+  if (value.task || value.choice || value.sessionAgentTargetKey) ctx.addIssue({ code: 'custom', message: 'Task runner purpose is required', path: ['purpose'] });
   if (value.purpose === 'scm_diff_summary') {
     if (!value.machineId || value.agentId || value.backendTargetKey || value.probe || value.limit !== undefined) {
       ctx.addIssue({ code: 'custom', message: 'Summary catalog requires only an exact machine target', path: ['machineId'] });
@@ -248,6 +264,7 @@ function createAgentCatalogActionSpecs() {
     id: 'machines.agents.install', executionPlacement: 'machine', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'policy' },
     confirmVerb: { key: 'common.install', fallback: 'Install' },
     title: 'Install or update an agent',
+    approvalPresentation: { summary: () => 'Install or update the agent on this machine. Runs the agent vendor installer when required.' },
     sideEffectClass: 'danger',
     description: 'Start a daemon-owned agent install or update job.',
     safety: 'danger',
@@ -258,7 +275,11 @@ function createAgentCatalogActionSpecs() {
       machineId: z.string().check(z.minLength(1)),
       intent: AgentAcquireJobIntentSchema,
       consent: z.optional(DaemonAgentInstallStartRequestSchema.shape.consent),
-    })),
+    }).check(z.overwrite(input => ({ ...input,
+      // The install approval covers the vendor installer. Normalize before
+      // review so its captured operand and admitted job carry the same consent.
+      consent: { vendorRecipe: true },
+    })))),
     outputSchema: DaemonAgentInstallStartResponseSchema,
     cli: { acceptsServerId: true, inputSchema: MachineAgentInstallCliInputSchema,
       flagAliases: [{ path: 'machineId', aliases: ['--machine'] }],
@@ -279,7 +300,6 @@ function createAgentCatalogActionSpecs() {
         { path: 'agentId', title: 'Agent', widget: 'text' },
         { path: 'definitionId', title: 'Custom agent', widget: 'text' },
         { path: 'intent', title: 'Intent', widget: 'text' },
-        { path: 'consent.vendorRecipe', title: 'Allow the vendor install recipe', widget: 'boolean' },
         { path: 'force', title: 'Reinstall an installed agent', widget: 'boolean' },
       ],
     },
@@ -352,7 +372,7 @@ function createAgentCatalogActionSpecs() {
     id: 'agents.models.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List agent models',
     sideEffectClass: 'read',
-    description: 'List available models for an agent backend. Omit serverId; the authenticated host binds the Home.',
+    description: 'List available models for an agent backend. With purpose "llm_task_runner" and a task (memory_hints, scm_commit_message, scm_diff_summary, session_replay_summary), report which Agent and model that background task runs on the machine: the stored choice when one is set, otherwise what Auto picks among the ready Agents, or why nothing is ready. Omit serverId; the authenticated host binds the Home.',
     safety: 'safe',
     placements: ['voice_panel'],
     bindings: { voiceClientToolName: 'listAgentModels', mcpToolName: 'agents_models_list' },
@@ -374,11 +394,18 @@ function createAgentCatalogActionSpecs() {
         { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
         { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
         { path: 'limit', title: 'Max results', widget: 'text' },
+        { path: 'purpose', title: 'Purpose (optional)', widget: 'text' },
+        { path: 'task', title: 'Background task (with purpose llm_task_runner)', widget: 'text' },
       ],
     },
     inputSchema: AgentsModelsListInputSchema,
     outputSchema: lazyZodSchema(() => inventoryOutputWithProbeObservation(AgentModelsProbeObservationSchema).check(z.superRefine((value, ctx) => {
-      if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.hasOwn(value, 'scmDiffSummaryCatalog')) return;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+      if (Object.hasOwn(value, 'llmTaskRunner')) {
+        const resolution = LlmTaskRunnerResolutionWireV1Schema.safeParse(Reflect.get(value, 'llmTaskRunner'));
+        if (!resolution.success) for (const issue of resolution.error.issues) ctx.addIssue({ ...issue, path: ['llmTaskRunner', ...issue.path] });
+      }
+      if (!Object.hasOwn(value, 'scmDiffSummaryCatalog')) return;
       const catalog = ScmDiffSummaryModelCatalogObservationV1Schema.safeParse(Reflect.get(value, 'scmDiffSummaryCatalog'));
       if (!catalog.success) for (const issue of catalog.error.issues) ctx.addIssue({ ...issue, path: ['scmDiffSummaryCatalog', ...issue.path] });
     }))),

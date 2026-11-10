@@ -514,7 +514,7 @@ describe('UI machine Agent inventory Action transport', () => {
         const start = rpc.machine.mock.calls.find(([request]) => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START)?.[0];
         expect(start).toMatchObject({
             machineId: 'machine-1', serverId, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_START,
-            payload: { agentId: 'acme/helper', intent, consent: { vendorRecipe: intent === 'update' },
+            payload: { agentId: 'acme/helper', intent, consent: { vendorRecipe: true },
                 ...(intent === 'update' ? { force: true } : {}),
             },
         });

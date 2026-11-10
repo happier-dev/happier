@@ -33,7 +33,9 @@ describe('signed Session Agent readiness receiver', () => {
       request: buildMachineAgentsDetectRequest({ agents: [{ agentId: 'codex', title: 'Codex' }], refresh: true, readinessOnly: true }) },
     { child: SESSION_AGENT_READINESS_CHILDREN_V1.acquire, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_START,
       actionInput: { agentId: 'codex', intent: 'install', consent: { vendorRecipe: false } },
-      request: { agentId: 'codex', intent: 'install', consent: { vendorRecipe: false } } },
+      request: { agentId: 'codex', intent: 'install', consent: getActionSpec('machines.agents.install').inputSchema.parse({
+        machineId: 'machine', agentId: 'codex', intent: 'install',
+      }).consent } },
     { child: SESSION_AGENT_READINESS_CHILDREN_V1.status, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_READ,
       actionInput: { jobId: 'job', waitForTerminal: true }, request: { jobId: 'job', cursor: 0, waitForTerminal: true } },
     { child: SESSION_AGENT_READINESS_CHILDREN_V1.status, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_READ,

@@ -11,22 +11,24 @@ describe('machine agent install Action parity', () => {
     const uninstallId = ActionIdSchema.parse('machines.agents.uninstall');
     for (const id of ['machines.agents.install', uninstallId, 'agents.acp.backends.delete'] as const) {
       const spec = getActionSpec(id);
-      expect(resolveActionApprovalRouting({ actionId: id, spec, context: { surface: 'ui', authority: 'present_user' } }).required).toBe(true);
+      expect(resolveActionApprovalRouting({ actionId: id, spec, context: { surface: 'ui', authority: 'present_user' } }))
+        .toMatchObject({ uiConfirmationRequired: true });
       expect(resolveActionApprovalRouting({ actionId: id, spec, context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
     }
     const requests: unknown[] = [];
     const executor = createActionExecutor({
       isActionApprovalRequired: () => false,
+      presentUserActionConfirmation: async () => true,
       machineAgentInstallStart: async (args: Parameters<NonNullable<ActionExecutorDeps['machineAgentInstallStart']>>[0]) => {
         requests.push(args); return { ok: true, jobId: 'definition-job' };
       },
     } as unknown as ActionExecutorDeps);
     const context = { surface: 'ui' as const, authority: 'present_user' as const };
     const target = { machineId: 'machine', agentId: 'custom-acp', definitionId: 'registry-agent' };
-    expect(await executor.execute('machines.agents.install', { ...target, intent: 'install' }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('machines.agents.install', { ...target, intent: 'install', consent: { vendorRecipe: false } }, context)).toMatchObject({ ok: true });
     expect(await executor.execute(uninstallId, target, context)).toMatchObject({ ok: true });
     expect(requests).toMatchObject([
-      { ...target, intent: 'install', consent: { vendorRecipe: false }, context, effectActionId: 'machines.agents.install' },
+      { ...target, intent: 'install', consent: { vendorRecipe: true }, context, effectActionId: 'machines.agents.install' },
       { ...target, intent: 'uninstall', consent: { vendorRecipe: false }, context, effectActionId: 'machines.agents.uninstall' },
     ]);
     expect(getActionSpec('machines.agents.install').inputSchema.safeParse({ ...target, intent: 'uninstall' }).success).toBe(false);
@@ -47,7 +49,7 @@ describe('machine agent install Action parity', () => {
     }
   });
 
-  it('defaults omitted vendor consent to false and returns current status independently of the event cursor', async () => {
+  it('carries install approval consent and returns current status independently of the event cursor', async () => {
     const requests: unknown[] = [];
     const snapshot = {
       steps: [{ stepId: 'cli', label: 'Install CLI', state: 'running' as const }],
@@ -55,6 +57,7 @@ describe('machine agent install Action parity', () => {
     };
     const executor = createActionExecutor({
       isActionApprovalRequired: () => false,
+      presentUserActionConfirmation: async () => true,
       machineAgentInstallStart: async (args: Parameters<NonNullable<ActionExecutorDeps['machineAgentInstallStart']>>[0]) => {
         requests.push(args);
         return { ok: true, jobId: 'job-1' };
@@ -66,7 +69,7 @@ describe('machine agent install Action parity', () => {
     } as unknown as ActionExecutorDeps);
     const context = { surface: 'ui' as const, authority: 'present_user' as const };
     expect(await executor.execute('machines.agents.install', { machineId: 'machine', agentId: 'acme/agent', intent: 'install' }, context)).toEqual({ ok: true, result: { ok: true, jobId: 'job-1' } });
-    expect(requests[0]).toMatchObject({ machineId: 'machine', agentId: 'acme/agent', consent: { vendorRecipe: false } });
+    expect(requests[0]).toMatchObject({ machineId: 'machine', agentId: 'acme/agent', consent: { vendorRecipe: true } });
     expect(await executor.execute('machines.agents.install.status', { machineId: 'machine', jobId: 'job-1' }, context)).toMatchObject({ ok: true, result: { nextCursor: 1, events: [{ t: 'progress', bytesDone: 32 }] } });
     const status = await executor.execute('machines.agents.install.status', { machineId: 'machine', jobId: 'job-1', cursor: 1 }, context);
     expect(status).toMatchObject({ ok: true, result: { ...snapshot, nextCursor: 1, events: [] } });

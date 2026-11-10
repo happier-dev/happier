@@ -5,6 +5,8 @@ import { BackendTargetRefSchema } from '../../backends/targets/backendTargetRef.
 import { readBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { ConnectedServiceBindingsV2Schema } from '../../connect/connectedServiceBindings.js';
+import { AcpConfigOptionOverridesV1Schema } from '../../sessions/metadata/metadataOverridesV1.js';
 
 export const LlmTaskPermissionModeSchema = lazyZodSchema(() => z.enum([
   'no_tools',
@@ -14,9 +16,17 @@ export const LlmTaskPermissionModeSchema = lazyZodSchema(() => z.enum([
 ]));
 export type LlmTaskPermissionMode = z.infer<typeof LlmTaskPermissionModeSchema>;
 
+/**
+ * One explicit runner choice: Agent + model (native or through a Provider
+ * connection), the Agent's connected-service route, its config options such as
+ * effort, and the permission level.
+ */
 export const LlmTaskRunnerConfigV1WriteSchema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
-    modelSelection: ProviderBoundModelRefSchema.check(z.refine(value => value.providerConnectionId === null, 'Task runner configuration currently supports native Agent models')),
+    modelSelection: ProviderBoundModelRefSchema,
+    /** Absent: the Account's default route for that Agent. Null: the machine's own sign-in. */
+    connectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)),
+    sessionConfigOptionOverrides: z.optional(AcpConfigOptionOverridesV1Schema),
     permissionMode: z.optional(LlmTaskPermissionModeSchema),
   }));
 
@@ -39,3 +49,24 @@ export const LlmTaskRunnerConfigV1Schema = lazyZodSchema(() => (<I extends z.cor
 }), StoredRunnerSchema));
 
 export type LlmTaskRunnerConfigV1 = z.infer<typeof LlmTaskRunnerConfigV1Schema>;
+
+/** The person chose Auto: the task owner picks among what is ready on the executing machine. */
+export const LlmTaskRunnerAutoV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  mode: z.literal('auto'),
+  /** The person's effort for this task; absent: the picked model's lowest effort. */
+  sessionConfigOptionOverrides: z.optional(AcpConfigOptionOverridesV1Schema),
+  permissionMode: z.optional(LlmTaskPermissionModeSchema),
+}));
+export type LlmTaskRunnerAutoV1 = z.infer<typeof LlmTaskRunnerAutoV1Schema>;
+
+/** A per-task runner setting: Auto, or one explicit runner. */
+export const LlmTaskRunnerChoiceV1Schema = lazyZodSchema(() => z.union([
+  createStoredReadSchema(LlmTaskRunnerAutoV1Schema),
+  LlmTaskRunnerConfigV1Schema,
+]));
+export type LlmTaskRunnerChoiceV1 = z.infer<typeof LlmTaskRunnerChoiceV1Schema>;
+
+export function isLlmTaskRunnerAutoV1(choice: LlmTaskRunnerChoiceV1 | null | undefined): choice is LlmTaskRunnerAutoV1 | null | undefined {
+  return !choice || 'mode' in choice;
+}

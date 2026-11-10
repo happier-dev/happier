@@ -35,8 +35,7 @@ export function useMachineAgentRowActions(input: Readonly<{
                 const intent = action.kind === 'retry' ? agent.job?.intent ?? 'install' : action.kind;
                 fireAndForget(withAgentInstallJobFailureFeedback(execute(intent === 'uninstall' ? 'machines.agents.uninstall' : 'machines.agents.install', {
                     machineId, agentId: agent.agentId, ...(agent.definitionId === undefined ? {} : { definitionId: agent.definitionId }),
-                    // Consent is reviewed by the shared Action confirmation before execution.
-                    ...(intent === 'uninstall' ? {} : { intent, consent: { vendorRecipe: agent.install.requiresVendorConsent } }),
+                    ...(intent === 'uninstall' ? {} : { intent }),
                 }), isCurrent), { tag: 'machineAgentRowAction.install' });
                 onOpenForm(agent);
                 return;

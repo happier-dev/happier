@@ -111,7 +111,7 @@ describe('Agent CLI compiled install jobs', () => {
       await owner.run([intent, 'codex', '--json']);
       expect(JSON.parse(output.logs.join('\n'))).toMatchObject({ ok: true, kind: `agents_${intent}`, data: { agentId: 'codex', jobId: 'job-codex', version: '1.2.3' } });
       expect(owner.requests).toEqual([
-        { machineId: 'current-machine', agentId: 'codex', intent, consent: { vendorRecipe: false } },
+        { machineId: 'current-machine', agentId: 'codex', intent, consent: { vendorRecipe: true } },
         { machineId: 'current-machine', jobId: 'job-codex', cursor: 0 },
       ]);
     } finally { output.restore(); }
