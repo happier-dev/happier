@@ -137,6 +137,84 @@ function providerSetupRemediationOperationSnapshot() {
 
 const providerSetupRemediationOperation = providerSetupRemediationOperationSnapshot();
 
+it('resolves a notification destination picker through the current provider without sending or saving', async () => {
+  const operation = { ...providerSetupOperationSnapshot(), role: 'notificationDestinationSetup',
+    action: { pluginId: providerContributor().pluginId, localId: 'notification-destination-setup' } } as const;
+  const destination = { connectionId: 'connection-1', endpoint: { kind: 'shared', audience: 'shared', id: 'room-1', label: 'Deploy alerts' } } as const;
+  const settleEphemeralInput = vi.fn(async () => {});
+  const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => {
+    expect(request.action).toEqual(operation.action);
+    return { kind: 'resolved', destinations: [destination] };
+  });
+  const selectActionInput = vi.fn(async () => ({ kind: 'submitted' as const, action: operation.action,
+    input: { connectionId: 'connection-1', query: 'deploys' },
+    selection: { target: { pluginId: 'happier.channels', sourceCustody: { kind: 'development' as const, registeredRootId: 'channels-target-root-a' } },
+      point: operation.point, contributor: providerPortableContributor() },
+    connectedAccount: { kind: 'none' as const }, presentation: { connectedAccountLabel: null, machineDisplayName: null } }));
+  const fixture = await createPluginUiTestkit({
+    identity: { instanceId: 'notification-destination-select', mountNonce: 'notification-destination-select' },
+    authorPlugin: { id: 'happier.channels', version: '0.0.0' }, surface: renderSurface,
+    surfaceContext: createSurfaceContextFixture({ mount: { kind: 'embedded', role: 'ephemeralInput', presentation: 'content' },
+      targetedContributions: { target: { pluginId: 'happier.channels', occurrenceId: 'channels-target-occurrence-a',
+        sourceCustody: { kind: 'development', registeredRootId: 'channels-target-root-a' } },
+        points: [{ pointId: operation.point.pointId, protocols: [{ protocol: providerProtocol(), contributions: [{
+          contributor: providerContributor(), protocol: providerProtocol(), operations: [operation], surfaces: [],
+        }] }] }] } }),
+    launchInput: { inputType: { pluginId: 'happier.channels', localId: 'notification-destination' }, semantic: 'notificationDestination',
+      value: { channelId: 'com.example.conversation-provider/alerts' } }, adapter: createChannelsSemanticAdapter(),
+    handlers: { settleEphemeralInput, executeAction, selectActionInput, readResource: bindingResourceReader() },
+  });
+  try {
+    expect(executeAction).not.toHaveBeenCalled();
+    await fixture.press(await fixture.findByRole('button', { name: 'Example conversation' }));
+    await fixture.press(await fixture.findByRole('button', { name: 'Deploy alerts' }));
+    expect(settleEphemeralInput).toHaveBeenCalledWith(expect.objectContaining({ settlement: { kind: 'completed',
+      input: { channelId: 'com.example.conversation-provider/alerts', destination } } }));
+    expect(executeAction).toHaveBeenCalledTimes(1);
+  } finally { await fixture.dispose(); }
+});
+
+it('selects a configured channel in the notification destination picker without a provider setup operation', async () => {
+  const settleEphemeralInput = vi.fn(async () => {});
+  const executeAction = vi.fn(async () => { throw new Error('An existing channel needs no provider setup'); });
+  const context = createChannelsSurfaceContext();
+  const fixture = await createPluginUiTestkit({
+    identity: { instanceId: 'notification-channel-select', mountNonce: 'notification-channel-select' },
+    authorPlugin: { id: 'happier.channels', version: '0.0.0' }, surface: renderSurface,
+    surfaceContext: { ...context, mount: { kind: 'embedded', role: 'ephemeralInput', presentation: 'content' } },
+    launchInput: { inputType: { pluginId: 'happier.channels', localId: 'notification-destination' },
+      semantic: 'notificationDestination', value: { channelId: 'expo_push' } },
+    adapter: createChannelsSemanticAdapter(),
+    handlers: { settleEphemeralInput, executeAction, readResource: bindingResourceReader() },
+  });
+  try {
+    expect(settleEphemeralInput).not.toHaveBeenCalled();
+    await fixture.press(await fixture.getByRole('button', { name: 'Use channel' }));
+    expect(settleEphemeralInput).toHaveBeenCalledWith(expect.objectContaining({ settlement: {
+      kind: 'completed', input: { channelId: 'expo_push' },
+    } }));
+    expect(executeAction).not.toHaveBeenCalled();
+  } finally { await fixture.dispose(); }
+});
+
+it('cancels a notification destination picker without changing connections or sending', async () => {
+  const settleEphemeralInput = vi.fn(async () => {});
+  const executeAction = vi.fn(async () => { throw new Error('Cancel must not execute an Action'); });
+  const context = createChannelsSurfaceContext();
+  const fixture = await createPluginUiTestkit({
+    identity: { instanceId: 'notification-destination-cancel', mountNonce: 'notification-destination-cancel' },
+    authorPlugin: { id: 'happier.channels', version: '0.0.0' }, surface: renderSurface,
+    surfaceContext: { ...context, mount: { kind: 'embedded', role: 'ephemeralInput', presentation: 'content' } },
+    launchInput: {}, adapter: createChannelsSemanticAdapter(),
+    handlers: { settleEphemeralInput, executeAction, readResource: bindingResourceReader() },
+  });
+  try {
+    await fixture.press(await fixture.getByRole('button', { name: 'Cancel' }));
+    expect(settleEphemeralInput).toHaveBeenCalledWith(expect.objectContaining({ settlement: { kind: 'cancelled' } }));
+    expect(executeAction).not.toHaveBeenCalled();
+  } finally { await fixture.dispose(); }
+});
+
 function jsonResource(value: unknown, digestDigit: string): ResourceContent {
   return {
     contentType: 'application/json',

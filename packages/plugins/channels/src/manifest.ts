@@ -7,7 +7,8 @@ import type {
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { DefinedContributionPointProtocolMap } from '@happier-dev/plugin-sdk/contributions';
 import { DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1, DiscussionReplyDestinationInputV1Schema,
-  DiscussionReplyDestinationResultV1Schema } from '@happier-dev/channels-protocol/v1';
+  DiscussionReplyDestinationResultV1Schema, NOTIFICATION_DESTINATION_INPUT_TYPE_V1,
+  NotificationDestinationSelectionV1Schema } from '@happier-dev/channels-protocol/v1';
 import { readConversationDiscussionReplyDestinationForInvocation } from './discussionReplyDestination.js';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
@@ -478,6 +479,13 @@ function createChannelsPlugin(): ChannelsPlugin {
       },
     },
     contributionPoints: PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS,
+    inputTypes: {
+      [NOTIFICATION_DESTINATION_INPUT_TYPE_V1.localId]: {
+        title: 'Alert destination', semantic: 'notificationDestination',
+        valueSchema: NotificationDestinationSelectionV1Schema.jsonSchema,
+        picker: CHANNELS_RENDERER_ID,
+      },
+    },
     resources: {
       ...CHANNELS_UI_TRANSLATION_RESOURCES,
       'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },

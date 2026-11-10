@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { NotificationDestinationPicker } from './notificationDestinationPicker.js';
 import { useExplicitFreshRereadAfterUnknownOutcome } from './useExplicitFreshRereadAfterUnknownOutcome.js';
 import { useConversationProviderDisplayName, useConversationProviderDisplayNameResolver } from './providerDisplayName.js';
 import { useDiscussionCandidatePages, useSessionCandidatePages, type SessionCandidate as BindingCreateSessionCandidate } from './useSessionCandidatePages.js';
@@ -363,7 +364,7 @@ function isSameProviderContributionOperation(
 function currentProviderOperationsForRole(
   targetedContributions: SurfaceContext['targetedContributions'],
   targetPluginId: string,
-  role: 'setup' | 'setupRemediation',
+  role: 'setup' | 'setupRemediation' | 'notificationDestinationSetup',
   providerPluginId?: string,
   selectedContribution?: ProviderTargetedOperation,
 ): readonly ProviderTargetedOperation[] {
@@ -14785,6 +14786,11 @@ function ChannelsPageAvailabilitySurface(props: Readonly<{
 }
 
 export function ChannelsSurface(context: RenderContext): React.ReactElement {
+  if (context.surface.mount.kind === 'embedded' && context.surface.mount.role === 'ephemeralInput') {
+    return <NotificationDestinationPicker context={context} operations={currentProviderOperationsForRole(
+      context.surface.targetedContributions, context.plugin.id, 'notificationDestinationSetup',
+    )} />;
+  }
   const target = context.surface.target;
   if (
     context.surface.mount.kind === 'destination'
