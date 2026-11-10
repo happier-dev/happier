@@ -1496,7 +1496,7 @@ describe('voice tool handlers', () => {
     const spawnInput = {
       creationKey: 'manual:voice-v2-contract',
       executionTarget,
-      directory: { kind: 'path', path: '/tmp/s1' },
+      directory: signedOutDefault ? { kind: 'managed' } : { kind: 'path', path: '/tmp/s1' },
       ...(!configuredDefault && !rememberedDefault && !signedOutDefault ? { agentTarget: selectedAgentTarget } : {}),
       initialInput: {
         text: 'Inspect this project.',
@@ -1523,28 +1523,46 @@ describe('voice tool handlers', () => {
       ...storage.getState().machines.m1,
       dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
       storageMode: 'plain',
+      presenceProtocolVersion: 1,
     }], true);
+    const inventory = createReadyMachineAgentInventoryFixture([{ agentId: 'claude', title: 'Claude' }, { agentId: 'codex', title: 'Codex' }]);
     if (signedOutDefault) {
-      const { resolveServerCredentialAccountScope, captureServerCredentialAccountScopeLifetime } = await import('@/sync/domains/scope/serverCredentialAccountScope');
-      const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
-      const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
-      const scope = await resolveServerCredentialAccountScope(homeA);
-      if (scope.kind !== 'bound') throw new Error('Expected Account scope');
-      const lifetime = captureServerCredentialAccountScopeLifetime(scope);
-      const key = serverAccountScopedResourceKey(lifetime.scope, 'machine-agents', 'm1');
-      const inventory = createReadyMachineAgentInventoryFixture([{ agentId: 'claude', title: 'Claude' }, { agentId: 'codex', title: 'Codex' }]);
-      machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 1,
-        items: Object.values(inventory.capabilities.results).map(result => result.data).map(item => item.agentId === 'claude'
-          ? { ...item, signIn: { ...item.signIn, status: 'signedOut' } } : item) });
+      // RUN111 starts at Home without a mounted inventory presenter. Supply
+      // Machine-owned facts only at the RPC boundary, never a populated store.
+      const claude = inventory.capabilities.results['cli.claude']!.data;
+      inventory.capabilities.results['cli.claude']!.data = { ...claude,
+        signIn: { ...claude.signIn, status: 'signedOut' }, isLoggedIn: false,
+        authStatus: { state: 'logged_out', checkedAt: 1 } };
     }
     let spawnSettlement: unknown = spawnResult;
+    const { buildConfiguredAcpAgentSelectionV1 } = await import('@happier-dev/protocol/agents/executionTargetV1');
+    const { MachinesAgentsListOutputSchema } = await import('@happier-dev/protocol/capabilities/machineAgentInventory');
+    const { isLoggedIn: _isLoggedIn, authStatus: _authStatus, ...configuredFacts } = inventory.capabilities.results['cli.codex']!.data;
+    const configuredInventory = MachinesAgentsListOutputSchema.parse({ items: configuredDefault || rememberedDefault ? [{
+      ...configuredFacts,
+      agentId: buildConfiguredAcpAgentSelectionV1('qa-c-exact-args').agentId,
+      definitionId: 'qa-c-exact-args', title: 'Configured default', managed: true,
+      fit: { kind: 'can_run', via: 'npm' },
+    }] : [] });
     daemonRpc.mockImplementation(async request => {
+      if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+        return { protocolVersion: 1, projection: inventory.projection };
+      }
+      if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return { ...inventory.capabilities, results: {
+        ...inventory.capabilities.results,
+        'tool.acpAgentInventory': { ok: true, checkedAt: 1, data: configuredInventory },
+      } };
+      if (request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { jobs: [] };
       if (request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
         return createExistingSessionDirectoryPreflightResult(request.payload);
       }
       if (request.method === RPC_METHODS.SESSION_SPAWN_NEW) return spawnSettlement;
       throw new Error(`Unexpected Voice spawn daemon RPC: ${request.method}`);
     });
+    // Each scenario installs a new daemon boundary; invalidate the preceding
+    // scenario's cached Machine facts through the normal producer notification.
+    const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+    publishMachineContributionRegistryProjectionInvalidation({ serverId: homeA, machineId: 'm1' }, 'authority');
 
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ currentServerId: homeA,
@@ -1680,21 +1698,22 @@ describe('voice tool handlers', () => {
     expect(delivered).toHaveLength(1);
     if (signedOutDefault) {
       const { resolveServerCredentialAccountScope, captureServerCredentialAccountScopeLifetime } = await import('@/sync/domains/scope/serverCredentialAccountScope');
-      const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
-      const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
+      const { refreshMachineAgents } = await import('@/agents/machineAgents/useMachineAgents');
       const scope = await resolveServerCredentialAccountScope(homeA);
       if (scope.kind !== 'bound') throw new Error('Expected Account scope');
       const lifetime = captureServerCredentialAccountScopeLifetime(scope);
-      const key = serverAccountScopedResourceKey(lifetime.scope, 'machine-agents', 'm1');
-      const inventory = createReadyMachineAgentInventoryFixture([{ agentId: 'claude', title: 'Claude' }, { agentId: 'codex', title: 'Codex' }]);
-      const items = Object.values(inventory.capabilities.results).map(result => result.data);
+      const refreshSignInFacts = async (signedIn: boolean) => {
+        for (const result of Object.values(inventory.capabilities.results)) {
+          result.data = { ...result.data, signIn: { ...result.data.signIn, status: signedIn ? 'signedIn' : 'signedOut' },
+            isLoggedIn: signedIn, authStatus: { state: signedIn ? 'logged_in' : 'logged_out', checkedAt: Date.now() } };
+        }
+        await refreshMachineAgents({ serverId: lifetime.scope.serverId, machineId: 'm1', accountLifetime: lifetime, force: true });
+      };
       const { SessionSpawnNewResultV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
       spawnSettlement = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'spawn_failed', retryable: false,
         launchError: { kind: 'launch_error', code: 'agent_startup_failed', message: 'Agent startup failed',
           failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error',
             providerErrorMessage: 'Claude is signed out on the selected machine' } } });
-      machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 1,
-        items: items.map(item => item.agentId === 'claude' ? { ...item, signIn: { ...item.signIn, status: 'signedOut' } } : item) });
       const claudeTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
       const startupFailure = spawnSettlement;
       spawnSettlement = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'agent_signed_out', retryable: false, agentId: 'claude' });
@@ -1705,21 +1724,20 @@ describe('voice tool handlers', () => {
       expect(entry === 'discovered' ? explicitFailure.result : explicitFailure).toMatchObject(spawnSettlement);
       expect(explicitFailure).not.toHaveProperty('alternativeAgent');
       // With no ready Agent, preserve and name the preferred Agent's actual refusal.
-      machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 1,
-        items: items.map(item => ({ ...item, signIn: { ...item.signIn, status: 'signedOut' } })) });
+      await refreshSignInFacts(false);
       const unavailable = JSON.parse(await invokeCreate('voice-none-ready', { ...spawnInput, creationKey: 'manual:voice-none-ready' }));
       expect(unavailable).toMatchObject({ agentTarget: claudeTarget, errorMessage: expect.stringContaining('claude') });
       expect(entry === 'discovered' ? unavailable.result : unavailable).toMatchObject(spawnSettlement);
       expect(unavailable).not.toHaveProperty('alternativeAgent');
       // A failure after selecting the ready default may offer another ready Agent.
-      machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 1, items });
+      await refreshSignInFacts(true);
       spawnSettlement = startupFailure;
       const failed = JSON.parse(await invokeCreate('voice-signed-out-failure', { ...spawnInput, creationKey: 'manual:voice-signed-out' }));
       expect(failed).toMatchObject({ agentTarget: claudeTarget,
         alternativeAgent: { label: 'Codex', agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
         errorMessage: expect.stringContaining('Codex') });
       // Retained facts do not promise runnable alternatives after presence loss.
-      machineAgentInventoryStore.publish(key, { status: 'offline', items, lastCheckedAt: 1 });
+      storage.getState().applyMachineActivityUpdates([{ id: 'm1', active: false, activeAt: Date.now() }], { sourceServerId: homeA });
       const stale = JSON.parse(await invokeCreate('voice-signed-out-stale', { ...spawnInput, creationKey: 'manual:voice-signed-out-stale' }));
       expect(stale).not.toHaveProperty('alternativeAgent');
     }

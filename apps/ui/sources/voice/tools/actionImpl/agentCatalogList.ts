@@ -46,7 +46,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { PersistedBackendTargetRefV2Schema, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { readMachineAgentsForScope } from '@/agents/machineAgents/useMachineAgents';
+import { readMachineAgentsForScope, refreshMachineAgents } from '@/agents/machineAgents/useMachineAgents';
 import { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 
 function normalizeId(raw: unknown): string {
@@ -382,8 +382,11 @@ export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDi
     return target.success ? [target.data] : [];
   });
   const scope = machineId && serverId ? await resolveServerCredentialAccountScope(serverId) : null;
-  const machineAgents = scope?.kind === 'bound'
-    ? readMachineAgentsForScope(captureServerCredentialAccountScopeLifetime(scope), machineId).agents : undefined;
+  const lifetime = scope?.kind === 'bound' ? captureServerCredentialAccountScopeLifetime(scope) : null;
+  // An inventory Action is demand even when Home has no mounted Agent picker.
+  // The inventory owner reuses its projection/probe caches and readiness policy.
+  if (lifetime) await refreshMachineAgents({ serverId: lifetime.scope.serverId, machineId, accountLifetime: lifetime });
+  const machineAgents = lifetime ? readMachineAgentsForScope(lifetime, machineId).agents : undefined;
   const preferred = resolvePreferredBackendTarget({ ...readLastUsedBackendSelection(settingsScope), availableBackendTargets, machineAgents });
   const defaultTargetKey = buildBackendTargetKeyV2(preferred);
 

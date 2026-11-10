@@ -28,9 +28,11 @@ an unknown or unavailable target stays absent.
 
 For unnamed Voice Session creation in 0.3 development source, the inventory's
 `defaultTargetKey` comes from the shared backend preference owner using the
-selected Machine and Account's held Agent readiness. A ready Agent takes
-precedence over an unavailable automatic default, without starting another
-probe. Explicit Agent choices remain unchanged. If no Agent is ready, creation
+selected Machine and Account's Agent readiness. The inventory Action acquires
+that readiness through the existing Machine inventory owner, including a cold
+Home call without a mounted Agent picker; the owner reuses its scoped projection
+and probe caches. A ready Agent takes precedence over an unavailable automatic
+default. Explicit Agent choices remain unchanged. If no Agent is ready, creation
 retains the ordinary default so its named launch refusal reaches the caller.
 
 ---
