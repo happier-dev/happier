@@ -47,6 +47,7 @@ function useReanimatedAgentCursorMotion(): ReanimatedAgentCursorMotion {
                     duration: reanimatedMotionTokens.durationMs.fast,
                     easing: reanimatedMotionTokens.easing[curve],
                 }, onDone ? (finished) => {
+                    'worklet';
                     // A fade a later call redirected reports unfinished and is not "done".
                     if (finished) runOnJS(onDone)();
                 } : undefined);
