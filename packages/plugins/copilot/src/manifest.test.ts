@@ -7,8 +7,8 @@ import { COPILOT_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
 import { COPILOT_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Copilot plugin manifest', () => {
-  it('offers distinct optional ChatGPT and native GitHub account purposes', () => {
-    expect(PLUGIN_MANIFEST.contributes.agents?.[0]?.connectedAccounts).toEqual([{
+  it('preserves distinct optional ChatGPT and native GitHub account purposes', () => {
+    expect(PLUGIN_MANIFEST.contributes.agents?.[0]?.connectedAccounts).toEqual(expect.arrayContaining([{
       purpose: 'openai-codex',
       service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
       materializationKinds: ['httpHeaders'],
@@ -18,7 +18,7 @@ describe('Copilot plugin manifest', () => {
       service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
       materializationKinds: ['environment'],
       credentialKinds: ['token', 'oauth'],
-    }]);
+    }]));
   });
 
   async function registeredProviderAdapter(): Promise<AgentProviderBindingAdapter> {

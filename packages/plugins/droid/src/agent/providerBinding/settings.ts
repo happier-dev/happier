@@ -2,6 +2,10 @@ export const DROID_PROVIDER_SETTINGS_PATH = 'droid/settings.json';
 export const DROID_PROVIDER_SECRET_ENV = 'HAPPIER_DROID_PROVIDER_API_KEY';
 export const DROID_PROVIDER_OWNED_ENV_KEYS = [DROID_PROVIDER_SECRET_ENV, 'FACTORY_API_KEY'] as const;
 
+export function droidSettingsCommandArgs(settingsPath: string): readonly string[] {
+  return ['--settings', settingsPath];
+}
+
 export function droidProviderModelDisplayName(modelId: string): string {
   return `Happier provider: ${modelId}`;
 }

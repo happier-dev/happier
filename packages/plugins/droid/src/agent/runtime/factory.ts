@@ -4,6 +4,7 @@ import type { AgentAcpRuntimeOptions, AgentExecutionRunOpenRequest, AgentRuntime
 
 import { DROID_ACP_COMMAND } from '../preflight.js';
 import { DROID_PROVIDER_SETTINGS_PATH, droidProviderModelDisplayName } from '../providerBinding/adapter.js';
+import { droidSettingsCommandArgs } from '../providerBinding/settings.js';
 import { DROID_TERMINAL_CONTRIBUTION } from '../terminal/contribution.js';
 import { prepareDroidConnectedAccount, type DroidConnectedAccountLaunch } from './connectedAccount.js';
 export { droidExternalSessionsContribution } from '../externalSessions/contribution.js';
@@ -13,7 +14,7 @@ function launch<TRequest extends AgentSessionOpenRequest | AgentExecutionRunOpen
   const args: string[] = [...DROID_ACP_COMMAND.args];
   const definition: NonNullable<AgentAcpRuntimeOptions['definition']> = { modelConfigOptionId: 'model', mcp: { policy: 'pass_through' } };
   if (!binding && !customModel) return { request, options: { transport: { kind: 'stdio' as const, executable: { kind: 'systemTool' as const, id: DROID_ACP_COMMAND.toolId }, args }, definition } };
-  let settingsPath = customModel?.settingsPath;
+  let settingsPath: string | undefined;
   if (binding) {
     const materialization = binding.materialization;
     if (materialization.kind !== 'configFile' || materialization.relativePaths.length !== 1
@@ -24,14 +25,14 @@ function launch<TRequest extends AgentSessionOpenRequest | AgentExecutionRunOpen
   if (!request.configuration) throw new Error('Droid requires the host-projected Agent session configuration');
   // --settings merges this file for this process without writing user settings.
   // https://docs.factory.com/droid-cli/cli-reference
-  args.push('--settings', settingsPath!);
+  args.push(...(customModel?.commandArgsSuffix ?? droidSettingsCommandArgs(settingsPath!)));
   let advertisedNativeModelId: string | null = null;
   const unavailable = () => new PluginError({ code: 'droid_provider_model_unavailable', message: 'Droid did not advertise the selected Provider model unambiguously.' });
   return {
     request: { ...request, configuration: { ...request.configuration, model: { ...request.configuration.model, value: model.id } } },
     options: { transport: { kind: 'stdio' as const, executable: { kind: 'systemTool' as const, id: DROID_ACP_COMMAND.toolId }, args },
       definition: { ...definition, models: {
-        ...(customModel ? { catalogConfidence: 'account_unverified' as const } : {}),
+        ...(customModel ? { catalogConfidence: customModel.catalogConfidence } : {}),
         projectModel: (_raw, normalized) => normalized,
         projectModelState({ normalizedModelState }) {
           const matches = normalizedModelState.availableModels.filter(option => option.id.startsWith('custom:') && option.name === droidProviderModelDisplayName(model.id));
@@ -64,7 +65,7 @@ async function openDroid<Request extends AgentSessionOpenRequest | AgentExecutio
   context: Pick<AgentRuntimeContext, 'services' | 'signal'>,
   open: (prepared: ReturnType<typeof launch<Request>>) => Promise<Runtime> | Runtime,
 ): Promise<Runtime> {
-  const account = await prepareDroidConnectedAccount(request, context);
+  const account = await prepareDroidConnectedAccount(request, context, request.configuration?.model.value);
   try {
     const runtime = await open(launch(account.request, account.customModel));
     if (!account.customModel) return runtime;

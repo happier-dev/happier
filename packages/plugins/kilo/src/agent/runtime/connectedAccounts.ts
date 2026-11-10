@@ -4,6 +4,8 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { writeAtomicTextFileIfChanged } from '@happier-dev/plugin-sdk/fs';
 import { buildConnectedAccountRequestAuthClientSource, CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { AgentAcpModelControls, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import { prepareKiloConnectedAccountKey, requireKiloConnectedAccountModel, selectKiloConnectedAccountKey } from './connectedAccountKeys.js';
+import { kiloNativeUpstreamModelControls } from '../providerBinding/models.js';
 
 export const KILO_CODEX_PURPOSE = 'openai-codex-model-request';
 const MARKER = 'happier-kilo-request-auth';
@@ -54,24 +56,28 @@ export default async () => ({ auth: { provider: 'openai', methods: [], loader: a
 `;
 }
 
-export async function prepareKiloConnectedAccount(request: Pick<AgentSessionOpenRequest, 'launchEnvironment' | 'providerBinding'> & Partial<Pick<AgentSessionOpenRequest, 'configuration'>>): Promise<Readonly<{
+export async function prepareKiloConnectedAccount(request: Pick<AgentSessionOpenRequest, 'launchEnvironment' | 'providerBinding' | 'connectedAccounts'> & Readonly<{ modelId?: string | null }>): Promise<Readonly<{
   env: Readonly<Record<string, string>>;
+  launchEnvironment?: AgentSessionOpenRequest['launchEnvironment'];
   models?: AgentAcpModelControls;
 }>> {
   const capabilityPath = request.launchEnvironment?.values[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV];
+  const purposes = request.connectedAccounts?.map(row => row.purpose) ?? [];
+  const selected = selectKiloConnectedAccountKey(purposes, Boolean(request.providerBinding || capabilityPath || purposes.includes(KILO_CODEX_PURPOSE)));
+  if (selected) {
+    const model = requireKiloConnectedAccountModel(request.modelId);
+    const prepared = prepareKiloConnectedAccountKey(request.launchEnvironment ?? { values: {}, unset: [] }, selected, model);
+    return { env: prepared.env, launchEnvironment: prepared.launchEnvironment,
+      models: { ...kiloNativeUpstreamModelControls(model, prepared.nativeModelId!, true), catalogConfidence: 'account_unverified' } };
+  }
   if (!capabilityPath) return { env: {} };
   if (request.providerBinding) throw new PluginError({ code: 'plugin_kilo_subscription_provider_conflict', message: 'Select either a Connected ChatGPT account or a Provider connection for Kilo.' });
-  if (!request.configuration?.model.value?.trim()) {
-    throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
-      message: 'Choose a model for the Kilo ChatGPT Connected Account.',
-      details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
-        phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
-  }
+  const model = requireKiloConnectedAccountModel(request.modelId);
   const resolveModel = (modelId: string) => {
     if (!modelId.startsWith('openai/')) throw new PluginError({ code: 'plugin_kilo_subscription_model_unsupported', message: 'Select an OpenAI model supported by the Kilo ChatGPT subscription catalog.' });
     return { modelId };
   };
-  resolveModel(request.configuration.model.value);
+  resolveModel(model);
   const path = join(dirname(capabilityPath), 'kilo-request-auth.mjs');
   await writeAtomicTextFileIfChanged({ path, contents: requestAuthPluginSource(), mode: 0o600 });
   return {

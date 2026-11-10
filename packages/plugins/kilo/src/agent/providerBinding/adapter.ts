@@ -6,7 +6,7 @@ import type {
   AgentProviderBindingPrepareInput,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-const SECRET_ENV_KEY = 'HAPPIER_KILO_PROVIDER_API_KEY';
+export const KILO_PROVIDER_SECRET_ENV_KEY = 'HAPPIER_KILO_PROVIDER_API_KEY';
 const DRIVERS = {
   'openai-chat': '@ai-sdk/openai-compatible',
   'openai-responses': '@ai-sdk/openai',
@@ -14,7 +14,7 @@ const DRIVERS = {
 } as const;
 
 export const KILO_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
-  SECRET_ENV_KEY, 'KILO_CONFIG_CONTENT', 'KILO_AUTH_CONTENT',
+  KILO_PROVIDER_SECRET_ENV_KEY, 'KILO_CONFIG_CONTENT', 'KILO_AUTH_CONTENT',
   'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
 ] as const);
 
@@ -57,6 +57,35 @@ function credentialValue(input: AgentProviderBindingMaterializeInput): string | 
   return value;
 }
 
+export function buildKiloNativeUpstreamConfig({ key, npm, model, baseURL, headers = {}, hasCredential }: Readonly<{
+  key: string; npm: string; model?: Readonly<{ id: string; name: string }>; baseURL: string;
+  headers?: Readonly<Record<string, string>>; hasCredential: boolean;
+}>): string {
+    // Trusted Kilo config expands these tokens before JSON parsing, including
+    // in model catalog text and headers supplied by an upstream Provider.
+    const publicConfig = JSON.stringify({ modelId: model?.id, modelName: model?.name,
+      baseURL: baseURL, headers });
+    if (/\{(?:env|file):/u.test(publicConfig)) {
+      throw new Error('Kilo Provider data cannot contain native config substitutions');
+    }
+    if (Object.keys(headers).some(name => ['authorization', 'x-api-key'].includes(name.toLowerCase()))) {
+      throw new Error('A Kilo provider public header competes with the credential destination');
+    }
+    // KILO_CONFIG_CONTENT is trusted native configuration, so {env:...} expands
+    // inside the child. No credential enters a native config or auth file.
+    return JSON.stringify({
+      enabled_providers: [key],
+      ...(model ? { model: `${key}/${model.id}` } : {}),
+      provider: { [key]: {
+        npm, name: 'Happier provider',
+        options: { baseURL: baseURL,
+          ...(hasCredential ? { apiKey: `{env:${KILO_PROVIDER_SECRET_ENV_KEY}}` } : {}),
+          ...(Object.keys(headers).length ? { headers } : {}) },
+        ...(model ? { models: { [model.id]: { name: model.name } } } : {}),
+      } },
+    });
+}
+
 export const KILO_PROVIDER_BINDING_ADAPTER_V1 = Object.freeze({
   v: 1,
   adapterVersion: 1,
@@ -70,33 +99,11 @@ export const KILO_PROVIDER_BINDING_ADAPTER_V1 = Object.freeze({
     if (!Object.hasOwn(DRIVERS, protocol)) throw new Error('Kilo provider binding does not support this wire protocol');
     const npm = DRIVERS[protocol as keyof typeof DRIVERS];
     const secret = credentialValue(input);
-    const headers = input.binding.endpoint.publicHeaders;
-    // Trusted Kilo config expands these tokens before JSON parsing, including
-    // in model catalog text and headers supplied by an upstream Provider.
-    const publicConfig = JSON.stringify({ modelId: input.binding.selection.model.id, modelName: input.binding.selection.model.name,
-      baseURL: input.binding.endpoint.normalizedUrl, headers });
-    if (/\{(?:env|file):/u.test(publicConfig)) {
-      throw new Error('Kilo Provider data cannot contain native config substitutions');
-    }
-    if (Object.keys(headers).some(name => ['authorization', 'x-api-key'].includes(name.toLowerCase()))) {
-      throw new Error('A Kilo provider public header competes with the credential destination');
-    }
-    // KILO_CONFIG_CONTENT is trusted native configuration, so {env:...} expands
-    // inside the child. No credential enters a native config or auth file.
-    const config = JSON.stringify({
-      enabled_providers: [key],
-      model: `${key}/${input.binding.selection.model.id}`,
-      provider: { [key]: {
-        npm, name: 'Happier provider',
-        options: { baseURL: input.binding.endpoint.normalizedUrl,
-          ...(secret ? { apiKey: `{env:${SECRET_ENV_KEY}}` } : {}),
-          ...(Object.keys(headers).length ? { headers } : {}) },
-        models: { [input.binding.selection.model.id]: { name: input.binding.selection.model.name } },
-      } },
-    });
+    const config = buildKiloNativeUpstreamConfig({ key, npm, model: input.binding.selection.model,
+      baseURL: input.binding.endpoint.normalizedUrl, headers: input.binding.endpoint.publicHeaders, hasCredential: Boolean(secret) });
     return { v: 1, kind: 'spawnEnv', env: KILO_PROVIDER_OWNED_ENV_KEYS.map(name => ({
       name, source: 'provider' as const,
-      value: name === SECRET_ENV_KEY ? secret
+      value: name === KILO_PROVIDER_SECRET_ENV_KEY ? secret
         : name === 'KILO_CONFIG_CONTENT' ? config
           : name === 'KILO_AUTH_CONTENT' ? '{}' : null,
     })) } as const;

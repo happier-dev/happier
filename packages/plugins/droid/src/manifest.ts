@@ -6,7 +6,7 @@ import { DROID_ACP_COMMAND } from './agent/preflight.js';
 import { droidExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { DROID_PROVIDER_BINDING_ADAPTER, DROID_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
 import { createDroidAgentRuntime } from './agent/runtime/factory.js';
-import { DROID_CHATGPT_PURPOSE, DROID_CHATGPT_SERVICE, DROID_CONNECTED_ACCOUNT_LAUNCH, prepareDroidConnectedAccount } from './agent/runtime/connectedAccount.js';
+import { DROID_CONNECTED_ACCOUNT_PURPOSES, DROID_CONNECTED_ACCOUNT_LAUNCH, prepareDroidConnectedAccount } from './agent/runtime/connectedAccount.js';
 
 
 export const DROID_PLUGIN = definePlugin({
@@ -21,8 +21,7 @@ export const DROID_PLUGIN = definePlugin({
       title: { key: 'agentInput.agent.droid', fallback: 'Factory Droid' },
       description: { key: 'profiles.aiBackend.droidSubtitleExperimental', fallback: 'Factory Droid (experimental)' },
       runtime: { kind: 'custom' },
-      connectedAccounts: [{ purpose: DROID_CHATGPT_PURPOSE, service: DROID_CHATGPT_SERVICE,
-        credentialKinds: ['oauth'], materializationKinds: ['httpHeaders'] }],
+      connectedAccounts: DROID_CONNECTED_ACCOUNT_PURPOSES.map(row => ({ ...row, credentialKinds: [...row.credentialKinds], materializationKinds: [...row.materializationKinds] })),
       providerRequirements: {
         acceptsProtocols: ['openai-chat', 'openai-responses', 'anthropic'], required: { streaming: true, toolRoundTrips: true },
         credentialSupport: { supportsNoAuth: true, apiKeyTransports: [
@@ -98,11 +97,12 @@ export const DROID_PLUGIN = definePlugin({
     providerBinding: DROID_PROVIDER_BINDING_ADAPTER,
     sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createDroidAgentRuntime', runtimeApiVersion: 1, externalSessionsExport: 'droidExternalSessionsContribution' },
     preflightSessionControls: {
-      async prepareLaunchEnvironment({ environment, connectedAccounts, signal }) {
-        // The account overlay requires an explicit model; catalog inspection
-        // consumes the same launch policy before any native process starts.
-        const prepared = await prepareDroidConnectedAccount({}, { services: { connectedAccounts }, signal });
-        return { environment, dispose: prepared.dispose };
+      async prepareLaunchEnvironment({ environment, connectedAccounts, signal, modelId }) {
+        const prepared = await prepareDroidConnectedAccount({ launchEnvironment: { values: environment, unset: [] } },
+          { services: { connectedAccounts }, signal }, modelId);
+        return { environment: prepared.request.launchEnvironment.values, unset: prepared.request.launchEnvironment.unset,
+          commandArgsSuffix: prepared.customModel?.commandArgsSuffix,
+          catalogConfidence: prepared.customModel?.catalogConfidence, dispose: prepared.dispose };
       },
       catalogs: { kind: 'acp', command: DROID_ACP_COMMAND },
     },

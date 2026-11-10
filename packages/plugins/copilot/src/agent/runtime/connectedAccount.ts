@@ -9,12 +9,12 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { COPILOT_ACP_MODEL_CONTROLS } from '../acp/modelControls.js';
-import { COPILOT_CONNECTED_ACCOUNT_PURPOSES, COPILOT_GITHUB_PURPOSE_ID } from '../auth/services/accountPurposes.js';
+import { COPILOT_CONNECTED_ACCOUNT_PURPOSES, COPILOT_GITHUB_PURPOSE_ID, COPILOT_NATIVE_KEY_PURPOSES } from '../auth/services/accountPurposes.js';
 import { COPILOT_AUTH_ENV_VARS, COPILOT_GITHUB_TOKEN_ENV_VAR } from '../auth/services/copilotAuth.js';
-import { COPILOT_PROVIDER_OWNED_ENV_KEYS } from '../providerBinding.js';
+import { COPILOT_PROVIDER_OWNED_ENV_KEYS, buildCopilotProviderEnvironment } from '../providerBinding.js';
 
 const PROVIDER_NAME = 'happier-chatgpt';
-type CopilotAccountRequest = Pick<AgentSessionOpenRequest, 'configuration' | 'providerBinding' | 'connectedAccounts' | 'launchEnvironment'>;
+type CopilotAccountRequest = Pick<AgentSessionOpenRequest, 'providerBinding' | 'connectedAccounts' | 'launchEnvironment'>;
 
 function withAccountEnvironment<T extends CopilotAccountRequest>(
   request: T, environment: Readonly<Record<string, string>>,
@@ -34,6 +34,7 @@ function withAccountEnvironment<T extends CopilotAccountRequest>(
 export async function prepareCopilotConnectedAccount<T extends CopilotAccountRequest>(
   request: T,
   context: Pick<AgentRuntimeContext, 'services' | 'signal'>,
+  modelId?: string | null,
 ): Promise<Readonly<{ request: T; models?: AgentAcpModelControls; dispose(): void }>> {
   const accounts = context.services.connectedAccounts;
   const selections = await Promise.all(COPILOT_CONNECTED_ACCOUNT_PURPOSES.map(async declaration => {
@@ -49,7 +50,7 @@ export async function prepareCopilotConnectedAccount<T extends CopilotAccountReq
     dispose() {} };
   if (selected.length > 1 || request.providerBinding) throw new PluginError({
     code: 'copilot_account_provider_conflict',
-    message: 'Choose one GitHub account, ChatGPT account or Provider connection for Copilot.',
+    message: 'Choose one Connected Account or Provider connection for Copilot.',
   });
   const { declaration, account, admitted } = selected[0]!;
   if (declaration.purpose === COPILOT_GITHUB_PURPOSE_ID) {
@@ -65,14 +66,25 @@ export async function prepareCopilotConnectedAccount<T extends CopilotAccountReq
     });
     return { request: withAccountEnvironment(request, { [COPILOT_GITHUB_TOKEN_ENV_VAR]: token }), dispose() {} };
   }
-  const selection = request.configuration?.model;
-  const modelId = selection?.value;
-  if (!modelId?.trim()) throw new PluginError({
+  if (!modelId?.trim() || modelId.trim() === 'default') throw new PluginError({
     code: 'agent_startup_model_reconciliation_failed', retryable: false,
-    message: 'Choose a model for the Copilot ChatGPT account.',
+    message: 'Choose a model for the Copilot Connected Account.',
     details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
       phase: 'client_start', failureReason: 'model_selection_required', retryable: false } },
   });
+  const nativeKey = COPILOT_NATIVE_KEY_PURPOSES.find(row => row.purpose === declaration.purpose);
+  if (nativeKey) {
+    const baseKey = 'baseUrlEnvironmentKey' in nativeKey ? nativeKey.baseUrlEnvironmentKey : undefined;
+    const material = await accounts.materialize(declaration.purpose, { kind: 'environment',
+      keys: [nativeKey.environmentKey, ...(baseKey ? [baseKey] : [])],
+    }, { signal: context.signal, expectedAccount: account });
+    const secret = material.kind === 'environment' ? material.env[nativeKey.environmentKey] : undefined;
+    const baseUrl = baseKey && material.kind === 'environment' ? material.env[baseKey] : 'baseUrl' in nativeKey ? nativeKey.baseUrl : undefined;
+    if (!secret?.trim() || !baseUrl) throw new PluginError({ code: 'copilot_account_materialization_unavailable', message: 'The selected Copilot account did not provide its native key and endpoint.' });
+    return { request: withAccountEnvironment(request, buildCopilotProviderEnvironment({ protocol: nativeKey.protocol,
+      baseUrl, modelId, credential: { kind: nativeKey.protocol === 'anthropic' ? 'api-key' : 'bearer', value: secret } })),
+      models: { ...COPILOT_ACP_MODEL_CONTROLS, catalogConfidence: 'account_unverified' }, dispose() {} };
+  }
   const materialized = await accounts.materialize(declaration.purpose, {
     kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['Authorization', 'ChatGPT-Account-Id'],
   }, { signal: context.signal, expectedAccount: account });

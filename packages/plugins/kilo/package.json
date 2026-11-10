@@ -38,7 +38,13 @@
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/plugin-sdk": "0.0.0"
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/plugins-kimi": "0.0.0",
+    "@happier-dev/plugins-claude": "0.0.0",
+    "@happier-dev/plugins-codex": "0.0.0",
+    "@happier-dev/plugins-openai": "0.0.0",
+    "@happier-dev/plugins-gemini": "0.0.0",
+    "@happier-dev/plugins-grok": "0.0.0"
   },
   "devDependencies": {
     "typescript": "^5.9.2",

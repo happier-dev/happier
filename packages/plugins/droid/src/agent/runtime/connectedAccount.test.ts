@@ -25,7 +25,7 @@ async function fixture(options: { bound?: boolean; materialization?: 'environmen
   // Host service port preserves the real Connected Account credential decoder;
   // only its persistent credential store is an in-memory boundary fixture.
   const connectedAccounts = {
-    getBinding: vi.fn(async () => options.bound === false ? null : { purpose, service: account.service, account, target: { kind: 'account' as const, displayName: 'ChatGPT' } }),
+    getBinding: vi.fn(async (requestedPurpose: string) => options.bound === false || requestedPurpose !== purpose ? null : { purpose, service: account.service, account, target: { kind: 'account' as const, displayName: 'ChatGPT' } }),
     materialize: vi.fn<ConnectedAccountsService['materialize']>(async (requestedPurpose, request, materializeOptions) => {
       expect(requestedPurpose).toBe(purpose);
       expect(materializeOptions?.expectedAccount).toEqual(account);
@@ -48,6 +48,29 @@ async function fixture(options: { bound?: boolean; materialization?: 'environmen
 }
 
 describe('Droid ChatGPT static access launch', () => {
+  it('prepares selected model preflight with the native settings, credential and catalog confidence', async () => {
+    const { registration, connectedAccounts } = await fixture();
+    const prepare = registration.preflightSessionControls?.prepareLaunchEnvironment;
+    if (!prepare) throw new Error('Missing native account preparation');
+    const input = { environment: { FACTORY_API_KEY: 'ambient' }, connectedAccounts: {
+      ...connectedAccounts, watch: () => ({ dispose() {} }),
+    }, signal, modelId: configuration.model.value };
+    const prepared = await prepare(input);
+    try {
+      expect(prepared.environment.HAPPIER_DROID_PROVIDER_API_KEY).toBe('synthetic-droid-token');
+      expect(prepared.environment.FACTORY_API_KEY).toBeUndefined();
+      expect(prepared.unset).toContain('FACTORY_API_KEY');
+      expect(prepared.catalogConfidence).toBe('account_unverified');
+      const settingsIndex = prepared.commandArgsSuffix?.indexOf('--settings') ?? -1;
+      expect(settingsIndex).toBeGreaterThanOrEqual(0);
+      const settingsPath = prepared.commandArgsSuffix![settingsIndex + 1]!;
+      const settings = await readFile(settingsPath, 'utf8');
+      expect(JSON.parse(settings).customModels[0]).toMatchObject({ model: configuration.model.value,
+        baseUrl: 'https://chatgpt.com/backend-api/codex', apiKey: '${HAPPIER_DROID_PROVIDER_API_KEY}' });
+      expect(settings).not.toContain('synthetic-droid-token');
+    } finally { await prepared.dispose(); }
+  });
+
   it('uses the same model refusal for selected-account preflight before materialization', async () => {
     const { registration, connectedAccounts } = await fixture();
     const prepare = registration.preflightSessionControls?.prepareLaunchEnvironment;
@@ -58,7 +81,7 @@ describe('Droid ChatGPT static access launch', () => {
     }, signal };
     await expect(prepare(input)).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed' });
     expect(connectedAccounts.materialize).not.toHaveBeenCalled();
-    connectedAccounts.getBinding.mockResolvedValueOnce(null);
+    connectedAccounts.getBinding.mockImplementationOnce(async () => null);
     const native = await prepare(input);
     expect(native.environment).toEqual(input.environment);
     await native.dispose();
@@ -82,7 +105,7 @@ describe('Droid ChatGPT static access launch', () => {
       launchEnvironment: { values: { PATH: '/bin', FACTORY_API_KEY: 'inherited-native-secret' }, unset: ['UNRELATED'] } };
     const opened = await runtime.sessions!.open(request, context);
     const [prepared, options] = open.mock.calls[0]!;
-    expect(connectedAccounts.getBinding).toHaveBeenCalledTimes(1);
+    expect(connectedAccounts.getBinding).toHaveBeenCalledWith(purpose, expect.anything());
     expect(connectedAccounts.materialize).toHaveBeenCalledTimes(1);
     expect(prepared).not.toHaveProperty('providerBinding');
     expect(prepared.launchEnvironment).toEqual({ values: { PATH: '/bin', HAPPIER_DROID_PROVIDER_API_KEY: 'synthetic-droid-token' }, unset: ['UNRELATED', 'FACTORY_API_KEY'] });
@@ -116,14 +139,15 @@ describe('Droid ChatGPT static access launch', () => {
     await opened.dispose();
   });
 
-  it.each(['missing-model', 'inherited-model', 'provider-binding', 'wrong-materialization', 'missing-account'] as const)('refuses %s before native launch', async failure => {
+  it.each(['missing-model', 'inherited-model', 'default-model', 'provider-binding', 'wrong-materialization', 'missing-account'] as const)('refuses %s before native launch', async failure => {
     const { runtime, context, open, connectedAccounts } = await fixture({ ...(failure === 'wrong-materialization' ? { materialization: 'environment' } : failure === 'missing-account' ? { materialization: 'missing-account' } : {}) });
     const request: AgentSessionOpenRequest = { kind: 'create', sessionId: 'refused', cwd: '/workspace', configuration: failure === 'missing-model' ? undefined : failure === 'inherited-model'
-      ? { ...configuration, model: { ...configuration.model, value: null, selectionSource: 'inherited' } } : configuration,
+      ? { ...configuration, model: { ...configuration.model, value: null, selectionSource: 'inherited' } } : failure === 'default-model'
+        ? { ...configuration, model: { ...configuration.model, value: 'default' } } : configuration,
       ...(failure === 'provider-binding' ? { providerBinding: { connectionId: 'selected-provider', upstream: { protocol: 'openai-responses', normalizedUrl: 'https://provider.example/v1', credential: 'none' },
         model: { id: 'other', name: 'Other' }, materialization: { v: 1, kind: 'configFile', rootPath: '/private/provider', relativePaths: ['droid/settings.json'] } } } : {}) };
-    await expect(runtime.sessions!.open(request, context)).rejects.toMatchObject({ code: failure === 'provider-binding' ? 'droid_connected_account_provider_conflict'
-      : failure === 'missing-model' || failure === 'inherited-model' ? 'agent_startup_model_reconciliation_failed' : 'droid_connected_account_materialization_invalid' });
+    await expect(runtime.sessions!.open(request, context).then(async opened => { await opened.dispose(); return opened; })).rejects.toMatchObject({ code: failure === 'provider-binding' ? 'droid_connected_account_provider_conflict'
+      : failure === 'missing-model' || failure === 'inherited-model' || failure === 'default-model' ? 'agent_startup_model_reconciliation_failed' : 'droid_connected_account_materialization_invalid' });
     expect(open).not.toHaveBeenCalled();
     expect(connectedAccounts.materialize).toHaveBeenCalledTimes(failure === 'wrong-materialization' || failure === 'missing-account' ? 1 : 0);
   });
@@ -151,7 +175,7 @@ describe('Droid ChatGPT static access launch', () => {
 
   it('declares static-access restart semantics and refuses unproven resume even with default-home history', async () => {
     const { registration } = await fixture();
-    expect(DROID_PLUGIN.manifest.contributes.agents[0]!.connectedAccounts).toEqual([{ purpose, service: account.service, credentialKinds: ['oauth'], materializationKinds: ['httpHeaders'] }]);
+    expect(DROID_PLUGIN.manifest.contributes.agents[0]!.connectedAccounts).toContainEqual({ purpose, service: account.service, credentialKinds: ['oauth'], materializationKinds: ['httpHeaders'] });
     expect(AGENT_DEFINITION.modelConfig.supportsFreeform).toBe(true);
     const launch = registration.connectedAccountLaunch!;
     expect(launch.switchContinuity).toMatchObject({ continuityMode: 'restart_same_home' });

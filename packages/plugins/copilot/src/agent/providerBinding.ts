@@ -8,6 +8,18 @@ export const COPILOT_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
   'COPILOT_PROVIDER_AZURE_API_VERSION', 'COPILOT_PROVIDER_MAX_PROMPT_TOKENS', 'COPILOT_PROVIDER_MAX_OUTPUT_TOKENS',
 ] as const);
 
+/** Native BYOK environment shared by Provider and selected-account launch. */
+export function buildCopilotProviderEnvironment(input: Readonly<{
+  protocol: 'openai-chat' | 'anthropic'; baseUrl: string; modelId: string;
+  credential?: Readonly<{ kind: 'bearer' | 'api-key'; value: string }>;
+}>): Record<string, string> {
+  return { COPILOT_PROVIDER_BASE_URL: input.baseUrl,
+    COPILOT_PROVIDER_TYPE: input.protocol === 'anthropic' ? 'anthropic' : 'openai',
+    COPILOT_MODEL: input.modelId,
+    ...(input.credential ? { [input.credential.kind === 'bearer' ? 'COPILOT_PROVIDER_BEARER_TOKEN' : 'COPILOT_PROVIDER_API_KEY']: input.credential.value } : {}),
+  };
+}
+
 async function materialize(input: AgentProviderBindingMaterializeInput) {
   const protocol = input.binding.endpoint.protocol;
   if (input.prepared.materialization !== 'spawnEnv' || (protocol !== 'openai-chat' && protocol !== 'anthropic')) {
@@ -16,11 +28,7 @@ async function materialize(input: AgentProviderBindingMaterializeInput) {
   if (Object.keys(input.binding.endpoint.publicHeaders).length) {
     throw new Error('Copilot Provider binding cannot preserve custom public headers');
   }
-  const values: Record<string, string | null> = {
-    COPILOT_PROVIDER_BASE_URL: input.binding.endpoint.normalizedUrl,
-    COPILOT_PROVIDER_TYPE: protocol === 'anthropic' ? 'anthropic' : 'openai',
-    COPILOT_MODEL: input.binding.selection.model.id,
-  };
+  let selectedCredential: Parameters<typeof buildCopilotProviderEnvironment>[0]['credential'];
   if (input.credential.kind === 'none') {
     if (input.binding.runtimeCredentialTransport !== null) {
       throw new Error('Copilot Provider binding requires its selected credential');
@@ -34,13 +42,15 @@ async function materialize(input: AgentProviderBindingMaterializeInput) {
     }
     const header = transport.destination.name.toLowerCase();
     if (header === 'authorization' && transport.destination.format === 'bearer') {
-      values.COPILOT_PROVIDER_BEARER_TOKEN = value;
+      selectedCredential = { kind: 'bearer', value };
     } else if (protocol === 'anthropic' && header === 'x-api-key' && transport.destination.format === 'raw') {
-      values.COPILOT_PROVIDER_API_KEY = value;
+      selectedCredential = { kind: 'api-key', value };
     } else {
       throw new Error('Copilot Provider binding does not support this credential transport');
     }
   }
+  const values = buildCopilotProviderEnvironment({ protocol, baseUrl: input.binding.endpoint.normalizedUrl,
+    modelId: input.binding.selection.model.id, ...(selectedCredential ? { credential: selectedCredential } : {}) });
   return { v: 1 as const, kind: 'spawnEnv' as const,
     env: COPILOT_PROVIDER_OWNED_ENV_KEYS.map(name => ({ name, value: values[name] ?? null, source: 'provider' as const })) };
 }

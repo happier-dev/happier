@@ -1,5 +1,6 @@
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-codex/connected-account-service';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { KILO_ACP_COMMAND } from './agent/acp/command.js';
@@ -9,6 +10,7 @@ import { KILO_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js'
 import { kiloExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { KILO_PROVIDER_BINDING_ADAPTER_V1, KILO_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
 import { KILO_CODEX_PURPOSE, prepareKiloConnectedAccount } from './agent/runtime/connectedAccounts.js';
+import { KILO_KEY_ACCOUNTS, KILO_KEY_DECLARATIONS, KILO_KEY_ENVIRONMENT_USES } from './agent/runtime/connectedAccountKeys.js';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 
 const {
@@ -33,7 +35,7 @@ export const KILO_PLUGIN = definePlugin({
       reason: 'Run the declared Kilo CLI executable.',
       scope: {
         executables: [{ kind: 'systemTool', id: 'kilo-cli' }],
-        envKeys: [KILO_PERMISSION_ENV, ...KILO_PROVIDER_OWNED_ENV_KEYS, CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV],
+        envKeys: [...new Set([KILO_PERMISSION_ENV, ...KILO_PROVIDER_OWNED_ENV_KEYS, ...KILO_KEY_ENVIRONMENT_USES.map(use => use.environmentKey), CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV])],
       },
     }],
     optional: [],
@@ -69,9 +71,9 @@ export const KILO_PLUGIN = definePlugin({
         primary: 'sessions',
         connectedAccounts: [{
           purpose: KILO_CODEX_PURPOSE,
-          service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+          service: OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE,
           materializationKinds: ['httpHeaders'], credentialKinds: ['oauth'],
-        }],
+        }, ...KILO_KEY_DECLARATIONS],
         providerRequirements: {
           acceptsProtocols: ['openai-chat', 'openai-responses', 'anthropic'],
           required: { streaming: true, toolRoundTrips: true },
@@ -124,6 +126,7 @@ export const KILO_PLUGIN = definePlugin({
       },
       factory: createKiloAgentRuntime,
       connectedAccountLaunch: {
+        environmentUses: KILO_KEY_ENVIRONMENT_USES,
         requestAuthUses: [{ purpose: KILO_CODEX_PURPOSE, materialization: {
           kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['authorization', 'chatgpt-account-id'],
         } }],
@@ -135,9 +138,13 @@ export const KILO_PLUGIN = definePlugin({
       },
       providerBinding: KILO_PROVIDER_BINDING_ADAPTER_V1,
       preflightSessionControls: {
-        prepareLaunchEnvironment: async ({ environment }) => {
-          const prepared = await prepareKiloConnectedAccount({ launchEnvironment: { values: environment, unset: [] } });
-          return { environment: { ...environment, ...prepared.env }, dispose() {} };
+        prepareLaunchEnvironment: async ({ environment, modelId, connectedAccounts, signal }) => {
+          const bindings = await Promise.all([...KILO_KEY_ACCOUNTS.map(row => row.purpose), KILO_CODEX_PURPOSE]
+              .map(purpose => connectedAccounts.getBinding(purpose, { signal })));
+          const prepared = await prepareKiloConnectedAccount({ modelId, launchEnvironment: { values: environment, unset: [] },
+            connectedAccounts: bindings.flatMap(binding => binding ? [{ purpose: binding.purpose, account: binding.account }] : []) });
+          return { environment: prepared.launchEnvironment?.values ?? { ...environment, ...prepared.env },
+            unset: prepared.launchEnvironment?.unset, catalogConfidence: prepared.models?.catalogConfidence, dispose() {} };
         },
         catalogs: { kind: 'acp', command: KILO_ACP_COMMAND },
         models: {

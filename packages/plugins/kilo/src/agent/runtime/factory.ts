@@ -17,14 +17,14 @@ import { prepareKiloConnectedAccount } from './connectedAccounts.js';
 export { kiloExternalSessionsContribution } from '../externalSessions/contribution.js';
 
 async function createKiloAcpOptions(
-  request: Pick<AgentSessionOpenRequest, 'launchEnvironment' | 'mcpServers' | 'mcpToolPolicy' | 'providerBinding'> & Readonly<{
+  request: Pick<AgentSessionOpenRequest, 'launchEnvironment' | 'mcpServers' | 'mcpToolPolicy' | 'providerBinding' | 'connectedAccounts'> & Readonly<{
     configuration?: AgentSessionConfigurationSnapshot;
   }>,
-): Promise<AgentAcpRuntimeOptions> {
+): Promise<Readonly<{ options: AgentAcpRuntimeOptions; launchEnvironment: AgentSessionOpenRequest['launchEnvironment'] }>> {
   if (!request.configuration) throw new Error('Kilo requires the host-projected Agent session configuration');
-  const account = await prepareKiloConnectedAccount(request);
+  const account = await prepareKiloConnectedAccount({ ...request, modelId: request.configuration.model.value });
   const models = account.models ?? kiloProviderModelControls(request);
-  return {
+  return { launchEnvironment: account.launchEnvironment ?? request.launchEnvironment, options: {
     transport: {
       kind: 'stdio',
       executable: { kind: 'systemTool', id: KILO_ACP_COMMAND.toolId },
@@ -37,13 +37,14 @@ async function createKiloAcpOptions(
     },
     definition: { ...KILO_ACP_RUNTIME_DEFINITION, toolNameResolver: buildKiloAcpToolNameResolver(request),
       ...(models ? { models } : {}) },
-  };
+  } };
 }
 
 export const createKiloAgentRuntime: AgentRuntimeFactory = () => ({
   sessions: {
     async open(request, context) {
-      return context.protocols.acp.open(request, await createKiloAcpOptions(request));
+      const prepared = await createKiloAcpOptions(request);
+      return context.protocols.acp.open({ ...request, launchEnvironment: prepared.launchEnvironment }, prepared.options);
     },
     executionRunContextV1: {
       async openConversation(request, context) {
@@ -51,7 +52,8 @@ export const createKiloAgentRuntime: AgentRuntimeFactory = () => ({
           throw new PluginError({ code: 'execution_run_protocol_unsupported',
             message: 'This host does not support retained detached ACP conversations.' });
         }
-        const runtimeOptions = await createKiloAcpOptions(request);
+        const prepared = await createKiloAcpOptions(request);
+        const runtimeOptions = prepared.options;
         const launchPolicy = runtimeOptions.transport.kind === 'stdio'
           ? runtimeOptions.transport.env?.[KILO_PERMISSION_ENV]
           : undefined;
@@ -59,7 +61,7 @@ export const createKiloAgentRuntime: AgentRuntimeFactory = () => ({
         const isPermissionKey = (key: string) => key.toUpperCase() === KILO_PERMISSION_ENV;
         const nativePolicyOverride = Object.keys(request.launchEnvironment?.values ?? {}).some(isPermissionKey)
           || (request.launchEnvironment?.unset ?? []).some(isPermissionKey);
-        const conversation = await context.protocols.acp.openExecutionRunConversationV1(request, runtimeOptions);
+        const conversation = await context.protocols.acp.openExecutionRunConversationV1({ ...request, launchEnvironment: prepared.launchEnvironment }, runtimeOptions);
         return {
           ...conversation,
           async send(input, sendOptions) {
@@ -80,10 +82,10 @@ export const createKiloAgentRuntime: AgentRuntimeFactory = () => ({
           },
         } satisfies AgentExecutionRunConversationRuntimeV1;
       },
-      open: async (request, context) => context.protocols.acp.openExecutionRunV1(
-        request,
-        await createKiloAcpOptions(request),
-      ),
+      open: async (request, context) => {
+        const prepared = await createKiloAcpOptions(request);
+        return context.protocols.acp.openExecutionRunV1({ ...request, launchEnvironment: prepared.launchEnvironment }, prepared.options);
+      },
     },
   },
 });

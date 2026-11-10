@@ -22,7 +22,7 @@ describe('registered Kilo subscription startup', () => {
       if (!prepare) throw new Error('Missing native account preparation');
       // The host already admitted and projected this request-auth capability.
       const connectedAccounts = {
-        getBinding: async () => { throw new Error('Preparation must consume the admitted capability'); },
+        getBinding: async () => null,
         materialize: async () => { throw new Error('Preparation must consume the admitted capability'); },
         watch: () => { throw new Error('Preflight must not subscribe'); },
       };
@@ -30,7 +30,7 @@ describe('registered Kilo subscription startup', () => {
       await expect(prepare({ environment: { [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]: '/private/capability.json' }, connectedAccounts, signal })).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
         details: { failureCause: { phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
       const environment = { KILO_AUTH_CONTENT: 'native-auth' };
-      const native = await prepare({ environment, connectedAccounts, signal });
+      const native = await prepare({ environment, connectedAccounts: { ...connectedAccounts, getBinding: async () => null }, signal });
       expect(native.environment).toEqual(environment);
       await native.dispose();
     } finally { await activation.dispose(); }
@@ -39,7 +39,9 @@ describe('registered Kilo subscription startup', () => {
   it.each([
     { value: null, selectionSource: 'explicit' as const },
     { value: null, selectionSource: 'inherited' as const },
-  ])('requires a resolved account model before native effects ($selectionSource)', async model => {
+    { value: 'default', selectionSource: 'explicit' as const },
+    { value: 'default', selectionSource: 'inherited' as const },
+  ])('requires a resolved account model before native effects ($value/$selectionSource)', async model => {
     const root = await mkdtemp(join(tmpdir(), 'kilo-account-default-'));
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
@@ -114,7 +116,9 @@ describe('registered Kilo subscription startup', () => {
       const pluginSource = await readFile(new URL(config.plugin[0]), 'utf8');
       expect(pluginSource).toContain('lookupConnectedAccountRequestAuth');
       expect(agent.connectedAccountLaunch?.requestAuthUses).toMatchObject([{ purpose: 'openai-codex-model-request' }]);
-      expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toMatchObject([{ credentialKinds: ['oauth'] }]);
+      expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual(expect.arrayContaining([
+        expect.objectContaining({ purpose: 'openai-codex-model-request', credentialKinds: ['oauth'] }),
+      ]));
       expect(() => open.mock.calls[0]![1].definition?.models?.resolveModelUpdate?.({ modelId: 'anthropic/claude-sonnet-4-5', modelState: null })).toThrowError(expect.objectContaining({ code: 'plugin_kilo_subscription_model_unsupported' }));
     } finally { await activation.dispose(); await rm(root, { recursive: true, force: true }); }
   });

@@ -53,6 +53,25 @@ async function fixture(missingAccount = false) {
 }
 
 describe('Copilot ChatGPT static native launch', () => {
+  it('prepares selected model preflight with the native provider file and catalog confidence', async () => {
+    const { registration, connectedAccounts } = await fixture();
+    const prepare = registration.preflightSessionControls?.prepareLaunchEnvironment;
+    if (!prepare) throw new Error('Missing native account preparation');
+    const input = { environment: { COPILOT_MODEL: 'ambient', COPILOT_GITHUB_TOKEN: 'ambient' }, connectedAccounts: {
+      ...connectedAccounts, watch: () => ({ dispose() {} }),
+    }, signal, modelId: configuration.model.value };
+    const prepared = await prepare(input);
+    try {
+      expect(prepared.environment.COPILOT_MODEL).toBe('happier-chatgpt/subscription-only-model');
+      expect(prepared.environment.COPILOT_GITHUB_TOKEN).toBeUndefined();
+      expect(prepared.unset).toContain('COPILOT_GITHUB_TOKEN');
+      expect(prepared.catalogConfidence).toBe('account_unverified');
+      const settings = JSON.parse(await readFile(prepared.environment.COPILOT_PROVIDERS_CONFIG!, 'utf8'));
+      expect(settings.models[0].id).toBe(configuration.model.value);
+      expect(settings.providers[0].bearerToken).toBe('synthetic-access-only');
+    } finally { await prepared.dispose(); }
+  });
+
   it('uses the same selected-account default refusal before preflight starts native ACP', async () => {
     const { registration, connectedAccounts } = await fixture();
     const prepare = registration.preflightSessionControls?.prepareLaunchEnvironment;
@@ -158,12 +177,13 @@ describe('Copilot ChatGPT static native launch', () => {
     await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it.each(['missing-model', 'empty-model', 'missing-account'] as const)('refuses %s before the native consumer opens', async failure => {
+  it.each(['missing-model', 'empty-model', 'default-model', 'missing-account'] as const)('refuses %s before the native consumer opens', async failure => {
     const { runtime, context, open } = await fixture(failure === 'missing-account');
     await expect(runtime.sessions.open({ kind: 'create', sessionId: 'refused', cwd: '/workspace',
       configuration: failure === 'missing-model' ? undefined : failure === 'empty-model'
-        ? { ...configuration, model: { ...configuration.model, value: '' } } : configuration,
-    }, context)).rejects.toMatchObject({ code: failure === 'missing-account' ? 'copilot_account_materialization_unavailable' : 'agent_startup_model_reconciliation_failed' });
+        ? { ...configuration, model: { ...configuration.model, value: '' } } : failure === 'default-model'
+          ? { ...configuration, model: { ...configuration.model, value: 'default' } } : configuration,
+    }, context).then(async opened => { await opened.dispose(); return opened; })).rejects.toMatchObject({ code: failure === 'missing-account' ? 'copilot_account_materialization_unavailable' : 'agent_startup_model_reconciliation_failed' });
     expect(open).not.toHaveBeenCalled();
   });
 

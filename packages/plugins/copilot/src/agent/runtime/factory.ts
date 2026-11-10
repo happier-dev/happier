@@ -60,7 +60,7 @@ async function openCopilot<
 >(request: TRequest, context: Pick<AgentRuntimeContext, 'services' | 'signal'>,
   open: (request: TRequest, options: AgentAcpRuntimeOptions) => TRuntime | Promise<TRuntime>,
 ): Promise<TRuntime> {
-  const prepared = await prepareCopilotConnectedAccount(request, context);
+  const prepared = await prepareCopilotConnectedAccount(request, context, request.configuration?.model.value);
   try {
     const options = createCopilotAcpOptions(request.configuration);
     const runtime = await open(prepared.request, prepared.models
