@@ -5240,7 +5240,7 @@ test('SDK resolver forwarding is source preparation across plugin defaults and d
   const artifact = fixture.path('policy.sh');
   await writeFile(artifact, renderNativeCommandPolicy());
   const owner = fileURLToPath(new URL('./remote_commands.mjs', import.meta.url));
-  // These producers reuse SDK plugins without spreading the SDK config.
+  // SDK forwarding and complete host maps both retain source preparation.
   for (const name of ['antigravity', 'gemini', 'kilo', 'opencode']) {
     const component = `packages/plugins/${name}`;
     const cwd = join(root, component);
@@ -5261,7 +5261,7 @@ test('SDK resolver forwarding is source preparation across plugin defaults and d
     assert.equal(native.status, 0, native.stderr);
     assert.equal(native.stdout, 'source-test,', name);
   }
-  const cwd = fixture.path('packages/plugins/opencode');
+  const cwd = fixture.path('packages/plugins/future-plugin');
   await mkdir(cwd, { recursive: true });
   for (const plugins of ['[]', '[customResolver()]']) {
     await writeFile(join(cwd, 'vitest.config.ts'),

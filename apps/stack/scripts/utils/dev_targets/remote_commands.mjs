@@ -139,8 +139,8 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
     'packages/plugins/claude': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
     'packages/plugins/cliproxyapi': Object.freeze(['vitest.config.ts']),
     'packages/plugins/codex': Object.freeze(['vitest.config.ts', 'vitest.mcpApproval.config.ts', 'vitest.mcpToolPolicy.config.ts']),
-    'packages/plugins/kilo': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
-    'packages/plugins/opencode': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
+    'packages/plugins/kilo': Object.freeze(['vitest.config.ts', 'vitest.mcpToolPolicy.config.ts']),
+    'packages/plugins/opencode': Object.freeze(['vitest.config.ts', 'vitest.mcpToolPolicy.config.ts']),
     'packages/plugins/pi': Object.freeze(['vitest.config.ts', 'vitest.mcpApproval.config.ts', 'vitest.realOwners.config.ts', 'vitest.spawnedRealOwners.config.ts']),
     // Like Pi, Qwen derives the complete transitive host workspace source map.
     'packages/plugins/qwen': Object.freeze(['vitest.config.ts']),
