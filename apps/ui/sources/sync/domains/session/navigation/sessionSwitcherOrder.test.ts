@@ -24,6 +24,22 @@ describe('session switcher order sources', () => {
         expect(next.every((entry) => entry.section === 'list')).toBe(true);
     });
 
+    it('lists each Session once when the list shows it twice (Needs you and its own group)', () => {
+        // The Sessions list repeats a Session that needs you; the switcher's rows must not (device 11-10:
+        // duplicate keys and the current Session offered as its own "next").
+        const repeated = ['s2', 's4', 's1', 's2', 's3', 's4', 's5'];
+        const next = resolveSessionSwitcherDirectionalEntries({
+            source: 'list', direction: 'next', currentKey: 's4', listSessionKeys: repeated, pool: [],
+        });
+        const previous = resolveSessionSwitcherDirectionalEntries({
+            source: 'list', direction: 'previous', currentKey: 's4', listSessionKeys: repeated, pool: [],
+        });
+        expect(keys(next)).toEqual(['s1', 's3', 's5']);
+        expect(keys(previous)).toEqual(['s2']);
+        expect(keys(resolveSessionSwitcherVerticalEntries({ source: 'list', currentKey: 's4', listSessionKeys: repeated, pool: [] })))
+            .toEqual(['s2', 's1', 's3', 's5']);
+    });
+
     it('offers nothing when the current session is not in the captured list (a step must not jump)', () => {
         expect(resolveSessionSwitcherDirectionalEntries({
             source: 'list', direction: 'next', currentKey: 'elsewhere', listSessionKeys: list, pool: [],

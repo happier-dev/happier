@@ -7,6 +7,9 @@ const SESSION_SURFACES_WITH_OWN_HEADER = new Set(['index', 'files', 'git', 'deta
 const SESSION_SURFACE_OPTIONS = {
     animation: 'none',
     headerShown: false,
+    // Back is the leading-edge swipe only. iOS 26 makes an unset full-screen swipe a back gesture from
+    // anywhere, which would take the Session bar's sideways stroke (the Session switcher) to the right.
+    fullScreenGestureEnabled: false,
 } as const satisfies NativeStackNavigationOptions;
 
 /** Page identities belong here before their body hydrates, for Expo and retained routes alike. */

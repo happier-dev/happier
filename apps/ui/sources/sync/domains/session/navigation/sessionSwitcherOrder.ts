@@ -47,6 +47,15 @@ function isCurrent(entry: SessionSwitcherEntry, currentKey: string | null): bool
 }
 
 /**
+ * The list as the switcher reads it: each Session once, at its first place. The Sessions list may show
+ * one Session twice (Needs you and its own group); a row per occurrence would repeat it, offer the
+ * current one as its own neighbour and collide on row keys.
+ */
+function listEntries(listSessionKeys: readonly string[]): SessionSwitcherEntry[] {
+    return [...new Set(listSessionKeys)].map((key) => sessionEntry(key, 'list'));
+}
+
+/**
  * The whole recent order, most recent first, the current one included (it is "Here").
  * A session that is not yet in the device's recents is still the most recent thing on screen.
  */
@@ -81,9 +90,7 @@ export function resolveSessionSwitcherVerticalEntries(params: Readonly<{
     pool: readonly SessionSwitcherEntry[];
 }>): SessionSwitcherEntry[] {
     if (params.source === 'list') {
-        return params.listSessionKeys
-            .filter((key) => key !== params.currentKey)
-            .map((key) => sessionEntry(key, 'list'));
+        return listEntries(params.listSessionKeys).filter((entry) => !isCurrent(entry, params.currentKey));
     }
     return params.pool.filter((entry) => !isCurrent(entry, params.currentKey));
 }
@@ -100,9 +107,7 @@ export function resolveSessionSwitcherDirectionalEntries(params: Readonly<{
     listSessionKeys: readonly string[];
     pool: readonly SessionSwitcherEntry[];
 }>): SessionSwitcherEntry[] {
-    const order = params.source === 'list'
-        ? params.listSessionKeys.map((key) => sessionEntry(key, 'list'))
-        : params.pool;
+    const order = params.source === 'list' ? listEntries(params.listSessionKeys) : params.pool;
     const index = order.findIndex((entry) => isCurrent(entry, params.currentKey));
     if (index < 0) return [];
     return params.direction === 'next'

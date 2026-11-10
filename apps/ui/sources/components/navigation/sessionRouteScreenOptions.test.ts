@@ -21,6 +21,12 @@ describe('Session route screen options', () => {
         expect(buildSessionRouteScreenOptions({ childRouteName })).toMatchObject({ headerShown: false });
     });
 
+    it('keeps the iOS back swipe on the leading edge, so a sideways stroke on the Session bar switches Sessions', () => {
+        // iOS 26 turns an unset full-screen swipe into a back gesture from anywhere, which took every
+        // rightward stroke on the bar (device-reproduced 2026-11-10); the bar reserves only the edge.
+        expect(buildSessionRouteScreenOptions({ childRouteName: 'index' })).toMatchObject({ fullScreenGestureEnabled: false });
+    });
+
     it('leaves a Session sub-page that declares its own stack header alone', () => {
         expect(buildSessionRouteScreenOptions({ childRouteName: 'follow' })).toEqual({});
     });
