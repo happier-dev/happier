@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { resolveItemGroupHeaderHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
+import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 
 import { buildSelectionListSectionHeaderGridA11yProps } from './buildSelectionListOptionA11yProps';
 import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from './_constants';
@@ -104,6 +105,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     cardContainer: {
         paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX,
     },
+    // Menu presentation: the title starts where the edge-to-edge menu rows start (their shared inset).
+    menuContainer: {
+        paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
+    },
     // Section presentation: the title starts where a grouped `ItemGroup` title does, in its type role.
     sectionContainer: {
         paddingHorizontal: resolveItemGroupHeaderHorizontalInsetPx(),
@@ -149,7 +154,7 @@ export function SelectionListSectionHeader(
     const header = (
         <View
             testID={props.testID}
-            style={[styles.container, isCard ? styles.cardContainer : null, presentation === 'section' ? styles.sectionContainer : null, props.containerStyle]}
+            style={[styles.container, isCard ? styles.cardContainer : null, presentation === 'menu' ? styles.menuContainer : null, presentation === 'section' ? styles.sectionContainer : null, props.containerStyle]}
             {...(gridAria === null ? {} : (gridAria.cell as unknown as Record<string, never>))}
         >
             <Text style={[styles.label, presentation === 'section' ? styles.sectionLabel : null, props.monoTitle ? styles.monoLabel : null]}>{title}</Text>

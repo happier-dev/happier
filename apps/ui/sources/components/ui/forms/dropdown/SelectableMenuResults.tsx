@@ -436,7 +436,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     // uppercase eyebrow over a menu.
     categoryTitle: {
         ...Typography.variant('meta', 'semiBold'),
-        paddingHorizontal: theme.space.s16,
+        // The rows' own inset (`SelectableRow` menu rows), so the label starts where its rows start.
+        paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
         paddingTop: theme.space.s12,
         paddingBottom: theme.space.s4,
         color: theme.colors.text.secondary,
@@ -445,7 +446,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
-        paddingHorizontal: theme.space.s16,
+        paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
         paddingTop: theme.space.s12,
         paddingBottom: theme.space.s4,
     },
@@ -455,7 +456,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     categoryNote: {
         ...Typography.variant('meta', 'regular'),
-        paddingHorizontal: theme.space.s16,
+        paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
         paddingTop: theme.space.s4,
         paddingBottom: theme.space.s8,
         color: theme.colors.text.tertiary,

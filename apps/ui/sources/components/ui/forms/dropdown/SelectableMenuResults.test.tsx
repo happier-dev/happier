@@ -335,7 +335,9 @@ describe('SelectableMenuResults', () => {
                 />);
 
         const categoryTitle = screen.findByType('Text');
-        expect(StyleSheet.flatten(categoryTitle.props.style)).toMatchObject({ paddingHorizontal: 16 });
+        // Menu rows run edge to edge on the shared menu row inset; the title starts on that same edge.
+        const { MENU_ROW_METRICS } = await import('@/components/ui/lists/itemDensityMetrics');
+        expect(StyleSheet.flatten(categoryTitle.props.style)).toMatchObject({ paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx });
     });
 
     it('renders swatch items as one row of colour radios that report the chosen one', async () => {
