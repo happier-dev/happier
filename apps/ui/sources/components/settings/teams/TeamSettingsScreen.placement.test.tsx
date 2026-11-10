@@ -64,6 +64,8 @@ it('selects a pool preset in mounted Team Settings, retains its name, and clears
     const policyPath = '/v1/teams/policy/set';
     harness.answer(serverId, '/v1/teams/get', { select: () => ({ body: team }) });
     harness.answer(serverId, listPath, { body: { kind: 'listed', presets: [preset,
+        ManagedMachinePresetV1Schema.parse({ ...preset, id: 'personal-preset', owner: { kind: 'account', accountId: 'admin' } }),
+        ManagedMachinePresetV1Schema.parse({ ...preset, id: 'other-team-preset', owner: { kind: 'team', teamId: 'other-team' } }),
         { ...preset, id: 'archived-preset', archivedAt: 1 },
         { id: 'setup-only', homeId, revision: 1, name: 'Tools', owner: preset.owner, setup: { scripts: [{ body: 'echo ready' }] } },
     ] } });

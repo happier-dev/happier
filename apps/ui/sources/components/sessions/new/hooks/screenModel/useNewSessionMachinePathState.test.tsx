@@ -157,9 +157,35 @@ describe('useNewSessionMachinePathState', () => {
             const explicitReopened = await renderMachinePathState({ ...props, managedDefaults: defaults('team-b'),
                 persistedExecutionTarget: authored.executionTarget, persistedMachineId: authored.selectedMachineId,
                 persistedManagedMachineSelection: authored.managedMachineSelection, persistedPath: authored.selectedPath });
-            try { expect(explicitReopened.getCurrent().selectedMachineId).toBe('chosen'); }
+            // Reopening carries remembered placement, not a choice in this draft (owner ruling 2026-11-07).
+            try {
+                expect(explicitReopened.getCurrent().selectedMachineId).toBe('team-b');
+                expect(explicitReopened.getCurrent().selectedPath).toBe('/team-b-project');
+            }
             finally { await explicitReopened.unmount(); }
         } finally { await hook.unmount(); }
+    });
+
+    it.each(['legacy', 'qualified'] as const)('preselects the Team preset over a %s remembered draft machine, while fresh choices win', async shape => {
+        const preset = { kind: 'preset', homeId: 'home-a', presetId: 'preset-a' } as const;
+        const props: HookParams = { machines: toMachines({ id: 'remembered' }, { id: 'chosen' }), recentMachinePaths: [],
+            machineIdParam: undefined, pathParam: undefined, persistedMachineId: 'remembered',
+            ...(shape === 'qualified' ? { persistedExecutionTarget: { kind: 'machine', target: { serverId: 'server-a', machineId: 'remembered' } } as const } : {}),
+        };
+        const managedDefaults: ManagedSessionDefaultsContext = { teamDefaults: { team: { placement: preset }, groups: {} } };
+        const hook = await renderMachinePathState(props);
+        try {
+            expect(hook.getCurrent().selectedMachineId).toBe('remembered');
+            await hook.rerender({ ...props, managedDefaults });
+            expect(hook.getCurrent().managedPlacementPreset).toEqual(preset);
+            expect(hook.getCurrent().executionTarget).toBeNull();
+            await act(async () => hook.getCurrent().setSelectedMachineId('chosen'));
+            expect(hook.getCurrent().selectedMachineId).toBe('chosen');
+            expect(hook.getCurrent().managedPlacementPreset).toBeNull();
+        } finally { await hook.unmount(); }
+        const linked = await renderMachinePathState({ ...props, managedDefaults, machineIdParam: 'chosen' });
+        try { expect(linked.getCurrent().selectedMachineId).toBe('chosen'); }
+        finally { await linked.unmount(); }
     });
 
     it.each(['committed', 'draft', 'noFolder'] as const)('keeps the effective managed machine when its directory intent becomes explicit: %s', async source => {
@@ -305,10 +331,11 @@ describe('useNewSessionMachinePathState', () => {
         } finally { await hook.unmount(); }
     });
 
-    it.each(['route', 'draft'] as const)('keeps an explicit %s target ahead of unlocked Team placement', async (source) => {
+    it.each(['route', 'picker'] as const)('keeps an explicit %s target ahead of unlocked Team placement', async (source) => {
         const machines = toMachines({ id: 'authored' }, { id: 'team' });
         const props: HookParams = { machines, recentMachinePaths: [], machineIdParam: source === 'route' ? 'authored' : undefined,
-            persistedExecutionTarget: source === 'draft' ? { kind: 'machine', target: { serverId: 'server-a', machineId: 'authored' } } : undefined,
+            persistedExecutionTarget: source === 'picker' ? { kind: 'machine', target: { serverId: 'server-a', machineId: 'authored' } } : undefined,
+            executionTargetRequestKey: source === 'picker' ? 'fresh-picker-handoff' : undefined,
             pathParam: undefined };
         const hook = await renderMachinePathState(props);
         try {

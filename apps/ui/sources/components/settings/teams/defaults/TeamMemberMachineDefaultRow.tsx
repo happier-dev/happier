@@ -25,6 +25,7 @@ const EMPTY_PRESETS: readonly ManagedMachinePresetV1[] = Object.freeze([]);
 
 type MachineDefaultState = Readonly<{
     serverId: string;
+    teamId: string;
     defaults: ManagedSessionDefaultsV1;
     editable: boolean;
     disabled: boolean;
@@ -62,8 +63,9 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
     });
     // The closed field shows its selected record through the same offer, so it reads as the open list does.
     const selectedPreset = selectedRecord.state.value;
-    const offerPresets = React.useMemo(() => open ? presetRows : selectedPreset ? [selectedPreset] : EMPTY_PRESETS,
-        [open, presetRows, selectedPreset]);
+    const offerPresets = React.useMemo(() => (open ? presetRows : selectedPreset ? [selectedPreset] : EMPTY_PRESETS)
+        .filter(preset => preset.owner.kind === 'team' && preset.owner.teamId === state.teamId),
+    [open, presetRows, selectedPreset, state.teamId]);
     const { binding } = useServerCredentialAccountScopeBinding(state.serverId);
     const allOffers = useManagedMachineSelectionOffers({ homeId, binding, serverId: state.serverId,
         presets: offerPresets, machines, configure: choosePreset });

@@ -305,7 +305,8 @@ export function useNewSessionMachinePathState(params: Readonly<{
         persistedMachineId: params.persistedMachineId,
         persistedPath: params.persistedPath,
     }));
-    const hasUserSelectedMachineRef = React.useRef(Boolean(params.requestedManagedMachineSelection));
+    const hasUserSelectedMachineRef = React.useRef(Boolean(params.requestedManagedMachineSelection
+        || params.executionTargetRequestKey));
     const hasCommittedExactTargetRef = React.useRef(
         normalizeMachineIdParam(params.machineIdParam).length > 0
         || normalizeMachineIdParam(params.persistedMachineId).length > 0
@@ -323,7 +324,9 @@ export function useNewSessionMachinePathState(params: Readonly<{
     );
     const authoredPreset = managedMachineSelectionState?.selection.kind === 'preset'
         ? managedMachineSelectionState.selection : null;
-    const hasExplicitPlacement = hasCommittedExactTargetRef.current || hasUserSelectedMachineRef.current;
+    // Retained targets stay exact for hydration/recovery, but only choices made
+    // in this draft (including route/picker handoffs) outrank managed defaults.
+    const hasExplicitPlacement = hasUserSelectedMachineRef.current || Boolean(normalizeMachineIdParam(params.machineIdParam));
     // Placement is independent of the Agent target; the shared resolver owns every layer's precedence.
     const placementDecision = React.useMemo(() => resolveManagedSessionDefaults({ ...params.managedDefaults, agentTargetKey: '',
         explicitChoices: hasExplicitPlacement && authoredExecutionTarget?.kind === 'machine'
@@ -601,6 +604,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
 
     const setSelectedPath = React.useCallback<React.Dispatch<React.SetStateAction<string>>>((next) => {
         hasUserEditedPathRef.current = true;
+        hasUserSelectedMachineRef.current = true;
         // Choosing a folder is choosing to have one.
         setDirectoryKindState('path');
         hasCommittedExactTargetRef.current = executionTargetRef.current !== null;
@@ -614,6 +618,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
 
     const setDraftSelectedPath = React.useCallback((path: string) => {
         hasUserEditedPathRef.current = true;
+        hasUserSelectedMachineRef.current = true;
         hasCommittedExactTargetRef.current = executionTargetRef.current !== null;
         setExecutionTarget(executionTargetRef.current);
         selectedPathDraftRef.current = path;
@@ -630,6 +635,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const setDirectoryIntent = React.useCallback((intent: SessionDirectoryIntentV1) => {
         if (fixedDirectoryIntent) return;
         if (intent.kind === 'managed') {
+            hasUserSelectedMachineRef.current = true;
             hasCommittedExactTargetRef.current = executionTargetRef.current !== null;
             setExecutionTarget(executionTargetRef.current);
             setDirectoryKindState('managed');
@@ -740,14 +746,14 @@ export function useNewSessionMachinePathState(params: Readonly<{
             hasCommittedExactTargetRef.current = true;
             setManagedMachineSelection(params.persistedManagedMachineSelection);
             setExecutionTarget(null);
-            if (!hasUserEditedPathRef.current) applyCommittedSelectedPath(normalizePathParam(params.persistedPath));
+            if (!hasUserEditedPathRef.current && !effectivePlacement) applyCommittedSelectedPath(normalizePathParam(params.persistedPath));
             return;
         }
 
         if (params.persistedExecutionTarget?.kind === 'temporary_computer') {
             hasCommittedExactTargetRef.current = true;
             setExecutionTarget(params.persistedExecutionTarget);
-            if (!hasUserEditedPathRef.current) {
+            if (!hasUserEditedPathRef.current && !effectivePlacement) {
                 applyCommittedSelectedPath(normalizePathParam(params.persistedPath));
             }
             return;
@@ -771,6 +777,9 @@ export function useNewSessionMachinePathState(params: Readonly<{
         }
 
         setSelectedMachineIdState(reconciledPersistedMachineId);
+        // The effective managed target already owns its default directory above.
+        // Restoring the fallback must not overwrite that target's folder.
+        if (effectivePlacement) return;
         hasUserEditedPathRef.current = false;
         applyCommittedSelectedPath(
             getPersistedPathForMachine(reconciledPersistedMachineId) || getBestPathForMachine(reconciledPersistedMachineId),
@@ -779,6 +788,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
         applyCommittedSelectedPath,
         getBestPathForMachine,
         getPersistedPathForMachine,
+        effectivePlacement,
         params.machineIdParam,
         params.persistedExecutionTarget,
         params.persistedManagedMachineSelection,
@@ -918,16 +928,17 @@ export function useNewSessionMachinePathState(params: Readonly<{
         ? scopedDirectoryPreflight : { ready: false, code: 'unavailable' };
 
     const hasAuthoredDirectory = hasUserEditedPathRef.current || Boolean(normalizePathParam(params.pathParam));
+    const hasRetainedPlacement = hasCommittedExactTargetRef.current || hasExplicitPlacement;
     const placementForPersistence = React.useMemo<NewSessionPlacementForPersistence>(() => ({
-        executionTarget: hasExplicitPlacement ? authoredExecutionTarget : undefined,
-        selectedMachineId: hasExplicitPlacement && authoredExecutionTarget?.kind === 'machine'
+        executionTarget: hasRetainedPlacement ? authoredExecutionTarget : undefined,
+        selectedMachineId: hasRetainedPlacement && authoredExecutionTarget?.kind === 'machine'
             ? authoredExecutionTarget.target.machineId : null,
-        managedMachineSelection: hasExplicitPlacement ? managedMachineSelectionState : null,
+        managedMachineSelection: hasRetainedPlacement ? managedMachineSelectionState : null,
         selectedPath: hasAuthoredDirectory ? selectedPath
-            : hasExplicitPlacement && authoredExecutionTarget?.kind === 'machine'
+            : hasRetainedPlacement && authoredExecutionTarget?.kind === 'machine'
                 ? getPersistedPathForMachine(authoredExecutionTarget.target.machineId)
-                : hasExplicitPlacement && managedMachineSelectionState ? normalizePathParam(params.persistedPath) : '',
-    }), [authoredExecutionTarget, getPersistedPathForMachine, hasAuthoredDirectory, hasExplicitPlacement,
+                : hasRetainedPlacement && managedMachineSelectionState ? normalizePathParam(params.persistedPath) : '',
+    }), [authoredExecutionTarget, getPersistedPathForMachine, hasAuthoredDirectory, hasRetainedPlacement,
         managedMachineSelectionState, params.persistedPath, selectedPath]);
 
     return {
