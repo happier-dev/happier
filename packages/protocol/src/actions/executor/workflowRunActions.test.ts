@@ -2056,6 +2056,22 @@ describe('shared Account workflow run owner', () => {
     expect(admitted).toBe(false);
   });
 
+  it.each(['plain', 'e2ee'] as const)('lists admitted %s Runs before the daemon seals their snapshot', async mode => {
+    const snapshot = runSnapshot();
+    const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+      material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } });
+    const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
+      ? { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }
+      : { kind: 'available', material, witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: material.contentPublicKeyFingerprint } };
+    const census = { ...snapshot.keyCensus, encryptionMode: mode, ownerAccountCurrentness: encryption.witness };
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async () => ({
+      runs: [snapshot.run], acceptedEnvelopesByRunId: {}, keyCensusByRunId: { [runId]: census },
+    }) }), resolveEncryption: async () => encryption });
+    const result = await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} });
+    expect(result).toMatchObject({ runs: [{ id: runId, state: 'queued' }] });
+    expect(result).not.toHaveProperty(`metadataByRunId.${runId}`);
+  });
+
   it.each(['history_not_readable', 'encryption_setup_required', 'waiting_for_keys'] as const)(
     'preserves %s through accepted detail, exact invocation, content list and result reads', async reason => {
       const snapshot = runSnapshot();
@@ -3013,19 +3029,22 @@ describe('shared Account workflow run owner', () => {
   it.each([
     { target: { kind: 'machine' as const, machineId: 'machine-a' }, allowed: true },
     { target: { kind: 'machine' as const, machineId: 'machine-b' }, allowed: false },
-    { target: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } }, allowed: false },
+    { target: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } }, allowed: true },
     { target: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/other' } }, allowed: false },
-  ])('enforces resource restrictions without opening private Resume content ($target)', async ({ target, allowed }) => {
+  ])('enforces resource restrictions when resuming an approval-paused Run ($target)', async ({ target, allowed }) => {
     let resumed = false;
+    const snapshot = runSnapshot();
+    snapshot.run = { ...snapshot.run, state: 'paused', revision: 6,
+      availability: { ...snapshot.run.availability, pause: false, resumeBoundary: true } };
     const owner = createWorkflowAccountRunActionOwner({
       ...ownerDeps({ execute: async operation => {
-        if (operation.operation === 'get') return { ...runSnapshot(), acceptedEnvelope: 'unreadable' };
-        if (operation.operation === 'resume') { resumed = true; return { run: runSnapshot().run, intent: 'resumed' }; }
+        if (operation.operation === 'get') return 'project' in target ? snapshot : { ...snapshot, acceptedEnvelope: 'unreadable' };
+        if (operation.operation === 'resume') { resumed = true; return { run: { ...snapshot.run, state: 'queued' }, intent: 'resumed' }; }
         throw new Error('unexpected_storage_operation');
       } }),
-      resolveEncryption: async () => { throw new Error('key_free_resume_must_not_resolve_keys'); },
+      ...(!('project' in target) ? { resolveEncryption: async (): Promise<never> => { throw new Error('key_free_resume_must_not_resolve_keys'); } } : {}),
     });
-    const result = owner.execute({ actionId: 'workflow.run.resume', input: { mode: 'boundary', runId, expectedRevision: 0 },
+    const result = owner.execute({ actionId: 'workflow.run.resume', input: { mode: 'boundary', runId, expectedRevision: 6 },
       context: { surface: 'ui', authority: 'present_user', externalActionTarget: target } });
     if (allowed) await expect(result).resolves.toMatchObject({ intent: 'resumed' });
     else await expect(result).rejects.toMatchObject({ code: 'target_unavailable' });

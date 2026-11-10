@@ -211,6 +211,19 @@ signature. A new review or binding preparation uses its existing current
 Environment authority; an admitted deployment read uses installed custody and the
 active accepted operation, without re-admitting the original requester. Selected
 runtime/build membership, installation and local cancellation remain enforced.
+Query uses this transport with its signed read admission, exact Environment
+revision, serving deployment, target and installed receiver. Its `dataRole`
+acquisition names the service, while the signed read admission carries only
+placement and revision references. The server returns only that receiver's
+Environment seals. The host owns protected template/native-service selection and opens
+only the exact `readOnlyPassword` binding. A missing role seal requires an
+explicit reviewed `deployments.bindings.set`; it does not acquire an admin
+credential. Binding preparation supplies native service destinations to the
+existing sealer and provisions the role before publishing the prepared binding.
+Finite Query preparation consumes that signed admission for exact Environment,
+receipt, Artifact and role-seal reads; it does not re-evaluate Source or Team
+permissions between phases. The installed signature, content-envelope custody
+and local cancellation still apply, and a new Query requires fresh admission.
 Domain application uses the same signed transport with its exact desired capture,
 Domain revision and admitted operation. It returns only the requested resource
 revision from the link-admitted installation grants. The host
@@ -1966,8 +1979,13 @@ Source. A changed payload or unavailable recorded row refuses instead of duplica
 Attaching requires independent current Artifact access. Plain Artifact headers
 also receive server-side kind admission; E2EE headers stay opaque and their
 kind is admitted by the Account-side Action client after its real Artifact read.
-Source visibility never supplies an Artifact grant, key, content access, or
-checkout permission. Detach removes the attachment metadata; Source deletion
+For these attachments, Source visibility supplies no Artifact grant, key,
+content access, or checkout permission. Private deployment content held by a
+Source has a separate parent relation: Artifact access and recipient census
+include the Source's effective audience as readers, while grant management and
+E2EE recipient-key readiness retain their existing owners. A keyholder's existing
+header-read preparation supplies missing recipient envelopes; changing Source
+audience alone does not. Detach removes the attachment metadata; Source deletion
 tombstones the Source while retaining its identity for deployment history.
 Both leave Artifact bytes, grants, and checkout files intact. Qualified foreign references
 retain their exact Home and use the canonical Account-side Artifact reader for
@@ -3286,7 +3304,10 @@ authorship and decision values remain in the existing invocation content
 envelope. These structural disclosures do not introduce plaintext copies of
 that private content, a manual-intent column, or mutable-index tamper protection.
 
-Person boundary Resume is a key-free Can-edit control write. Automation boundary
+Person boundary Resume is a key-free Can-edit control write when unrestricted or
+restricted only to a Machine. A project restriction requires opening the accepted
+snapshot through the existing requester-content Action path to check the retained
+Machine and project before the control write. Automation boundary
 Resume opens the accepted snapshot through the existing requester-content Action
 path and compares the actual admitted caller with the frozen Run authority before
 the storage mutation. Its nullable

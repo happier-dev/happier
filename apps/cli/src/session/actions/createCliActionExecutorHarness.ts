@@ -1,4 +1,4 @@
-import { StoredApprovalRequestSchema, isHistoricalPublishApprovalRequestV2, type StoredApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { StoredApprovalRequestSchema, isHistoricalPublishApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, type ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
@@ -446,7 +446,7 @@ export function createCliActionExecutorHarness(
       }) : null;
       const getApproval = authorizedStore?.approvalsGet ?? deps.approvalsGet;
       if (!getApproval) return failure('approval_context_unavailable');
-      let observedRequest: StoredApprovalRequestV2 | undefined;
+      let observedRequest: Awaited<ReturnType<typeof getApproval>> = null;
       const current = async () => !args.signal.aborted
         && (!args.isCurrent || await args.isCurrent()) && !args.signal.aborted;
       const observe = async (): Promise<ActionExecuteResult> => {
@@ -472,12 +472,13 @@ export function createCliActionExecutorHarness(
             // Cancellation before the first read still withdraws this exact child.
             const request = await runWithServerHttpBaseUrl(serverUrl, () => getApproval({ artifactId: args.artifactId, serverId: params.serverId ?? null }));
             if (!request) return failure(args.signal.aborted ? 'cancelled' : 'approval_not_found');
-            if (request.v !== 2
-              || Object.entries(args.expectedOrigin).some(([key, value]) => Reflect.get(request.executionOriginV1, key) !== value)
+            const origin = 'executionOriginV1' in request ? request.executionOriginV1 : undefined;
+            if (!origin || (request.v !== 2 && !('kind' in request && request.kind === 'plugin_target_action'))
+              || Object.entries(args.expectedOrigin).some(([key, value]) => Reflect.get(origin, key) !== value)
               // Machine-hosted core Actions need no external target. The exact
               // origin Machine above still binds their recorded execution.
-              || request.executionOriginV1.target !== undefined && (request.executionOriginV1.target.kind !== 'machine'
-                || request.executionOriginV1.target.machineId !== args.expectedOrigin.machineId)) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
+              || request.v === 2 && origin.target !== undefined && (origin.target.kind !== 'machine'
+                || origin.target.machineId !== args.expectedOrigin.machineId)) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
             observedRequest = request;
             if (!await current()) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
             const result = buildActionExecuteResultFromRecordedApprovalExecution(request);
@@ -486,7 +487,9 @@ export function createCliActionExecutorHarness(
             if (request.status === 'canceled') return failure('approval_canceled');
             // A returned approval id is the deferred flow. Its observer must not
             // claim another Machine's live blocking decision continuation.
-            if (request.approval?.flow !== 'deferred') return failure('approval_context_unavailable');
+            if (request.v === 2 ? request.approval?.flow !== 'deferred'
+              : !('kind' in request && request.kind === 'plugin_target_action') || request.approvalInputCustody === 'live_only')
+              return failure('approval_context_unavailable');
             // A receipt observer must not claim the authenticated decision's
             // live waiter. Both local updates and Account socket changes only
             // invalidate this durable read; approval alone is not execution.
@@ -508,7 +511,7 @@ export function createCliActionExecutorHarness(
       };
       const result = await observe();
       const request = observedRequest;
-      if (args.signal.aborted && request?.status === 'open' && request.approval?.flow === 'deferred') {
+      if (args.signal.aborted && request?.v === 2 && request.status === 'open' && request.approval?.flow === 'deferred') {
         const updateApproval = authorizedStore?.approvalsUpdate ?? deps.approvalsUpdate;
         if (!updateApproval) return failure('approval_context_unavailable');
         try {

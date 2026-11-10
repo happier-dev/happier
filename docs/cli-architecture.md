@@ -2160,6 +2160,18 @@ Ordinary Action Wait returns an already-recorded uncertain observation even whil
 the operation retains process custody. Retirement still waits for actual physical
 settlement; observing uncertainty neither claims an exit nor releases that custody.
 
+### Managed resize (0.3 development)
+
+Managed resize uses the finite `machines.managed.resize` Action and the existing
+Manage admission, approval and operation owners. Its approved input captures the
+desired size once; execution does not re-evaluate policy, declarations or a
+current-intent fingerprint. The portable managed driver sequences any required
+stop, native resize and restart, then settles from the provisioner's observed
+size. A successful native command alone does not establish the requested size.
+The provisioner declares support and restart requirements per CPU, memory and
+disk dimension. Missing support returns a typed unsupported dimension instead
+of replacing the managed resource. Resize adds no retained desired-state loop.
+
 ### Managed guest display names (0.3 development)
 
 The portable managed driver in `packages/cli-common/src/machines/managed/`
@@ -4521,7 +4533,12 @@ correspondence retains the Action request id and original input; an Action that
 declares Execution Run completion additionally retains its immediate output and
 every launched Run id before native observation. Live completion and recovery
 consume Protocol's Action completion owner, not get/wait Actions. Lost invoke
-responses remain uncertain and replay never invokes the Action again. Typed
+responses remain uncertain and replay never invokes the Action again. An approval
+receipt retains its exact Artifact correspondence, then joins the existing pushed
+recorded-execution observer for core and plugin Actions. Approval alone is not
+terminal execution. The recorded result enters the same completion owner, including
+retaining native launch ids before observation; no manual Resume is needed while
+the coordinator holds the invocation. Typed
 terminal output is checked against the frozen schema. The exact-machine
 materialization host reads host catalog contracts through its host adapter and
 qualified contributed Action schemas through `daemon.plugins.actions.schemas.read`,
@@ -4950,9 +4967,10 @@ worker parks using that confirmed revision rather than a later refreshed one.
 The parked parent releases the worker slot; durable Run custody stays pending
 and retention protection remains. Human decisions wake through the existing
 claim owner. Person boundary Resume requeues a paused Run without opening its
-private snapshot. Explicit Machine restrictions use the public Run row;
-project-scoped person boundary Resume fails closed because project identity is
-private. Automation boundary Resume uses the existing requester-content Action
+private snapshot when unrestricted or restricted only to a Machine. A project
+restriction opens the accepted snapshot through the existing requester-content
+Action path and checks the retained Machine and project before requeueing.
+Automation boundary Resume uses the existing requester-content Action
 path to open the accepted snapshot and compare the actual admitted controller
 through `assertControllerDominates` before requeueing. The server
 records `workflowResumeRequestedRevision` in the same CAS that requeues Resume.

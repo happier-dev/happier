@@ -293,7 +293,7 @@ export type WorkflowActionExecutor = Readonly<{
   /** Host-owned role projection, snapshotted before effects; never an authored result policy. */
   prepareResultCapture?: (actionId: string) => Promise<((output: WorkflowJsonValue) => WorkflowJsonValue | undefined) | undefined>;
   /** Existing Artifact execution observer; it never decides or replays an effect. */
-  observeApproval?: (params: Readonly<{ artifactId: string; actionRequestId: string; actionId?: 'discussion.invite' | 'discussion.reply';
+  observeApproval?: (params: Readonly<{ artifactId: string; actionRequestId: string; actionId?: string;
     authorization: WorkflowAcceptedAuthorizationV1; signal: AbortSignal }>) => Promise<ActionExecuteResult>;
   buildContext: (params: Readonly<{ runId: string; invocationRecordId?: string; authorization: WorkflowAcceptedAuthorizationV1;
     workDepth: number; originSessionId?: string; workspace: WorkflowWorkspaceDescriptorV1;
@@ -1788,9 +1788,9 @@ async function executeActionBlock(
     && row.execution?.kind === 'action' && row.execution.actionId === leaf.actionId
     ? readWorkflowProjectSetupConsentHold(row.execution.actionId, row.execution.output) : null;
   const setupConsentHold = heldConsent !== null && row?.reason === heldConsent.code;
-  const pendingApproval = row?.execution?.kind === 'action'
+  let pendingApproval = row?.execution?.kind === 'action'
     ? ActionApprovalRequestCreatedResultSchema.safeParse(row.execution.output) : null;
-  const approvalHold = pendingApproval?.success === true;
+  let approvalHold = pendingApproval?.success === true;
   if (row && !setupConsentHold) { const failure = persistedFailure(row); if (failure) throw failure; }
   const frozen = context.materializedLeaves.find((candidate) => candidate.sourceKey === context.sourceKey
     && candidate.blockId === leaf.id && candidate.kind === 'action');
@@ -1833,7 +1833,23 @@ async function executeActionBlock(
     const wrapped = actionId === 'action.invoke' ? PluginContributionIdentityV1Schema.safeParse(input.action) : null;
     return contributedAction ?? (wrapped?.success ? wrapped.data : undefined);
   };
+  if (completionState && row.execution?.kind === 'action') {
+    const target = readTarget(row.execution.input);
+    captureResult = await context.deps.action.prepareResultCapture?.(target ? formatQualifiedPluginActionId(target) : actionId);
+  }
   let noRunsLaunched = false;
+  const prepareCompletion = async (invoked: ActionExecuteResult, serverId?: string) => {
+    const declaration = frozen.actionContract!.completion && builtinActionId.success ? getActionSpec(builtinActionId.data).completion : undefined;
+    if (frozen.actionContract!.completion && !declaration) return await fail('outcome_uncertain', 'outcome_uncertain');
+    const phase = prepareActionCompletionV1(declaration, invoked, { serverId });
+    if (phase.kind === 'awaiting' && row!.execution?.kind === 'action') {
+      completionState = phase.state;
+      row = await context.deps.store.commitFact({ key: row!.key, lifecycle: 'running', execution: { ...row!.execution, ...completionState } });
+    } else if (phase.kind !== 'awaiting') {
+      completed = phase;
+      noRunsLaunched = phase.kind === 'failed' && 'noRunsLaunched' in phase && phase.noRunsLaunched === true;
+    }
+  };
   if (row.lifecycle === 'pending' || setupConsentHold) {
     const runtime = createResolutionRuntime(context.inputs, frame, context.deps.store, context.deps.sessionContext);
     // Only this producer's explicit no-effect consent hold permits re-admission.
@@ -1877,7 +1893,7 @@ async function executeActionBlock(
     // data and must never become a secret-bearing replay input.
     let presentedInput = input;
     const target = readTarget(input);
-    captureResult = target ? await context.deps.action.prepareResultCapture?.(formatQualifiedPluginActionId(target)) : undefined;
+    captureResult = await context.deps.action.prepareResultCapture?.(target ? formatQualifiedPluginActionId(target) : actionId);
     if (target) {
       const preparedDescription = await context.holds.track(() => context.deps.action!.executor.prepare('action.spec.get',
         { id: formatQualifiedPluginActionId(target) }, actionContext));
@@ -1932,43 +1948,55 @@ async function executeActionBlock(
     const approval = invoked.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(invoked.result) : null;
     if (approval?.success) {
       // The approval owner owns execution. Retain its exact correspondence before
-      // surfacing the hold; reclaim observes settlement and never re-invokes.
-      await context.deps.store.commitFact({ key: row.key, lifecycle: 'waiting_for_approval', reason: 'approval_required',
+      // observing settlement; reclaim joins the same receipt and never re-invokes.
+      row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'waiting_for_approval', reason: 'approval_required',
         execution: { ...execution, output: approval.data } });
       assertWorkflowAbortSignal(context);
-      throw new WorkflowControlBoundary('paused', 'approval_required');
-    }
-    const declaration = frozen.actionContract.completion && builtinActionId.success ? getActionSpec(builtinActionId.data).completion : undefined;
-    if (frozen.actionContract.completion && !declaration) return await fail('outcome_uncertain', 'outcome_uncertain');
-    const phase = prepareActionCompletionV1(declaration, invoked, { serverId: actionContext.serverId });
-    if (phase.kind === 'awaiting') {
-      completionState = phase.state;
-      row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'running', execution: { ...execution, ...completionState } });
+      pendingApproval = approval;
+      approvalHold = true;
     } else {
-      completed = phase;
-      noRunsLaunched = phase.kind === 'failed' && 'noRunsLaunched' in phase && phase.noRunsLaunched === true;
+      await prepareCompletion(invoked, actionContext.serverId);
     }
   }
   if (approvalHold && pendingApproval?.success && row.execution?.kind === 'action') {
     const target = readTarget(row.execution.input);
-    captureResult = target ? await context.deps.action.prepareResultCapture?.(formatQualifiedPluginActionId(target)) : undefined;
+    captureResult = await context.deps.action.prepareResultCapture?.(target ? formatQualifiedPluginActionId(target) : actionId);
     if (!workspace) return await fail('outcome_uncertain', 'outcome_uncertain');
     // The daemon observes its own admitted invocation, without spending the original PAT again.
     const actionContext: ActionExecutorContext = { surface: 'agent', authority: 'account_automation',
       actionCaller: { kind: 'host' }, ...(context.signal ? { signal: context.signal } : {}) };
     const approvalExecution = row.execution;
-    const settlement = await context.holds.track(() => readWorkflowActionApprovalSettlement({ runId: context.runId, execution: approvalExecution,
+    let settlement = await context.holds.track(() => readWorkflowActionApprovalSettlement({ runId: context.runId, execution: approvalExecution,
       read: async artifactId => {
         const prepared = await context.deps.action!.executor.prepare('approval.request.get', { artifactId }, actionContext);
         const observed = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
         return observed.ok ? observed.result : null;
       } }));
+    if (settlement?.kind === 'unresolved' && settlement.code === 'approval_required' && context.deps.action.observeApproval) {
+      const observed = await context.holds.track(() => context.deps.action!.observeApproval!({
+        artifactId: pendingApproval.data.artifactId, actionRequestId: approvalExecution.actionRequestId,
+        actionId: pendingApproval.data.actionId, authorization: context.authorization,
+        signal: context.signal ?? new AbortController().signal,
+      }));
+      assertWorkflowAbortSignal(context);
+      if (!observed.ok && isActionOutcomeUnknownErrorCodeV1(observed.errorCode)) return await fail(observed.errorCode, 'outcome_uncertain');
+      const phase = prepareActionCompletionV1(undefined, observed);
+      if (phase.kind === 'completed') settlement = { kind: 'completed', result: phase.value };
+      else if (phase.kind === 'failed') settlement = { kind: 'failed', code: phase.errorCode,
+        result: phase.value, failureCause: phase.failureCause, message: phase.error };
+      else return await fail('outcome_uncertain', 'outcome_uncertain');
+    }
     if (!settlement || settlement.kind === 'unresolved') throw new WorkflowControlBoundary('paused', settlement?.code ?? 'approval_unavailable');
     if (settlement.kind === 'outcome_uncertain') return await fail(settlement.code, 'outcome_uncertain');
     if (settlement.kind !== 'completed') return await fail(settlement.code ?? 'action_failed', 'failed', true,
       settlement.kind === 'failed' ? settlement.result : undefined, settlement.kind === 'failed' ? settlement.failureCause : undefined,
       settlement.kind === 'failed' ? settlement.message : undefined);
-    completed = { kind: 'completed', value: settlement.result };
+    const completionContext = frozen.actionContract.completion ? await context.deps.action.buildContext({
+      runId: context.runId, invocationRecordId: row.recordId, authorization: context.authorization,
+      workDepth: context.workDepth, workspace, ...(context.origin ? { origin: context.origin } : {}),
+      ...(context.signal ? { signal: context.signal } : {}),
+    }) : undefined;
+    await prepareCompletion({ ok: true, result: settlement.result }, completionContext?.serverId);
   }
   // The one-shot call may have returned exact launch ids after this claim was
   // interrupted. Preserve that correspondence before stopping observation.

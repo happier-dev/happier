@@ -32,6 +32,7 @@ describe('workflow built-in Action approval holds', () => {
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
       machinesList: async () => { effects++; return { items: [] }; },
       approvalsCreate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { artifactId: 'selection-approval' }; },
+      approvalsGet: async () => approval ?? null,
     });
     const store = createInMemoryWorkflowCoordinatorStore();
     const workspace = { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' };
@@ -74,6 +75,7 @@ describe('workflow built-in Action approval holds', () => {
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
       machinesList: async () => { effects++; return { items: [] }; },
       approvalsCreate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { artifactId: 'profile-approval' }; },
+      approvalsGet: async () => approval ?? null,
     });
     const store = createInMemoryWorkflowCoordinatorStore();
     const workspace = { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' };

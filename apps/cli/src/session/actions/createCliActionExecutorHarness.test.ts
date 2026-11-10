@@ -1,9 +1,12 @@
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createInMemoryWorkflowCoordinatorStore, createTestWorkflowCoordinator } from '@/daemon/workflows/workflowCoordinator.testkit';
+import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import fastify from 'fastify';
 import nacl from 'tweetnacl';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
@@ -73,6 +76,121 @@ const wire = vi.hoisted(() => {
   }) };
 });
 vi.mock('socket.io-client', () => ({ io: wire.io }));
+
+it('observes a deferred plugin Action execution after approval without replaying it', async () => {
+  const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
+  const origin = { v: 1, authority: 'account_automation', surface: 'agent', serverId: 'home',
+    serverIdentityId: 'home', accountId: 'account', machineId: 'machine', actionId: 'action.invoke',
+    requestId: 'run/invocation/0', caller: { kind: 'host' } };
+  let request = TargetActionApprovalRequestV1Schema.parse({ v: 1, kind: 'plugin_target_action', status: 'open',
+    createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'agent' }, requestedSurface: 'agent', summary: 'Send',
+    qualifiedActionId: 'example.channel/actions/send', input: {}, secretInputPaths: [],
+    sourceCustody: { kind: 'development', registeredRootId: 'root' },
+    policyFingerprint: 'a'.repeat(64), subjectFingerprint: 'b'.repeat(64), executionOriginV1: origin });
+  let lastReadStatus: string | undefined;
+  const harness = createCliActionExecutorHarness({ token, credentials: { token, encryption: null },
+    mode: 'plain', ctx: null, sessionId: 'origin', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid' }, {
+    approvalsGet: async () => { lastReadStatus = request.status; return request; },
+  });
+  const abort = new AbortController();
+  const pending = harness.observeRecordedApprovalExecution({ artifactId: 'plugin-approval', signal: abort.signal,
+    expectedOrigin: { actionId: 'action.invoke', requestId: 'run/invocation/0', accountId: 'account',
+      serverIdentityId: 'home', machineId: 'machine' } });
+  try {
+    await vi.waitFor(() => expect(wire.sockets.some(socket => socket.connected)).toBe(true));
+    request = TargetActionApprovalRequestV1Schema.parse({ ...request, status: 'approved',
+      decision: { kind: 'approve', decidedAtMs: 2 } });
+    for (const socket of wire.sockets) socket.update({ t: 'update-artifact', artifactId: 'plugin-approval' });
+    await vi.waitFor(() => expect(lastReadStatus).toBe('approved'));
+    request = TargetActionApprovalRequestV1Schema.parse({ ...request, status: 'executed', updatedAtMs: 3,
+      execution: { executedAtMs: 3, ok: true, effectAttempted: true, result: { delivered: true } } });
+    for (const socket of wire.sockets) socket.update({ t: 'update-artifact', artifactId: 'plugin-approval' });
+    expect(await pending).toEqual({ ok: true, result: { delivered: true } });
+  } finally { abort.abort(); await pending; wire.sockets.length = 0; }
+});
+
+it.each(['live', 'recorded', 'rejected', 'native'] as const)('finishes an approval-gated Workflow Action without Resume (%s)', async mode => {
+  const actionId = mode === 'native' ? 'review.walkthrough' : 'machines.list';
+  const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
+  let request: ApprovalRequestV2 | undefined;
+  let lastReadStatus: string | undefined;
+  let effects = 0;
+  const harness = createCliActionExecutorHarness({ token, credentials: { token, encryption: null },
+    mode: 'plain', ctx: null, sessionId: 'origin', serverId: 'home', serverIdentityId: 'home',
+    serverHttpBaseUrl: 'https://home.invalid',
+    actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+      actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } }),
+      getAccountSettings: () => accountSettingsParse({}) } }, {
+    approvalsCreate: async ({ request: value }) => {
+      request = ApprovalRequestV2Schema.parse(value);
+      if (mode === 'recorded') request = ApprovalRequestV2Schema.parse({ ...request, status: 'executed',
+        decision: { kind: 'approve', authority: 'present_user', decidedAtMs: 2 },
+        execution: { executedAtMs: 3, ok: true, result: { items: [] } } });
+      return { artifactId: 'workflow-approval' };
+    },
+    approvalsGet: async () => { lastReadStatus = request?.status; return request ?? null; },
+    machinesList: async () => { effects++; return { items: [] }; },
+  });
+  const store = createInMemoryWorkflowCoordinatorStore();
+  const workspace = { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' };
+  const abort = new AbortController();
+  const coordinator = createTestWorkflowCoordinator({ store,
+    executeStep: async () => { throw new Error('Unexpected Agent step'); },
+    resolveWorkspace: async () => ({ ok: true, workspace }),
+    action: { executor: harness.executor,
+      buildContext: async input => ({ ...buildWorkflowActionContext(input), serverId: 'home', serverIdentityId: 'home',
+        runtimeAccountId: 'account', defaultSessionId: 'origin', defaultSessionMachineId: workspace.machineId,
+        approvalProfileId: 'builtin:read-propose' }),
+      observeApproval: async ({ artifactId, actionRequestId, actionId, signal }) => harness.observeRecordedApprovalExecution({
+        artifactId, signal, expectedOrigin: { actionId: actionId ?? 'discussion.invite', requestId: actionRequestId,
+          accountId: 'account', serverIdentityId: 'home', machineId: 'machine' } }),
+      // Native execution observation is a transport boundary. F18 must retain
+      // the approved launch and consume its terminal evidence, not the receipt.
+      observeRun: async run => {
+        expect(run.runId).toBe('narrator');
+        expect(store.list().find(row => row.blockId === 'list')).toMatchObject({ lifecycle: 'running',
+          execution: { awaitedRuns: [{ runId: 'narrator' }] } });
+        return { kind: 'completed', result: { value: 'terminal' } };
+      } },
+  });
+  const pending = coordinator.run({ runId: 'approval-push-run',
+    definition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'action', id: 'list', actionId, input: mode === 'native' ? {
+      sessionId: { kind: 'literal', value: 'origin' }, runId: { kind: 'literal', value: 'review' },
+      comparisonId: { kind: 'literal', value: 'comparison' },
+    } : {} }] },
+    inputs: {}, executionTarget: { kind: 'session' }, originSessionId: 'origin', signal: abort.signal,
+    origin: { kind: 'direct', originSessionId: 'origin', authenticatedStarterV1: {
+      requestRef: 'start-request', requester: { serverId: 'home', accountId: 'account' } } },
+    authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } });
+  try {
+    if (mode !== 'recorded') {
+      await vi.waitFor(() => {
+        const row = store.list().find(row => row.blockId === 'list');
+        expect(row?.lifecycle, row?.reason).toBe('waiting_for_approval');
+      });
+      if (!request) throw new Error('Missing approval');
+      await vi.waitFor(() => expect(wire.sockets.some(socket => socket.connected)).toBe(true));
+      // The separate approval executor has delivered its effect. Approval alone
+      // remains nonterminal; the Artifact push publishes the execution afterwards.
+      request = ApprovalRequestV2Schema.parse({ ...request, status: 'approved',
+        decision: { kind: 'approve', authority: 'present_user', decidedAtMs: 2 } });
+      for (const socket of wire.sockets) socket.update({ t: 'update-artifact', artifactId: 'workflow-approval' });
+      await vi.waitFor(() => expect(lastReadStatus).toBe('approved'));
+      expect(store.list().find(row => row.blockId === 'list')?.lifecycle).toBe('waiting_for_approval');
+      const output = mode === 'native' ? { runId: 'narrator', comparisonId: 'comparison' } : { items: [] };
+      request = ApprovalRequestV2Schema.parse(mode === 'rejected' ? { ...request, status: 'rejected',
+        decision: { kind: 'reject', authority: 'present_user', decidedAtMs: 3 } }
+        : { ...request, status: 'executed', execution: { executedAtMs: 3, ok: true, result: output } });
+      for (const socket of wire.sockets) socket.update({ t: 'update-artifact', artifactId: 'workflow-approval' });
+    }
+    expect(await pending).toMatchObject(mode === 'rejected' ? { state: 'failed', reason: 'approval_rejected' } : { state: 'succeeded' });
+    expect(store.list().find(row => row.blockId === 'list')).toMatchObject(mode === 'rejected'
+      ? { lifecycle: 'failed', reason: 'approval_rejected' }
+      : { lifecycle: 'completed', result: mode === 'native'
+        ? { narration: { runId: 'narrator', outcome: 'completed', result: { value: 'terminal' } } } : { items: [] } });
+    expect(effects).toBe(0); // Observing approval never dispatches the effect again.
+  } finally { abort.abort(); await pending; wire.sockets.length = 0; }
+});
 
 function createApprovalRequest(overrides: Partial<ApprovalRequestV1> = {}): ApprovalRequestV1 {
   return {

@@ -2792,7 +2792,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               const code = (error as { code?: unknown })?.code;
               if (code === 'ERR_CANCELED' || (error instanceof Error && error.name === 'AbortError')) throw error;
               const reason = WorkflowOperationErrorCodeV1Schema.safeParse(code);
-              projected = { kind: 'unavailable', reason: reason.success ? reason.data : 'content_unavailable' };
+              // Scheduled admission precedes the daemon sealing the snapshot
+              // and its keys. That public row has no private history to open yet.
+              projected = run.workflowCustodyState === 'pending' && (run.state === 'queued' || run.state === 'claimed')
+                && acceptedEnvelopesByRunId[run.id] == null
+                ? null
+                : { kind: 'unavailable', reason: reason.success ? reason.data : 'content_unavailable' };
             }
             if (!matchesResource || !matchesDestination || !matchesUnder) continue;
             // Storage/control rows cannot author this private accepted-source fact.
@@ -2850,11 +2855,16 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           // marked worker claim checks the original source's currentness once.
           await assertControllerDominates(args, opened.accepted, ingressContext, () => true, deps);
         } else if (target !== undefined) {
-          // Project identity is private: a key-free control cannot prove that
-          // restriction. Machine restrictions use only the public Run row.
-          if (target.kind !== 'machine' || target.project) throw workflowError('target_unavailable');
-          const snapshot = await getSnapshot(args.input.runId, args.context.signal);
-          assertRunResourceRestriction(args.context, { machineId: snapshot.run.machineId }, deps.normalizeAbsolutePath);
+          if (target.kind !== 'machine') throw workflowError('target_unavailable');
+          if (target.project) {
+            const { accepted } = await openAccepted(args.input.runId, args.context.signal);
+            assertRunResourceRestriction(args.context, {
+              machineId: accepted.machineId, project: accepted.workspaceTarget.project,
+            }, deps.normalizeAbsolutePath);
+          } else {
+            const snapshot = await getSnapshot(args.input.runId, args.context.signal);
+            assertRunResourceRestriction(args.context, { machineId: snapshot.run.machineId }, deps.normalizeAbsolutePath);
+          }
         }
         try {
           return WorkflowActionOutputSchemasV1[args.actionId].parse(await deps.storage.execute({ operation: 'resume', runId: args.input.runId, expectedRevision: args.input.expectedRevision }, args.context.signal ? { signal: args.context.signal } : {}));
