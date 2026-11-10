@@ -1,5 +1,5 @@
-import type { LocalServiceActionRequestV1, DaemonLocalServiceLauncherStartRequestV1, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
-import type { ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
+import type { LocalServiceActionRequestV1, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
+import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 
@@ -20,10 +20,12 @@ export type LocalServiceActionExecutionOutcome =
 export type LocalServiceActionExecutionContext = Readonly<{
     ingress?: RpcHandlerContext;
     actionContext: RuntimeActionExecuteArgs['context'];
-    prepareStartAction?: (request: DaemonLocalServiceLauncherStartRequestV1, context: RuntimeActionExecuteArgs['context']) => Promise<ActionPrepareResult>;
 }>;
 export type RestartProjectManagedService = (request: LocalServiceActionRequestV1, handle: WorkspaceProjectManagedServiceHandle,
     context: LocalServiceActionExecutionContext) => Promise<LocalServiceActionExecutionOutcome>;
+export type PrepareRestartProjectManagedService = (request: LocalServiceActionRequestV1, handle: WorkspaceProjectManagedServiceHandle,
+    context: LocalServiceActionExecutionContext) => Promise<HostReviewedChildrenPreparationV1 | LocalServiceActionExecutionOutcome>;
+export const PROJECT_SERVICE_RESTART_START_ROLE = 'service.restart.start';
 
 /** Exact retained-resource cleanup; serving/new-effect admission is a separate contract. */
 export async function stopProjectManagedService(handle: ProjectManagedServiceHandle, signal?: AbortSignal): Promise<LocalServiceActionExecutionOutcome> {

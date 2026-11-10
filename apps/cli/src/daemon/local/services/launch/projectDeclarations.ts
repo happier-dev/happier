@@ -6,7 +6,8 @@ import type { DaemonLocalServiceLauncherStartRequestV1, RuntimeActionExecuteArgs
 import type { ProjectCommandSourceV1, ProjectExecutionInputV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readProjectFiniteIngressRefusal, readProjectRuntimeAdmissionRefusal, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
-import { resolveProjectRequesterSecretEnvironment } from '@/workspaces/projectSetup/projectSetupRequesterInputs';
+import { resolveProjectRequesterSecretInputs } from '@/workspaces/projectSetup/projectSetupRequesterInputs';
+import { readProjectManifest } from '@/workspaces/projectSetup/projectManifestFile';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
 import { prepareProjectSetup, type PreparedProjectSetupCommand, type PreparedProjectSetupPlan, type ProjectSetupPreparationInput } from '@/workspaces/projectSetup/projectSetupPreparation';
@@ -30,7 +31,7 @@ import { DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceNativePrer
     LocalServiceStartApprovalReviewV1Schema, type LocalServiceStartApprovalReviewV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { stopProjectManagedService, type RestartProjectManagedService } from '../actions/executor';
+import { PROJECT_SERVICE_RESTART_START_ROLE, stopProjectManagedService, type PrepareRestartProjectManagedService, type RestartProjectManagedService } from '../actions/executor';
 import { createProjectServiceDeclarationTargetIdV1, LocalServiceManagedServiceActionTargetV1Schema, type ProjectServiceDeclarationRefV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import type { WorkspaceSyncWorkerTargetBasis } from '@/workspaces/sync/workspaceSyncPreparation';
 import type { ProjectServiceStartChoice } from '@/workspaces/execution/projectServicePlacement';
@@ -344,7 +345,10 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             assertNotCancelled();
             if (!currentTargets.some(target => 'declaration' in target && target.id === request.targetId && digest(target.declaration) === digest(request.declaration))) throw new ServiceStartRefusal('launcher_target_unknown');
         }
-        const secretEnvironment = await phase('requester_environment', () => resolveProjectRequesterSecretEnvironment(runtime, undefined, signal));
+        const manifest = worker?.manifest ?? (await phase('local_manifest', () => readProjectManifest({ root: association.workspace.rootPath }))).document?.manifest;
+        const { environmentBindings, secretEnvironment } = await phase('requester_environment', () => resolveProjectRequesterSecretInputs(runtime, {
+            project: sourceAssociation.project, requirements: manifest?.environmentVariables ?? [],
+        }, signal));
         if (approval && !sameStrictJsonValue(approval.target, workspaceAddressFromRefV1(association.workspace))) {
             throw new ServiceStartRefusal('project_service_effect_changed');
         }
@@ -358,6 +362,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 project: approval.setup.project, reviewedEffectDigest: approval.setup.reviewedEffectDigest } } : {}),
             retainNativeInvocation: production => nativeCustody ? nativeCustody.retain(production) : nativeInvocations.add(production),
             ...(runtime.successHomeDir ? { successHomeDir: runtime.successHomeDir } : {}),
+            ...(environmentBindings ? { environmentBindings } : {}),
             ...(secretEnvironment ? { secretEnvironment } : {}),
             ...(runtime.configEnvironment ? { configEnvironment: runtime.configEnvironment } : {}),
             ...(runtime.plugins ? { plugins: runtime.plugins } : {}),
@@ -601,7 +606,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             const current = await review(nativeInvocations, reviewInputs, true, executeCanonicalAction, undefined, true);
             if (current.kind !== 'target') throw new ServiceStartRefusal('project_service_effect_review_required');
             if (request.expectedEffectDigest && request.expectedEffectDigest !== current.reviewedEffectDigest) {
-                throw new ServiceStartRefusal('project_service_effect_changed');
+                throw new ServiceStartRefusal('project_service_effect_changed', current);
             }
             return LocalServiceStartApprovalReviewV1Schema.parse({ request,
                 target: workspaceAddressFromRefV1(current.plan.workspace),
@@ -612,7 +617,12 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         } catch (error) {
             uncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
             if (uncertain) throw error;
-            return { ok: false, errorCode: codeOf(error), error: codeOf(error) };
+            const denied = refusal(error);
+            return { ok: false, errorCode: denied.reasonCode, error: denied.reasonCode,
+                ...(denied.reviewedEffect !== undefined || denied.reviewedEffectDigest ? { details: {
+                    ...(denied.reviewedEffect !== undefined ? { reviewedEffect: denied.reviewedEffect } : {}),
+                    ...(denied.reviewedEffectDigest ? { reviewedEffectDigest: denied.reviewedEffectDigest } : {}),
+                } } : {}) };
         } finally { if (!uncertain) await Promise.all([...nativeInvocations].map(production => production.release())); }
     }
 
@@ -861,28 +871,39 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             ...(denied.reviewedEffectDigest ? { reviewedEffectDigest: denied.reviewedEffectDigest } : {}) }; }
         finally { if (!uncertain) await Promise.all([...nativeInvocations].map(production => production.release())); await lease?.release(); }
     }
-    const restartManagedService: RestartProjectManagedService = async (request, handle, execution) => {
+    const prepareRestartManagedService: PrepareRestartProjectManagedService = async (request, handle, execution) => {
         if (handle.kind !== 'workspace') return { status: 'denied', reasonCode: 'workspace_service_required' };
-        if (!execution.prepareStartAction) return { status: 'denied', reasonCode: 'managed_service_restart_admission_required' };
         const start: DaemonLocalServiceLauncherStartRequestV1 = {
             ...buildProjectManagedServiceStartRequest(handle),
             ...(request.expectedEffectDigest ? { expectedEffectDigest: request.expectedEffectDigest } : {}),
             ...(request.choice ? { choice: request.choice } : {}),
         };
         // Fresh source/effect/placement review precedes disruption. Stop never authorizes replacement.
-        const selected = await resolveStartTarget(start, execution.ingress, execution.actionContext);
-        if (!selected.ok) return { status: 'denied', reasonCode: selected.reasonCode,
-            ...(selected.reviewedEffect !== undefined ? { reviewedEffect: selected.reviewedEffect } : {}),
-            ...(selected.reviewedEffectDigest ? { reviewedEffectDigest: selected.reviewedEffectDigest } : {}) };
-        // Start's required-result Action preparation settles its independent approval policy before
-        // disruption. Its one-shot invocation still revalidates current admission when run.
-        const prepared = await execution.prepareStartAction({ ...start, expectedEffectDigest: selected.declaration.reviewedEffectDigest }, execution.actionContext);
-        if (prepared.kind === 'ready') {
-            const signals = [execution.ingress?.signal, execution.actionContext.signal].filter((signal): signal is AbortSignal => signal !== undefined);
-            const stopped = await stopProjectManagedService(handle, signals.length ? AbortSignal.any(signals) : undefined);
-            if (stopped.status !== 'succeeded') return stopped;
+        const preparedReview = await prepareStartApproval(start, execution.ingress, execution.actionContext);
+        if ('ok' in preparedReview) {
+            const details = preparedReview.details && typeof preparedReview.details === 'object' ? preparedReview.details : undefined;
+            return { status: 'denied', reasonCode: preparedReview.errorCode,
+                ...(details && 'reviewedEffect' in details ? { reviewedEffect: projectNativeJsonValueForTransport(details.reviewedEffect) } : {}),
+                ...(details && 'reviewedEffectDigest' in details && typeof details.reviewedEffectDigest === 'string'
+                    ? { reviewedEffectDigest: details.reviewedEffectDigest } : {}) };
         }
-        const result = prepared.kind === 'settled' ? prepared.result : await prepared.invocation.run();
+        const childInput = { ...start, expectedEffectDigest: preparedReview.reviewedEffectDigest };
+        const review = { ...preparedReview, request: childInput };
+        return { children: [{ action: 'localServices.launcher.start', role: PROJECT_SERVICE_RESTART_START_ROLE,
+            input: projectNativeJsonValueForTransport(childInput) }],
+            approvalPreview: projectNativeJsonValueForTransport({ serviceStartReview: review }),
+            prepareExecutionContext: async context => ({ ...context, nativeServiceStartApproval: review }) };
+    };
+    const restartManagedService: RestartProjectManagedService = async (_request, handle, execution) => {
+        if (handle.kind !== 'workspace') return { status: 'denied', reasonCode: 'workspace_service_required' };
+        const child = execution.actionContext.hostReviewedChild;
+        const review = execution.actionContext.nativeServiceStartApproval;
+        if (!child || !review) return { status: 'denied', reasonCode: 'managed_service_restart_admission_required' };
+        const signals = [execution.ingress?.signal, execution.actionContext.signal].filter((signal): signal is AbortSignal => signal !== undefined);
+        const stopped = await stopProjectManagedService(handle, signals.length ? AbortSignal.any(signals) : undefined);
+        if (stopped.status !== 'succeeded') return stopped;
+        const result = await child.invoke({ action: 'localServices.launcher.start', role: PROJECT_SERVICE_RESTART_START_ROLE,
+            input: projectNativeJsonValueForTransport(review.request) });
         if (!result.ok) return { status: 'denied', reasonCode: result.errorCode };
         const parsed = DaemonLocalServiceLauncherStartResponseV1Schema.safeParse(result.result);
         if (!parsed.success) return { status: 'failed', reasonCode: 'managed_service_restart_result_unavailable' };
@@ -891,5 +912,5 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             ...(parsed.data.reviewedEffect !== undefined ? { reviewedEffect: parsed.data.reviewedEffect } : {}),
             ...(parsed.data.reviewedEffectDigest ? { reviewedEffectDigest: parsed.data.reviewedEffectDigest } : {}) };
     };
-    return { resolveStartTarget, startManagedDeclaration, restartManagedService, prepareStartApproval };
+    return { resolveStartTarget, startManagedDeclaration, prepareRestartManagedService, restartManagedService, prepareStartApproval };
 }

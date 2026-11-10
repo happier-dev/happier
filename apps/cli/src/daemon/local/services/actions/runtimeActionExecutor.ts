@@ -10,12 +10,12 @@ import { LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/s
 import { LocalServiceInventoryCountResponseV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { ProjectServiceRelocateInputV1Schema, type ProjectServiceRelocateInputV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { resolveLocalServicePublicPreviewCreateFailureV1 } from '@happier-dev/protocol/local/services/public/v1';
 
 import type { LocalServiceActionRoutes } from './routes';
-import type { LocalServiceActionExecutionContext } from './executor';
 import type { LocalServicesDaemonFeatureGate, LocalServicesDaemonFeatureGateId } from '../featureGate';
 import type { LocalServiceInventoryRoutes } from '../inventory/routes';
 import { projectLocalServiceInventorySnapshotV1 } from '../inventory/wire';
@@ -27,7 +27,7 @@ export type LocalServicesRuntimeActionRoutes = Readonly<{
     inventoryRoutes?: Pick<LocalServiceInventoryRoutes, 'getSnapshot' | 'refreshSnapshot'> & Partial<Pick<LocalServiceInventoryRoutes, 'getSummary'>>;
     launcherRoutes?: Pick<LocalServiceLauncherRoutes, 'getSnapshot'> & Partial<Pick<LocalServiceLauncherRoutes, 'startTarget' | 'leaves'>>;
     previewRoutes?: Pick<LocalServicePreviewRoutes, 'getSnapshot'> & Partial<Pick<LocalServicePreviewRoutes, 'openOrCreate' | 'revoke'>>;
-    actionRoutes?: Pick<LocalServiceActionRoutes, 'execute'>;
+    actionRoutes?: Pick<LocalServiceActionRoutes, 'execute'> & Partial<Pick<LocalServiceActionRoutes, 'prepareRestart'>>;
     publicPreviewRoutes?: LocalServicePublicPreviewRoutes;
     relocateService?: (request: ProjectServiceRelocateInputV1, context: RuntimeActionExecuteArgs['context'],
         executeCanonicalAction?: RuntimeActionExecuteArgs['executeCanonicalAction'], ingress?: RpcHandlerContext) => Promise<ActionExecuteResult>;
@@ -37,7 +37,6 @@ type CreateLocalServicesDaemonRuntimeActionExecutorInput = Readonly<{
     routes: LocalServicesRuntimeActionRoutes;
     /** Captured by the receiving host, never reconstructed from Action input/context. */
     ingress?: RpcHandlerContext;
-    prepareStartAction?: LocalServiceActionExecutionContext['prepareStartAction'];
     fallback?: RuntimeActionExecute;
     // Single-owner daemon feature-gate (REQUIRED — mirrors the browser daemon executor). Each
     // local-service action family is refused at the execution boundary when its server feature
@@ -181,6 +180,22 @@ const failClosedLocalServicesDaemonFeatureGate: LocalServicesDaemonFeatureGate =
     isEnabled: () => false,
     refresh: async () => {},
 };
+
+/** Native Restart admission prepares its exact replacement before the parent review or Stop. */
+export function createLocalServicesDaemonRestartPreparation(input: Pick<CreateLocalServicesDaemonRuntimeActionExecutorInput,
+    'routes' | 'ingress' | 'featureGate'>): NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']> {
+    return async request => {
+        if (request.actionId !== 'localServices.actions.restartManaged') return null;
+        const refusedFeatureId = resolveFeatureGateRefusal(input.featureGate, request.actionId);
+        if (refusedFeatureId) return featureDisabledResult(refusedFeatureId);
+        const prepare = input.routes.actionRoutes?.prepareRestart;
+        if (!prepare) return { ok: false, errorCode: 'managed_service_restart_admission_required',
+            error: 'managed_service_restart_admission_required' };
+        return prepare(LocalServiceActionRequestV1Schema.parse(request.input), {
+            ingress: input.ingress, actionContext: request.context,
+        });
+    };
+}
 
 export function createLocalServicesDaemonRuntimeActionExecutor(
     input: CreateLocalServicesDaemonRuntimeActionExecutorInput,
@@ -385,8 +400,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             ) {
                 return invalidParametersResult;
             }
-            const result = await routes.execute(request.data, { ingress: input.ingress, actionContext: args.context,
-                prepareStartAction: input.prepareStartAction });
+            const result = await routes.execute(request.data, { ingress: input.ingress, actionContext: args.context });
             if (args.actionId !== 'localServices.actions.openPreview') return result;
             if (result.status !== 'succeeded') return previewLifecycleDisabledResult(result.reasonCode ?? 'action_not_allowed');
             const previewRoutes = input.routes.previewRoutes;
