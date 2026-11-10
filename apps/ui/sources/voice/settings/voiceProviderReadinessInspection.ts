@@ -4,6 +4,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 import { projectVoiceDefaultAgentSelection, projectVoiceSelectedAgentReadiness } from '@/voice/agent/projectVoiceAgentSelection';
+import { getVoiceSessionFailedAttempt } from '@/voice/session/voiceSessionStore';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { projectVoiceExecutionMachineReadiness } from '@/voice/settings/executionMachine';
 import type { ConnectedServiceBindingsV1} from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -145,7 +146,8 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
     const parsedPlatform = VoiceRuntimePlatformSchema.safeParse(Platform.OS);
     const platform = parsedPlatform.success ? parsedPlatform.data : 'unknown';
     const runtimeSettings = purpose === 'dictation' ? createVoiceDictationRuntimeSettingsSnapshot(settings) : settings;
-    const localConfig = resolveLocalVoiceAdapterSettings(runtimeSettings).config;
+    const localAdapter = resolveLocalVoiceAdapterSettings(runtimeSettings);
+    const localConfig = localAdapter.config;
     const stt = parseLocalVoiceSttSettings(localConfig.stt);
     const tts = parseLocalVoiceTtsSettings(localConfig.tts);
     const localSelected = voice.providerId === 'local_conversation' || voice.providerId === 'local_direct';
@@ -252,7 +254,7 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
     const observedAgents = machine.machineId && agentLifetime && areAccountSettingsScopesEqual(scope, agentLifetime.scope)
         ? readMachineAgentsForScope(agentLifetime, machine.machineId) : EMPTY_MACHINE_AGENTS;
     const selectedAgentReadiness = projectVoiceSelectedAgentReadiness(selectedAgent, observedAgents,
-        { serverId, machineId: machine.machineId });
+        { serverId, machineId: machine.machineId, failedAttempt: getVoiceSessionFailedAttempt(localAdapter.adapterId, scope) });
     const localFacts = projectLocalConversationReadinessFacts({ registry, voice, voiceSettingsV1: settings.voiceSettingsV1,
         secrets: settings.secrets, connectedPurposes, platform, localInput: localAvailability,
         local: resolveVoiceProviderAvailability({ happierVoiceSupported: hostedEnabled, platformOs: platform, local: localAvailability }).local,

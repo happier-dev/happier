@@ -38,6 +38,47 @@ function seedOrderedTranscript() {
 }
 
 describe('VoiceTranscriptProjector', () => {
+    it('replaces native snapshots by segment identity and retains a separate same-text utterance', () => {
+        // Native-session speech enters through the session writer, rather than
+        // the synthetic Voice projector. Keep normalization, reducer and selector real.
+        const applySnapshot = (serverId: string, localId: string, segmentLocalId: string,
+            text: string, seq: number, segmentState: 'streaming' | 'complete') => {
+            const message = normalizeRawMessage(serverId, localId, 1_000, {
+                role: 'agent',
+                content: { type: 'acp', agentId: 'codex', data: { type: 'message', message: text } },
+                meta: { happierStreamSegmentV1: { v: 1, segmentKind: 'assistant', segmentLocalId,
+                    segmentState, startedAtMs: 1_000, updatedAtMs: 1_000 + seq } },
+            });
+            if (!message) throw new Error('Expected normalized native stream snapshot');
+            storage.getState().applyMessages('carrier-s1', [{ ...message, seq }]);
+        };
+        applySnapshot('partial-row', 'partial-commit', 'native-1', 'The', 1, 'streaming');
+        expect(selectVoiceTranscriptEntriesForConversationSession(storage.getState(), 'carrier-s1').map(entry => entry.text))
+            .toEqual(['The']);
+        applySnapshot('final-row', 'final-commit', 'native-1', 'The capital of Japan is Tokyo.', 2, 'complete');
+        applySnapshot('final-replay-row', 'final-replay-commit', 'native-1', 'The capital of Japan is Tokyo.', 3, 'complete');
+        expect(selectVoiceTranscriptEntriesForConversationSession(storage.getState(), 'carrier-s1').map(entry => [entry.id, entry.text]))
+            .toEqual([['native-1', 'The capital of Japan is Tokyo.']]);
+        applySnapshot('another-utterance', 'another-commit', 'native-2', 'The capital of Japan is Tokyo.', 4, 'complete');
+        expect(selectVoiceTranscriptEntriesForConversationSession(storage.getState(), 'carrier-s1').map(entry => entry.id))
+            .toEqual(['native-1', 'native-2']);
+    });
+
+    it('keeps a late-arriving target note in event-time order beside newer acknowledged turns', () => {
+        const projector = createVoiceTranscriptProjector({ getState: storage.getState, nowMs: () => 1794302029511 });
+        projector.projectNoteText({ conversationSessionId: 'carrier-s1', text: 'Target session set to the current session' });
+        const newer = normalizeRawMessage('newer-answer', 'newer-answer', 1794303184958, {
+            role: 'agent', content: { type: 'output', data: { type: 'assistant', uuid: 'newer-answer',
+                message: { role: 'assistant', content: [{ type: 'text', text: 'Created third.txt.' }] } } },
+        });
+        if (!newer) throw new Error('Expected normalized assistant answer');
+        storage.getState().applyMessages('carrier-s1', [{ ...newer, seq: 1 }]);
+        expect(selectVoiceTranscriptEntriesForConversationSession(storage.getState(), 'carrier-s1').map(entry => entry.text))
+            .toEqual(['Target session set to the current session', 'Created third.txt.']);
+        expect(selectVoiceTranscriptEntriesForConversationSession(storage.getState(), 'carrier-s1', { limit: 1 }).map(entry => entry.text))
+            .toEqual(['Created third.txt.']);
+    });
+
     it.each(['user', 'assistant'] as const)('retains Voice origin and provider casing for a synthetic %s STT conversation turn', role => {
         const projector = createVoiceTranscriptProjector({ getState: storage.getState, nowMs: () => 100 });
         const input = { conversationSessionId: 'carrier-s1', text: 'HULLO PLEASE keep API and iOS' };

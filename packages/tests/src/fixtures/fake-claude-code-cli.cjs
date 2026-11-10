@@ -919,34 +919,6 @@ async function runSdkStreamUntilEof() {
       continue;
     }
 
-    if (scenario === 'voice-actions-send-session-message') {
-      const assistant = createAssistantMessage([
-        {
-          type: 'text',
-          text: [
-            'I can send that.',
-            '',
-            '<voice_actions>',
-            JSON.stringify({
-              actions: [
-                {
-                  t: 'sendSessionMessage',
-                  args: {
-                    message: 'hello from fake voice action',
-                  },
-                },
-              ],
-            }),
-            '</voice_actions>',
-          ].join('\n'),
-        },
-      ]);
-
-      emitSdk(assistant);
-      emitSdk(createResultSuccess());
-      continue;
-    }
-
     if (scenario === 'voice-current-ui-triage') {
       if (promptText.includes('CURRENT UI CONTEXT')) {
         safeAppendJsonl(logPath, {

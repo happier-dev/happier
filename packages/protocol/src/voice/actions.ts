@@ -6,13 +6,6 @@ import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js'
 
 export const VOICE_ACTION_FUNCTION_NAME = 'happier_voice_action' as const;
 
-export const VOICE_ACTIONS_TAG = 'voice_actions' as const;
-
-export const VOICE_ACTIONS_BLOCK = {
-  startTag: `<${VOICE_ACTIONS_TAG}>`,
-  endTag: `</${VOICE_ACTIONS_TAG}>`,
-} as const;
-
 export type VoiceAssistantAction = Readonly<{
   t: string;
   args: unknown;
@@ -219,48 +212,4 @@ export function decodeVoiceAssistantActions(
     };
   }
   return { assistantText: assistantText.trim(), actions };
-}
-
-export function extractVoiceActionsFromAssistantText(
-  assistantTextRaw: string,
-): Readonly<{ assistantText: string; actions: VoiceAssistantAction[]; invalidActionBlock?: true }> {
-  const assistantText = String(assistantTextRaw ?? '');
-
-  const startIndex = assistantText.indexOf(VOICE_ACTIONS_BLOCK.startTag);
-  if (startIndex < 0) return { assistantText: assistantText.trim(), actions: [] };
-
-  // An attempted action that cannot execute must not settle as ordinary prose:
-  // otherwise "Creating ... now" survives while its mutation silently vanishes.
-  const invalidActionBlock = {
-    assistantText: INVALID_VOICE_ACTION_MESSAGE,
-    actions: [],
-    invalidActionBlock: true as const,
-  };
-  const endIndex = assistantText.indexOf(VOICE_ACTIONS_BLOCK.endTag, startIndex);
-  const stripped = endIndex < 0
-    ? assistantText.slice(0, startIndex)
-    : `${assistantText.slice(0, startIndex)}${assistantText.slice(endIndex + VOICE_ACTIONS_BLOCK.endTag.length)}`;
-  if (endIndex < 0) return invalidActionBlock;
-
-  const jsonRaw = assistantText
-    .slice(startIndex + VOICE_ACTIONS_BLOCK.startTag.length, endIndex)
-    .trim();
-
-  let parsedJson: unknown;
-  try {
-    parsedJson = JSON.parse(jsonRaw);
-  } catch {
-    return invalidActionBlock;
-  }
-  if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
-    return invalidActionBlock;
-  }
-
-  const rawActionsValue = (parsedJson as { actions?: unknown }).actions;
-  if (rawActionsValue !== undefined && !Array.isArray(rawActionsValue)) {
-    return invalidActionBlock;
-  }
-
-  const rawActions = Array.isArray(rawActionsValue) ? rawActionsValue : [];
-  return decodeVoiceAssistantActions(rawActions, stripped);
 }

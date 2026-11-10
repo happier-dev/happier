@@ -6,7 +6,7 @@ import {
 import type { Message } from "@happier-dev/session-core/messages";
 import { prepareTranscriptMessageBody } from '@/components/sessions/transcript/messageDisplayText';
 import type { SessionDeleteResult } from '@/sync/ops/sessions';
-import { sortTranscriptMessagesOldestFirst } from "@happier-dev/session-core/messages";
+import { compareVoiceTranscriptOrder } from '@/voice/transcript/voiceTranscriptOrder';
 import type { TranscriptOlderPageLoadResult } from "@happier-dev/session-core/messages";
 import { registerSessionRealtimeTranscriptConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
 
@@ -130,7 +130,7 @@ export function projectVoiceHistoryRows(
   resolveProviderLabel: VoiceHistoryConsumerDeps['resolveProviderLabel'],
   query = '',
 ): readonly VoiceHistoryRow[] {
-  const rows = sortTranscriptMessagesOldestFirst(messages)
+  const rows = [...messages].sort(compareVoiceTranscriptOrder)
     .flatMap((message): VoiceHistoryRow[] => {
       if (message.kind !== 'user-text' && message.kind !== 'agent-text') return [];
       if (message.kind === 'agent-text' && message.isThinking === true) return [];

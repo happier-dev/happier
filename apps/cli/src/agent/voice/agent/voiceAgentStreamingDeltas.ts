@@ -1,4 +1,3 @@
-import { VOICE_ACTIONS_BLOCK } from '@happier-dev/protocol/voice/actions';
 import { fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, resolveVoiceAgentOutputSpeechSegmentLength } from '@happier-dev/protocol/voice/outputEvents';
 import type { VoiceAgentOutputTurnV1 } from '@happier-dev/protocol';
 
@@ -16,8 +15,6 @@ type VoiceOutputDeltaEvent = Readonly<{
 
 type VoiceStreamingOutputState = Readonly<{
   done: boolean;
-  suppressActionDeltas: boolean;
-  deltaHold: string;
   outputSpeechBuffer: string;
   outputSpeechText: string;
   outputBudget: VoiceAgentOutputTurnV1;
@@ -31,8 +28,6 @@ type VoiceStreamingOutputState = Readonly<{
 }>;
 
 type VoiceStreamingOutputPatch = (next: Readonly<{
-  suppressActionDeltas?: boolean;
-  deltaHold?: string;
   outputSpeechBuffer?: string;
   outputSpeechText?: string;
   outputBudget?: VoiceAgentOutputTurnV1;
@@ -87,8 +82,6 @@ export function finalizeVoiceAgentStreamingSpeech(
   stream: VoiceStreamingOutputState,
   patch: VoiceStreamingOutputPatch,
 ): void {
-  if (!stream.suppressActionDeltas && stream.deltaHold) appendSpeechText(stream, patch, stream.deltaHold);
-  patch({ deltaHold: '' });
   flushVoiceAgentStreamingSpeech(stream, patch, true);
 }
 
@@ -98,29 +91,6 @@ export function ingestVoiceAgentStreamingDelta(
   textDelta: string,
 ): void {
   if (stream.done) return;
-  if (stream.suppressActionDeltas) return;
-
-  const startTag = VOICE_ACTIONS_BLOCK.startTag;
-  const combined = `${stream.deltaHold}${textDelta}`;
-  const tagIndex = combined.indexOf(startTag);
-  if (tagIndex >= 0) {
-    const emit = combined.slice(0, tagIndex);
-    if (emit) {
-      appendSpeechText(stream, patch, emit);
-    }
-    flushVoiceAgentStreamingSpeech(stream, patch, true);
-    patch({ deltaHold: '', suppressActionDeltas: true });
-    return;
-  }
-
-  let heldLength = Math.min(combined.length, startTag.length - 1);
-  while (heldLength > 0 && !startTag.startsWith(combined.slice(-heldLength))) heldLength -= 1;
-  const safeLen = combined.length - heldLength;
-  const emit = combined.slice(0, safeLen);
-  const nextHold = combined.slice(safeLen);
-  patch({ deltaHold: nextHold });
-  if (emit) {
-    appendSpeechText(stream, patch, emit);
-    flushVoiceAgentStreamingSpeech(stream, patch);
-  }
+  appendSpeechText(stream, patch, textDelta);
+  flushVoiceAgentStreamingSpeech(stream, patch);
 }

@@ -69,8 +69,6 @@ describe('accepted semantic speech playback', () => {
       const playbackController = createVoicePlaybackController();
       const stream = {
         done: false,
-        suppressActionDeltas: false,
-        deltaHold: '',
         outputSpeechBuffer: '',
         outputSpeechText: '',
         outputBudget: createVoiceAgentOutputTurnV1('semantic-turn'),

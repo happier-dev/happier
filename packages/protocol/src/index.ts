@@ -5864,10 +5864,7 @@ export {
 } from './scm/capabilities.js';
 
 export {
-  VOICE_ACTIONS_BLOCK,
-  VOICE_ACTIONS_TAG,
   VoiceAssistantActionSchema,
-  extractVoiceActionsFromAssistantText,
   type VoiceAssistantAction,
 } from './voice/actions.js';
 

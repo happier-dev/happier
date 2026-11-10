@@ -8,5 +8,4 @@ export {
   type PromptBlockV1,
   type PromptPlanV1,
 } from '../prompts/promptPlanV1.js';
-export { VOICE_ACTIONS_TAG } from './actions.js';
 export { VOICE_TOOL_RESULTS_JSON_PREFIX } from './toolResultsChannel.js';

@@ -1182,12 +1182,10 @@ export class VoiceAgentManager {
       completedHistory: false,
       cancelled: false,
       preparationAbortController: new AbortController(),
-      deltaHold: '',
       outputSpeechBuffer: '',
       outputSpeechText: '',
       outputBudget: createVoiceAgentOutputTurnV1(streamId),
       outputIncomplete: false,
-      suppressActionDeltas: false,
       outputSeq: 0,
       outputSegmentIndex: 0,
       targetChars: params.speechSegmentTargetChars,
@@ -1200,9 +1198,7 @@ export class VoiceAgentManager {
       if (!stream.cancelled) {
         return false;
       }
-      stream.deltaHold = '';
       stream.outputSpeechBuffer = '';
-      stream.suppressActionDeltas = true;
       voiceAgent.clearChatBuffer();
       if (!stream.events.some((event) => event.t === 'voice_output' && event.output.kind === 'turn_cancelled')) {
         stream.events.push({
@@ -1269,12 +1265,10 @@ export class VoiceAgentManager {
 
         const extracted = decodeVoiceAssistantActions(voiceAgent.chatActions, voiceAgent.chatBuffer);
         const patchSpeech: Parameters<typeof ingestVoiceAgentStreamingDelta>[1] = (next) => {
-          if (typeof next.deltaHold === 'string') stream.deltaHold = next.deltaHold;
           if (typeof next.outputSpeechBuffer === 'string') stream.outputSpeechBuffer = next.outputSpeechBuffer;
           if (typeof next.outputSpeechText === 'string') stream.outputSpeechText = next.outputSpeechText;
           if (next.outputBudget) stream.outputBudget = next.outputBudget;
           if (typeof next.outputIncomplete === 'boolean') stream.outputIncomplete = next.outputIncomplete;
-          if (typeof next.suppressActionDeltas === 'boolean') stream.suppressActionDeltas = next.suppressActionDeltas;
           if (typeof next.outputSeq === 'number') stream.outputSeq = next.outputSeq;
           if (typeof next.outputSegmentIndex === 'number') stream.outputSegmentIndex = next.outputSegmentIndex;
         };
@@ -1586,9 +1580,7 @@ export class VoiceAgentManager {
     // Prompt and Follow reads belong to this turn, not the retained native
     // Session. Cancel must release them before joining the turn's settlement.
     stream.preparationAbortController.abort();
-    stream.deltaHold = '';
     stream.outputSpeechBuffer = '';
-    stream.suppressActionDeltas = true;
     voiceAgent.clearChatBuffer();
     if (!stream.events.some((event) => event.t === 'voice_output' && event.output.kind === 'turn_cancelled')) {
       stream.events.push({

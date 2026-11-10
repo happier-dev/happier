@@ -208,8 +208,8 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
     ...agentReadiness,
     ...(needsAgent && input.selectedAgent ? { selectedAgent: input.selectedAgent } : {}),
     ...(needsAgent && agentReadiness.code.startsWith('runtime_') && agentReadiness.code !== 'runtime_unknown'
-      && input.selectedAgent?.runtimeTarget ? {
-        recoveryAction: 'open_provider_settings' as const,
+      && input.selectedAgent ? {
+        ...(input.selectedAgent.runtimeTarget ? { recoveryAction: 'open_provider_settings' as const } : {}),
         ...(input.selectedAgent.needsSignIn ? { code: 'agent_signed_out', reasonKey: 'settingsVoice.local.machineErrors.agent_signed_out' } : {}),
       } : {}),
   };

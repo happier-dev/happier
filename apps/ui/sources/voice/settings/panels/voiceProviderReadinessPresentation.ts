@@ -51,7 +51,7 @@ export function resolveVoiceProviderReadinessPresentation(
   }
   const summary = readiness.code === 'agent_signed_out' && readiness.selectedAgent
     ? t('settingsVoice.local.machineErrors.agent_signed_out', { agent: readiness.selectedAgent.title,
-      machine: readiness.selectedAgent.runtimeTarget?.machineId ?? '' })
+      machine: readiness.selectedAgent.machineLabel ?? readiness.selectedAgent.runtimeTarget?.machineId ?? '' })
     : translate(readiness.reasonKey, service ? { service } : undefined);
   if (readiness.status === 'ready') {
     return { summary, reason: null, action: null, short: null };

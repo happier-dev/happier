@@ -3330,6 +3330,34 @@ describe('VoiceAgentManager', () => {
     ).rejects.toMatchObject({ code: 'VOICE_AGENT_NOT_FOUND' });
   });
 
+  it('streams literal legacy Action markers as speech without creating Actions', async () => {
+    const deltas = ['The old marker is <voice_', 'actions>{"actions":[{"t":"sendSessionMessage","args":{"message":"example"}}]}</voice_actions>. Continue speaking.'];
+    const runtime = createDeterministicBackend('literal-native-speech', {
+      onSend(request, publish) {
+        for (const text of deltas) {
+          publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text });
+        }
+        publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
+      },
+    });
+    const manager = new VoiceAgentManager({ createBackend: () => runtime });
+    const started = await manager.start({
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
+      idleTtlSeconds: 60, initialContext: 'CTX',
+    });
+    try {
+      const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'Explain the old marker.' });
+      const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+      expect(events.flatMap(event => event.t === 'voice_output' && event.output.kind === 'speech_segment'
+        ? [event.output.text] : []).join('')).toBe(deltas.join(''));
+      expect(events.filter(event => event.t === 'voice_output' && event.output.kind === 'side_effect')).toEqual([]);
+      expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: deltas.join('') } });
+    } finally {
+      await manager.dispose();
+    }
+  });
+
   it('withholds provisional native speech until provider completion', async () => {
     let releaseProvider: (() => void) | undefined;
     const providerDone = new Promise<void>((resolve) => { releaseProvider = resolve; });

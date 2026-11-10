@@ -203,7 +203,7 @@ describe('voiceTranscriptSelectors', () => {
         expect(reads.count).toBe(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW);
     });
 
-    it('walks the canonical ordered store backward and only visits the bounded suffix needed for renderable rows', () => {
+    it('reads canonical ordering keys once while extracting text only for the requested renderable window', () => {
         const total = VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 10;
         const reads = { visited: 0, content: 0 };
         const session = buildCanonicalCountingSession(total, reads);
@@ -217,9 +217,15 @@ describe('voiceTranscriptSelectors', () => {
         expect(entries).toHaveLength(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW);
         expect(entries[0]?.id).toBe('m-8');
         expect(entries[entries.length - 1]?.id).toBe('m-207');
-        // Three non-projectable tail messages are visited before the 200 rows
-        // are admitted; all older messages remain untouched.
-        expect(reads.visited).toBe(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 3);
+        // Server sequence is arrival order, so event-time keys must be read
+        // before windowing. Expensive text projection remains bounded.
+        expect(reads.visited).toBe(total);
+        expect(reads.content).toBe(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 3);
+        expect(selectVoiceTranscriptEntriesForConversationSession(
+            { sessionMessages: { 'carrier-canonical-bounded': session } },
+            'carrier-canonical-bounded', { limit: VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW },
+        )).toBe(entries);
+        expect(reads.visited).toBe(total);
         expect(reads.content).toBe(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 3);
     });
 

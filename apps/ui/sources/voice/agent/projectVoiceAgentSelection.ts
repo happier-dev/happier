@@ -9,6 +9,7 @@ import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentI
 import type { VoiceReadinessFact, VoiceRoleReadiness } from '@/voice/registry/readiness';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveVoiceAttemptRecoveryRuntimeTarget } from '@/voice/agent/voiceAgentRecoveryTarget';
+import type { VoiceSessionSnapshot } from '@/voice/session/types';
 
 /** Passive selection uses the same remembered/catalog facts that Start admits. */
 export function projectVoiceDefaultAgentSelection(
@@ -29,7 +30,8 @@ export function projectVoiceDefaultAgentSelection(
 export function projectVoiceSelectedAgentReadiness(
     target: AgentExecutionTargetV1 | null,
     inventory: MachineAgentsSnapshot,
-    context: Readonly<{ serverId: string | null | undefined; machineId: string | null | undefined }>,
+    context: Readonly<{ serverId: string | null | undefined; machineId: string | null | undefined;
+        failedAttempt?: VoiceSessionSnapshot | null }>,
 ): Readonly<{ runtime: VoiceReadinessFact; selectedAgent?: VoiceRoleReadiness['selectedAgent'] }> {
     if (!target) return { runtime: 'unknown' };
     const bundledId = resolveBundledAgentIdFromContributionIdentity(target.identity);
@@ -37,12 +39,24 @@ export function projectVoiceSelectedAgentReadiness(
     const row = inventory.agents.find(agent => agent.agentId === agentId && agent.definitionId === target.definitionId);
     const agent = inventory.status === 'idle' || inventory.status === 'offline' || inventory.status === 'error'
         || row?.stale ? undefined : row;
-    const runtime: VoiceReadinessFact = agent?.state === 'ready' || agent?.state === 'updateAvailable' ? 'ready'
+    const attempt = context.failedAttempt;
+    const admitted = attempt?.recoveryTarget;
+    // A launch refusal is more specific than an unobserved or cached inventory.
+    // Definition instances have no exact definition in the retained recovery target.
+    const admittedSignedOut = admitted != null && target.definitionId === undefined
+        && attempt?.errorCode === 'authentication_required' && attempt.errorMessage === 'agent_signed_out'
+        && admitted?.serverId === context.serverId && admitted.machineId === context.machineId
+        && admitted.agentRuntime?.pluginId === target.identity.pluginId
+        && admitted.agentRuntime.localId === target.identity.localId;
+    const runtime: VoiceReadinessFact = admittedSignedOut ? 'missing'
+        : agent?.state === 'ready' || agent?.state === 'updateAvailable' ? 'ready'
         : agent?.state === 'needsSignIn' || agent?.state === 'notInstalled' ? 'missing'
             : agent?.state === 'installing' ? 'installing' : agent?.state === 'unsupported' ? 'incompatible' : 'unknown';
     return { runtime, selectedAgent: {
         title: row?.title ?? (bundledId ? resolveAgentCatalogTitle(bundledId) : target.identity.localId),
-        needsSignIn: agent?.state === 'needsSignIn',
-        runtimeTarget: resolveVoiceAttemptRecoveryRuntimeTarget({ agentRuntime: target.identity, ...context }),
+        needsSignIn: admittedSignedOut || agent?.state === 'needsSignIn',
+        ...(admittedSignedOut ? { machineLabel: admitted.machineLabel } : {}),
+        runtimeTarget: resolveVoiceAttemptRecoveryRuntimeTarget({ agentRuntime: target.identity,
+            serverId: context.serverId, machineId: context.machineId }),
     } };
 }

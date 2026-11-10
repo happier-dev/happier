@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Message } from "@happier-dev/session-core/messages";
 import { buildRealtimeConversationTurnMeta } from '@/voice/transcript/VoiceTranscriptProjector';
+import { buildVoiceTranscriptNoteMeta } from '@/voice/transcript/voiceTranscriptNoteMeta';
 import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { resolveVoiceHistoryProviderLabel } from './defaultVoiceHistoryConsumer';
@@ -106,6 +107,17 @@ function createDeps(overrides: Partial<VoiceHistoryConsumerDeps> = {}): VoiceHis
 }
 
 describe('projectVoiceHistoryRows', () => {
+  it('keeps an older unacknowledged note before a newer acknowledged turn in History and export rows', () => {
+    const rows = projectVoiceHistoryRows([
+      { ...agentMessage('newer-answer', 'Created third.txt.', 1794303184958), seq: 1 },
+      { ...agentMessage('older-note', 'Target session set to the current session', 1794302029511),
+        meta: buildVoiceTranscriptNoteMeta() },
+    ], readProviderLabel);
+    expect(rows.map(row => row.text)).toEqual([
+      'Target session set to the current session', 'Created third.txt.',
+    ]);
+  });
+
   it('settles warm search from loaded rows without waiting for cold transcript discovery', async () => {
     const discovery = createDeferred<string | null>();
     let discoveries = 0;

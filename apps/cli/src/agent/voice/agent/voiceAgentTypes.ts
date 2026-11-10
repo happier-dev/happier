@@ -157,12 +157,10 @@ export type VoiceAgentTurnStreamState = {
   cancelled: boolean;
   preparedInstructionsFor?: VoicePromptPreparation['preparedInstructionsFor'];
   preparationAbortController: AbortController;
-  deltaHold: string;
   outputSpeechBuffer: string;
   outputSpeechText: string;
   outputBudget: VoiceAgentOutputTurnV1;
   outputIncomplete: boolean;
-  suppressActionDeltas: boolean;
   outputSeq: number;
   outputSegmentIndex: number;
   targetChars?: number;

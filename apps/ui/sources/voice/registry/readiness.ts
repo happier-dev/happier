@@ -39,7 +39,7 @@ export type VoiceRoleReadinessFacts = Readonly<{
 
 export type VoiceRoleReadiness = Readonly<{
   /** The same selected Agent and Machine used by Start; observation never acquires its runtime. */
-  selectedAgent?: Readonly<{ title: string; needsSignIn: boolean; runtimeTarget: VoiceAttemptRecoveryRuntimeTarget | null }>;
+  selectedAgent?: Readonly<{ title: string; needsSignIn: boolean; machineLabel?: string | null; runtimeTarget: VoiceAttemptRecoveryRuntimeTarget | null }>;
   role: VoiceReadinessRole;
   providerId: string | null;
   status: 'ready' | 'needs_setup' | 'unavailable' | 'installing' | 'incompatible';

@@ -177,7 +177,7 @@ const subscribeRawReadiness = (notify: () => void) => {
     rawReadinessListeners.add(notify);
     return () => { rawReadinessListeners.delete(notify); };
 };
-installSessionActionRpcBoundary(async request => {
+const machineRequests = installSessionActionRpcBoundary(async request => {
     const separator = request.method.indexOf(':');
     const machineId = request.method.slice(0, separator);
     const method = request.method.slice(separator + 1);
@@ -2164,7 +2164,7 @@ describe('VoiceProviderSection', () => {
         expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.credential_missing'));
     }, 120_000);
 
-    it('keeps bundled fixed Agent authentication unknown on cold Home without demanding ACP', async () => {
+    it.each(['session', 'agent'] as const)('shows Start authentication refusal for the same %s Agent on cold Home without another check', async (agentSource) => {
         const { useVoiceConversationsReadinessModel } = await import('./VoiceProviderSection');
         const { deriveVoiceSetupFacts } = await import('../setup/voiceSetupFacts');
         const { VoiceSetupPanel } = await import('../setup/VoiceSetupPanel');
@@ -2173,7 +2173,7 @@ describe('VoiceProviderSection', () => {
         const defaults = readLocalConversationVoiceSettings(accountFixture.settings.voice);
         const voice = writeLocalConversationVoiceSettings({ ...accountFixture.settings.voice, providerId: 'local_conversation' }, {
             ...defaults, conversationMode: 'agent',
-            agent: { ...defaults.agent, agentSource: 'agent', agentId: 'codex', agentTargetKey: 'backend:codex', agentIdentity: null },
+            agent: { ...defaults.agent, agentSource, agentId: 'claude', agentTargetKey: 'backend:claude', agentIdentity: null },
             stt: { ...defaults.stt, provider: 'device' }, tts: { ...defaults.tts, provider: 'device' },
         });
         storageBoundary.settings = settingsParse({ ...accountFixture.settings, experiments: true,
@@ -2183,10 +2183,10 @@ describe('VoiceProviderSection', () => {
         const { resolveRuntimeFeatureDecision } = await import('@/sync/domains/features/featureDecisionInputs');
         expect(await resolveRuntimeFeatureDecision({ featureId: 'voice.agent' })).toMatchObject({ state: 'enabled' });
         expect(getAcpCatalogSnapshot(accountFixture.scope)).toBeNull();
-        function ColdHome() {
-            const model = useVoiceConversationsReadinessModel({ voice, setVoice: vi.fn(), happierVoiceSupported: true,
-                platformOs: 'web', executionMachineId: 'machine-1',
-                executionMachineSelectedId: 'machine-1', executionMachineSelectionKind: 'resolved',
+        function ColdHome({ machineId = 'machine-1', selectedVoice = voice }: { machineId?: string; selectedVoice?: typeof voice }) {
+            const model = useVoiceConversationsReadinessModel({ voice: selectedVoice, setVoice: vi.fn(), happierVoiceSupported: true,
+                platformOs: 'web', executionMachineId: machineId,
+                executionMachineSelectedId: machineId, executionMachineSelectionKind: 'resolved',
                 localAvailability: { browserSpeech: { support: 'cloud_only', onDevice: 'unsupported' }, daemon: {
                     featureEnabled: true, route: 'direct', modelState: 'ready', runtimeState: 'available', pcmCapture: 'available',
                 }, nativeDevice: { requested: false } },
@@ -2205,6 +2205,42 @@ describe('VoiceProviderSection', () => {
         const projected = screen.tree.root.findByType('ColdHome').props;
         expect(projected, JSON.stringify(projected)).toMatchObject({ readiness: { status: 'unavailable', code: 'runtime_unknown' }, canTry: false });
         expect(getAcpCatalogSnapshot(accountFixture.scope)).toBeNull();
+        const { beginVoiceSessionRuntimePreparation, getVoiceSessionFailedAttempt, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+        onTestFinished(resetVoiceSessionStoreForTests);
+        const { resolveVoiceProviderReadinessPresentation } = await import('./voiceProviderReadinessPresentation');
+        const requestsBefore = machineRequests.length;
+        await act(async () => {
+            const preparation = beginVoiceSessionRuntimePreparation({ adapterId: 'local_conversation', sessionId: 'voice-home',
+                status: 'connecting', mode: 'idle', canStop: true }, {
+                accountScope: accountFixture.scope, targetSessionAddress: null, conversationScope: null,
+            });
+            preparation.adopt({ adapterId: 'local_conversation', sessionId: 'voice-home', status: 'error', mode: 'idle', canStop: false,
+                errorCode: 'authentication_required', errorMessage: 'agent_signed_out', errorRecoveryAction: 'connect_agent',
+                recoveryTarget: { serverId: accountFixture.scope.serverId, machineId: 'machine-1', machineLabel: 'Voice Computer',
+                    agentRuntime: { pluginId: 'happier.agent.claude', localId: 'claude' } } });
+        });
+        const refused = screen.tree.root.findByType('ColdHome').props;
+        expect(refused).toMatchObject({ readiness: { status: 'needs_setup', code: 'agent_signed_out', selectedAgent: {
+            title: 'Claude', needsSignIn: true,
+        } }, canTry: false });
+        const presentation = resolveVoiceProviderReadinessPresentation(refused.readiness, tLoose);
+        expect(presentation.summary).toBe(t('settingsVoice.local.machineErrors.agent_signed_out', { agent: 'Claude', machine: 'Voice Computer' }));
+        expect(machineRequests.length).toBe(requestsBefore);
+        expect(getAcpCatalogSnapshot(accountFixture.scope)).toBeNull();
+        expect(getVoiceSessionFailedAttempt('local_conversation', { ...accountFixture.scope, accountId: 'other-account' })).toBeNull();
+        expect(getVoiceSessionFailedAttempt('other-provider', accountFixture.scope)).toBeNull();
+        await screen.update(<ColdHome machineId="machine-2" />);
+        expect(screen.tree.root.findByType('ColdHome').props).toMatchObject({
+            readiness: { code: 'runtime_unknown', selectedAgent: { needsSignIn: false } },
+        });
+        const codexVoice = writeLocalConversationVoiceSettings(voice, { ...defaults, conversationMode: 'agent',
+            agent: { ...defaults.agent, agentSource: 'agent', agentId: 'codex', agentTargetKey: 'backend:codex', agentIdentity: null },
+            stt: { ...defaults.stt, provider: 'device' }, tts: { ...defaults.tts, provider: 'device' },
+        });
+        await screen.update(<ColdHome selectedVoice={codexVoice} />);
+        expect(screen.tree.root.findByType('ColdHome').props).toMatchObject({
+            readiness: { code: 'runtime_unknown', selectedAgent: { title: 'Codex', needsSignIn: false } },
+        });
     });
 
     it('uses the pipeline readiness for the selected Service row, including unobserved Local prerequisites', async () => {

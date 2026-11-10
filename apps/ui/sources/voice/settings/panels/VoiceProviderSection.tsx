@@ -2,6 +2,7 @@ import { useObservedMachineAgents } from '@/agents/machineAgents/useMachineAgent
 import { useLastUsedBackendSelectionForScope } from '@/sync/domains/state/newSessionTargetUiState';
 import { projectVoiceDefaultAgentSelection, projectVoiceSelectedAgentReadiness } from '@/voice/agent/projectVoiceAgentSelection';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
+import { getVoiceSessionFailedAttempt, useVoiceSessionStore } from '@/voice/session/voiceSessionStore';
 import * as React from 'react';
 import { projectVoiceExecutionMachineReadiness, type VoiceExecutionMachineSelection } from '@/voice/settings/executionMachine';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -432,8 +433,9 @@ export function useVoiceConversationsReadinessModel(props: {
       acpCatalogSnapshot: agentCatalog?.catalog.status === 'ready' && !agentCatalog.stale ? agentCatalog.catalog : undefined,
       daemonMergedProjectionInputs: agentProjection.inputs,
     }).agentTarget;
+  const failedAttempt = useVoiceSessionStore(() => getVoiceSessionFailedAttempt(localAdapterSettings.adapterId, settingsScope));
   const selectedAgentReadiness = projectVoiceSelectedAgentReadiness(selectedAgent, observedAgents,
-    { serverId: settingsScope?.serverId, machineId: props.executionMachineId });
+    { serverId: settingsScope?.serverId, machineId: props.executionMachineId, failedAttempt });
   const selectedSpeechProviderIds = [
     parseLocalVoiceSttSettings(localAdapterSettings.config.stt).provider,
     parseLocalVoiceTtsSettings(localAdapterSettings.config.tts).provider,

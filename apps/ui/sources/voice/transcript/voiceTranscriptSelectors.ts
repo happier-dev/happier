@@ -6,6 +6,7 @@ import { resolveVoiceContinuationNoteText } from './voiceTranscriptNotePresentat
 import { getDeviceAnalyticsId } from '@/track/settingsAnalytics/deviceAnalyticsIdentity';
 import { getPreferredLanguage } from '@/text';
 import { readVoiceTranscriptMessageText } from './voiceTranscriptMessageText';
+import { compareVoiceTranscriptOrder } from './voiceTranscriptOrder';
 
 export type VoiceTranscriptEntry = Readonly<{
     id: string;
@@ -42,13 +43,6 @@ type TranscriptOrderKey = Readonly<{
     createdAt: number;
     id: string;
 }>;
-
-/** The projection's one ordering rule, shared by the order check and the sort. */
-function compareTranscriptOrderKeys(left: TranscriptOrderKey, right: TranscriptOrderKey): number {
-    return left.createdAt === right.createdAt
-        ? left.id.localeCompare(right.id)
-        : left.createdAt - right.createdAt;
-}
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     if (!value || typeof value !== 'object') return null;
@@ -104,24 +98,6 @@ export function selectVoiceTranscriptEntriesForConversationSession(
     const sessionRecord = readRecord(sessionSlice);
     const interruptedEntryIds: ReadonlySet<unknown> | undefined = sessionRecord?.voiceInterruptedEntryIds instanceof Set
         ? sessionRecord.voiceInterruptedEntryIds : undefined;
-    const canonicalIds = sessionRecord?.messageIdsOldestFirst;
-    const canonicalMessagesById = readRecord(sessionRecord?.messagesById ?? sessionRecord?.messagesMap);
-
-    if (Array.isArray(canonicalIds) && canonicalMessagesById) {
-        const newestFirst: VoiceTranscriptEntry[] = [];
-        for (let cursor = canonicalIds.length - 1; cursor >= 0 && newestFirst.length < limit; cursor -= 1) {
-            const messageId = canonicalIds[cursor];
-            const message = typeof messageId === 'string' ? canonicalMessagesById[messageId] : undefined;
-            const entry = projectTranscriptEntry(message, viewerDeviceId, interruptedEntryIds);
-            if (entry) newestFirst.push(entry);
-        }
-        const result: ReadonlyArray<VoiceTranscriptEntry> = newestFirst.length === 0
-            ? EMPTY_ENTRIES
-            : Object.freeze(newestFirst.reverse());
-        writeTranscriptSelectorCache(slice, { limit, viewerDeviceId, language, result });
-        return result;
-    }
-
     const messages = readStoredSessionMessages<unknown, unknown>(state, resolvedConversationSessionId);
 
     /*
@@ -142,13 +118,13 @@ export function selectVoiceTranscriptEntriesForConversationSession(
             createdAt: typeof record.createdAt === 'number' && Number.isFinite(record.createdAt) ? record.createdAt : 0,
         };
         const previous = orderKeys[orderKeys.length - 1];
-        if (previous && compareTranscriptOrderKeys(previous, key) > 0) alreadyOrdered = false;
+        if (previous && compareVoiceTranscriptOrder(previous, key) > 0) alreadyOrdered = false;
         orderKeys.push(key);
     }
-    // The canonical store hands back `messageIdsOldestFirst` order, which already
-    // satisfies this comparator. Legacy slices persisted as a raw array carry no
-    // such guarantee, so the tail is only exact once they are ordered.
-    if (!alreadyOrdered) orderKeys.sort(compareTranscriptOrderKeys);
+    // Session sequence records arrival order. A local note or delayed durable
+    // row can arrive after newer speech, so both stored shapes establish event
+    // order before selecting a window. Only ordering metadata is read here.
+    if (!alreadyOrdered) orderKeys.sort(compareVoiceTranscriptOrder);
 
     /*
      * Pass 2 walks newest-first and stops at the window. The window counts

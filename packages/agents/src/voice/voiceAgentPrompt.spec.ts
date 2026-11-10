@@ -6,7 +6,6 @@ import {
   listVoiceActionBlockSpecs,
   listVoiceSdkSafeToolActionSpecs,
   listVoiceToolActionSpecs,
-  VOICE_ACTIONS_BLOCK,
   VOICE_TOOL_RESULTS_JSON_PREFIX,
   renderPromptPlanV1,
 } from '@happier-dev/protocol';
@@ -33,7 +32,6 @@ describe('voiceAgentPrompt', () => {
     const creation = published.find(value => value.t === 'spawnSession');
     expect(creation).toMatchObject({ t: 'spawnSession', args: { initialInput: { text: expect.any(String) } } });
     expect(creation.args).not.toHaveProperty('agentTarget');
-    expect(prompt).not.toContain('<voice_actions>');
   });
 
   it('distinguishes native subagents from created Happier Sessions in every Voice mode', () => {
@@ -170,7 +168,6 @@ describe('voiceAgentPrompt', () => {
     expect(rendered).toContain('Never semantically retry a mutation');
     expect(rendered).toContain('Do not claim completion before canonical results exist');
     expect(rendered).not.toContain('sendSessionMessage');
-    expect(rendered).not.toContain(VOICE_ACTIONS_BLOCK.startTag);
     expect(rendered).not.toContain('{{');
   });
 
@@ -258,7 +255,6 @@ describe('voiceAgentPrompt', () => {
 
     expect(prompt).toContain(VOICE_TOOL_RESULTS_JSON_PREFIX);
     expect(prompt).toContain('happier_voice_action');
-    expect(prompt).not.toContain(VOICE_ACTIONS_BLOCK.startTag);
     expect(prompt).toContain('searchActionSpecs');
     expect(prompt).toContain('getActionSpec');
     expect(prompt).toContain('resolveActionOptions');

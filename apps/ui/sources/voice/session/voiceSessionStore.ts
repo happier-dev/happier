@@ -163,7 +163,8 @@ function reconcileAttemptId(snapshot: VoiceSessionSnapshot, binding?: VoiceSessi
     }
     activeAttemptBinding = binding;
   }
-  const contextHome = context?.targetSessionAddress?.serverId ?? activeAttemptBinding?.conversationSessionAddress.serverId;
+  const contextHome = context?.targetSessionAddress?.serverId ?? activeAttemptBinding?.conversationSessionAddress.serverId
+    ?? context?.accountScope.serverId;
   if (active && context && context.accountScope.serverId === contextHome) {
     // Admission owns target and Account; a later route/profile publication cannot relabel them.
     if (!activeAttemptConversationContext) activeAttemptConversationContext = context;
@@ -398,6 +399,14 @@ export function getVoiceSessionPresentedAttemptId(): string | null {
 
 export function getVoiceSessionPresentedBinding(): VoiceSessionBinding | null {
   return activeAttemptBinding;
+}
+
+/** Settings observes Start's retained refusal without acquiring another runtime or probe. */
+export function getVoiceSessionFailedAttempt(providerId: string, accountScope: ServerAccountScope | null): VoiceSessionSnapshot | null {
+  return canDismissVoiceSessionFailedAttempt(lastAttemptSnapshot)
+    && lastAttemptSnapshot.adapterId === providerId
+    && areServerAccountScopesEqual(activeAttemptConversationContext?.accountScope, accountScope)
+    ? lastAttemptSnapshot : null;
 }
 
 /** Default restart stays with the presented attempt; explicit Home/composer intents remain explicit. */

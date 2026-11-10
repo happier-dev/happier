@@ -9,8 +9,6 @@ type StreamingState = Parameters<typeof ingestVoiceAgentStreamingDelta>[0];
 function createStream(): StreamingState {
   return {
     done: false,
-    suppressActionDeltas: false,
-    deltaHold: '',
     outputSpeechBuffer: '',
     outputSpeechText: '',
     outputBudget: createVoiceAgentOutputTurnV1('turn-1'),
@@ -50,7 +48,7 @@ describe('voice agent streaming speech segmentation', () => {
     expect(segments.map((event) => event.seq)).toEqual(segments.map((_, index) => index));
   });
 
-  it('never emits the canonical action block even when its start tag is split across deltas', () => {
+  it('preserves literal legacy Action markers split across deltas', () => {
     const stream = createStream();
     const patch = patchStream(stream);
     for (const delta of ['Speak this. <voice_', 'actions>{"actions":[]}</voice_actions>']) {
@@ -58,10 +56,9 @@ describe('voice agent streaming speech segmentation', () => {
     }
     finalizeVoiceAgentStreamingSpeech(stream, patch);
 
-    expect(speechSegments(stream).map((event) => event.text).join('')).toBe('Speak this. ');
-    expect(stream.suppressActionDeltas).toBe(true);
+    expect(speechSegments(stream).map((event) => event.text).join('')).toBe('Speak this. <voice_actions>{"actions":[]}</voice_actions>');
   });
-  it('emits a useful first sentence before completion and filters split action tags', () => {
+  it('emits a useful first sentence before completion and preserves remaining literal text', () => {
     const stream = createStream();
     const patch = patchStream(stream);
     ingestVoiceAgentStreamingDelta(stream, patch, 'Open index.');
@@ -74,6 +71,6 @@ describe('voice agent streaming speech segmentation', () => {
     ingestVoiceAgentStreamingDelta(stream, patch, 'ions>{"actions":[]}</voice_actions>');
     finalizeVoiceAgentStreamingSpeech(stream, patch);
     const speech = speechSegments(stream).map((event) => event.text).join('');
-    expect(speech.trim()).toBe('Open index.ts at https://example.com at 10:30.');
+    expect(speech).toBe('Open index.ts at https://example.com at 10:30. <voice_actions>{"actions":[]}</voice_actions>');
   });
 });

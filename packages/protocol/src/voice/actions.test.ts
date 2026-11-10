@@ -1,67 +1,40 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  extractVoiceActionsFromAssistantText,
-  VOICE_ACTIONS_BLOCK,
-  VOICE_ACTIONS_TAG,
-} from './actions.js';
+import { decodeVoiceAssistantActions } from './actions.js';
 
-describe('extractVoiceActionsFromAssistantText', () => {
-  it('derives the action-block delimiters from one canonical tag', () => {
-    expect(VOICE_ACTIONS_TAG).toBe('voice_actions');
-    expect(VOICE_ACTIONS_BLOCK).toEqual({
-      startTag: `<${VOICE_ACTIONS_TAG}>`,
-      endTag: `</${VOICE_ACTIONS_TAG}>`,
-    });
-  });
-  it('returns the original text and no actions when no action block is present', () => {
-    const result = extractVoiceActionsFromAssistantText('Hello.');
+describe('decodeVoiceAssistantActions', () => {
+  it('returns ordinary assistant text when no native Actions were requested', () => {
+    const result = decodeVoiceAssistantActions([], 'Hello.');
     expect(result).toEqual({ assistantText: 'Hello.', actions: [] });
   });
 
-  it('extracts actions from a tagged JSON block and strips it from assistantText', () => {
+  it('decodes a structured native Action alongside assistant text', () => {
     const input = [
-      'Ok, I will send that to the session.',
-      '',
-      '<voice_actions>',
-      JSON.stringify({
-        actions: [
-          { t: 'sendSessionMessage', args: { message: 'Please do X.' } },
-        ],
-      }),
-      '</voice_actions>',
-    ].join('\n');
+      { t: 'sendSessionMessage', args: { message: 'Please do X.' } },
+    ];
 
-    const result = extractVoiceActionsFromAssistantText(input);
+    const result = decodeVoiceAssistantActions(input, 'Ok, I will send that to the session.');
     expect(result.assistantText).toBe('Ok, I will send that to the session.');
     expect(result.actions).toEqual([{ t: 'sendSessionMessage', args: { message: 'Please do X.' } }]);
   });
 
-  it('rejects the whole block when a permission action accompanies a valid message', () => {
+  it('rejects all native Actions when a permission action accompanies a valid message', () => {
     const input = [
-      'Ok.',
-      '',
-      '<voice_actions>',
-      JSON.stringify({
-        actions: [
-          { t: 'sendSessionMessage', args: { sessionId: 's1', message: 'Please do X.' } },
-          { t: 'processPermissionRequest', args: { sessionId: 's1', decision: 'allow', requestId: 'req_1' } },
-        ],
-      }),
-      '</voice_actions>',
-    ].join('\n');
+      { t: 'sendSessionMessage', args: { sessionId: 's1', message: 'Please do X.' } },
+      { t: 'processPermissionRequest', args: { sessionId: 's1', decision: 'allow', requestId: 'req_1' } },
+    ];
 
-    const result = extractVoiceActionsFromAssistantText(input);
+    const result = decodeVoiceAssistantActions(input, 'Ok.');
     expect(result.invalidActionBlock).toBe(true);
     expect(result.assistantText).not.toBe('Ok.');
     expect(result.actions).toEqual([]);
   });
 
   it('refuses malformed message input plainly without executing its valid sibling', () => {
-    const result = extractVoiceActionsFromAssistantText(`Sending both messages now. <voice_actions>${JSON.stringify({ actions: [
+    const result = decodeVoiceAssistantActions([
       { t: 'sendSessionMessage', args: { sessionId: 's1', message: 'Valid request.' } },
       { t: 'sendSessionMessage', args: { sessionId: 's2', message: { text: 'private request content' } } },
-    ] })}</voice_actions>`);
+    ], 'Sending both messages now.');
     expect(result.invalidActionBlock).toBe(true);
     expect(result.actions).toEqual([]);
     expect(result.assistantText).toContain("couldn't run");
@@ -70,32 +43,11 @@ describe('extractVoiceActionsFromAssistantText', () => {
     expect(result.assistantText).not.toContain('private request content');
   });
 
-  it('reports malformed action blocks as a failure instead of preserving success narration', () => {
-    const input = ['Hello', '<voice_actions>', '{not json}', '</voice_actions>'].join('\n');
-    const result = extractVoiceActionsFromAssistantText(input);
-    expect(result).toEqual({ assistantText: "I couldn't run that action because its request was invalid. Please try again.", actions: [], invalidActionBlock: true });
-  });
-
-  it('identifies RUN107 malformed creation JSON without executing or disclosing the task', () => {
-    // Native carrier lines25/37 closed args but omitted actions[0]'s brace.
-    const input = 'Starting a Session. <voice_actions>{"actions":[{"t":"spawnSession","args":{"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":{"kind":"path","path":"/tmp"},"initialInput":{"text":"private QA file task"}}]}</voice_actions>';
-    const result = extractVoiceActionsFromAssistantText(input);
-    expect(result.actions).toEqual([]);
-    expect(result.invalidActionBlock).toBe(true);
-    expect(result.assistantText).toContain("couldn't run");
-    expect(result.assistantText).not.toContain('JSON');
-    expect(result.assistantText).not.toContain('private QA file task');
-    expect(result.assistantText).not.toContain('Starting a Session');
-    const repaired = extractVoiceActionsFromAssistantText(input.replace('}}]}</voice_actions>', '}}}]}</voice_actions>'));
-    expect(repaired.invalidActionBlock).toBeUndefined();
-    expect(repaired.actions).toMatchObject([{ t: 'spawnSession', args: { initialInput: { text: 'private QA file task' } } }]);
-  });
-
   it.each([
     { t: 'listSessions', args: { limit: { title: 'VOICE-RUN96 R118 approval target' } }, field: 'limit' },
     { t: 'sendSessionMessage', args: { sessionId: 'cmw806d1u006bmcraf5efazah', message: { text: 'private request content' } }, field: 'message' },
   ])('refuses invalid $t input without disclosing fields or values', ({ t, args, field }) => {
-    const result = extractVoiceActionsFromAssistantText(`<voice_actions>${JSON.stringify({ actions: [{ t, args }] })}</voice_actions>`);
+    const result = decodeVoiceAssistantActions([{ t, args }]);
     expect(result.actions).toEqual([]);
     expect(result.invalidActionBlock).toBe(true);
     expect(result.assistantText).toContain("couldn't run");
@@ -105,24 +57,8 @@ describe('extractVoiceActionsFromAssistantText', () => {
     expect(result.assistantText).not.toContain('VOICE-RUN96 R118 approval target');
   });
 
-  it('strips an unterminated action block from the first opening tag', () => {
-    const input = ['Hello', '<voice_actions>', '{"actions": ['].join('\n');
-    expect(extractVoiceActionsFromAssistantText(input)).toEqual({
-      assistantText: "I couldn't run that action because its request was invalid. Please try again.",
-      actions: [],
-      invalidActionBlock: true,
-    });
-  });
-
-  it.each(['null', '[]', '{"actions":{}}'])(
-    'does not retain creation narration when the action block cannot execute: %s', (block) => {
-      expect(extractVoiceActionsFromAssistantText(`Creating the Session now. <voice_actions>${block}</voice_actions>`))
-        .toEqual({ assistantText: "I couldn't run that action because its request was invalid. Please try again.", actions: [], invalidActionBlock: true });
-    },
-  );
-
   it('replaces creation narration with a plain refusal', () => {
-    const result = extractVoiceActionsFromAssistantText('Creating the Session now. <voice_actions>{"actions":[{"t":"spawnSession","args":{}}]}</voice_actions>');
+    const result = decodeVoiceAssistantActions([{ t: 'spawnSession', args: {} }], 'Creating the Session now.');
     expect(result.actions).toEqual([]);
     expect(result.invalidActionBlock).toBe(true);
     expect(result.assistantText).toContain("couldn't run");
@@ -132,19 +68,11 @@ describe('extractVoiceActionsFromAssistantText', () => {
 
   it('supports session targeting actions for global voice', () => {
     const input = [
-      'Sure.',
-      '',
-      '<voice_actions>',
-      JSON.stringify({
-        actions: [
-          { t: 'setPrimaryActionSession', args: { serverId: 'server-1', sessionId: 's1' } },
-          { t: 'setTrackedSessions', args: { sessionIds: ['s1', 's2'] } },
-        ],
-      }),
-      '</voice_actions>',
-    ].join('\n');
+      { t: 'setPrimaryActionSession', args: { serverId: 'server-1', sessionId: 's1' } },
+      { t: 'setTrackedSessions', args: { sessionIds: ['s1', 's2'] } },
+    ];
 
-    const result = extractVoiceActionsFromAssistantText(input);
+    const result = decodeVoiceAssistantActions(input, 'Sure.');
     expect(result.assistantText).toBe('Sure.');
     expect(result.actions).toEqual([
       { t: 'setPrimaryActionSession', args: { serverId: 'server-1', sessionId: 's1' } },
@@ -154,21 +82,13 @@ describe('extractVoiceActionsFromAssistantText', () => {
 
   it('supports execution run control actions', () => {
     const input = [
-      'Starting a review.',
-      '',
-      '<voice_actions>',
-      JSON.stringify({
-        actions: [
-          {
-            t: 'startReview',
-            args: { engineIds: ['claude'], instructions: 'Review the repo.', changeType: 'committed', base: { kind: 'none' } },
-          },
-        ],
-      }),
-      '</voice_actions>',
-    ].join('\n');
+      {
+        t: 'startReview',
+        args: { engineIds: ['claude'], instructions: 'Review the repo.', changeType: 'committed', base: { kind: 'none' } },
+      },
+    ];
 
-    const result = extractVoiceActionsFromAssistantText(input);
+    const result = decodeVoiceAssistantActions(input, 'Starting a review.');
     expect(result.assistantText).toBe('Starting a review.');
     expect(result.actions).toEqual([
       {
@@ -203,20 +123,12 @@ describe('extractVoiceActionsFromAssistantText', () => {
       initialInput: { text: 'Start a new session.' },
     };
     const input = [
-      'Ok.',
-      '',
-      '<voice_actions>',
-      JSON.stringify({
-        actions: [
-          { t: 'openSession', args: { sessionId: 's_other' } },
-          { t: 'spawnSession', args: spawnArgs },
-          { t: 'resetGlobalVoiceAgent', args: {} },
-        ],
-      }),
-      '</voice_actions>',
-    ].join('\n');
+      { t: 'openSession', args: { sessionId: 's_other' } },
+      { t: 'spawnSession', args: spawnArgs },
+      { t: 'resetGlobalVoiceAgent', args: {} },
+    ];
 
-    const result = extractVoiceActionsFromAssistantText(input);
+    const result = decodeVoiceAssistantActions(input, 'Ok.');
     expect(result.assistantText).toBe('Ok.');
     expect(result.actions).toEqual([
       { t: 'openSession', args: { sessionId: 's_other' } },
@@ -238,35 +150,23 @@ describe('extractVoiceActionsFromAssistantText', () => {
       runClass: 'bounded',
       ioMode: 'request_response',
     };
-    const input = [
-      '<voice_actions>',
-      JSON.stringify({ actions: [{ t: 'startExecutionRun', args: startArgs }] }),
-      '</voice_actions>',
-    ].join('\n');
+    const input = [{ t: 'startExecutionRun', args: startArgs }];
 
-    expect(extractVoiceActionsFromAssistantText(input).actions).toEqual([
+    expect(decodeVoiceAssistantActions(input, '').actions).toEqual([
       { t: 'startExecutionRun', args: startArgs },
     ]);
   });
 
   it('coerces numeric and boolean string args for voice actions', () => {
     const input = [
-      'Let me check.',
-      '',
-      '<voice_actions>',
-      JSON.stringify({
-        actions: [
-          {
-            t: 'listSessions',
-            args: { limit: '10' },
-          },
-          { t: 'getSessionRecentMessages', args: { sessionId: 's1', includeUser: 'true' } },
-        ],
-      }),
-      '</voice_actions>',
-    ].join('\n');
+      {
+        t: 'listSessions',
+        args: { limit: '10' },
+      },
+      { t: 'getSessionRecentMessages', args: { sessionId: 's1', includeUser: 'true' } },
+    ];
 
-    const result = extractVoiceActionsFromAssistantText(input);
+    const result = decodeVoiceAssistantActions(input, 'Let me check.');
     expect(result.assistantText).toBe('Let me check.');
     expect(result.actions).toEqual([
       {
@@ -279,21 +179,13 @@ describe('extractVoiceActionsFromAssistantText', () => {
 
   it('coerces comma-separated string lists for text-list voice action args', () => {
     const input = [
-      'Tracking them now.',
-      '',
-      '<voice_actions>',
-      JSON.stringify({
-        actions: [
-          {
-            t: 'setTrackedSessions',
-            args: { sessionIds: 's1, s2' },
-          },
-        ],
-      }),
-      '</voice_actions>',
-    ].join('\n');
+      {
+        t: 'setTrackedSessions',
+        args: { sessionIds: 's1, s2' },
+      },
+    ];
 
-    const result = extractVoiceActionsFromAssistantText(input);
+    const result = decodeVoiceAssistantActions(input, 'Tracking them now.');
     expect(result.assistantText).toBe('Tracking them now.');
     expect(result.actions).toEqual([
       {
@@ -305,26 +197,18 @@ describe('extractVoiceActionsFromAssistantText', () => {
 
   it('normalizes canonical action ids onto voice tool names', () => {
     const input = [
-      'Starting the voice agent.',
-      '',
-      '<voice_actions>',
-      JSON.stringify({
-        actions: [
-          {
-            t: 'voice_agent.start',
-            args: {
-              sessionId: 's1',
-              backendTargetKeys: ['agent:claude'],
-              instructions: 'Start the voice assistant.',
-              retentionPolicy: 'ephemeral',
-            },
-          },
-        ],
-      }),
-      '</voice_actions>',
-    ].join('\n');
+      {
+        t: 'voice_agent.start',
+        args: {
+          sessionId: 's1',
+          backendTargetKeys: ['agent:claude'],
+          instructions: 'Start the voice assistant.',
+          retentionPolicy: 'ephemeral',
+        },
+      },
+    ];
 
-    const result = extractVoiceActionsFromAssistantText(input);
+    const result = decodeVoiceAssistantActions(input, 'Starting the voice agent.');
     expect(result.assistantText).toBe('Starting the voice agent.');
     expect(result.actions).toEqual([
       {
@@ -342,21 +226,13 @@ describe('extractVoiceActionsFromAssistantText', () => {
     ]);
   });
 
-  it('rejects the whole block when one action has invalid numeric args', () => {
+  it('rejects all native Actions when one action has invalid numeric args', () => {
     const input = [
-      'Ok.',
-      '',
-      '<voice_actions>',
-      JSON.stringify({
-        actions: [
-          { t: 'sendSessionMessage', args: { message: 'Please continue.' } },
-          { t: 'listSessions', args: { limit: 'not-a-number' } },
-        ],
-      }),
-      '</voice_actions>',
-    ].join('\n');
+      { t: 'sendSessionMessage', args: { message: 'Please continue.' } },
+      { t: 'listSessions', args: { limit: 'not-a-number' } },
+    ];
 
-    const result = extractVoiceActionsFromAssistantText(input);
+    const result = decodeVoiceAssistantActions(input, 'Ok.');
     expect(result.invalidActionBlock).toBe(true);
     expect(result.assistantText).toContain("couldn't run");
     expect(result.assistantText).not.toContain('listSessions');
