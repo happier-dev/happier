@@ -7,6 +7,7 @@ import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageTimi
 import { z } from 'zod/mini';
 import { createSessionFixture, standardCleanup } from '@/dev/testkit';
 import { createSessionMetadataHttpBoundary, type SessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
+import { createCompactSessionListFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { storage } from '@/sync/domains/state/storage';
 import { settingsParse } from '@/sync/domains/settings/settings';
@@ -40,7 +41,8 @@ beforeEach(async () => {
     sessionMetadata = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
     const fallback = account.request.getMockImplementation();
     if (!fallback) throw new Error('Expected Account HTTP boundary');
-    account.request.mockImplementation(async (input, init) => {
+    account.request.mockImplementation(createCompactSessionListFetchBoundary(async (input, init) => {
+        if (new URL(String(input)).pathname === '/v2/sessions/read-batch') return undefined;
         const metadataResponse = sessionMetadata.handle(input, init);
         if (metadataResponse) return metadataResponse;
         const match = /^\/v2\/sessions\/([^/]+)\/messages$/.exec(new URL(String(input)).pathname);
@@ -55,7 +57,7 @@ beforeEach(async () => {
         return Response.json({ didWrite: true, message: {
             id: 'ack-' + writes.length, seq: writes.length, localId: body.localId, createdAt: 100 + writes.length,
         } });
-    });
+    }));
     storage.setState({ sessionMessages: {}, sessions: Object.fromEntries(
         ['carrier-s1', 'carrier-canonical', 'direct-agent-session'].map(id => [id, createSessionFixture({ id,
             serverId: account.scope.serverId })])) });
@@ -90,6 +92,7 @@ describe('voiceConversationTranscript', () => {
         await settleAdmittedCanonicalVoiceTranscriptPersistence({ conversationSessionId: sessionId, attemptIdentity: attempt.attemptIdentity });
         await vi.waitFor(() => expect(readSessionOwnerMetadataView(storage.getState().sessions[sessionId]!))
             .toMatchObject({ summary: { text: 'Make the file' } }));
+        const initialTitleWrites = sessionMetadata.writes.length;
         await persistVoiceConversationSpokenAssistantText({ conversationSessionId: sessionId, text: 'Should I allow it?' });
         final('second-question', 2, 'user', 'What is two plus three?');
         final('answer', 3, 'assistant', 'Five.');
@@ -97,7 +100,9 @@ describe('voiceConversationTranscript', () => {
         const expected = ['MAKE THE FILE', 'Should I allow it?', 'What is two plus three?', 'Five.'];
         expect(entries(sessionId).map(entry => entry.text)).toEqual(expected);
         expect(writes).toHaveLength(4);
-        expect(sessionMetadata.writes).toEqual([sessionId]);
+        // The ordinary writer may first migrate a legacy metadata tuple; later
+        // utterances must not add another title mutation.
+        expect(sessionMetadata.writes).toHaveLength(initialTitleWrites);
         const loaded = writes.map((write, index) => {
             const normalized = normalizeRawMessage(`ack-${index + 1}`, write.localId, 101 + index, write.rawRecord);
             if (!normalized) throw new Error('Expected stored transcript');
