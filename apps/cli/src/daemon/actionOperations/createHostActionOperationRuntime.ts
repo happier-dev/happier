@@ -28,7 +28,7 @@ import { isDeploymentChildEffectActionIdV1, isDeploymentDomainChildActionIdV1 } 
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
-import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { ProjectOpenReceiptPersistenceError, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
 
@@ -351,8 +351,22 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     let observedOperationId: string | undefined;
     const execution = runner.observe({
       actionId: request.actionId,
-      ...(request.operation || request.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? { action: { actionId: spec.id,
+      ...(request.operation || request.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || request.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 ? { action: { actionId: spec.id,
         title: spec.title, operation: request.operation ?? spec.operation,
+        ...(request.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 ? {
+          operationReentry: (snapshot: ActionOperationSnapshotV1, input?: unknown) => {
+            if (snapshot.observation?.kind !== 'review_required' || snapshot.observation.code !== 'restore_snapshot_not_confirmed')
+              return 'replay' as const;
+            const prior = DeploymentActionInputSchemasV1[DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1].safeParse(
+              store.readDeploymentInvocationInput(scope, snapshot.operationId));
+            const next = DeploymentActionInputSchemasV1[DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1].safeParse(input);
+            if (!prior.success || prior.data.mode !== 'confirm' || !next.success || next.data.mode !== 'confirm'
+              || prior.data.snapshot === false || next.data.snapshot !== false) return 'replay' as const;
+            const { snapshot: _priorChoice, ...priorIntent } = prior.data;
+            const { snapshot: _nextChoice, ...nextIntent } = next.data;
+            return isDeepStrictEqual(priorIntent, nextIntent) ? 'resume' as const : 'replay' as const;
+          },
+        } : {}),
         ...(request.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? {
           operationReentry: (snapshot: ActionOperationSnapshotV1, input?: unknown) => snapshot.state === 'failed'
             && snapshot.error?.effectAttempted === false

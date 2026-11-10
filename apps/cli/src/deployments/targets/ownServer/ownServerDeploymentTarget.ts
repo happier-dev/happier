@@ -1,6 +1,7 @@
 import type { DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentRestoreResultV1 } from '@happier-dev/deployments';
-import type { DeploymentBackupManifestV1 as BackupManifestV1, DeploymentPreMigrationBackupV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupManifestV1 as BackupManifestV1, DeploymentPreMigrationBackupV1,
+    DeploymentBackupRestoreCaptureV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentBackupActionInputV1, DeploymentBackupActionResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import type { OwnServerRestorePreparationForHost } from './restorePreparation';
@@ -111,6 +112,9 @@ export type OwnServerDomainCaddyPreparation = Readonly<{
 }> | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'private_scope_unenforceable';
     details?: Readonly<{ requiredFact: string }> }>;
 export type OwnServerDeploymentRuntime = Readonly<{
+    prepareBackupSourceChoices?(request: Readonly<{
+        environment: Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>; context: ActionExecutorContext;
+    }>): Promise<readonly import('@happier-dev/deployment-protocol').DeploymentBackupSourceV1[]>;
     /** Domain setup borrows the deployed generation's already observed routing facts. */
     prepareDomainCaddy?(input: OwnServerDomainCaddyRequest): OwnServerDomainCaddyPreparation;
     acquireRetention?(request: OwnServerDeploymentRetentionRequest, assertCurrent: () => Promise<void>): Promise<Readonly<{
@@ -130,12 +134,14 @@ export type OwnServerDeploymentRuntime = Readonly<{
         sha?: string;
         stageContent(sourceIntent: DeploymentSourceIntentV1): Promise<string>;
         context: ActionExecutorContext;
-        readReferenceEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'] }>, environment: DeploymentEnvironmentDetailV1):
+        readReferenceEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'];
+        readPreviewDomain?: OwnServerDeploymentTargetHostInput['readPreviewDomain'] }>, environment: DeploymentEnvironmentDetailV1):
         Promise<OwnServerDeploymentRuntimeAcquisition & Readonly<{ sourceIntent: DeploymentOwnServerContentV1['sourceIntent'] }>>;
     acquire(request: OwnServerDeploymentRuntimeRequest, snapshot: Readonly<{
         environment: DeploymentEnvironmentDetailV1;
         content: DeploymentOwnServerContentV1;
         readReferenceEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'];
+        readPreviewDomain?: OwnServerDeploymentTargetHostInput['readPreviewDomain'];
         /** Absent only while reviewing a candidate before receipt acceptance. */
         deployment?: DeploymentReceiptHeaderV1;
     }>): Promise<OwnServerDeploymentRuntimeAcquisition>;
@@ -164,6 +170,8 @@ export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
         /** Lazy use of this acquisition's captured destination and P42 bindings. */
         preparePreMigrationBackupOperands?(): Promise<import('./backupDestination').OwnServerPreMigrationBackupOperandsForHost>;
         prepareBackupRepositoryOperands?(): Promise<import('./backupDestination').OwnServerBackupRepositoryOperandsForHost>;
+        prepareBackupRunOperands?(): Promise<import('./backupDestination').OwnServerBackupRepositoryOperandsForHost
+            | import('./backupDestination').OwnServerPreMigrationBackupOperandsForHost>;
         /** Explicit Source/workspace physical custody witness with the local installed-runtime guard. */
         assertSourceCurrent(): Promise<void>;
         /** Local admitted-runtime cancellation, installation and invocation lifetime. */
@@ -181,6 +189,10 @@ export type OwnServerDeploymentTargetHostInput = Readonly<{
     serverHttpBaseUrl: string;
     machineId: string;
     readEnvironment(request: OwnServerDeploymentReadContext): Promise<DeploymentEnvironmentDetailV1>;
+    readPreviewDomain?(request: Parameters<typeof import('../../previewDomainForHost').readPreviewDomainForHost>[0]
+        & Readonly<{ context: ActionExecutorContext }>): ReturnType<typeof import('../../previewDomainForHost').readPreviewDomainForHost>;
+    readExpectedDownDomains?(request: OwnServerDeploymentReadContext & Readonly<{ targetLinkId: string; affectedServices: readonly string[] }>):
+        Promise<readonly import('@happier-dev/protocol/machines/machineDeploymentDomainReferenceV1').MachineDeploymentDomainReferenceV1[] | null>;
     readEnvironmentMetadata?(request: OwnServerDeploymentReadContext): Promise<DeploymentEnvironmentHeaderV1>;
     readRetentionHeaders?(request: OwnServerDeploymentReadContext & Readonly<{ deploymentId: string; targetLinkId: string }>): Promise<Readonly<{
         environment: DeploymentEnvironmentHeaderV1; deployment: DeploymentReceiptHeaderV1; link: DeploymentTargetLinkHeaderV1;
@@ -217,7 +229,14 @@ export type OwnServerRestoreRequestForHost = Readonly<{
     /** Decoded once from the scoped, succeeded prepare Action operation. */
     prepared?: OwnServerRestorePreparationForHost;
     /** Selected once from the exact scoped, successful backup Action operation. */
-    backup?: Readonly<{ manifest: BackupManifestV1; capture?: DeploymentPreMigrationBackupV1 }>;
+    backup?: Readonly<{ manifest: BackupManifestV1;
+        capture?: import('@happier-dev/deployment-protocol').DeploymentBackupRestoreCaptureV1 }>;
+    upload?: import('@/transfers/targets/deploymentRestoreUpload').AdmittedDeploymentRestoreUpload;
+    /** Prepare lends the admitted native tuple; selector bytes never enter public evidence. */
+    reviewNativeSnapshot?(input: Readonly<{
+        destination: OwnServerRestorePreparationForHost['prepared']['destination'];
+        selection: Readonly<{ prefix: readonly string[]; env: Readonly<Record<string, string>> }>;
+    }>): Promise<void>;
 }>;
 export type OwnServerRestoreResultForHost = (Readonly<{ kind: 'prepared' }> & OwnServerRestorePreparationForHost)
     | DeploymentRestoreResultV1;
@@ -228,7 +247,9 @@ export type OwnServerBackupRequestForHost = {
         actionId: TId; input: DeploymentBackupActionInputV1<TId>; context: ActionExecutorContext;
     }> & (TId extends 'deployments.backups.inventory' ? Readonly<{
         verificationEvidence?: readonly Readonly<{ backupOperationId: string; manifest: BackupManifestV1 }>[];
-    }> : TId extends 'deployments.backups.verify' ? Readonly<{ manifest: BackupManifestV1 }>
+    }> : TId extends 'deployments.backups.verify' ? Readonly<{
+        manifest: BackupManifestV1; capture?: DeploymentBackupRestoreCaptureV1;
+    }>
         : TId extends 'deployments.backups.prune' ? Readonly<{
             verification: Readonly<{ kind: 'verified'; level: 'manifestReadBack' | 'repositoryCheck'; manifest: BackupManifestV1 }>;
             protectedSnapshotIds: readonly string[];

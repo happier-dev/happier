@@ -576,7 +576,8 @@ export function createActionOperationStore(options?: Readonly<{
     readDeploymentInvocationInput(scope: ActionOperationQueryScope, operationId: string): unknown {
       const snapshot = snapshots.get(operationId);
       const metadata = invocationMetadata.get(operationId);
-      if (!snapshot || !inScope(snapshot, scope) || (snapshot.actionId !== DEPLOYMENT_DEPLOY_ACTION_ID_V1 && snapshot.actionId !== DEPLOYMENT_TEARDOWN_ACTION_ID_V1) || !metadata) return undefined;
+      if (!snapshot || !inScope(snapshot, scope) || (snapshot.actionId !== DEPLOYMENT_DEPLOY_ACTION_ID_V1 && snapshot.actionId !== DEPLOYMENT_TEARDOWN_ACTION_ID_V1
+        && snapshot.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) || !metadata) return undefined;
       return JSON.parse(metadata.inputIdentity);
     },
     /** Exact host-only receipt read. Work is proportional to this target's

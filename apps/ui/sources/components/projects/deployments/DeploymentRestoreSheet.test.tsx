@@ -8,6 +8,8 @@ import {
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
 import {
   act,
   renderScreen,
@@ -38,9 +40,16 @@ vi.mock(
 );
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
+const uploadBoundary = vi.hoisted(() => ({ pick: vi.fn(), rpc: vi.fn() }));
+// Device selection and encrypted Machine RPC are the two external upload boundaries.
+vi.mock('expo-document-picker', () => ({ getDocumentAsync: uploadBoundary.pick }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => ({
+  callGuardedMachineRpcWithPolicy: uploadBoundary.rpc,
+}));
 const { DeploymentEnvironmentDetail } =
   await import('./DeploymentEnvironmentDetail');
 const { HappyError } = await import('@/utils/errors/errors');
+const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 
 const snapshotId = 'c'.repeat(64);
 const safetyId = 'e'.repeat(64);
@@ -73,7 +82,7 @@ type Answer = (
   input: Record<string, unknown>,
 ) =>
   | Readonly<{ ok: true; result: unknown }>
-  | Readonly<{ ok: false; errorCode: string }>;
+  | Readonly<{ ok: false; errorCode: string; details?: unknown }>;
 
 /** Settings → Backups of an Environment whose serving deploy kept a pre-migration backup; only the HTTP boundary is answered. */
 async function renderRestore(answer: Answer) {
@@ -85,6 +94,7 @@ async function renderRestore(answer: Answer) {
     accountId: 'account-owner',
     currentAccount: true,
   });
+  const account = await captureLazyActionAccountContext(serverId);
   const scope = {
     serverId,
     accountId: 'account-owner',
@@ -169,14 +179,13 @@ async function renderRestore(answer: Answer) {
     },
   });
   const observed: Record<string, unknown>[] = [];
-  // The restore Action's UI transport is not wired yet (the spec has no UI daemon ingress; see the lane report), so
-  // the page's `restore` dependency is answered here at the Action result: the input is parsed by the published
-  // schema, a refusal arrives as the typed HappyError the front door raises, and a result by its output schema.
+  // The Action transport is the boundary: published schemas parse both directions; native composition
+  // and retained-operation behavior are exercised by the CLI public restore tests.
   const restore = async (input: unknown) => {
     const parsed = DeploymentActionInputSchemasV1['deployments.backups.restore'].parse({ ...(input as object), serverId: 'home' });
     observed.push(parsed as Record<string, unknown>);
     const outcome = answer(parsed as Record<string, unknown>);
-    if (!outcome.ok) throw new HappyError(outcome.errorCode, false, { code: outcome.errorCode });
+    if (!outcome.ok) throw new HappyError(outcome.errorCode, false, { code: outcome.errorCode, details: outcome.details });
     return DeploymentActionOutputSchemasV1['deployments.backups.restore'].parse(outcome.result);
   };
   const { ModalProvider } = await import('@/modal');
@@ -184,6 +193,7 @@ async function renderRestore(answer: Answer) {
     <ModalProvider>
     <DeploymentEnvironmentDetail
       controller={controller}
+      lifetime={account.accountLifetime}
       environmentId={environmentId}
       demand={shown}
       accountId={scope.accountId}
@@ -213,7 +223,7 @@ async function renderRestore(answer: Answer) {
     observed,
     until,
     environmentId,
-    dispose: () => controller.retire(),
+    dispose: () => { controller.retire(); account.dispose(); },
   };
 }
 
@@ -278,7 +288,148 @@ const prepared = (environmentId: string, withSafety: boolean) => ({
 
 describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
   beforeEach(() => homes.reset());
-  afterEach(standardCleanup);
+  afterEach(async () => {
+    const { Modal } = await import('@/modal');
+    Modal.hideAll();
+    standardCleanup();
+  });
+
+  it('uploads a local backup through encrypted finite transfer before checking its opaque source', async () => {
+    const bytes = new TextEncoder().encode('PGDMP-local-backup');
+    const file = Object.assign(new Blob([bytes]), { name: 'backup.dump', lastModified: 0, webkitRelativePath: '' });
+    uploadBoundary.pick.mockResolvedValue({ canceled: false, assets: [{ file }] });
+    const recipient = createTransferRecipientKeyPair();
+    const uploaded: number[] = [];
+    const methods: string[] = [];
+    uploadBoundary.rpc.mockImplementation(async (request: { method: string; payload: Record<string, unknown> }) => {
+      methods.push(request.method);
+      if (request.method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT) {
+        expect(request.payload).toMatchObject({ t: 'deployment_restore_upload_v1', sizeBytes: bytes.length });
+        expect(request.payload).not.toHaveProperty('path');
+        return { success: true, uploadId: 'upload-backup', chunkSizeBytes: 4,
+          recipientPublicKeyBase64: recipient.recipientPublicKeyBase64 };
+      }
+      if (request.method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK) {
+        const chunk = request.payload;
+        uploaded.push(...await decryptEncryptedTransferChunkEnvelope({ transferId: String(chunk.uploadId),
+          sequence: Number(chunk.index), payloadBase64: String(chunk.payloadBase64),
+          encryptedDataKeyEnvelopeBase64: String(chunk.encryptedDataKeyEnvelopeBase64),
+          recipientSecretKeySeed: recipient.recipientSecretKeySeed }));
+        return { success: true };
+      }
+      if (request.method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE) return {
+        success: true, transferId: 'retained-upload', sizeBytes: bytes.length, sha256: 'f'.repeat(64),
+      };
+      throw new Error(`Unexpected Machine upload method: ${request.method}`);
+    });
+    const view = await renderRestore(input => {
+      if (input.mode !== 'prepare') return { ok: true, result: { kind: 'restored', verified: true, nextAction: 'none', evidence: {} } };
+      const result = prepared(String(input.environmentId), true);
+      const { repository: _repository, ...native } = result.evidence.native.prepared;
+      return { ok: true, result: { ...result, evidence: { input: {}, native: { prepared: { ...native,
+        source: { kind: 'upload', transferId: 'retained-upload', sizeBytes: bytes.length, sha256: 'f'.repeat(64) },
+      } } } } };
+    });
+    try {
+      await view.until(`${settings}.restore.open`);
+      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until('project-deployments.restore.upload');
+      await view.screen.pressByTestIdAsync('project-deployments.restore.upload');
+      await view.until('project-deployments.restore.uploaded');
+      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
+      await view.until('project-deployments.restore.confirm');
+      expect(view.observed[0]).toMatchObject({ source: { kind: 'upload', transferId: 'retained-upload' },
+        destination: { kind: 'database', service: 'postgres', database: 'shop' } });
+      expect(uploaded).toEqual([...bytes]);
+      expect(methods).not.toContain(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT);
+      expect(JSON.stringify(view.observed)).not.toContain('backup.dump');
+      await view.screen.pressByTestIdAsync('project-deployments.restore.confirm');
+      await view.until('project-deployments.restore.result.restored');
+      expect(view.observed[1]).toMatchObject({ source: view.observed[0]!.source,
+        destination: view.observed[0]!.destination, prepareOperationId: 'prepare-op-1' });
+    } finally { view.dispose(); }
+  });
+
+  it('reviews the native named volume destination without relabeling it as a database', async () => {
+    const view = await renderRestore(input => {
+      const result = prepared(String(input.environmentId), true);
+      return { ok: true, result: { ...result, evidence: { ...result.evidence, native: {
+        ...result.evidence.native, prepared: { ...result.evidence.native.prepared,
+          source: { ...result.evidence.native.prepared.source, kind: 'volume' }, sourceFormat: 'volume',
+          destination: { adapter: 'volume-v1', service: 'app', volume: 'data', currentVolume: 'app_data',
+            stagingVolume: 'app_data_restore', environmentId: input.environmentId, revision: 1,
+            hasMeaningfulData: true, writerServices: ['app'], runningServices: ['app'] },
+        },
+      } } } };
+    });
+    try {
+      await view.until(`${settings}.restore.open`);
+      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
+      await view.until('project-deployments.restore.confirm');
+      expect(view.screen.findByTestId('project-deployments.restore.fact.volume')).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.restore.fact.database')).toBeNull();
+    } finally { view.dispose(); }
+  });
+
+  it('explains native snapshot unavailability for a remote Engine while ordinary restore stays available', async () => {
+    const view = await renderRestore(input => input.mode === 'prepare'
+      ? { ok: true, result: { ...prepared(String(input.environmentId), true), evidence: {
+          ...prepared(String(input.environmentId), true).evidence,
+          snapshotUnavailable: { code: 'restore_snapshot_remote_engine' },
+        } } }
+      : { ok: true, result: { kind: 'restored', verified: true, nextAction: 'none', evidence: {} } });
+    try {
+      await view.until(`${settings}.restore.open`);
+      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
+      await view.until('project-deployments.restore.confirm');
+      expect(view.screen.findByTestId('project-deployments.restore.snapshotUnavailable')).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.restore.snapshot')).toBeNull();
+      await view.screen.pressByTestIdAsync('project-deployments.restore.confirm');
+      await view.until('project-deployments.restore.result.restored');
+      expect(view.observed[1]).not.toHaveProperty('snapshot');
+    } finally { view.dispose(); }
+  });
+
+  it.each(['unknown', 'failed'] as const)('reviews native snapshot coverage and stops on %s until a fresh continue choice', async (kind) => {
+    const offer = {
+      managedId: 'managed-database', intentRevision: 1,
+      controller: { machineId: 'controller', installationId: 'controller-installation' },
+      resource: { contributionRef: { pluginId: 'happier.machine.digitalocean', localId: 'droplet' }, schemaVersion: 1, value: { id: 123 } },
+      contribution: { pluginId: 'happier.machine.digitalocean', localId: 'droplet' },
+      coverage: { rootDisk: true, attachedVolumes: false },
+      cost: { kind: 'billed', source: 'https://docs.digitalocean.com/products/snapshots/details/pricing/' },
+      consistency: 'running',
+    };
+    const view = await renderRestore(input => {
+      if (input.mode === 'prepare') {
+        const result = prepared(String(input.environmentId), true);
+        return { ok: true, result: { ...result, evidence: { ...result.evidence, snapshot: offer } } };
+      }
+      return input.snapshot === false
+        ? { ok: true, result: { kind: 'restored', verified: true, nextAction: 'none', evidence: {} } }
+        : { ok: false, errorCode: 'restore_snapshot_not_confirmed', details: { snapshot: { kind, code: 'provider_unconfirmed' } } };
+    });
+    try {
+      await view.until(`${settings}.restore.open`);
+      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until('project-deployments.restore.check');
+      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
+      await view.until('project-deployments.restore.snapshot');
+      expect(view.screen.findByTestId('project-deployments.restore.fact.snapshotCoverage')).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.restore.fact.snapshotCost')).not.toBeNull();
+      await view.screen.pressByTestIdAsync('project-deployments.restore.confirm');
+      await view.until('project-deployments.restore.snapshotStopped');
+      expect(view.observed).toHaveLength(2);
+      expect(view.observed[1]!.snapshot).not.toBe(false);
+      expect(view.screen.findByTestId('project-deployments.restore.result.restored')).toBeNull();
+      await view.screen.pressByTestIdAsync('project-deployments.restore.continueWithoutSnapshot');
+      await view.until('project-deployments.restore.result.restored');
+      expect(view.observed).toHaveLength(3);
+      expect(view.observed[2]).toEqual({ ...view.observed[1], snapshot: false });
+    } finally { view.dispose(); }
+  });
 
   it('checks the kept backup first, then replaces data with exactly that check and says the code is unchanged', async () => {
     const view = await renderRestore((input) =>
@@ -312,7 +463,7 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
         installationId: 'installation-a',
         targetLinkId: 'target-link',
         deploymentId: 'deployment-a',
-        restoreBackupId: snapshotId,
+        source: { kind: 'repository', snapshotId },
       };
       expect(view.observed[0]).toEqual({
         ...operands,

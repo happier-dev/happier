@@ -43,7 +43,7 @@ export function retainedBackupFromSummary(
   };
 }
 
-/** The Machine that runs the restore: the runtime link's first member, where the database service runs. */
+/** Restore operands use the runtime link's sole data Machine selected by the canonical owner. */
 export type DeploymentRestoreOperands = Omit<
   Extract<DeploymentUiRestoreInput, { mode: 'prepare' }>,
   'mode'

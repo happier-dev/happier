@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
@@ -6,16 +6,22 @@ import { DeploymentBackupNativeFailureV1Schema } from './deploymentBackupActions
 import { ManagedMachineV1Schema, ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
-import { MachineProvisionerSnapshotFactsV1Schema, MachineProvisionerSnapshotConsistencyV1Schema } from '../plugins/contributions/machineProvisioners.js';
+import { MachineProvisionerSnapshotFactsV1Schema, MachineProvisionerSnapshotConsistencyV1Schema, MachineProvisionerSnapshotResultV1Schema } from '../plugins/contributions/machineProvisioners.js';
 
 /** Exact provider facts retained by restore preparation; the full resource stays private. */
 export const DeploymentNativeSnapshotOfferV1Schema = lazyZodSchema(() => z.strictObject({
-  managedId: id, intentRevision: revision, controller: ManagedControllerV1Schema,
+  managedId: id, intentRevision: ManagedMachineV1Schema.shape.intentRevision, controller: ManagedControllerV1Schema,
   resource: z.nonoptional(ManagedMachineV1Schema.shape.resource), contribution: asProtocolZod(PluginContributionIdentityV1Schema),
   ...MachineProvisionerSnapshotFactsV1Schema.shape,
   consistency: MachineProvisionerSnapshotConsistencyV1Schema,
 }));
 export type DeploymentNativeSnapshotOfferV1 = z.infer<typeof DeploymentNativeSnapshotOfferV1Schema>;
+
+/** A review reason only; remote Engine selection never becomes a physical-Machine guess. */
+export const DeploymentNativeSnapshotUnavailableV1Schema = lazyZodSchema(() => z.strictObject({
+  code: z.literal('restore_snapshot_remote_engine'),
+}));
+export type DeploymentNativeSnapshotUnavailableV1 = z.infer<typeof DeploymentNativeSnapshotUnavailableV1Schema>;
 
 /** Source handles cross the public boundary; native paths stay in finite-transfer custody. */
 export const DeploymentBackupRestoreRepositorySourceV1Schema = z.strictObject({
@@ -52,6 +58,17 @@ export const DeploymentBackupRestoreInputV1Schema = lazyZodSchema(() => z.discri
   DeploymentBackupRestoreConfirmInputV1Schema,
 ]));
 export type DeploymentBackupRestoreInputV1 = z.infer<typeof DeploymentBackupRestoreInputV1Schema>;
+/** One domain summary for present-user and agent approval of the exact reviewed restore. */
+export function summarizeDeploymentRestoreReviewV1(input: DeploymentBackupRestoreInputV1, unavailable?: DeploymentNativeSnapshotUnavailableV1 | null): string {
+  if (input.mode === 'prepare') return 'Check the backup and take a safety backup first. Nothing is replaced yet.';
+  const offer = input.snapshotReview;
+  if (!offer) return ["Replace this Environment's data with the checked backup. The running code stays as it is.",
+    ...(unavailable ? ["Machine snapshot is unavailable: this Environment's data runs on another Engine."] : [])].join('\n');
+  return [input.snapshot === false ? 'Replace data without a Machine snapshot.' : 'Take a Machine snapshot before replacing data.',
+    `Coverage: root disk ${offer.coverage.rootDisk ? 'included' : 'excluded'}; attached volumes ${offer.coverage.attachedVolumes ? 'included' : 'excluded'}.`,
+    `Provider billing: ${offer.cost.price ? `${offer.cost.price.amount} ${offer.cost.price.currency}/${offer.cost.price.unit}` : 'price not supplied'}. Source: ${offer.cost.source}.`,
+    `Machine consistency: ${offer.consistency}; no application quiescing is implied.`].join('\n');
+}
 /** Native-owner presentation facts, never authority to repeat a restore effect. */
 export const DeploymentRestoreStepV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.enum(['safety', 'stop', 'restore', 'start', 'health']),
@@ -76,6 +93,7 @@ export function readDeploymentRestoreStepProgressV1(phase: unknown): DeploymentR
 export const DeploymentRestoreFailureResultV1Schema = lazyZodSchema(() => z.strictObject({
   steps: z.array(DeploymentRestoreStepV1Schema),
   nativeFailure: z.optional(DeploymentBackupNativeFailureV1Schema),
+  snapshot: z.optional(asProtocolZod(MachineProvisionerSnapshotResultV1Schema)),
 }));
 export type DeploymentRestoreFailureResultV1 = z.infer<typeof DeploymentRestoreFailureResultV1Schema>;
 const restoreSteps = () => ({ steps: z.optional(z.array(DeploymentRestoreStepV1Schema)) });

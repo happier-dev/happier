@@ -8,9 +8,27 @@ import { ExternalActionRequestEnvelopeV2Schema, projectExternalActionDeploymentN
 
 const actionId = 'deployments.backups.restore';
 const common = { serverId: 'home', environmentId: 'production', machineId: 'runtime', installationId: 'installed',
-  targetLinkId: 'target', deploymentId: 'capture-receipt', restoreBackupId: 'backup', expectedRevision: 3 };
+  targetLinkId: 'target', deploymentId: 'capture-receipt', source: { kind: 'repository' as const, snapshotId: 'backup' }, expectedRevision: 3 };
 
 describe('deployment backup restore Action', () => {
+  it('keeps the reviewed provider resource and billing evidence inside the private restore input', () => {
+    const snapshotReview = {
+      managedId: 'managed-database', intentRevision: 1,
+      controller: { machineId: 'controller', installationId: 'controller-installation' },
+      resource: { contributionRef: { pluginId: 'happier.machine.digitalocean', localId: 'droplet' }, schemaVersion: 1, value: { id: 123 } },
+      contribution: { pluginId: 'happier.machine.digitalocean', localId: 'droplet' },
+      coverage: { rootDisk: true, attachedVolumes: false },
+      cost: { kind: 'billed', source: 'provider-billing-evidence' }, consistency: 'running',
+    };
+    const spec = listActionSpecsForSurface('agent').find(candidate => String(candidate.id) === actionId)!;
+    const input = spec.inputSchema.parse({ ...common, mode: 'confirm', prepareOperationId: 'prepared', snapshot: true, snapshotReview });
+    const native = projectDeploymentNativeAdmissionV1(actionId, input);
+    expect(native).toMatchObject({ kind: 'restore', snapshot: true });
+    expect(native).not.toHaveProperty('snapshotReview');
+    expect(JSON.stringify(native)).not.toContain('provider-billing-evidence');
+    expect(projectDeploymentNativeAdmissionV1(actionId, { ...input, snapshot: false })).not.toEqual(native);
+    expect(DeploymentNativeAdmissionV1Schema.safeParse({ ...native, snapshotReview }).success).toBe(false);
+  });
   it('resolves the native admission union before any public restore input is parsed', () => {
     const { serverId: _serverId, ...target } = common;
     const native = { ...target, kind: 'restore', actionId, mode: 'prepare', inputDigest: 'a'.repeat(43) };
@@ -89,7 +107,7 @@ describe('deployment backup restore Action', () => {
     const readable = fields.rows.filter(row => !(row.kind === 'value' && row.technical)).map(row => row.path);
     // The runtime Machine is named by the shared reader; every opaque id only correlates the request.
     expect(readable).toEqual(['machineId']);
-    for (const path of ['serverId', 'environmentId', 'installationId', 'targetLinkId', 'deploymentId', 'restoreBackupId',
+    for (const path of ['serverId', 'environmentId', 'installationId', 'targetLinkId', 'deploymentId', 'source',
       'expectedRevision', 'mode', ...(mode === 'confirm' ? ['prepareOperationId'] : [])]) {
       expect(fields.rows.find(row => row.path === path)).toMatchObject({ technical: true });
     }

@@ -491,6 +491,17 @@ grants Use deployment authority; existing owner/Manage behavior is retained.
 to one executor. Its host runtime borrows the daemon's mounted
 `projectManagedServices` owner; it must not construct another supervisor.
 
+In 0.3 development, an own-server Environment's Settings includes a migration
+editor for its service, literal command arguments, optional pending check,
+backup choice and existing failure-recovery policy. Commands use one argument
+per line and run without shell interpretation. Save uses the ordinary
+`deployments.environments.update` Action; removing the command sends
+`ownServer.migration: null`. The canonical content patch removes that property
+while retaining the other saved policies. Protocol owns the shared migration
+policy schema, and deployment-protocol consumes it for stored content. Command
+arguments remain private content and are omitted from the server-readable
+metadata patch for an E2EE Environment.
+
 The development native executor runs a declared migration once on the first
 runtime Machine through P30's admitted candidate command. Configure its optional
 pending check in `ownServer.migration.pendingCheck.argv`. Exit zero means no
@@ -1909,6 +1920,16 @@ the Machine-grant decoder consumes that same source schema rather than a copied
 subset. Purpose materialization and fact resolution still require their owning
 runtime producers; schema acceptance alone does not make them executable.
 
+In 0.3 development, Environment Settings also exposes registry bindings through
+the ordinary `deployments.bindings.set` Action. A manager chooses an existing
+target link, registry origin, pull-only or push-and-pull access, and a Saved
+Secret reference with its selected revision. The editor does not open secret
+material. An access or secret change at the same address replaces that binding;
+changing its target or origin removes the old structured identity and sets the
+new binding in one patch. Removing a binding uses the same canonical identity
+projection. The Account mode, picker and Action owners retain their existing
+custody and encryption decisions for plain and E2EE Accounts.
+
 Stored-definition sub-revisions are resolved by the deployment-protocol
 Environment owner for host preparation, promotion, template instantiation and
 server admission. A bindings-only edit retains the definition revision. A
@@ -2748,7 +2769,10 @@ snapshot offer when the admitted native launch has no remote Engine selector.
 A remote Engine selector suppresses that offer with the typed review reason
 `restore_snapshot_remote_engine`; ordinary restore remains available. This rule
 uses the admitted launch selector and does not infer a remote host's enrolled
-Machine identity. UI and agent approval share coverage, billing source and
+Machine identity. The current own-server runtime admits only its platform/PATH
+environment and exposes no remote-selector input; setting an ambient Docker
+selector does not select a remote Engine for this restore path. UI and agent
+approval share coverage, billing source and
 price when supplied, and observed running/stopped/unknown consistency. Snapshot
 is selected by default for an eligible offer; a root-disk-only offer explicitly
 excludes attached volumes and does not imply application quiescence. Confirmation

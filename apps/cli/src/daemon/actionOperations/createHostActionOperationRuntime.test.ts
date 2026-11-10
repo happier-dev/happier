@@ -45,6 +45,47 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SessionSpawnNewResultV1Schema as preObservationSpawnResult } from '../../../../../packages/protocol/src/sessions/creation/testFixtures/sessionSpawnResultBeforeCommitObservation';
 
 describe('finite host operation custody', () => {
+
+  it('keeps an unconfirmed restore snapshot on the same receipt through exact replay and reviewed skip', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'machine', serverId: 'home',
+      resolveAccountId: async () => 'account', generateOperationId: () => 'held-restore' });
+    const snapshot = { kind: 'unknown' as const, code: 'provider_outcome_unknown' };
+    const input = { mode: 'confirm' as const, serverId: 'home', environmentId: 'environment', machineId: 'machine',
+      installationId: 'installation', targetLinkId: 'link', deploymentId: 'capture', expectedRevision: 1,
+      source: { kind: 'repository' as const, snapshotId: 'b'.repeat(64) }, prepareOperationId: 'prepared', snapshot: true };
+    const context = { surface: 'agent' as const, actionCaller: { kind: 'host' as const }, serverId: 'home',
+      runtimeAccountId: 'account', actionRequestId: 'restore-request' };
+    let effects = 0;
+    const held = { ok: false as const, errorCode: 'restore_snapshot_not_confirmed', error: 'restore_snapshot_not_confirmed',
+      details: { steps: [], snapshot } };
+    // This owner test substitutes the external effect result; receipt admission and continuation remain real.
+    const first = { actionId: 'deployments.backups.restore', input, context,
+      execute: async (effectContext: Parameters<Parameters<typeof runtime.runActionOperation>[0]['execute']>[0]) => {
+        effects++;
+        effectContext.operationOwnerUpdate!.update({ domainRef: { kind: 'deployment', serverId: 'home',
+          environmentId: 'environment', deploymentId: 'capture' },
+          observation: { kind: 'review_required', code: 'restore_snapshot_not_confirmed', snapshot } });
+        return held;
+      } };
+    expect(await runtime.runActionOperation(first)).toEqual(held);
+    expect(await runtime.runActionOperation(first)).toEqual(held);
+    expect(effects).toBe(1);
+    const continued = { ...first, input: { ...input, snapshot: false }, execute: async (
+      effectContext: Parameters<Parameters<typeof runtime.runActionOperation>[0]['execute']>[0]) => {
+      effects++;
+      expect(effectContext.operationAcceptance).toMatchObject({ operationId: 'held-restore', previousRestoreSnapshot: snapshot });
+      return { ok: true as const, result: { kind: 'restored', verified: true, nextAction: 'none', evidence: { snapshot } } };
+    } };
+    expect(await runtime.runActionOperation({ ...continued, input: { ...continued.input, expectedRevision: 2 } }))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    const restored = await runtime.runActionOperation(continued);
+    expect(restored).toMatchObject({ ok: true, result: { evidence: { snapshot } } });
+    expect(await runtime.runActionOperation(continued)).toEqual(restored);
+    expect(effects).toBe(2);
+    expect(await runtime.handlers.getV2({ operationId: 'held-restore' })).toMatchObject({ kind: 'found',
+      operation: { state: 'succeeded', result: { evidence: { snapshot } } } });
+  });
+
   it.each(['immediate', 'deferred', 'cancelled'] as const)('retains only public contributed refusal facts after %s settlement', async settlement => {
     const { PluginError } = await import('@happier-dev/plugin-sdk');
     const { contributedActionFailureResult, projectStructuredMessageActionFailure } = await import('@/plugins/runtime/invocation/actions/contributedActionFailure');

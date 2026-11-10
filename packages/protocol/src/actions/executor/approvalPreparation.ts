@@ -36,6 +36,9 @@ import { ProviderErrorV1Schema } from '../../providers/errors.js';
 import { areProviderContributionKeysEqualV1 } from '../../providers/contributionIdentityV1.js';
 import { projectApprovalReviewInput } from '../actionApprovalPresentation.js';
 import { appendTeamCredentialSourceSummary, prepareTeamCredentialSources, readTeamCredentialApprovalSources } from '../specs/teamCredentialApproval.js';
+import { SAVED_HEALTH_ALERT_TEST_ACTION_ID } from '../notificationConfigurationActionIds.js';
+import { NotificationConfigurationActionInputSchemas, SavedHealthAlertTestApprovalReviewSchema } from '../notificationConfigurationActionFamily.js';
+import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 
 export function mapApprovalCreatedBySurface(surface: ActionExecutorContext['surface']): ApprovalRequestV1['createdBy']['surface'] {
   if (surface === 'voice') return 'voice';
@@ -142,6 +145,7 @@ export async function readDeploymentPreparation(deps: ActionExecutorDeps, action
       || !sameStrictJsonValue(candidate.newProject ?? null, authored.newProject ?? null)
       || candidate.requestKey !== authored.requestKey || candidate.protection !== authored.protection
       || candidate.purpose !== authored.purpose || candidate.deployerMode !== authored.deployerMode
+      || candidate.previewCompanionOfEnvironmentId !== authored.previewCompanionOfEnvironmentId
       || candidate.managedRetention !== authored.managedRetention
       || !sameStrictJsonValue(candidate.deployerPrincipals ?? null, authored.deployerPrincipals ?? null)
       || !sameStrictJsonValue(candidate.copyFrom ?? null, authored.copyFrom ?? null)
@@ -246,6 +250,22 @@ export async function prepareApprovalRequest(params: Readonly<{
   executeCanonicalAction?: Parameters<NonNullable<ActionExecutorDeps['prepareDeploymentTemplateInstantiation']>>[0]['executeCanonicalAction'];
 }>): Promise<Readonly<{ actionArgs: unknown; preview: unknown }> | ActionExecuteFailure | null> {
   const spec = getActionSpec(params.actionId);
+  if (params.actionId === SAVED_HEALTH_ALERT_TEST_ACTION_ID) {
+    const unavailable = { ok: false as const, errorCode: 'notification_test_preparation_unavailable',
+      error: 'notification_test_preparation_unavailable' };
+    if (!params.deps.prepareNotificationTestApproval) return unavailable;
+    const input = NotificationConfigurationActionInputSchemas[SAVED_HEALTH_ALERT_TEST_ACTION_ID].safeParse(params.input);
+    if (!input.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    const prepared = await params.deps.prepareNotificationTestApproval({ input: input.data, context: params.context });
+    const failure = readActionFailureEnvelope(prepared);
+    if (failure) return failure;
+    const review = SavedHealthAlertTestApprovalReviewSchema.safeParse(prepared);
+    if (!review.success || !sameStrictJsonValue(review.data.request, input.data)
+      || review.data.controllerMachineId !== input.data.machineId) return unavailable;
+    return { actionArgs: input.data, preview: { actionId: params.actionId, actionArgs: input.data,
+      summary: `Send a saved health alert test. Sent from ${review.data.controllerMachineId}. Destination: ${createCanonicalJsonSigningInput(review.data.destination)}. ${review.data.disclosure}`,
+      notificationTestReview: review.data } };
+  }
   const teamCredentialSources = [
     ...readTeamCredentialApprovalSources(params.hostReviewedContent),
     ...await prepareTeamCredentialSources({ deps: params.deps, context: params.context,

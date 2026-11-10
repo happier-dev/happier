@@ -272,7 +272,7 @@ describe('own-server target at the Action host boundary', () => {
     for (const { scenario, sourceKind } of [
         ...(['iroh_publication_refused', 'iroh_publication_loopback', 'iroh_publication_host_network', 'private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
-        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_remote_engine', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
     ]) it(
         `native deployment admission, finite execution and retained C1 observation: ${scenario}`, async () => {
         const startedAt = Date.now();
@@ -294,7 +294,9 @@ describe('own-server target at the Action host boundary', () => {
         const retainedHealth = scenario.startsWith('retained_health');
         const stagePhases: Array<{ phase: string; elapsedMs: number }> = [];
         const phase = (value: string) => { stagePhases.push({ phase: value, elapsedMs: Date.now() - startedAt }); };
-        onTestFailed(() => { console.info('Native target phases', { scenario, phases: stagePhases }); });
+        onTestFailed(() => { console.info('Native target phases', { scenario, phases: stagePhases,
+            ...(previewCopy && vi.isMockFunction(axios.request) ? { recentHomeRequests: vi.mocked(axios.request).mock.calls.slice(-6)
+                .map(([input]) => ({ method: input.method, path: new URL(input.url ?? serverHttpBaseUrl).pathname })) } : {}) }); });
         phase('fixture');
         const root = await mkdtemp(join(tmpdir(), 'happier-deployment-health-'));
         const nativeHttp = { get: axios.get.bind(axios), post: axios.post.bind(axios), request: axios.request.bind(axios) };
@@ -303,7 +305,6 @@ describe('own-server target at the Action host boundary', () => {
         const docker = await createOwnServerDockerBoundary(join(root, 'docker'), {
             operatingSystem: previewCompanion ? 'Ubuntu 24.04.3 LTS' : 'Docker Desktop' });
         vi.stubEnv('PATH', `${join(root, 'docker')}${delimiter}${process.env.PATH ?? ''}`);
-        if (scenario === 'standalone_public_restore_remote_engine') vi.stubEnv('DOCKER_HOST', 'ssh://restore-engine.invalid');
         const registeredImage = await docker.registerImage('app', 'A');
         const image = scenario === 'joining_current_successor'
             ? { ...registeredImage, registryReference: `registry.example.test/app@${registeredImage.manifestDigest}` } : registeredImage;
@@ -1689,6 +1690,23 @@ describe('own-server target at the Action host boundary', () => {
                 if (publicCopy) {
                     const operations = createHostActionOperationRuntime({ machineId: 'machine-a', serverId: 'home',
                         custodyBinding: { serverId: 'home', installationId: 'installation-a' }, resolveAccountId: async () => accountId });
+                    const copyEffects = new Set<Promise<unknown>>();
+                    const trackCopyEffect = <T,>(effect: Promise<T>): Promise<T> => {
+                        copyEffects.add(effect);
+                        void effect.finally(() => copyEffects.delete(effect)).catch(() => undefined);
+                        return effect;
+                    };
+                    settleBackupFixture = async () => {
+                        caller.abort();
+                        const scope = { accountId, machineId: 'machine-a' };
+                        for (const operation of operations.store.list(scope).items)
+                            operations.runner.cancel(scope, operation.operationId);
+                        // Caller cancellation ends observation before admitted native effects.
+                        // Settle this fixture's effects before another daemon lifetime starts.
+                        await Promise.allSettled([...copyEffects]);
+                    };
+                    const runCopyOperation: typeof operations.runActionOperation = value => operations.runActionOperation({ ...value,
+                        execute: context => trackCopyEffect(value.execute(context)) });
                     const backupTarget = { serverId: 'home', environmentId: promotionSource.environment.id,
                         targetLinkId: promotionSource.targetLinks[0].targetLink.id, machineId: 'machine-a',
                         installationId: 'installation-a', deploymentId: 'source-capture',
@@ -1696,7 +1714,7 @@ describe('own-server target at the Action host boundary', () => {
                     const nativeSnapshot = { ...snapshot, hostname: `happier-env-${promotionSource.environment.id}`,
                         tags: ['happier', `env:${promotionSource.environment.id}`, 'kind:dump', 'src:database'] };
                     const checksumSha256 = createHash('sha256').update(archive).digest('hex');
-                    const producedOperation = await operations.runActionOperation({ actionId: 'deployments.backups.run',
+                    const producedOperation = await runCopyOperation({ actionId: 'deployments.backups.run',
                         input: buildDeploymentBackupActionInputV1('deployments.backups.run', backupTarget),
                         context: { ...sourceContext, surface: 'ui', actionCaller: { kind: 'host' }, serverId: 'home',
                             runtimeAccountId: accountId, actionRequestId: 'public-copy-source-backup' },
@@ -2051,9 +2069,9 @@ describe('own-server target at the Action host boundary', () => {
                             const deps = createDaemonDeploymentActionDeps({ ...host, resolveRequesterIdentity, savedSecretOperationContext,
                                 async acquirePluginRuntimeRegistryLease() { return mounted.controller.tryAcquireRuntimeRegistry()!; },
                                 readBackupOperations: (input, context) => operations.readDeploymentBackupOperations({ target: input, context }),
-                                runActionOperation: value => operations.runActionOperation(value) });
+                                runActionOperation: runCopyOperation });
                             const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
-                                serverId: 'home', machineId: 'machine-a', runActionOperation: value => operations.runActionOperation(value) });
+                                serverId: 'home', machineId: 'machine-a', runActionOperation: runCopyOperation });
                             const actionContext = { ...sourceContext, surface: 'ui' as const, actionCaller: { kind: 'host' as const },
                                 machineAdmission: { ...sourceContext.machineAdmission, role: 'manage' as const },
                                 serverId: 'home', runtimeAccountId: accountId, signal: caller.signal, executionRunWorkflowRunId: 'preview-copy-run',
@@ -2126,6 +2144,7 @@ describe('own-server target at the Action host boundary', () => {
                             }
                             async function closePreviewChildren(page: ReturnType<typeof WorkflowInvocationListResultV1Schema.parse>,
                                 nativeReceipts: readonly OwnServerDeploymentReceipt[]) {
+                                phase('preview-close-source');
                                 const closing = await readPreviewSource('closed', page);
                                 expect(closing, JSON.stringify(closing)).toMatchObject({ kind: 'available' });
                                 if (closing.kind !== 'available') throw new Error(closing.reason);
@@ -2135,6 +2154,7 @@ describe('own-server target at the Action host boundary', () => {
                                     if (closeAction.kind !== 'action' || closeAction.actionId !== 'deployments.teardown')
                                         throw new Error('Expected ordinary native close Actions');
                                     const closeInput = DeploymentTeardownRequestInputV1Schema.parse(await operands(closeAction));
+                                    phase(`preview-close-${closeInput.environmentId}-prepare`);
                                     selectChild(closeInput.environmentId);
                                     const deployed = nativeReceipts.find(saved => saved.deployment.environmentId === environment.environment.id
                                         && saved.content.ownServer?.previewCleanup)?.content.ownServer?.previewCleanup;
@@ -2145,9 +2165,16 @@ describe('own-server target at the Action host boundary', () => {
                                             for (const saved of [...nativeReceipts].reverse())
                                                 if (saved.deployment.environmentId === environment.environment.id) yield saved;
                                         })(), findReceipt: async () => null,
-                                        createCandidate: async (_environment, content) => {
+                                        createCandidate: async (selectedEnvironment, content) => {
                                             candidate = DeploymentOwnServerContentV1Schema.parse(content);
-                                            return { contentArtifactId: `preview-teardown-${environment.environment.id}`,
+                                            const id = `preview-teardown-${selectedEnvironment.environment.id}`;
+                                            stored.set(id, { id, ownerAccountId: accountId, access: 'owner', publicAudience: 'none',
+                                                encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                                                header: encodePlainArtifactStoredContent(createDeploymentReceiptArtifactHeaderV1(
+                                                    selectedEnvironment.content.name, candidate)),
+                                                body: encodePlainArtifactStoredContent({ body: JSON.stringify(candidate) }),
+                                                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+                                            return { contentArtifactId: id,
                                                 contentHeaderVersion: 1, contentBodyVersion: 1 };
                                         } });
                                     const prepared = await teardown.prepare({ input: closeInput, context: actionContext });
@@ -2170,17 +2197,20 @@ describe('own-server target at the Action host boundary', () => {
                                         actionOperationId: `preview-close-operation-${environment.environment.id}`, operation: 'teardown',
                                         revision: 1, state: 'queued', contentArtifactId: prepared.input.contentArtifactId,
                                         contentHeaderVersion: 1, contentBodyVersion: 1 };
-                                    const closed = await teardown.execute({ actionId: 'deployments.teardown', input: prepared.input,
+                                    phase(`preview-close-${environment.environment.id}-execute`);
+                                    const closed = await trackCopyEffect(teardown.execute({ actionId: 'deployments.teardown', input: prepared.input,
                                         receipt: { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
                                             deploymentId: receipt.deployment.id, deploymentRevision: 1, state: 'queued' },
-                                        context: { ...actionContext, operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } });
+                                        context: { ...actionContext, operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } }));
                                     expect(closed, JSON.stringify(closed)).toMatchObject({ ok: true, state: 'succeeded' });
                                     outputs.set(closeAction.id, normalizeStrictJsonValue(closed));
                                     closedIds.push(environment.environment.id);
+                                    phase(`preview-close-${environment.environment.id}-succeeded`);
                                 }
                                 return closedIds;
                             }
                             const create = block('preview-create');
+                            phase('preview-main-create');
                             if (scenario !== 'public_preview_configure_failure')
                                 await boundary.setRepositoryMissing('s3:https://fixture.invalid/destination-safety');
                             if (scenario === 'public_preview_configure_failure') await boundary.setRepositoryConfigExitCode(12);
@@ -2205,11 +2235,13 @@ describe('own-server target at the Action host boundary', () => {
                                 .toMatchObject({ ok: true, result: previewCompanion ? { previewCompanionRequired: true }
                                     : { previewNativeData: [{ service: 'database', database: 'app' }] } });
                             if (!created.ok) throw new Error('Expected real preview child creation');
+                            phase('preview-main-created');
                             outputs.set(create.id, normalizeStrictJsonValue(created.result));
                             const creationInvocations: ReturnType<typeof makeInvocation>[] = [];
                             if (previewCompanion) {
                                 creationInvocations.push(makeInvocation(create, await operands(create), created.result, 0));
                                 const companion = block('preview-data-create');
+                                phase('preview-companion-create');
                                 const companionInput = await operands(companion);
                                 expect(companionInput).toMatchObject({ purpose: 'standard', protection: 'nonProduction',
                                     previewCompanionOfEnvironmentId: mainEnvironmentId });
@@ -2243,6 +2275,7 @@ describe('own-server target at the Action host boundary', () => {
                                             expect.objectContaining({ purpose: 'variable', name,
                                                 source: expect.objectContaining({ kind: 'reference', environmentId: environment.environment.id }) }))) } });
                                 if (!companionCreated.ok) throw new Error('Expected real catalog companion creation');
+                                phase('preview-companion-created');
                                 outputs.set(companion.id, normalizeStrictJsonValue(companionCreated.result));
                                 creationInvocations.push(makeInvocation(companion, companionInput,
                                     companionCreated.result, creationInvocations.length));
@@ -2269,6 +2302,7 @@ describe('own-server target at the Action host boundary', () => {
                             await docker.registerImage(pgService!, 'postgres17', { registryReferences: [sourceService.image] });
                             const nativeReceipts: OwnServerDeploymentReceipt[] = [];
                             const executeNative = async (action: WorkflowActionLeafV1, deploymentId: string) => {
+                                phase(`${deploymentId}-prepare`);
                                 if (action.actionId !== 'deployments.deploy') throw new Error('Expected native deployment Action');
                                 const authored = await operands(action);
                                 selectChild(authored.environmentId);
@@ -2287,7 +2321,8 @@ describe('own-server target at the Action host boundary', () => {
                                     receipt: { ...request.receipt, environmentId: environment.environment.id,
                                         revision: environment.environment.revision, deploymentId, deploymentRevision: 1, state: 'queued' },
                                     context: { ...actionContext, operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } };
-                                const result = await target.execute(request);
+                                phase(`${deploymentId}-execute`);
+                                const result = await trackCopyEffect(target.execute(request));
                                 expect(result, JSON.stringify({ result, nativeFailures: await docker.readFailures(),
                                     boundaryFailures: await readHomeBoundaryFailures() })).toMatchObject({ ok: true, state: 'succeeded' });
                                 if (!result.ok || !('state' in result) || result.state !== 'succeeded') throw new Error('Expected native deployment');
@@ -2295,6 +2330,7 @@ describe('own-server target at the Action host boundary', () => {
                                 previewReceipts.set(receipt.deployment.id, structuredClone(receipt));
                                 nativeReceipts.push(structuredClone(receipt));
                                 outputs.set(action.id, normalizeStrictJsonValue(result));
+                                phase(`${deploymentId}-succeeded`);
                                 return { input: authored, result };
                             };
                             const provision = block(previewCompanion ? 'preview-data-companion-provision' : 'preview-data-provision');
@@ -2331,12 +2367,13 @@ describe('own-server target at the Action host boundary', () => {
                                 readPreparation: (operationId, context) => operations.readRestorePreparation({ operationId, context }) });
                             const restoreExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), serverId: 'home', machineId: 'machine-a',
                                 resolveEnvironmentApprovalScope: deps.resolveEnvironmentApprovalScope,
-                                deploymentRestore: restore, runActionOperation: value => operations.runActionOperation(value) });
+                                deploymentRestore: restore, runActionOperation: runCopyOperation });
                             const prepareCopy = block('preview-copy-0-prepare');
                             const restoreInput = await operands(prepareCopy);
                             expect(restoreInput.source).toMatchObject({ kind: 'repository', origin: { environmentId: promotionSource.environment.id,
                                 targetLinkId: promotionSource.targetLinks[0]!.targetLink.id } });
                             expect(restoreInput.destination).toEqual({ kind: 'database', service: 'database', database: 'app' });
+                            phase('preview-copy-prepare');
                             const preparation = await restoreExecutor.execute(prepareCopy.actionId, restoreInput,
                                 { ...actionContext, actionRequestId: 'native-preview-copy-prepare' });
                             const restoreEvents = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean)
@@ -2347,16 +2384,19 @@ describe('own-server target at the Action host boundary', () => {
                                     command: event.argv?.[0], fixtureCode: event.fixtureCode })) }))
                                 .toMatchObject({ ok: true, result: { kind: 'prepared' } });
                             if (!preparation.ok) throw new Error('Expected preview copy preparation');
+                            phase('preview-copy-prepared');
                             outputs.set(prepareCopy.id, normalizeStrictJsonValue(preparation.result));
                             if (scenario === 'public_preview_copy_failure') {
                                 const state = JSON.parse(await readFile(boundary.stateFile, 'utf8'));
                                 await writeFile(boundary.stateFile, JSON.stringify({ ...state, mode: 'failure' }));
                             }
                             const confirm = block('preview-copy-0-confirm');
+                            phase('preview-copy-confirm');
                             const restored = await restoreExecutor.execute(confirm.actionId, await operands(confirm),
                                 { ...actionContext, actionRequestId: 'native-preview-copy-confirm' });
                             expect(restored, JSON.stringify(restored)).toMatchObject({ ok: true });
                             if (!restored.ok) throw new Error('Expected typed native restore result');
+                            phase('preview-copy-confirmed');
                             outputs.set(confirm.id, normalizeStrictJsonValue(restored.result));
                             const full = block('preview-deploy');
                             if (!full.onlyWhen) throw new Error('Factory must guard the app behind verified copy');
@@ -2442,6 +2482,7 @@ describe('own-server target at the Action host boundary', () => {
                             const page = WorkflowInvocationListResultV1Schema.parse({ parentRevision: 1,
                                 invocations: capturedInvocations.map(row => row.index), invocationDetails: capturedInvocations });
                             const synchronized = await readPreviewSource('synchronize', page);
+                            phase('preview-synchronized');
                             expect(synchronized, JSON.stringify(synchronized)).toMatchObject(mayDeployApp
                                 ? { kind: 'available' } : { kind: 'refused', reason: 'restore_prepare_required' });
                             const cleanup = provisioned.result.previewCleanup;
@@ -2676,6 +2717,7 @@ describe('own-server target at the Action host boundary', () => {
                                     result: { ok: true, columns: [{ name: 'restored_rows' }], rows: [['1']], complete: true },
                                 });
                                 expect(execFileSync(process.execPath, [docker.executablePath, 'ps', '--filter',
+                                    `label=com.docker.compose.project=${serving.content.ownServer!.approvedInputBasis.physicalProjectName}`, '--filter',
                                     'label=com.docker.compose.service=app'], { encoding: 'utf8' }).trim()).toBe('');
                                 expect({ runtimeGrants, copySourceGrants }).toEqual(grantsBefore);
                                 expect(environment.targetLinks[0].targetLink.activeDeploymentId).toBe(pointer);
@@ -2876,21 +2918,6 @@ describe('own-server target at the Action host boundary', () => {
                     { ...actionContext, actionRequestId: 'discarded-prepare' });
                 expect(discardedPreparation, JSON.stringify(discardedPreparation)).toMatchObject({ ok: true, result: { kind: 'prepared',
                     evidence: { native: { prepared: { repository: capture.repository } } } } });
-                if (scenario === 'standalone_public_restore_remote_engine') {
-                    expect(discardedPreparation).toMatchObject({ ok: true, result: { evidence: {
-                        snapshotUnavailable: { code: 'restore_snapshot_remote_engine' },
-                    } } });
-                    if (!discardedPreparation.ok || !isRecord(discardedPreparation.result)
-                        || !isRecord(discardedPreparation.result.evidence)) throw new Error('Expected remote restore preparation');
-                    expect(discardedPreparation.result.evidence).not.toHaveProperty('snapshot');
-                    const remotePrepared = DeploymentBackupRestoreResultV1Schema.parse(discardedPreparation.result);
-                    if (remotePrepared.kind !== 'prepared') throw new Error('Expected remote restore preparation');
-                    expect(await executor.execute('deployments.backups.restore', { ...restoreInput, mode: 'confirm',
-                        prepareOperationId: remotePrepared.operationId }, { ...waivedAgentContext, actionRequestId: 'remote-engine-confirm' }))
-                        .toMatchObject({ ok: true, result: { kind: 'restored', verified: true } });
-                    expect(nativeSnapshots).toBe(0);
-                    return;
-                }
                 expect(discardedPreparation).toMatchObject({ ok: true, result: { evidence: { snapshot: nativeSnapshotOffer } } });
                 phase('standalone-discarded-prepared');
                 if (!discardedPreparation.ok) throw new Error('Expected public restore preparation for stale input');

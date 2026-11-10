@@ -13,6 +13,7 @@ import type {
   DeploymentReadControllerV1,
   DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
+import type { DeploymentBackupConfigureResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol/v1';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
@@ -32,8 +33,10 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useSettingReveal } from '@/components/settings/shell/SettingRow';
 import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
+import { useWorkflowTriggerSets } from '@/components/workflows/triggers/useWorkflowTriggerSets';
 import { guidedStarterEventSeed } from '@/components/workflows/triggers/guidedAutomation';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 
 import { useDeploymentEnvironmentRowParts } from './DeploymentEnvironmentCollection';
@@ -49,6 +52,7 @@ import {
   DeploymentBackupDestinationRow,
   DeploymentBackupRetentionRows,
   DeploymentBackupSetup,
+  DeploymentBackupConfigurationResult,
   DeploymentBackupCredentialRows,
   DeploymentBackupScheduleRow,
   deploymentBackupAttention,
@@ -72,7 +76,7 @@ const noop = () => {};
 /** What a manager can change from Settings and Permissions, through the Action owner. */
 export type DeploymentEnvironmentEditing = Readonly<{
   actions: Pick<ReturnType<typeof createDeploymentActions>, 'setController' | 'updateEnvironment'>
-    & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'inspectPlatformTarget' | 'moveToRepository' | 'prepareConfigurationDefaults' | 'setBindings'>>;
+    & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'inspectPlatformTarget' | 'moveToRepository' | 'prepareConfigurationDefaults' | 'preparePreviewForkPolicy' | 'setBindings'>>;
   serverId: string;
   review: DeploymentReviewHandle;
   /** A settled change moved the Environment's revision: re-read it. */
@@ -112,6 +116,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       lifetime?: ServerAccountScopeLifetime | null;
       /** The Action owner's manager edits; absent where this viewer cannot change settings. */
       editing?: DeploymentEnvironmentEditing | null;
+      previewBindings?: React.ComponentProps<typeof DeploymentPreviewVariables>['draft'];
       definitionDocument: StoredDefinitionDocument;
       review?: DeploymentReviewHandle;
       /** Opens a Machine's Services page (health checks); absent where no Home is known. */
@@ -126,6 +131,16 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
     const change = useDeploymentChangePress(editing?.review ?? null, editing?.onChanged ?? noop);
     const controllerReveal = useSettingReveal(props.focusSection === 'controller', 0);
     const { detail, machineName } = props;
+    const previewEnrollmentEnabled = detail.environment.purpose !== 'preview' && detail.content.previewTemplate?.enabled === true;
+    const previewEnrollment = useWorkflowTriggerSets(previewEnrollmentEnabled && props.lifetime
+      ? { scope: 'account_inline' } : null, props.lifetime ?? null);
+    const enrolledPreview = previewEnrollment.sets.find(set => {
+      const target = set.context?.deploymentPreview;
+      return target?.environmentId === detail.environment.id
+        && areServerProfileIdentifiersEquivalent(target.serverId, detail.environment.serverId);
+    });
+    const previewEnrollmentUnavailable = previewEnrollmentEnabled && previewEnrollment.status !== 'loading'
+      && (previewEnrollment.status === 'failed' || !enrolledPreview?.enabled || enrolledPreview.health === 'source_unavailable');
     const runtimeMachines = detail.runtimeTargetLink?.machines ?? [];
     const runtimeLinkId = detail.runtimeTargetLink?.id ?? null;
     const platformSource = detail.runtimeTargetLink?.source.kind === 'plugin' ? detail.runtimeTargetLink.source : null;
@@ -456,11 +471,13 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             description={t('projects.deployments.sectionPreviewsDescription')}
           >
             {/* The save landed; only new pull requests are affected, so the warning sits with the previews it concerns. */}
-            {change.followup ? (
+            {change.followup || previewEnrollmentUnavailable ? (
               <SurfaceStateCard testID="project-deployments.environment.settings.preview-enrollment" kind="warning" size="line"
                 title={t('projects.deployments.settingsSections.previewsEnrollmentUnavailable')}
-                reason={readDeploymentRefusalRecoveryV1(change.followup.errorCode)?.remedy}
-                diagnosticCode={change.followup.errorCode} />
+                reason={change.followup ? readDeploymentRefusalRecoveryV1(change.followup.errorCode)?.remedy : undefined}
+                diagnosticCode={change.followup?.errorCode}
+                action={previewEnrollment.status === 'failed'
+                  ? { label: t('common.retry'), onPress: previewEnrollment.retry } : undefined} />
             ) : null}
             {detail.environment.purpose !== 'preview' ? (
               <PreviewTemplateRows
@@ -474,6 +491,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
                 saving={change.running}
                 inspect={editing?.actions.inspectPlatformTarget ?? null}
                 prepareDefaults={editing?.actions.prepareConfigurationDefaults ?? null}
+                prepareForkPolicy={editing?.actions.preparePreviewForkPolicy ?? null}
+                onChooseMachine={props.onChangeMachine ?? props.onLink ?? null}
                 lifetime={props.lifetime ?? null}
                 testID={`${section('previews')}.template`}
               />
@@ -490,8 +509,9 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             ) : null}
           </ItemGroup>
         ) : null}
-        {detail.environment.purpose !== 'preview' && detail.content.previewTemplate && props.lifetime && props.review ? (
-          <DeploymentPreviewVariables detail={detail} lifetime={props.lifetime} editing={editing}
+        {detail.environment.purpose !== 'preview' && detail.content.previewTemplate && props.lifetime && props.review && props.previewBindings ? (
+          <DeploymentPreviewVariables detail={detail} lifetime={props.lifetime} draft={props.previewBindings}
+            domainRead={{ controller: props.controller, demand: props.demand }}
             review={props.review}
             phone={props.phone === true} environmentName={props.environmentTitle}
             sealedOn={detail.runtimeTargetLink?.machines?.map(machineName).join(', ') ?? null} />
@@ -592,26 +612,28 @@ function BackupRows(props: SectionProps) {
   const factsInput = target && deploymentId && configured ? { ...target, deploymentId, configRevision: configured.configRevision } : null;
   const backupFacts = useDeploymentBackupFacts(actions, factsInput, true);
   const attention = deploymentBackupAttention(backupFacts.facts);
-  const retentionChange = useDeploymentChangePress(editing?.review ?? null, editing?.onChanged ?? noop);
-  const saveRetention = React.useMemo(() => editing && backup && !('notNeeded' in backup)
-    ? (retention: DeploymentBackupConfigurationV1['retention']) => retentionChange.press(() =>
-      editing.actions.updateEnvironment(props.detail.environment,
-        { backupRetention: { configRevision: backup.configRevision, retention } }))
-    : null, [editing, backup, retentionChange.press, props.detail.environment]);
-  if (!backup && backups.result.status === 'empty' && editing && actions) {
-    return (
-      <DeploymentBackupSetup
-        detail={props.detail}
-        serverId={editing.serverId}
-        testID={props.testID}
-        review={editing.review}
-        onChanged={editing.onChanged}
-        machineName={props.machineName}
-        onAddDatabase={props.onAddDatabase}
-        save={(configuration) => editing.actions.updateEnvironment(props.detail.environment, { backup: configuration })}
-      />
-    );
-  }
+  const retentionChange = useDeploymentChangePress(editing?.review ?? null, noop);
+  const [retentionResult, setRetentionResult] = React.useState<DeploymentBackupConfigureResultV1 | null>(null);
+  const saveRetention = React.useMemo(() => editing && configured && actions
+    ? async (retention: DeploymentBackupConfigurationV1['retention']) => {
+      let configuredResult = false;
+      await retentionChange.press(async () => {
+        const result = await actions.configureBackup(props.detail.environment, { intent: 'save',
+          configuration: { ...configured, retention } });
+        setRetentionResult(result);
+        configuredResult = result.kind === 'configured';
+        if (configuredResult) editing.onChanged();
+        return { ok: true };
+      });
+      return configuredResult;
+    } : null, [actions, configured, editing, retentionChange.press, props.detail.environment]);
+  const setup = editing && actions && lifetime ? <DeploymentBackupSetup
+    detail={props.detail} serverId={editing.serverId} testID={props.testID} review={editing.review}
+    onChanged={editing.onChanged} machineName={props.machineName} onAddDatabase={props.onAddDatabase}
+    lifetime={lifetime} actions={{ configureBackup: actions.configureBackup,
+      addBackupSchedule: actions.addBackupSchedule,
+      prepareConfigurationDefaults: editing.actions.prepareConfigurationDefaults ?? actions.prepareConfigurationDefaults }} /> : null;
+  if (!backup && backups.result.status === 'empty' && setup) return setup;
   if (!backup || backups.result.status !== 'ready') {
     return (
       <DeploymentTabState
@@ -622,16 +644,12 @@ function BackupRows(props: SectionProps) {
       />
     );
   }
-  if ('notNeeded' in backup) {
-    return (
-      <Item
-        testID={`${props.testID}.notNeeded`}
-        title={t('projects.deployments.backupNotNeededTitle')}
-        subtitle={t('projects.deployments.backupNotNeededBody', { name: props.detail.content.name })}
-        mode="info"
-      />
-    );
-  }
+  if ('notNeeded' in backup) return <>
+    <Item testID={`${props.testID}.notNeeded`} title={t('projects.deployments.backupNotNeededTitle')}
+      subtitle={t('projects.deployments.backupNotNeededBody', { name: props.detail.content.name })} mode="info" />
+    {setup}
+  </>;
+
   return (
     <>
       <DeploymentBackupDestinationRow detail={props.detail} configuration={backup} actions={actions} testID={props.testID} />
@@ -655,6 +673,8 @@ function BackupRows(props: SectionProps) {
         onSave={saveRetention} actions={actions} review={props.review ?? null}
         machineName={props.machineName} testID={props.testID}
       />
+      <DeploymentBackupConfigurationResult result={retentionResult}
+        machine={props.machineName(props.detail.environment.controllerMachineId)} testID={`${props.testID}.retention`} />
       {retentionChange.outcome && editing ? (
         <DeployOutcomeBanner
           outcome={retentionChange.outcome}
@@ -690,11 +710,11 @@ function BackupRows(props: SectionProps) {
           machineName={props.machineName} testID={props.testID}
         />
       ) : null}
-      {props.retainedBackup && props.onRestore ? (
+      {props.onRestore ? (
         <Item
           testID={`${props.testID}.restore`}
           title={t('projects.deployments.restoreEntry')}
-          subtitle={props.retainedBackup.versionLabel
+          subtitle={!props.retainedBackup ? t('projects.deployments.restoreExtended.uploadBody') : props.retainedBackup.versionLabel
             ? t('projects.deployments.restoreBackupBefore', { version: props.retainedBackup.versionLabel,
               time: formatAsOfTime(props.retainedBackup.takenAtMs) })
             : t('projects.deployments.restoreBackupTaken', { time: formatAsOfTime(props.retainedBackup.takenAtMs) })}

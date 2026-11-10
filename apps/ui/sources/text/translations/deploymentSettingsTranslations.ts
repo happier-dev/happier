@@ -37,17 +37,52 @@ const moveToRepositoryCopy = {
 const previewEditorCopy = {
   addFact: 'Deployment value',
   configure: 'Configure previews',
+  nativeTemplate: 'Database template',
+  nativeSource: 'Copy data from',
+  nativeSourceEmpty: 'No readable environments',
+  nativeSourceEmptyBody: 'Choose an environment with PostgreSQL and a verified backup.',
+  nativeCapture: 'Restore point',
+  nativeCaptureEmpty: 'No verified backups',
+  nativeCaptureEmptyBody: 'Create and verify a backup in the source environment first.',
+  nativeUnsupported: 'Choose a PostgreSQL template with logical backups.',
+  backupPrefix: 'Backup folder prefix',
+  backupIntentBody: 'Save the backup destination for new previews. The source environment is unchanged.',
+
   domain: 'Preview domain',
   slug: 'Template slug',
   variables: 'Preview variables',
   variablesBody: 'Variables added to each new pull request preview.',
   inherited: 'Previews inherit approvals from their template. A preview can require approval more strictly.',
+  forks: 'Fork previews',
+  forksOff: 'Off',
+  forksApprove: 'Approve each commit',
+  forksBody: 'Review every fork commit before it runs. Use a non-production Machine: untrusted code can affect other workloads on the same Machine. Forks receive no inherited secrets or data and keep the template’s approval requirements.',
+  forksLoading: 'Checking the selected Machines…',
+  forksProduction: 'A selected Machine runs a production environment.',
+  forksUnsupported: 'This target does not support fork previews.',
+  forksUnavailable: 'Could not establish the selected Machines’ workloads.',
+  forksChooseMachine: 'Choose another Machine',
+};
+
+/** English fallback for restore snapshot and upload review, pending translation review. */
+const restoreExtendedCopy = {
+  uploadTitle: 'Restore a local backup', upload: 'Choose backup file', uploading: 'Uploading backup…',
+  uploadBody: 'Upload the backup to this Machine, then check its contents before replacing data.',
+  uploaded: 'Uploaded backup', volume: 'Named volume', snapshot: 'Take a Machine snapshot first',
+  coverage: 'Snapshot coverage', coverageValue: ({ root, volumes }: { root: string; volumes: string }) => `Root disk: ${root}. Attached volumes: ${volumes}.`,
+  billing: 'Provider billing', priceUnknown: 'Billed by the provider; price not supplied',
+  consistency: 'Snapshot consistency', consistencyRunning: 'Machine running', consistencyStopped: 'Machine stopped', consistencyUnknown: 'Machine state unknown', noQuiesce: 'Applications are not quiesced',
+  unavailable: 'Snapshot is unavailable because this Environment’s data runs on another Engine.',
+  stopped: 'Machine snapshot not confirmed',
+  stoppedBody: 'Data has not been replaced. Stop here, or review continuing without a confirmed Machine snapshot.',
+  continueWithoutSnapshot: 'Continue without snapshot',
 };
 
 /** Environment → Settings (Backups destination and keep counts, Checks): copy added by DEPLOY-COMPOSE-1107 lane L-D. */
 type DeploymentSettingsTranslations = Readonly<{
   moveToRepository: typeof moveToRepositoryCopy;
   previewEditor: typeof previewEditorCopy;
+  restoreExtended: typeof restoreExtendedCopy;
   fleetIngressTitle: string;
   fleetIngressChoose: string;
   fleetIngressUnobserved: string;
@@ -181,6 +216,7 @@ export const deploymentSettingsTranslations = {
     fleetIngressSuggestedBody: "Suggested from the Machines’ network information. Choose to save it; Domain setup will still check the route.",
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
+    restoreExtended: restoreExtendedCopy,
     fleetIngressTitle: "Public route",
     fleetIngressChoose: "Choose a route",
     fleetIngressUnobserved: "No Domain zone or shared private network has been checked here. Choose a route; Domain setup will check it.",
@@ -317,6 +353,7 @@ export const deploymentSettingsTranslations = {
     fleetIngressSuggestedBody: "Предложено на основе сетевых данных машин. Сохраните этот вариант, если хотите его использовать; при настройке домена маршрут всё равно будет проверен.",
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
+    restoreExtended: restoreExtendedCopy,
     fleetIngressTitle: "Публичный маршрут",
     fleetIngressChoose: "Выберите маршрут",
     fleetIngressUnobserved: "Зона домена и общая частная сеть здесь ещё не проверены. Выберите маршрут; он будет проверен при настройке домена.",
@@ -452,6 +489,7 @@ export const deploymentSettingsTranslations = {
     fleetIngressSuggestedBody: "Sugestia na podstawie informacji o sieci maszyn. Wybierz ją, aby zapisać; trasa zostanie jeszcze sprawdzona podczas konfiguracji domeny.",
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
+    restoreExtended: restoreExtendedCopy,
     fleetIngressTitle: "Trasa publiczna",
     fleetIngressChoose: "Wybierz trasę",
     fleetIngressUnobserved: "Nie sprawdzono tu jeszcze strefy domeny ani wspólnej sieci prywatnej. Wybierz trasę; zostanie sprawdzona podczas konfiguracji domeny.",
@@ -586,6 +624,7 @@ export const deploymentSettingsTranslations = {
     fleetIngressSuggestedBody: "Sugerencia basada en la información de red de las máquinas. Elígela para guardarla; la ruta se comprobará al configurar el dominio.",
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
+    restoreExtended: restoreExtendedCopy,
     fleetIngressTitle: "Ruta pública",
     fleetIngressChoose: "Elige una ruta",
     fleetIngressUnobserved: "Aquí aún no se ha comprobado ninguna zona del dominio ni red privada compartida. Elige una ruta; se comprobará al configurar el dominio.",
@@ -723,6 +762,7 @@ export const deploymentSettingsTranslations = {
     fleetIngressSuggestedBody: "Suggestion basée sur les informations réseau des machines. Choisissez-la pour l’enregistrer ; la route sera encore vérifiée lors de la configuration du domaine.",
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
+    restoreExtended: restoreExtendedCopy,
     fleetIngressTitle: "Route publique",
     fleetIngressChoose: "Choisir une route",
     fleetIngressUnobserved: "Aucune zone du domaine ni aucun réseau privé partagé n’a encore été vérifié ici. Choisissez une route ; elle sera vérifiée lors de la configuration du domaine.",
@@ -862,6 +902,7 @@ export const deploymentSettingsTranslations = {
     fleetIngressSuggestedBody: "Suggerimento basato sulle informazioni di rete delle macchine. Sceglilo per salvarlo; il percorso verrà comunque verificato durante la configurazione del dominio.",
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
+    restoreExtended: restoreExtendedCopy,
     fleetIngressTitle: "Percorso pubblico",
     fleetIngressChoose: "Scegli un percorso",
     fleetIngressUnobserved: "Qui non è ancora stata verificata una zona del dominio né una rete privata condivisa. Scegli un percorso; verrà verificato durante la configurazione del dominio.",
@@ -1000,6 +1041,7 @@ export const deploymentSettingsTranslations = {
     fleetIngressSuggestedBody: "Sugestão baseada nas informações de rede das máquinas. Escolha para salvar; a rota ainda será verificada na configuração do domínio.",
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
+    restoreExtended: restoreExtendedCopy,
     fleetIngressTitle: "Rota pública",
     fleetIngressChoose: "Escolher uma rota",
     fleetIngressUnobserved: "Nenhuma zona do domínio ou rede privada compartilhada foi verificada aqui. Escolha uma rota; ela será verificada na configuração do domínio.",
@@ -1139,6 +1181,7 @@ export const deploymentSettingsTranslations = {
     fleetIngressSuggestedBody: "Suggeriment basat en la informació de xarxa de les màquines. Tria’l per desar-lo; la ruta es comprovarà en configurar el domini.",
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
+    restoreExtended: restoreExtendedCopy,
     fleetIngressTitle: "Ruta pública",
     fleetIngressChoose: "Tria una ruta",
     fleetIngressUnobserved: "Aquí encara no s’ha comprovat cap zona del domini ni cap xarxa privada compartida. Tria una ruta; es comprovarà en configurar el domini.",
@@ -1277,6 +1320,7 @@ export const deploymentSettingsTranslations = {
     fleetIngressSuggestedBody: "Vorschlag anhand der Netzwerkinformationen der Maschinen. Wählen Sie ihn zum Speichern aus; bei der Domain-Einrichtung wird die Route noch geprüft.",
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
+    restoreExtended: restoreExtendedCopy,
     fleetIngressTitle: "Öffentliche Route",
     fleetIngressChoose: "Route wählen",
     fleetIngressUnobserved: "Hier wurde noch keine Domain-Zone und kein gemeinsames privates Netzwerk geprüft. Wählen Sie eine Route; sie wird bei der Domain-Einrichtung geprüft.",
@@ -1415,6 +1459,7 @@ export const deploymentSettingsTranslations = {
     fleetIngressSuggestedBody: "根据机器的网络信息提供的建议。选择后才会保存；域名设置时仍会检查此路由。",
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
+    restoreExtended: restoreExtendedCopy,
     fleetIngressTitle: "公网路由",
     fleetIngressChoose: "选择路由",
     fleetIngressUnobserved: "此处尚未检查域名区域或共享私有网络。请选择路由；域名设置时会进行检查。",
@@ -1546,6 +1591,7 @@ export const deploymentSettingsTranslations = {
     fleetIngressSuggestedBody: "根據機器的網路資訊提供的建議。選擇後才會儲存；設定網域時仍會檢查此路由。",
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
+    restoreExtended: restoreExtendedCopy,
     fleetIngressTitle: "公網路由",
     fleetIngressChoose: "選擇路由",
     fleetIngressUnobserved: "此處尚未檢查網域區域或共用私人網路。請選擇路由；設定網域時會進行檢查。",
@@ -1677,6 +1723,7 @@ export const deploymentSettingsTranslations = {
     fleetIngressSuggestedBody: "マシンのネットワーク情報に基づく候補です。選択すると保存されます。ドメイン設定時にもルートを確認します。",
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
+    restoreExtended: restoreExtendedCopy,
     fleetIngressTitle: "公開ルート",
     fleetIngressChoose: "ルートを選択",
     fleetIngressUnobserved: "ここではドメインのゾーンや共有プライベートネットワークはまだ確認されていません。ルートを選択してください。ドメイン設定時に確認されます。",

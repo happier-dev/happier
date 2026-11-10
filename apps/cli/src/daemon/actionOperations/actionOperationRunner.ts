@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import type {
   ActionOperationCancelV1Response,
@@ -214,6 +214,9 @@ export function createActionOperationRunner(deps: Readonly<{
       }), undefined, () => ({ operationId: existing.operationId,
         ...(request.requestId ? { executionRequestId: request.requestId } : {}), inputIdentityEqual: false }));
     }
+    const previousRestoreSnapshot = action.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
+      && existing?.observation?.kind === 'review_required' && existing.observation.code === 'restore_snapshot_not_confirmed'
+      ? existing.observation.snapshot : undefined;
     const previousCreation = action.actionId === 'session.spawn_new' && (existing?.state === 'succeeded' || existing?.state === 'failed')
       ? SessionSpawnNewActionResultV1Schema.safeParse(existing.result) : null;
     const previousSessionCreationFailure = previousCreation?.success && previousCreation.data.type === 'error'
@@ -293,7 +296,8 @@ export function createActionOperationRunner(deps: Readonly<{
               lastEffect = effect;
             },
             operationAcceptance: { operationId, actionId: action.actionId,
-              ...(previousSessionCreationFailure ? { previousSessionCreationFailure } : {}), accept: (result) => {
+              ...(previousSessionCreationFailure ? { previousSessionCreationFailure } : {}),
+              ...(resumeActionRequest && previousRestoreSnapshot ? { previousRestoreSnapshot } : {}), accept: (result) => {
               if (isFiniteProjectCommand(action.actionId)) acceptFinite();
               else accept({ ok: true, result });
             } },
@@ -569,6 +573,11 @@ export function createActionOperationRunner(deps: Readonly<{
       if (!pendingApproval && isFiniteProjectCommand(action.actionId) && existing.domainRef?.kind === 'projectCommand') {
         return { ok: true, result: { operation: existing } };
       }
+      // This domain's held result is replayed exactly; only its newly reviewed
+      // explicit skip may resume the original, still-unconsumed restore.
+      if (previousRestoreSnapshot && hasMatchingInputIdentity) return { ok: false,
+        errorCode: 'restore_snapshot_not_confirmed', error: 'restore_snapshot_not_confirmed',
+        details: { steps: [], snapshot: previousRestoreSnapshot } };
       const terminal = readActionOperationTerminalResultV1(existing);
       const refusal = existing.state === 'failed' && terminal && !terminal.ok
         ? request.failureResult?.read(existing.result) : null;
