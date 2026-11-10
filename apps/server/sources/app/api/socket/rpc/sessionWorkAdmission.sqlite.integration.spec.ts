@@ -3,7 +3,7 @@ import { Server, type Socket } from 'socket.io';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, MACHINE_PLAIN_DATA_KEY_MARKER,
     buildAccountStoredContentCompatibilitySocketAuthV1, encodePlainMachineStoredContent } from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
@@ -32,7 +32,9 @@ describe('Session work admission after Machine grant withdrawal', () => {
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
 
-    it('refuses new work on the retained publisher while preserving Stop, cancel and reads', async () => {
+    // Attachments require Use; headerless filesystem transfers require Manage.
+    // Both enter the real protected receiver guard after Session admission.
+    it.each(['attachment', 'raw'] as const)('refuses new work on the retained publisher while preserving Stop, cancel and reads (%s)', async transferCarrier => {
         const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
         const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: custodian.id,
@@ -43,7 +45,7 @@ describe('Session work admission after Machine grant withdrawal', () => {
             operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] },
                 sessionInputAdmission: { protocolVersions: [1, 2, 3] } }, operationProtocolCapabilitiesRevision: 1 } });
         expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
-            machineId: machine.id, principal: { kind: 'account', accountId: guest.id }, level: 'view' })))
+            machineId: machine.id, principal: { kind: 'account', accountId: guest.id }, level: transferCarrier === 'raw' ? 'admin' : 'view' })))
             .toMatchObject({ kind: 'saved' });
         const session = await db.session.create({ data: { accountId: guest.id, tag: randomUUID(),
             encryptionMode: 'plain', metadata: '{}' } });
@@ -76,11 +78,15 @@ describe('Session work admission after Machine grant withdrawal', () => {
             io.sockets.adapter.rooms.set(buildRpcMethodRoom({ userId: guest.id, method }), new Set([target.id]));
             const callback = vi.fn();
             emitWithAck.mockClear();
-            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-work-request' }, callback);
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-work-request',
+                ...(transferCarrier === 'attachment' && rpcMethod === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT ? { transferRouting: {
+                    t: 'session_attachment_upload_v1', sessionId: session.id, method: rpcMethod,
+                } } : {}),
+            }, callback);
             expect(callback).toHaveBeenCalledOnce();
             return callback.mock.calls[0]![0];
         };
-        const workMethods = [SESSION_RPC_METHODS.EXECUTION_RUN_START, SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
+        const workMethods = [RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, SESSION_RPC_METHODS.EXECUTION_RUN_START, SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
             SESSION_RPC_METHODS.EXECUTION_RUN_SEND, SESSION_RPC_METHODS.SESSION_REVIEW_START_INLINE,
             SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START, SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE,
             SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1, SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
@@ -109,9 +115,11 @@ describe('Session work admission after Machine grant withdrawal', () => {
                 expect(await call(method), method).toMatchObject({ ok: true, result: { delivered: true } });
             }
             expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
-                machineId: machine.id, principal: { kind: 'account', accountId: guest.id }, level: 'view' })))
+                machineId: machine.id, principal: { kind: 'account', accountId: guest.id }, level: transferCarrier === 'raw' ? 'admin' : 'view' })))
                 .toMatchObject({ kind: 'saved' });
-            expect(await call(SESSION_RPC_METHODS.EXECUTION_RUN_START)).toMatchObject({ ok: true, result: { delivered: true } });
+            for (const method of workMethods) {
+                expect(await call(method), method).toMatchObject({ ok: true, result: { delivered: true } });
+            }
         } finally { io.sockets.sockets.clear(); }
     });
 });
