@@ -520,11 +520,11 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
           >
             {/* The identity and trailing controls keep one parent in both layouts. An item card's identity row
                 sits above its full-width title; a widget card and plain keep the same slots on one line. */}
-            <View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center',
+            {/* Omit absent slots: retaining empty display:none nodes can violate Yoga child ownership on native. */}
+            {unmarked ? null : <View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center',
               ...(stacked ? { position: 'absolute', left: inset, top: inset, minHeight: identityRowPx } as const : {}),
               ...(!plain && !stacked && !previewItem && !row ? { minHeight: identityRowPx,
                 ...(compact && (props.mark || props.leading || props.disclosure) ? { marginRight: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx } : {}) } : {}),
-              ...(unmarked ? { display: 'none' } as const : {}),
               flexShrink: 0, gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx }}>
             {props.disclosure ? (
               <HappierPressable
@@ -571,7 +571,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
                 {mark}
               </View>
             ) : null}
-            </View>
+            </View>}
             <View
               pointerEvents="box-none"
               testID={`${testID}.titleBlock`}
@@ -609,20 +609,19 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
                   style={{ flexShrink: 1, minWidth: 0 }}>{source}</View>
               ) : null}
             </View>
-            <View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: controlsBelow ? 'flex-start' : 'flex-end',
+            {!compact && (!plain || meta || props.accessory) ? <View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: controlsBelow ? 'flex-start' : 'flex-end',
               flexShrink: 0, ...(controlsBelow ? { width: '100%' } as const : {}),
               // A stacked card's right slot shares the identity row's line: it stops short of the mark's box and its
               // words give way there, so a long state never draws over the mark.
               ...(stacked ? { paddingLeft: identityRowPx + HAPPIER_WIDGET_FRAME_METRICS.headerGapPx, minWidth: 0 } : {}),
-              ...(plain ? (meta || props.accessory ? {} : { display: 'none' } as const)
-                : compact ? { display: 'none' } as const : previewItem || row ? {} : { minHeight: identityRowPx }) }}>
+              ...(!plain && !previewItem && !row ? { minHeight: identityRowPx } : {}) }}>
               <View pointerEvents="box-none" {...(row ? { onLayout: onControlsLayout } : {})}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx, flexShrink: 1, minWidth: 0 }}>
                 {meta ? <View pointerEvents="auto" style={{ flexShrink: 0 }}>{meta}</View> : null}
                 {/* The slot is a box around its controls, not a target: words in it (a card's reason) pass a press on. */}
-                <View pointerEvents="box-none" style={plain && !props.accessory ? { display: 'none' } : { flexShrink: 1, minWidth: 0 }}>{props.accessory ?? null}</View>
+                {!plain || props.accessory ? <View pointerEvents="box-none" style={{ flexShrink: 1, minWidth: 0 }}>{props.accessory ?? null}</View> : null}
               </View>
-            </View>
+            </View> : null}
           </View>
         }
       >

@@ -51,6 +51,29 @@ function byId(root: ParentNode, id: string): HTMLElement | null {
 }
 
 describe('HappierWidgetFrame', () => {
+  it.each(['plain', 'card'] as const)('omits absent %s header slots across content updates instead of retaining hidden Yoga nodes', async (frameStyle) => {
+    // RN 0.81 can retain a shared Yoga child for an empty display:none slot during a measure-only pass.
+    // The native Usage replay identified the unmarked identity slot; the DOM boundary checks its absence.
+    const frame = (hasControls: boolean) => <HappierWidgetFrame testID="frame" frameStyle={frameStyle}
+      placement="board" title="Daily usage" source="Tokens"
+      meta={hasControls ? <Text>Reading</Text> : null}
+      accessory={hasControls ? <Pressable accessibilityRole="button"><Text>Options</Text></Pressable> : null}>
+      <Text>Usage chart</Text>
+    </HappierWidgetFrame>;
+    const view = mountThroughReactNativeWeb(frame(false));
+    try {
+      for (const hasControls of [false, true, false]) {
+        await view.render(frame(hasControls));
+        const header = byId(view.container, 'frame.header')!;
+        const hiddenEmptySlots = Array.from(header.querySelectorAll<HTMLElement>('*'))
+          .filter(node => getComputedStyle(node).display === 'none' && !node.textContent);
+        expect(hiddenEmptySlots).toEqual([]);
+        expect(byId(view.container, 'frame.title')!.textContent).toBe('Daily usage');
+        expect(header.textContent?.includes('Options')).toBe(hasControls);
+      }
+    } finally { view.unmount(); }
+  });
+
   it.each([false, true])('keeps its body and controls mounted across card → plain → card (host material: %s)', async (hosted) => {
     // A real host supplies its own component type, as Happier does with GlassSurface.
     function HostMaterial(input: Readonly<{ children?: ReactNode; style?: HappierStyleProp; testID?: string }>) {

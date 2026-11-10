@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { collectUnexpectedRawTextNodes } from '@/dev/testkit/render/renderScreen';
 
 // Browser hardware and native viewport measurements are the boundaries; classification stays real.
 const viewport = vi.hoisted(() => ({ width: 390, height: 844, scale: 1, fontScale: 1 }));
@@ -84,6 +85,19 @@ function barProps(selections: string[]): Bar {
 }
 
 describe('UsageFilterBar', () => {
+  it('keeps phone and desktop filter labels inside text hosts as controls settle', async () => {
+    for (const width of [390, 1280]) {
+      Object.assign(viewport, { width, height: 844 });
+      vi.stubGlobal('navigator', { userAgent: width === 390 ? 'Mozilla/5.0 (iPhone)' : 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: width === 390 ? 1 : 0 });
+      const props = barProps([]);
+      const screen = await renderScreen(<UsageFilterBar {...props} costBasisPending metricPending onMetricChange={() => {}} />);
+      expect(collectUnexpectedRawTextNodes(screen.tree.toJSON(), ['Text', 'span'])).toEqual([]);
+      await screen.update(<UsageFilterBar {...props} costBasisOptions={['auto', 'reported']} onMetricChange={() => {}} />);
+      expect(collectUnexpectedRawTextNodes(screen.tree.toJSON(), ['Text', 'span'])).toEqual([]);
+      await screen.unmount();
+    }
+  });
+
   it('reads an unnarrowed scope as "All", leaving the count to the menu\'s All row (lab d2views, d2filter)', async () => {
     Object.assign(viewport, { width: 1280, height: 900 });
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });
