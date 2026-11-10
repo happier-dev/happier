@@ -22,7 +22,8 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useMachineVitalsOverview } from '@/sync/domains/machines/resources/useMachineVitalsOverview';
-import { useMachineVitalsAttribution } from '@/sync/domains/machines/resources/useMachineVitalsAttribution';
+import { useMachineProcesses } from '@/sync/domains/machines/processes/useMachineProcesses';
+import { useMachineStorageSummary } from '@/sync/domains/machines/storage/useMachineStorageSummary';
 import { useMachineMonitoringMode } from '@/sync/domains/machines/resources/useMachineMonitoringMode';
 import { MachineUsingTheMost } from './MachineUsingTheMost';
 import { t } from '@/text';
@@ -112,14 +113,6 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
   const axisLive = view.kind === 'ready' && view.freshness === 'live';
   const axis = React.useMemo(() => resolveVitalsAxis(range, timeline, axisLive), [axisLive, range, timeline, language]);
   const { retry } = overview;
-  // What Happier uses — processes (plan 30) and what it keeps on each volume (plan 40) — through the one
-  // attribution owner, only while this Overview shows a reading.
-  const attribution = useMachineVitalsAttribution({ machineId: machine.id, serverId: props.serverId, online: props.online,
-    enabled: props.online === true && view.kind === 'ready', sample: view.kind === 'ready' ? view.sample : null });
-  const storageSummary = attribution.storage.summary;
-  const happierBytesByVolume = React.useMemo(() => storageSummary
-    ? new Map(storageSummary.volumes.map((entry) => [entry.volume.volumeId, entry.happierBytes])) : null, [storageSummary]);
-
   // Offline is said once, in a quiet banner above what the machine last reported (lab `rv` OS 3); with nothing
   // reported this session the banner says that too, and no body follows.
   const offlineBanner = props.online === false && !props.offlineExplained ? (
@@ -216,7 +209,13 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
               freshness={view.freshness}
               live={range === '1h'}
             />
-            <DiskTile sample={view.sample} attention={attention} happierBytesByVolume={happierBytesByVolume} />
+            <MachineOverviewDiskTile
+              serverId={props.serverId}
+              machineId={machine.id}
+              online={props.online}
+              sample={view.sample}
+              attention={attention}
+            />
             <NetworkTile
               sample={view.sample}
               today={overview.history?.today ?? null}
@@ -229,12 +228,11 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
         </ArrivalFade>
       )}
       {view.kind === 'ready' && props.onOpenProcesses ? (
-        <MachineUsingTheMost
+        <MachineOverviewProcesses
+          online={props.online}
           serverId={props.serverId}
           machineId={machine.id}
           machineName={props.machineName}
-          processes={attribution.processes.answer}
-          processesStatus={attribution.processes.status}
           offline={props.online === false}
           sample={view.sample}
           cpuCapacityCores={published?.host ? resolveMachineCpuCapacityCores(published.host) : null}
@@ -252,6 +250,40 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
     </>
   );
 });
+
+/** Storage publications belong to the disk tile, not its CPU, memory and network siblings. */
+function MachineOverviewDiskTile(props: Omit<React.ComponentProps<typeof DiskTile>, 'happierBytesByVolume'> & Readonly<{
+  serverId: string;
+  machineId: string;
+  online: boolean | null;
+}>) {
+  const storage = useMachineStorageSummary({
+    serverId: props.serverId,
+    machineId: props.machineId,
+    online: props.online,
+    enabled: props.online === true,
+  });
+  const summary = storage.summary;
+  const happierBytesByVolume = React.useMemo(() => summary
+    ? new Map(summary.volumes.map(entry => [entry.volume.volumeId, entry.happierBytes])) : null, [summary]);
+  return <DiskTile sample={props.sample} attention={props.attention} happierBytesByVolume={happierBytesByVolume} />;
+}
+
+/** Observe the existing owners projection where it is displayed; a process tick never redraws the vitals body. */
+function MachineOverviewProcesses(props: Omit<React.ComponentProps<typeof MachineUsingTheMost>, 'processes' | 'processesStatus'> & Readonly<{
+  online: boolean | null;
+}>) {
+  const { online, ...presentation } = props;
+  const processes = useMachineProcesses({
+    serverId: props.serverId,
+    machineId: props.machineId,
+    scope: 'happier',
+    view: 'owners',
+    online,
+    enabled: online === true,
+  });
+  return <MachineUsingTheMost {...presentation} processes={processes.answer} processesStatus={processes.status} />;
+}
 
 /** The first sample cross-fades in over its reserved boxes; a retained Overview draws at once. */
 function ArrivalFade(props: Readonly<{ enabled: boolean; children: React.ReactNode }>) {
