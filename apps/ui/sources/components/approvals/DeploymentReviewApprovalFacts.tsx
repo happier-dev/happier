@@ -56,6 +56,12 @@ export function readDeploymentReviewApproval(
     : { review: parsed.data, promotion: null };
 }
 
+const REFERENCE_ROUTE_LABEL = {
+  direct: 'projects.deployments.editors.referenceRouteDirect',
+  relay: 'projects.deployments.editors.referenceRouteRelay',
+  unknown: 'projects.deployments.editors.referenceRouteUnknown',
+} as const;
+
 /** Root-granting settings read first; a missing restart policy is only worth a mention. */
 const RISK_KINDS: readonly DeploymentReviewRiskKindV1[] = [
   'privileged',
@@ -325,6 +331,8 @@ function MachineRisks(props: Readonly<{ machine: ReviewMachine; name: string | n
         ...referenceChanges.map(change => [
           { code: change.name }, ' · ',
           t(change.phase === 'build' ? 'projects.deployments.phaseBuild' : 'projects.deployments.phaseRuntime'), ' · ',
+          // The path the resolver observed for a Happier network address; a native-network address has none.
+          ...(change.route ? [t(REFERENCE_ROUTE_LABEL[change.route.observedPath]), ' · '] : []),
           t('projects.deployments.editors.referenceAddressChanged'),
         ]),
         // The service leads, as the lab reads it: "worker · Can control Docker on the host".

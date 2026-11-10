@@ -39,7 +39,8 @@ export function projectOwnServerDeploymentReview(input: Readonly<{
     const referenceChanges = [...referenceAddressesByBinding(input.referenceAddresses ?? [])].flatMap(([key, current]) => {
         const running = runningReferences.get(key);
         return current.address !== null && running && running.address !== null && current.address !== running.address
-            ? [{ name: current.reference.name, phase: current.reference.phase }] : [];
+            ? [{ name: current.reference.name, phase: current.reference.phase,
+                ...(current.reference.route ? { route: current.reference.route } : {}) }] : [];
     });
     return { ...input.nativeReview, machineId: input.machineId,
         ...(inputBasis.health ? { health: inputBasis.health } : {}),

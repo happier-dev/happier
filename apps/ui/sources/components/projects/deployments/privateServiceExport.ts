@@ -4,10 +4,28 @@ import { isMap, isSeq, parseDocument } from 'yaml';
 import { DeploymentEnvironmentContentPatchV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentContentPatchV1';
 import { DeploymentServiceExportV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
+/** How other Machines reach the shared service: Happier's own network, or a network this Machine joined. */
+export type PrivateServiceExportReach =
+  | Readonly<{ kind: 'happierNetwork' }>
+  | Readonly<{ kind: 'privateNetwork'; privateNetwork: string; hostAddress: string }>;
+
 export type PrivateServiceExportSelection = Readonly<{
-  key: string; service: string; containerPort: number; scheme: string;
-  privateNetwork: string; hostAddress: string; hostPort: number;
+  key: string; service: string; containerPort: number; scheme: string; hostPort: number; reach: PrivateServiceExportReach;
 }>;
+
+type ServiceExport = NonNullable<NonNullable<DeploymentEnvironmentContentV1['ownServer']>['serviceExports']>[number];
+
+/**
+ * Whether people can choose the Happier network when sharing. It stays pending until NET-FWD-1110's native-transport
+ * and security validation passes (O-DEPLOY 2026-11-10 08:36Z); until then the sheet shows it as not yet available and
+ * shares only through joined networks. Saved Happier network exports are listed and kept either way.
+ */
+export const HAPPIER_NETWORK_SHARING_READY: boolean = false;
+
+/** A private export is shared through a joined network or the Happier network; every surface reads it here. */
+export function isPrivateServiceExport(entry: ServiceExport): boolean {
+  return entry.exposure === 'privateNetwork' || entry.transport?.kind === 'iroh';
+}
 
 export type PrivateServiceExportAuthoring =
   | Readonly<{ kind: 'ready'; machineIds: readonly string[] }>
@@ -20,7 +38,7 @@ export function privateServiceExportAuthoring(
 ): PrivateServiceExportAuthoring {
   if (!canEdit) return { kind: 'unavailable', reason: 'readOnly' };
   if (detail.content.definition.kind !== 'stored') return { kind: 'unavailable', reason: 'repository' };
-  if (detail.content.ownServer?.serviceExports?.some(entry => entry.exposure !== 'privateNetwork')) {
+  if (detail.content.ownServer?.serviceExports?.some(entry => !isPrivateServiceExport(entry))) {
     return { kind: 'unavailable', reason: 'unsupported' };
   }
   const runtime = detail.runtimeTargetLink;
@@ -55,6 +73,15 @@ function publicationTarget(value: unknown): Readonly<{ target: number; protocol:
   return { target, protocol: 'protocol' in value && typeof value.protocol === 'string' ? value.protocol : 'tcp' };
 }
 
+function privateExport(entry: ServiceExport) {
+  const { key, service, containerPort, scheme } = entry;
+  if (entry.transport?.kind === 'iroh' && entry.exposure === 'loopback') {
+    return { key, service, containerPort, scheme, exposure: 'loopback' as const, transport: { kind: 'iroh' as const } };
+  }
+  if (entry.exposure !== 'privateNetwork' || !entry.privateNetwork) return invalid();
+  return { ...entry, exposure: 'privateNetwork' as const, privateNetwork: entry.privateNetwork };
+}
+
 /** Author the two existing Environment update content operands together. */
 export function buildPrivateServiceExportPatch(content: DeploymentEnvironmentContentV1, selection: PrivateServiceExportSelection) {
   const definition = content.definition;
@@ -71,14 +98,15 @@ export function buildPrivateServiceExportPatch(content: DeploymentEnvironmentCon
     const port = publicationTarget(value);
     return port.protocol !== 'tcp' || port.target !== selection.containerPort;
   });
+  // The Happier network reaches a loopback publication on this Machine; a joined network binds its own address.
+  const reach = selection.reach;
   service.set('ports', [...retained, { target: selection.containerPort, published: String(selection.hostPort),
-    host_ip: selection.hostAddress, protocol: 'tcp' }]);
-  const serviceExports = (content.ownServer?.serviceExports ?? []).filter(entry => entry.key !== selection.key).map(entry => {
-    if (entry.exposure !== 'privateNetwork' || !entry.privateNetwork) return invalid();
-    return { ...entry, exposure: 'privateNetwork' as const, privateNetwork: entry.privateNetwork };
-  });
-  serviceExports.push({ key: selection.key, service: selection.service, containerPort: selection.containerPort,
-    scheme: selection.scheme, exposure: 'privateNetwork', privateNetwork: selection.privateNetwork });
+    host_ip: reach.kind === 'happierNetwork' ? '127.0.0.1' : reach.hostAddress, protocol: 'tcp' }]);
+  const serviceExports = (content.ownServer?.serviceExports ?? []).filter(entry => entry.key !== selection.key).map(privateExport);
+  const shared = { key: selection.key, service: selection.service, containerPort: selection.containerPort, scheme: selection.scheme };
+  serviceExports.push(reach.kind === 'happierNetwork'
+    ? { ...shared, exposure: 'loopback', transport: { kind: 'iroh' } }
+    : { ...shared, exposure: 'privateNetwork', privateNetwork: reach.privateNetwork });
   const patch = {
     definition: { from: 'compose' as const, document: document.toString(),
       profiles: definition.profiles, services: definition.services,

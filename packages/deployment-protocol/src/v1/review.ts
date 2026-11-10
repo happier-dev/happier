@@ -6,6 +6,7 @@ import { DeploymentReviewServiceV1Schema } from '@happier-dev/protocol/local/ser
 import { DeploymentOnFailureV1Schema, EnvironmentVariableBindingV1Schema, type DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import { EnvVarRequirementSchema } from '@happier-dev/protocol/profiles/environmentVariables';
+import { DeploymentReferenceAddressV1Schema } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 export { DeploymentReviewServiceV1Schema, type DeploymentReviewServiceV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
 export { deploymentRevisionShortLabelV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
@@ -70,7 +71,9 @@ const machineReview = {
   replaces: z.optional(z.nullable(z.strictObject({ deploymentId: id, revision: DeploymentReviewRevisionV1Schema }))),
   secretBindingNames: z.optional(z.array(z.string())),
   /** Resolved review inputs that differ from exact serving launch evidence. Values stay host-private. */
-  referenceChanges: z.optional(z.array(z.strictObject({ name: z.string(), phase: EnvironmentVariableBindingV1Schema.shape.phase }))),
+  /** `route` is the resolver's observed Happier network path for the reviewed address, when it has one. */
+  referenceChanges: z.optional(z.array(z.strictObject({ name: z.string(), phase: EnvironmentVariableBindingV1Schema.shape.phase,
+    route: DeploymentReferenceAddressV1Schema.shape.route }))),
   onFailure: z.optional(DeploymentOnFailureV1Schema),
   /** A recreate replaces an existing serving generation; no estimated duration. */
   downtime: z.optional(z.literal('stopThenStart')),

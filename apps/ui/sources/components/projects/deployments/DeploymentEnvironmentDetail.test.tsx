@@ -1269,7 +1269,9 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
-  it('reviews a stored service private publication before saving both Compose and its export without deploying', async () => {
+  it('shares a stored service through a joined network after review, showing the Happier network as not yet available', async () => {
+    scope.serverId = await homes.addHome({ name: 'Private sharing', serverUrl: 'https://private-sharing.test',
+      serverIdentityId: 'srv_private-sharing', accountId: scope.accountId, currentAccount: true });
     const base = environmentDetailForHome();
     const stored = environmentDetailForHome({ content: { ...base.content,
       definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
@@ -1306,32 +1308,46 @@ describe('Project deployments page', () => {
     const deploy = vi.fn();
     const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
       environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+      destination={{ tab: 'settings', section: 'servers-build' }}
       phone={false} deploy={deploy} review={noReview} lifetime={account.accountLifetime}
       environmentActions={actions} onOpenReceipt={() => {}} /></ModalProvider>);
     const id = 'project-deployments.environment.privateSharing';
     try {
-      await selectEnvironmentTab(screen, 'settings');
+      await waitForContent(screen, 'project-deployments.environment.settings.servers-build');
       expect(screen.findByTestId(`${id}.add`)).not.toBeNull();
+      const fill = async (hostPort: string) => { await act(async () => {
+        screen.findByTestId(`${id}.hostPort`)!.props.onChangeText(hostPort);
+        screen.findByTestId(`${id}.containerPort`)!.props.onChangeText('5432');
+        screen.findByTestId(`${id}.scheme`)!.props.onChangeText('postgres'); }); };
+      const saved = async (count: number) => { await screen.pressByTestIdAsync(`${id}.save`);
+        await waitForHomeGovernance(() => expect(updates, JSON.stringify({ text: screen.getTextContent(),
+          refusals: screen.root.findAll(node => node.props.testID === `${id}.refused`)
+            .map(node => node.props.diagnosticCode).filter(Boolean) })).toHaveLength(count)); };
+      const document = (index: number) => { const definition = updates[index]!.patch?.definition;
+        return definition && 'document' in definition ? definition.document : ''; };
+      // No joined network: the joined-network step leads, and the Happier network is shown but cannot be chosen yet.
       await screen.pressByTestIdAsync(`${id}.add`);
       expect(screen.findByTestId(`${id}.networkMissing`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.reach:happierNetwork`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.reach:happierNetwork`);
+      expect(screen.findByTestId(`${id}.review`)).toBeNull();
+      expect(screen.findByTestId(`${id}.hostPort`)).toBeNull();
+      // A joined network arrives: it becomes the choice, with its concrete address.
       await act(async () => { storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', installationId: 'installation-a',
         daemonState: { status: 'running', reachability } })], true,
         { sourceServerId: scope.serverId, sourceAccountId: scope.accountId }); });
       expect(screen.findByTestId(`${id}.networkMissing`)).toBeNull();
-      await act(async () => { screen.findByTestId(`${id}.hostPort`)!.props.onChangeText('15432');
-        screen.findByTestId(`${id}.containerPort`)!.props.onChangeText('5432');
-        screen.findByTestId(`${id}.scheme`)!.props.onChangeText('postgres'); });
+      expect(screen.findByTestId(`${id}.address`)).not.toBeNull();
+      await fill('15432');
       await screen.pressByTestIdAsync(`${id}.review`);
       expect(updates).toHaveLength(0);
-      expect(screen.findByTestId(`${id}.reviewAddress`)?.props.detail).toBe('100.80.0.12');
-      expect(screen.findByTestId(`${id}.reviewHostPort`)?.props.detail).toBe('15432');
-      await screen.pressByTestIdAsync(`${id}.save`);
-      await waitForHomeGovernance(() => expect(updates).toHaveLength(1));
+      expect(screen.getTextContent()).toContain('100.80.0.12');
+      expect(screen.getTextContent()).toContain('15432');
+      await saved(1);
       expect(updates[0]!.patch?.ownServer?.serviceExports).toEqual([{ key: 'postgres', service: 'postgres',
         containerPort: 5432, scheme: 'postgres', exposure: 'privateNetwork', privateNetwork: 'shop-net' }]);
       expect(updates[0]!.patch?.definition).toMatchObject({ from: 'compose' });
-      expect(updates[0]!.patch?.definition && 'document' in updates[0].patch.definition
-        ? updates[0].patch.definition.document : '').toContain('100.80.0.12');
+      expect(document(0)).toContain('100.80.0.12');
       expect(deploy).not.toHaveBeenCalled();
     } finally { await screen.unmount(); controller.retire(); account.dispose(); }
   });

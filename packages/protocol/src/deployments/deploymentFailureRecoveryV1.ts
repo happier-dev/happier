@@ -157,6 +157,11 @@ const recoveries = {
     unavailable: recovery('The requested deployment information is unavailable. Open history to check the last recorded result.', 'history', 'Check last result'),
     request_headers_too_large: recovery('The deployment request was rejected because its HTTP headers were too large. Ask the Home owner to update Happier, then check deployment history before trying again.', 'history', 'Review request failure'),
     auth_failed: recovery('The service rejected the connected account. Reconnect that account before preparing the deployment again.', 'connectedAccounts', 'Reconnect service account'),
+    // A referenced private service reached through the Happier network (NET-FWD's typed forward failures).
+    private_service_forward_refused: recovery('The Machine sharing this service refused the private connection. Check that the service is still shared and that you can use that Machine, then deploy again.', 'variables', 'Check shared service reference'),
+    private_service_destination_unreachable: recovery('The shared service is not accepting connections on its Machine. Check that it is running there, then deploy again.', 'machines', 'Check shared service'),
+    machine_carrier_unavailable: recovery('Happier could not reach the other Machine over the Happier network. Check that both Machines are online, then deploy again.', 'machines', 'Check Machine connection'),
+    private_service_container_bridge_unavailable: recovery("Happier could not connect this app's containers to the shared service. Check the container service on this Machine, then deploy again.", 'machines', 'Check container connection'),
 } as const;
 
 const missingFacts = {

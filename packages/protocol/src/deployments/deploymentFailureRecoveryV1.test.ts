@@ -145,6 +145,11 @@ const reachableFailures = [
     ['unavailable', 'history'],
     ['request_headers_too_large', 'history'],
     ['auth_failed', 'connectedAccounts'],
+    // A Happier network forward behind a referenced private service (NET-FWD-1110's typed forward failures).
+    ['private_service_forward_refused', 'variables'],
+    ['private_service_destination_unreachable', 'machines'],
+    ['machine_carrier_unavailable', 'machines'],
+    ['private_service_container_bridge_unavailable', 'machines'],
 ] as const;
 
 describe('deployment failure recovery', () => {

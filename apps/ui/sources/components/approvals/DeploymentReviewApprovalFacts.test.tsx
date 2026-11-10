@@ -61,6 +61,25 @@ describe('DeploymentReviewApprovalFacts', () => {
     expect(unchanged.findHostByTestId('unchanged.risks')).toBeNull();
   });
 
+  it('says which Happier network path a changed reference took, and nothing for a native-network one', async () => {
+    const review = { ...machineReview, risks: [], referenceChanges: [
+      { name: 'DATABASE_URL', phase: 'runtime' as const, route: { kind: 'iroh' as const, observedPath: 'relay' as const } },
+      { name: 'CACHE_URL', phase: 'runtime' as const, route: { kind: 'iroh' as const, observedPath: 'direct' as const } },
+      { name: 'QUEUE_URL', phase: 'runtime' as const, route: { kind: 'iroh' as const, observedPath: 'unknown' as const } },
+      { name: 'SEARCH_URL', phase: 'runtime' as const },
+    ] };
+    const screen = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={{ review, promotion: null }}
+        serverId={getActiveServerSnapshot().serverId} testID="routes" />,
+    );
+    const text = screen.getTextContent();
+    for (const route of ['referenceRouteRelay', 'referenceRouteDirect', 'referenceRouteUnknown']) {
+      expect(text.split(`projects.deployments.editors.${route}`)).toHaveLength(2);
+    }
+    // The changed-address treatment still applies to every changed reference, routed or not.
+    expect(text.split('projects.deployments.editors.referenceAddressChanged')).toHaveLength(5);
+  });
+
   it('says a redeploy of the running version as that, not "replaces" itself (PAGE-ACCEPT-100 D10)', async () => {
     const revision = { kind: 'stored' as const, contentRevision: 2, composeDigest: `sha256:${'a'.repeat(64)}` };
     const other = { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` };

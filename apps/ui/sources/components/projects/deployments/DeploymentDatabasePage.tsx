@@ -56,8 +56,8 @@ import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/plugi
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
-import { privateServiceExportAuthoring } from './privateServiceExport';
-import { privateServiceExportUnavailableReason } from './DeploymentPrivateServiceExports';
+import { isPrivateServiceExport, privateServiceExportAuthoring } from './privateServiceExport';
+import { privateServiceExportReachLabel, privateServiceExportUnavailableReason } from './DeploymentPrivateServiceExports';
 import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { deploymentPartialRecoveryTab, readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
@@ -331,7 +331,7 @@ export function DeploymentDatabasePage(
   const controller = props.controller;
   const connectExports = database.kind === 'selfHosted'
     ? (detail.content.ownServer?.serviceExports ?? []).filter((entry) => entry.service === database.data.service
-      && (entry.exposure === 'privateNetwork' || entry.exposure === 'public'))
+      && (isPrivateServiceExport(entry) || entry.exposure === 'public'))
     : [];
   const setBindings = props.setBindings;
   // Sharing is authored in Settings › Private sharing; its owner decides whether this viewer can do it here.
@@ -939,7 +939,7 @@ function ConnectionSection(
   const exports = (detail.content.ownServer?.serviceExports ?? []).filter(
     (entry) => entry.service === data.service,
   );
-  const shared = exports.find((entry) => entry.exposure === 'privateNetwork');
+  const shared = exports.find(isPrivateServiceExport);
   const published = exports.find((entry) => entry.exposure === 'public');
   const loginNames = new Set(
     [data.variables?.username, data.variables?.password].filter(
@@ -981,8 +981,8 @@ function ConnectionSection(
           rightElement: <SectionActionButton testID={`${props.testID}.private.share`}
             title={t('projects.deployments.databaseShare')} onPress={props.onShare} />,
         } : {
-          detail: shared?.privateNetwork
-            ? t('projects.deployments.databasePrivateShared', { network: shared.privateNetwork })
+          detail: shared
+            ? t('projects.deployments.databasePrivateShared', { network: privateServiceExportReachLabel(shared) })
             : t('projects.deployments.databaseNotShared'),
         })}
       />
