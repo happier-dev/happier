@@ -910,6 +910,63 @@ describe('Environment → Settings: checks, backups, previews', () => {
     retention: { kind: 'keep' as const, last: 7 },
   };
 
+  it('shows unavailable nightly backup schedule discovery instead of a known Off', async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Schedule unavailable', serverUrl: 'https://schedule-unavailable.test',
+      serverIdentityId: 'srv_schedule_unavailable', accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = createDeploymentEnvironmentDetailV1({ content: { ...base.content, backup } });
+    homes.answer(serverId, 'POST /v3/automations/query', { status: 503, body: { error: 'storage_unavailable' } });
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
+      environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
+    const id = 'project-deployments.environment.settings.backups';
+    const { t } = await import('@/text');
+    try {
+      expect(await settle(`${id}.schedule`)).not.toBeNull();
+      await vi.waitFor(() => expect(homes.requestsFor('/v3/automations/query')).not.toHaveLength(0));
+      await vi.waitFor(() => {
+        const subtitle = screen.findAllByProps({ testID: `${id}.schedule` })[0]?.props.subtitle;
+        expect(subtitle).toContain(t('common.unavailable'));
+        // The unavailable label alone is insufficient: the Action's failure must also be visible.
+        expect(subtitle).not.toBe(t('common.unavailable'));
+      });
+      expect(screen.findByTestId(`${id}.schedule.on`)).toBeNull();
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('shows a refused nightly backup schedule creation without changing the known Off state', async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Schedule creation', serverUrl: 'https://schedule-creation.test',
+      serverIdentityId: 'srv_schedule_creation', accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = createDeploymentEnvironmentDetailV1({ content: { ...base.content, backup } });
+    const { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } =
+      await import('@/dev/testkit/fixtures/machineFixtures');
+    homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+      body: await createMachineReadBatchResponseFixture(body, id =>
+        createPlainMachineRowFixture({ id, accountId: 'account-owner' })).json(),
+    }) });
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
+      environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
+    const id = 'project-deployments.environment.settings.backups';
+    const { t } = await import('@/text');
+    const { presentActionFailureOutcome } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
+    const subtitle = () => screen.findAllByProps({ testID: `${id}.schedule` })[0]?.props.subtitle;
+    try {
+      expect(await settle(`${id}.schedule.on`)).not.toBeNull();
+      const off = t('projects.deployments.settingsSections.scheduleOff');
+      expect(subtitle()).toBe(off);
+      // The real Action policy refuses creation without approval, before the Home write.
+      await screen.pressByTestIdAsync(`${id}.schedule.on`);
+      const failure = presentActionFailureOutcome({ ok: false, errorCode: 'approval_required', error: 'approval_required' }, 'deployment');
+      expect(subtitle()).toBe(`${off} · ${failure.reason}`);
+      expect(screen.findByTestId(`${id}.schedule.on`)).not.toBeNull();
+      expect(homes.requestsFor('/v3/automations')).toHaveLength(0);
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
   it('backs up and verifies an exact snapshot through the real store and Action front door, showing the destination and result', async () => {
     await homes.reset();
     const serverIdentityId = 'srv_backups';

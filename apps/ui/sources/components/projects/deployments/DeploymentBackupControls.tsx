@@ -702,13 +702,24 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
   const target = useBackupTarget(props.detail, props.configuration);
   const { actions } = props;
   const [scheduled, setScheduled] = React.useState<boolean | null>(null);
+  const [failure, setFailure] = React.useState<string | null>(null);
   const [adding, setAdding] = React.useState(false);
+  const showFailure = (error: unknown) => {
+    const outcome = readDeploymentActionError(error);
+    const presented = outcome.kind === 'refused' ? presentActionFailureOutcome(outcome.failure
+      ?? { ok: false, errorCode: outcome.code, error: outcome.code }, 'deployment') : null;
+    setFailure(presented?.reason ?? t('common.error'));
+  };
   const targetKey = target ? JSON.stringify(target) : null;
   React.useEffect(() => {
     if (!actions || !target) return;
     let live = true;
     const { expectedRevision: _expectedRevision, ...identity } = target;
-    actions.backupScheduleSets(identity).then((count) => { if (live) setScheduled(count > 0); }, () => {});
+    actions.backupScheduleSets(identity).then((count) => {
+      if (live) { setScheduled(count > 0); setFailure(null); }
+    }, (error) => {
+      if (live) { setScheduled(null); showFailure(error); }
+    });
     return () => { live = false; };
     // The target key carries every identity field the read uses.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -720,16 +731,18 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
       await actions.addBackupSchedule({ target, retention: props.configuration.retention,
         controllerMachineId: props.detail.environment.controllerMachineId });
       setScheduled(true);
-    } catch { /* The trigger owner's refusal leaves the row as it was; pressing again retries. */ }
-    setAdding(false);
+      setFailure(null);
+    } catch (error) { showFailure(error); }
+    finally { setAdding(false); }
   };
+  const status = scheduled === null ? t('common.unavailable') : scheduled
+    ? t('projects.deployments.settingsSections.scheduleOn')
+    : t('projects.deployments.settingsSections.scheduleOff');
   return (
     <Item
       testID={`${props.testID}.schedule`}
       title={t('projects.deployments.settingsSections.scheduleTitle')}
-      subtitle={scheduled
-        ? t('projects.deployments.settingsSections.scheduleOn')
-        : t('projects.deployments.settingsSections.scheduleOff')}
+      subtitle={failure ? `${status} · ${failure}` : status}
       mode="info"
       rightElement={actions && target && scheduled === false ? (
         <SectionActionButton testID={`${props.testID}.schedule.on`}
