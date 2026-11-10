@@ -48,3 +48,33 @@ test('Stack reclaims retired plugin preparations through the UI owner while live
   await assert.rejects(stat(preparation), { code: 'ENOENT' });
   assert.equal(await readFile(inventoryPath, 'utf8'), 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = {};');
 });
+
+
+test('artifact retirement reads an unchanged inventory once per pass, independent of retired roots', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-expo-retention-cost-' });
+  const { reapBundledPluginUiArtifactStore } = await import('../../../../ui/scripts/generateBundledPluginUiArtifacts.mjs');
+  const inventoryPath = fixture.path('inventory.js');
+  const artifactStoreDir = fixture.path('artifacts');
+  const procRoot = fixture.path('empty-proc');
+  await mkdir(procRoot);
+  const historical = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  for (let index = 0; index < 64; index++) {
+    const path = join(artifactStoreDir, 'fixture', index.toString(16).padStart(64, '0'));
+    await mkdir(path, { recursive: true });
+    await utimes(path, historical, historical);
+  }
+  await writeFile(inventoryPath, 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = {};');
+  let inventoryReads = 0;
+  const readFile = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (path === inventoryPath) inventoryReads++;
+    return readFile(path, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const result = reapBundledPluginUiArtifactStore({ artifactStoreDir, inventoryPaths: [inventoryPath],
+      procRoot, dryRun: true, retainCandidate: () => false });
+    assert.equal(result.reclaimableRoots, 64);
+    assert.equal(inventoryReads, 1, 'reference parsing scales with publications, not retired generations');
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+});

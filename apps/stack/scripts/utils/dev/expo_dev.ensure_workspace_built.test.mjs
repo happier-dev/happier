@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile, chmod, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, chmod, readFile, utimes, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -113,7 +113,7 @@ function createExpoBaseEnv(tmp) {
   };
 }
 
-async function startFixtureExpo({ tmp, uiDir, spawnOptions = undefined, ...overrides }) {
+async function startFixtureExpo({ tmp, uiDir, spawnOptions = undefined, waitForExit = true, ...overrides }) {
   const result = await ensureDevExpoServer({
     startUi: true,
     startMobile: false,
@@ -132,7 +132,7 @@ async function startFixtureExpo({ tmp, uiDir, spawnOptions = undefined, ...overr
     ...overrides,
   });
   // The fixture Expo exits on its own; settle it before removing its executable.
-  await result.proc?.completion;
+  if (waitForExit) await result.proc?.completion;
   return result;
 }
 
@@ -563,6 +563,92 @@ test('ensureDevExpoServer adopts an existing Expo process while canonical refres
     try {
       if (existingExpo?.pid) process.kill(-existingExpo.pid, 'SIGKILL');
     } catch {}
+    await rm(fixture.tmp, { recursive: true, force: true });
+  }
+});
+
+// Real retirement owner and filesystem; only the process census is an OS fixture.
+test('Expo spawns with zero deletions from an accumulated plugin artifact backlog', async t => {
+  const fixture = await createExpoWorkspaceFixture();
+  const fs = await import('node:fs');
+  const { syncBuiltinESMExports } = await import('node:module');
+  const originalReaddir = fs.default.readdirSync;
+  t.mock.method(fs.default, 'readdirSync', (path, ...args) => path === '/proc' ? [] : originalReaddir(path, ...args));
+  syncBuiltinESMExports();
+  let result;
+  try {
+    const pluginRoot = join(getExpoStatePaths({ baseDir: fixture.tmp, kind: 'expo-dev', projectDir: fixture.uiDir }).stateDir, 'plugin-ui');
+    const inventoryPath = join(pluginRoot, 'inventory.js');
+    const stages = [];
+    const historical = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    for (let index = 0; index < 32; index++) {
+      const stage = join(pluginRoot, 'artifacts/fixture', `.happier-plugin-ui-stage-${index}`);
+      await mkdir(stage, { recursive: true });
+      await utimes(stage, historical, historical);
+      stages.push(stage);
+    }
+    await writeFile(inventoryPath, 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = {};');
+    const owner = new URL('../../../../ui/scripts/generateBundledPluginUiArtifacts.mjs', import.meta.url).href;
+    await mkdir(join(fixture.uiDir, 'scripts'), { recursive: true });
+    await writeFile(join(fixture.uiDir, 'scripts/ensureWorkspacePackagesBuilt.mjs'),
+      `export { reapBundledPluginUiArtifactStore } from ${JSON.stringify(owner)};\nexport async function ensureUiWorkspacePackagesBuilt() { return { outputPath: ${JSON.stringify(inventoryPath)} }; }\n`);
+    result = await startFixtureExpo(fixture);
+    assert.equal(result.ok, true);
+    assert.equal((await Promise.all(stages.map(path => stat(path).then(() => 1, () => 0)))).reduce((a, b) => a + b, 0),
+      stages.length, 'N retired generations cause zero deletions before Expo spawn settles');
+  } finally {
+    await result?.close?.();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    await rm(fixture.tmp, { recursive: true, force: true });
+  }
+});
+
+test('Expo is serving before plugin retirement runs and cleanup settles after readiness', async t => {
+  const fixture = await createExpoWorkspaceFixture();
+  const fs = await import('node:fs');
+  const { syncBuiltinESMExports } = await import('node:module');
+  const originalReaddir = fs.default.readdirSync;
+  t.mock.method(fs.default, 'readdirSync', (path, ...args) => path === '/proc' ? [] : originalReaddir(path, ...args));
+  syncBuiltinESMExports();
+  let result;
+  const releasePath = join(fixture.tmp, 'release-serving');
+  try {
+    const pluginRoot = join(getExpoStatePaths({ baseDir: fixture.tmp, kind: 'expo-dev', projectDir: fixture.uiDir }).stateDir, 'plugin-ui');
+    const inventoryPath = join(pluginRoot, 'inventory.js');
+    const stage = join(pluginRoot, 'artifacts/fixture/.happier-plugin-ui-stage-ready');
+    await mkdir(stage, { recursive: true });
+    const historical = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    await utimes(stage, historical, historical);
+    await writeFile(inventoryPath, 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = {};');
+    const owner = new URL('../../../../ui/scripts/generateBundledPluginUiArtifacts.mjs', import.meta.url).href;
+    await mkdir(join(fixture.uiDir, 'scripts'), { recursive: true });
+    await writeFile(join(fixture.uiDir, 'scripts/ensureWorkspacePackagesBuilt.mjs'),
+      `export { reapBundledPluginUiArtifactStore } from ${JSON.stringify(owner)};\nexport async function ensureUiWorkspacePackagesBuilt() { return { outputPath: ${JSON.stringify(inventoryPath)} }; }\n`);
+    await writeFile(join(fixture.uiDir, 'node_modules/.bin/expo'), [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      `const releasePath = ${JSON.stringify(releasePath)};`,
+      "const interval = setInterval(() => {",
+      "  if (!fs.existsSync(releasePath)) return;",
+      "  clearInterval(interval);",
+      "  const server = require('node:http').createServer((req, res) => res.end('packager-status:running'));",
+      "  server.listen(Number(process.argv[process.argv.indexOf('--port') + 1]), '127.0.0.1');",
+      "  setTimeout(() => server.close(), 2000);",
+      "}, 10);",
+    ].join('\n'));
+    result = await startFixtureExpo({ ...fixture, waitForExit: false });
+    await stat(stage);
+    await writeFile(releasePath, 'serve');
+    await result.proc.completion;
+    await assert.rejects(stat(stage), { code: 'ENOENT' },
+      'once Metro serves, canonical maintenance reclaims the unpublished stage');
+  } finally {
+    await writeFile(releasePath, 'serve');
+    await result?.proc?.completion;
+    await result?.close?.();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
     await rm(fixture.tmp, { recursive: true, force: true });
   }
 });

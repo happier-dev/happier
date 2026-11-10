@@ -8,6 +8,7 @@ import {
   isStateProcessRunning,
   resolveExpoTmpDir,
   wantsExpoClearCache,
+  waitForExpoMetroRunning,
   writePidState,
 } from '../expo/expo.mjs';
 import { selectExpoDevMetroPort } from '../expo/metro_ports.mjs';
@@ -759,6 +760,7 @@ export async function ensureDevExpoServer({
     let restartTimer = null;
     let restartOperation = null;
     let spawnedBefore = false;
+    let retirementOperation = Promise.resolve();
     const restartAbort = new AbortController();
     const stopping = () => closed || isShuttingDown?.() === true;
     const scheduleRestart = (restartAttempt) => {
@@ -805,8 +807,6 @@ export async function ensureDevExpoServer({
       // dependency/configuration transition also retires its old cache root.
       await waitForDependencyRefresh({ installDir: resolveDependencyInstallRoot(uiDir), env, signal: restartAbort.signal });
       if (stopping()) throw new DOMException('Expo startup cancelled', 'AbortError');
-      await reapExpoPluginUiArtifacts({ projectDir,
-        inventoryPath: env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY, statePath: paths.statePath });
       await refreshMetroConfigInspection();
       const metroCacheRoot = resolveExpoMetroCacheRoot({
         tmpDir,
@@ -900,6 +900,19 @@ export async function ensureDevExpoServer({
       });
       await requireSpawnedProcess(proc);
       attachSupervision(proc);
+      // Retirement is maintenance, never a Metro startup prerequisite. The
+      // existing readiness owner settles it; the reaper still pins live graphs.
+      if (env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY) {
+        const retirementAbort = new AbortController();
+        void proc.completion.then(() => retirementAbort.abort(), () => retirementAbort.abort());
+        retirementOperation = waitForExpoMetroRunning({ port: metroPort, env,
+          signal: AbortSignal.any([restartAbort.signal, retirementAbort.signal]),
+        }).then(async readiness => {
+          if (readiness.ok) await reapExpoPluginUiArtifacts({ projectDir,
+            inventoryPath: env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY, statePath: paths.statePath });
+          else if (readiness.reason !== 'aborted') writeSupervisorLine('Plugin UI retirement deferred: Metro readiness unavailable.');
+        }).catch(() => writeSupervisorLine('Plugin UI retirement deferred: cleanup unavailable.'));
+      }
       if (restartAttempt > 0 || spawnedBefore) process.stderr.write('[expo] dev Expo restarted (auto)\n');
       spawnedBefore = true;
       return proc;
@@ -923,6 +936,7 @@ export async function ensureDevExpoServer({
         // Replacement must observe the last child this owner published,
         // including a retry already admitted when close was requested.
         await restartOperation;
+        await retirementOperation;
       },
     };
   };

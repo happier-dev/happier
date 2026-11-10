@@ -1,5 +1,5 @@
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
-import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,15 +92,25 @@ export function reapBundledPluginUiArtifactStore({ artifactStoreDir, inventoryPa
   const inventories = [...new Set(inventoryPaths.map(path => resolve(path)))];
   const isStage = name => name.startsWith('.happier-plugin-ui-stage-');
   const contains = (directory, path) => path === directory || path.startsWith(`${directory}${sep}`);
+  let referenceSnapshot = null;
   const readReferences = () => {
     try {
       if (inventories.length === 0) throw new Error('Plugin UI retained inventory is unavailable');
-      return inventories.flatMap(path => {
+      // Inventories are atomically published. Recheck their identity at the
+      // final candidate boundary, resolving the full graph only on publication.
+      const signature = inventories.map(path => {
+        const info = statSync(path);
+        return [info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs].join(':');
+      }).join(';');
+      if (referenceSnapshot?.signature === signature) return referenceSnapshot.references;
+      const references = inventories.flatMap(path => {
         const inventory = readBundledPluginUiArtifactsInventory(path);
         if (!inventory) throw new Error(`Plugin UI retained inventory is unavailable: ${path}`);
         return [...inventory.references, ...inventory.declarationPaths, ...Object.values(inventory.artifactRoots)]
           .map(path => realpathSync(path));
       });
+      referenceSnapshot = { signature, references };
+      return references;
     } catch (error) {
       result.observationUnavailable ??= error.message;
       return null;
@@ -120,7 +130,7 @@ export function reapBundledPluginUiArtifactStore({ artifactStoreDir, inventoryPa
       }
       if (retainCandidate(directory, currentReferences) !== false) return true;
     }
-    // Reread the producer's current and last-green selections immediately
+    // Recheck the producer's current and last-green selections immediately
     // before the canonical reaper removes an otherwise retired candidate.
     const references = readReferences();
     return references === null ? !stage : references.some(path => contains(directory, path));
