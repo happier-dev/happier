@@ -1,5 +1,6 @@
 import { isSessionStopChildRootV1, isSessionStopChildEffectV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionIdsV1';
+import { PROJECT_READINESS_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import { isMachineSetupCombinedRunHttpPurpose } from '@/app/auth/externalActionMachineSetupWorkflowPurpose';
 import { isExternalActionConnectedAccountInventoryHttpPurpose } from './externalActionConnectedAccountInventoryPurpose';
 import { isExternalActionConnectedSubscriptionPriceHttpPurpose } from './externalActionConnectedMetadataPurpose';
@@ -20,7 +21,7 @@ import { readDeploymentLinkReviewedSetupHttpPurpose } from '@/app/deployments/de
 import { admitDeploymentMachineInTx, canDeployDeploymentEnvironment } from '@/app/deployments/deploymentAdmission';
 import { readDeploymentAcceptedExecution, hasAcceptedDeploymentReceiptInTx, deploymentInProgressStates, type DeploymentReceiptContinuation } from '@/app/deployments/deploymentAcceptedExecution';
 import { isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSourceHttpPurposeInTx, type DeploymentPreparationSourceRead,
-    readDeploymentCreateHttpPurposeInTx, isDeploymentCreateHttpEffect, type DeploymentCreateHttpPurpose,
+    readDeploymentCreateHttpPurposeInTx, isDeploymentCreateHttpEffect, isDeploymentPreviewPreparationReadEffect, type DeploymentCreateHttpPurpose,
     readDeploymentTargetRetentionHttpPurpose, type DeploymentTargetRetentionHttpPurpose,
     readDeploymentLinkPreparationHttpPurpose,
     readDeploymentDomainPreparationHttpPurpose,
@@ -47,7 +48,7 @@ import { isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMeta
     isDeploymentDomainMetadataReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
     isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { EnvironmentSecretLaunchAdmissionInputV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
+import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
     DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
 import { ProjectSourcesReadInputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
@@ -1189,8 +1190,9 @@ function isRegistryAppUpdateReadEffect(binding: ExternalActionExecutionAuthoriza
 
 /** The installed service/deployment owner derives its Environment from current custody. */
 function isDeploymentReadPreparation(binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string): boolean {
+    if (isDeploymentPreviewPreparationReadEffect(binding, effectActionId)) return true;
     const rootActionId = binding.actionId;
-    if (rootActionId === 'projects.readiness.read' && binding.deploymentReadAdmission?.actionId === rootActionId)
+    if (rootActionId === PROJECT_READINESS_ACTION_IDS_V1[0] && binding.deploymentReadAdmission?.actionId === rootActionId)
         return effectActionId === 'projects.sources.read' || effectActionId === 'deployments.environments.get'
             || effectActionId === 'deployments.domains.list' || effectActionId === 'deployments.domains.get';
     if (rootActionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
@@ -1282,6 +1284,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, effectActionId)
             === effectActionId;
     const createPreparationEffect = isDeploymentCreateHttpEffect(binding, effectActionId);
+    const previewPreparationRead = isDeploymentPreviewPreparationReadEffect(binding, effectActionId);
     const movePreparationEffect = isDeploymentMoveToRepositoryHttpEffect(binding, effectActionId, proof.reviewedChild);
     const targetRetentionPurpose = await readDeploymentTargetRetentionHttpPurpose(db, binding, effectActionId, proof);
     const preparationRead = await readDeploymentPreparationHttpReadPurpose(db, binding, effectActionId, proof,
@@ -1319,7 +1322,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
         && proof.reviewedChild?.actionId === effectActionId && proof.reviewedChild.role === 'backup.bindings'
         && isDeploymentBackupConfigureNativeAdmissionV1(binding.deploymentNativeAdmission);
-    const crossesEffectFamily = configureBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
+    const crossesEffectFamily = configureBindings || setupPreparationRead || createPreparationEffect || previewPreparationRead || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || linkReviewedSetupRead || reviewedDomainEffect
         || teardownDomainContinuation || membershipDomainContinuation;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
@@ -1626,8 +1629,10 @@ async function verifyCommon(
     // consumes its exact reviewed input before the managed owner's ordinary CAS.
     const deploymentPreparationSourceRead = await readDeploymentPreparationSourceHttpPurposeInTx(db, binding, effectActionId.data, proof);
     if (deploymentPreparationSourceRead === false) return refuseExternalActionExecutionRequest('deployment_preparation', proof);
-    const createPreparationAdmission = createPreparationEffect
-        ? await readDeploymentCreateHttpPurposeInTx(db, binding, effectActionId.data, proof, isReadOnlyArtifactHttpPurpose,
+    const createPreparationAdmission: DeploymentCreateHttpPurpose | null = createPreparationEffect
+        ? acceptedPreparationRead && isDeploymentDomainMetadataReadActionIdV1(acceptedPreparationRead.actionId)
+            ? { rootActionId: 'deployments.environments.create', effectActionId: effectActionId.data }
+            : await readDeploymentCreateHttpPurposeInTx(db, binding, effectActionId.data, proof, isReadOnlyArtifactHttpPurpose,
             () => isDeploymentNativeHttpPurpose({ binding, effectActionId: effectActionId.data }, proof)
                 || signedChildPurpose.sibling.deploymentRead
                     && isAccountActionHttpOperation(effectActionId.data, proof)) : null;
@@ -2381,12 +2386,15 @@ function isDeploymentBindingPreparationHttpPurpose(verified: VerifiedExternalAct
     if (isReadOnlyArtifactHttpPurpose(proof)) return true;
     const url = new URL(proof.path, 'http://home.invalid');
     if (proof.method.toUpperCase() !== 'POST' || url.search !== '' || url.hash !== '') return false;
-    const prepared = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
-    return prepared.success && prepared.data.materialization.kind === 'bindings'
-        && (root === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 || prepared.data.materialization.buildMachineId === undefined)
+    const prepared = EnvironmentSecretAdmissionRequestV1Schema.safeParse(proof.body);
+    return prepared.success
         && prepared.data.serverId === verified.binding.serverIdentityId
         && prepared.data.environmentId === verified.binding.environmentId
-        && prepared.data.machineId === verified.binding.machineId && prepared.data.installationId === verified.binding.installationId
+        && ('kind' in prepared.data
+            ? root === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 || prepared.data.buildMachineId === undefined
+            : prepared.data.materialization.kind === 'bindings'
+                && (root === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 || prepared.data.materialization.buildMachineId === undefined)
+                && prepared.data.machineId === verified.binding.machineId && prepared.data.installationId === verified.binding.installationId)
         && proof.path === `/v1/deployments/environments/${encodeURIComponent(prepared.data.environmentId)}/secret-launch-admission`
         && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, prepared.data));
 }
@@ -2405,7 +2413,7 @@ function readDeploymentEnvironmentAccessPurpose(verified: VerifiedExternalAction
 async function isDeploymentNativeReadHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
     proof: ExternalActionExecutionRequestProof, exactTransportPurpose: boolean): Promise<boolean> {
     const admission = verified.binding.deploymentReadAdmission;
-    if (!admission || admission.actionId === 'projects.readiness.read' || !isDeploymentReadActionIdV1(verified.binding.actionId)) return false;
+    if (!admission || admission.actionId === PROJECT_READINESS_ACTION_IDS_V1[0] || !isDeploymentReadActionIdV1(verified.binding.actionId)) return false;
     const current = await readDeploymentReadAuthorizationInTx(db, verified.binding, admission, {
         authenticationAuthority: verified.effectiveAuthority, authenticationEvidence: verified.principal.authenticationEvidence,
     });
@@ -2487,7 +2495,7 @@ type DeploymentBackupHttpPurpose = Pick<VerifiedExternalActionExecutionRequest,
 async function readProjectReadinessHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
     proof: ExternalActionExecutionRequestProof): Promise<DeploymentBackupHttpPurpose | false> {
     const admission = verified.binding.deploymentReadAdmission;
-    if (admission?.actionId !== 'projects.readiness.read') return false;
+    if (admission?.actionId !== PROJECT_READINESS_ACTION_IDS_V1[0]) return false;
     if (verified.effectActionId === 'projects.sources.read' && proof.method.toUpperCase() === 'GET' && proof.body === undefined
         && proof.path === `/v1/projects/sources/${encodeURIComponent(admission.projectId)}?serverId=${encodeURIComponent(verified.binding.serverIdentityId)}`
         && (proof.routeInput === undefined || sameManagedInput(proof.routeInput,
@@ -2703,7 +2711,8 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     const linkPreparation = await readDeploymentLinkPreparationHttpPurpose(db, verified.binding, verified.effectActionId, proof,
         actionId => isAccountActionHttpOperation(actionId, proof));
     if (linkPreparation !== null) return linkPreparation;
-    const environmentContentPreparation = await readDeploymentEnvironmentContentPreparationHttpPurpose(db, verified.binding, verified.effectActionId, proof);
+    const environmentContentPreparation = await readDeploymentEnvironmentContentPreparationHttpPurpose(db, verified.binding, verified.effectActionId, proof,
+        actionId => isAccountActionHttpOperation(actionId, proof));
     if (environmentContentPreparation !== null) return environmentContentPreparation;
     if (root === 'artifact.get' && verified.effectActionId === root) return isReadOnlyArtifactHttpPurpose(proof)
         || isArtifactRecipientKeyPreparationHttpPurpose(proof);
@@ -3371,7 +3380,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             if (!purpose) return refuseExternalActionExecutionRequest('deployment_native_read_purpose', proof);
             backupHttpPurpose = purpose;
         }
-    } else if (verified.binding.actionId === 'projects.readiness.read') {
+    } else if (verified.binding.actionId === PROJECT_READINESS_ACTION_IDS_V1[0]) {
         if (!isAdmittedRootRelay && !readsExecutionMachine) {
             const purpose = await readProjectReadinessHttpPurpose(verified, proof);
             if (!purpose) return refuseExternalActionExecutionRequest('deployment_native_read_purpose', proof);
