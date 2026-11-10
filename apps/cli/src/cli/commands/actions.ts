@@ -9,8 +9,8 @@ import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/acti
 import { getActionSpec, resolveActionExecutionPlacementForInput, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import type { ActionDefinitionV1, ActionExecuteFailure, ActionExecuteResult, SignedRootActionId } from '@happier-dev/protocol';
-import { normalizeActionExecuteResult, normalizeCliActionThrownError, projectCliActionFailure, throwCliActionFailure as throwActionFailure } from './session/shared/normalizeActionExecuteResult';
+import type { ActionDefinitionV1, ActionExecuteResult, SignedRootActionId } from '@happier-dev/protocol';
+import { normalizeCliActionThrownError, projectCliActionFailure, throwCliActionFailure as throwActionFailure } from './session/shared/normalizeActionExecuteResult';
 import { FilesystemUploadInputSchema, FilesystemDownloadInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { createCredentialedFilesystemTransferClient } from '@/machines/transfer/createCredentialedFilesystemTransferClient';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
@@ -90,7 +90,6 @@ const INVOKE_TRANSPORT_VALUE_FLAGS = [
 
 type ActionsDeps = ActionCliExecutionDeps;
 type ActionCommandError = Error & Readonly<{
-  actionFailure?: ActionExecuteFailure;
   expectedFailure?: boolean;
   code?: unknown;
   candidates?: unknown;
@@ -630,10 +629,8 @@ export async function handleActionsCommand(
   try { await execute(args, { ...DEFAULT_DEPS, ...deps }, signal, requestId); }
   catch (error) {
     const candidate = error instanceof Error ? error as ActionCommandError : null;
-    const normalized = candidate?.actionFailure ? normalizeActionExecuteResult(candidate.actionFailure) : null;
     const mapped = error instanceof SavedSecretsInputFailure
       ? { failure: { ...error.failure, errorMessage: error.message }, unexpected: false }
-      : normalized && !normalized.ok ? { failure: normalized, unexpected: false }
       : candidate?.expectedFailure ? { failure: { errorCode: String(candidate.code ?? 'action_failed'), errorMessage: candidate.message,
         ...(Array.isArray(candidate.candidates) ? { candidates: candidate.candidates.filter((value): value is string => typeof value === 'string') } : {}) }, unexpected: false }
       : normalizeCliActionThrownError(error);

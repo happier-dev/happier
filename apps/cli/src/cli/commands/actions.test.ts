@@ -373,7 +373,7 @@ describe('actions root command', () => {
     ['running_unverified', 0, undefined],
     ['failed', 1, 'deployment_failed'],
     ['cancelled', 1, 'cancelled'],
-    ['waitingApproval', 3, 'approval_waiting'],
+    ['waitingApproval', 1, 'invalid_action_output'],
     ['outcome_unknown', 5, 'outcome_unknown'],
     ['queued', 5, 'outcome_unknown'],
     ['running', 5, 'outcome_unknown'],

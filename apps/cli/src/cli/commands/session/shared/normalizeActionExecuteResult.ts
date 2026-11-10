@@ -15,9 +15,15 @@ export type CliActionFailure = Readonly<{
   goalControlFailure?: SessionGoalControlFailureV1;
 }>;
 
+class CliActionFailureError extends Error {
+  constructor(readonly actionFailure: ActionExecuteFailure) {
+    super(actionFailure.error);
+  }
+}
+
 /** Retain the owning failure intact until the command's single output boundary. */
 export function throwCliActionFailure(failure: ActionExecuteFailure): never {
-  throw Object.assign(new Error(failure.error), { actionFailure: failure });
+  throw new CliActionFailureError(failure);
 }
 
 export type NormalizedCliActionExecuteResult =
@@ -112,6 +118,10 @@ export function projectCliActionFailure(failure: CliActionFailure, requestId?: s
 
 /** Every thrown Action failure consumes the Protocol owner's typed carrier. */
 export function normalizeCliActionThrownError(error: unknown): Readonly<{ failure: CliActionFailure; unexpected: boolean }> {
+  if (error instanceof CliActionFailureError) {
+    const normalized = normalizeActionExecuteResult(error.actionFailure);
+    if (!normalized.ok) return { failure: normalized, unexpected: false };
+  }
   const failure = normalizeActionExecutorThrownError(error);
   if (failure.errorCode !== 'action_failed' || failure.failureCause.errorCode !== null) {
     return { failure: { errorCode: failure.errorCode, errorMessage: resolveActionFailureMessage(failure.error, failure.failureCause),

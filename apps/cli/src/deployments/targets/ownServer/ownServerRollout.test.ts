@@ -614,9 +614,12 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
         expect(opened.notice).toMatchObject({ type: 'blocked', healthPhase: 'open', source: { kind: 'host', topic: 'service_health',
             subject: { kind: 'environment', environmentId: environment.environment.id, targetLinkId: link.id, condition: 'deployment_failed' } } });
         expect(opened.item?.view).toBe('needs_you');
-        const writesBeforeRetry = noticeBoundary.writes();
+        const settlementWritesBeforeRetry = noticeBoundary.writeJournal.filter(row => row.id === opened.artifact.artifactId);
         await onMachine('machine-a', () => targets.get('machine-a')!.execute(introduced.request));
-        expect(noticeBoundary.writes(), JSON.stringify(noticeBoundary.writeJournal)).toBe(writesBeforeRetry);
+        // Runtime health has its own notice identity and can settle on retry.
+        // The failed deployment's settlement itself must remain idempotent.
+        expect(noticeBoundary.writeJournal.filter(row => row.id === opened.artifact.artifactId))
+            .toEqual(settlementWritesBeforeRetry);
         for (const machineId of machineIds) expect(await tools.get(machineId)!.readRunningImageConfig('app')).toBeNull();
         expect(introduced.receipt.content.machineResults, JSON.stringify({ dispatchErrors, stages })).toEqual(expect.arrayContaining(['machine-a', 'machine-b'].map(machineId => expect.objectContaining({
             machineId, steps: expect.arrayContaining([expect.objectContaining({ id: 'own-server-candidate-cleanup', state: 'succeeded' })]),
@@ -751,7 +754,8 @@ it.each(['action_forbidden', 'outcome_unknown'] as const)(
     expect(receipt.content.machineResults[0]).toMatchObject({ activation: 'succeeded', currentDeploymentId: receipt.deployment.id });
 });
 
-it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingBaseline', 'missingPlatform', 'missingVariant', 'lostAck', 'buildLostAck', 'incompleteBuild', 'baselineObserve', 'keepPartialBaselineObserve', 'joiningNoRoute', 'joiningWriteRejected'] as const)('keeps %s transport settlement truthful without early aggregate success or uncertain replay', async mode => {
+it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingBaseline', 'missingPlatform', 'missingVariant', 'lostAck', 'buildLostAck', 'incompleteBuild', 'baselineObserve', 'keepPartialBaselineObserve', 'joiningNoRoute', 'joiningWriteRejected', 'joiningHealthy', 'joiningMultiple', 'joiningUnhealthy', 'joiningRouteRefused'] as const)('keeps %s transport settlement truthful without early aggregate success or uncertain replay', async mode => {
+    const enrollJoining = mode === 'joiningHealthy' || mode === 'joiningMultiple' || mode === 'joiningUnhealthy' || mode === 'joiningRouteRefused';
     const environment = createDeploymentEnvironmentDetailV1();
     const noticeBoundary = ['offline', 'unknown', 'staleSettlement', 'revokedSettlement'].includes(mode) ? createSettlementNoticeHttpBoundary('https://home.test') : null;
     if (mode === 'unknown' || mode === 'staleSettlement') environment.environment.protection = 'production';
@@ -761,9 +765,11 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
     if (mode === 'revokedSettlement') noticeBoundary!.boundary.beforeArtifactRead = () => { environment.environment.capabilities.read = false; };
     const link = environment.targetLinks[0].targetLink;
     link.machines = ['machine-a', 'machine-b', 'machine-c'];
+    if (mode === 'joiningMultiple') link.machines.push('machine-d');
     link.members = link.machines.map(machineId => ({ machineId, installationId: `installation-${machineId.at(-1)}`, state: 'active' }));
     link.activeDeploymentId = 'uniform-v1';
-    if (mode === 'joiningNoRoute' || mode === 'joiningWriteRejected') link.members[2].state = 'joining';
+    if (mode === 'joiningNoRoute' || mode === 'joiningWriteRejected' || enrollJoining) link.members[2].state = 'joining';
+    if (mode === 'joiningMultiple') link.members[3].state = 'joining';
     if (mode === 'missingBaseline') delete link.activeDeploymentId;
     const receipt = createDeploymentReceiptDetailV1();
     receipt.deployment = { ...receipt.deployment, id: 'candidate-v3', state: 'queued' };
@@ -780,7 +786,7 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
         runtimeProjections: link.members.map(({ machineId, installationId }) => ({ machineId, installationId, ...nativeBasis, platform: 'linux/amd64' })) }) };
     const uniform = structuredClone(receipt);
     uniform.deployment = { ...uniform.deployment, id: 'uniform-v1', state: 'succeeded' };
-    if (mode === 'baselineObserve' || mode === 'keepPartialBaselineObserve') {
+    if (mode === 'baselineObserve' || mode === 'keepPartialBaselineObserve' || enrollJoining) {
         // C joined after U. Only its actual read-only U render can establish
         // U's effective platform; A's host-default projection is not C's proof.
         uniform.content.machines = ['machine-a', 'machine-b'];
@@ -795,7 +801,9 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
         receipt.content.ownServer.approvedInputBasis.runtimeProjections!.forEach(projection => { projection.platform = 'linux/arm64'; });
     }
     const builtImages = structuredClone(receipt.content.images);
-    if (mode === 'buildLostAck' || mode === 'incompleteBuild' || mode === 'baselineObserve' || mode === 'keepPartialBaselineObserve') {
+    const immutableUniform = structuredClone(uniform);
+    if (mode === 'buildLostAck' || mode === 'incompleteBuild' || mode === 'baselineObserve' || mode === 'keepPartialBaselineObserve'
+        || mode === 'joiningHealthy') {
         environment.environment.buildMachineId = 'builder-c';
         receipt.content.buildMachineId = 'builder-c';
         receipt.content.images = [];
@@ -833,10 +841,29 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: input.state };
         },
         runtime: { async acquire() { throw new Error('Remote members must not acquire controller native custody'); } },
+        ...(enrollJoining ? { async enrollMemberRoutes(_request: OwnServerDeploymentRequest, input: {
+            link: typeof link; member: { machineId: string; installationId: string }; selectedDeploymentId: string;
+        }) {
+            expect(input.link.id).toBe(link.id);
+            expect(input.member).toMatchObject({ machineId: 'machine-c', installationId: 'installation-c' });
+            expect(input.selectedDeploymentId).toBe('uniform-v1');
+            expect(receipt.content.machineResults.find(row => row.machineId === 'machine-c')).toMatchObject({
+                currentDeploymentId: 'uniform-v1', restoration: 'succeeded', health: 'healthy' });
+            if (mode === 'joiningMultiple') expect(receipt.content.machineResults.find(row => row.machineId === 'machine-d')).toMatchObject({
+                currentDeploymentId: 'uniform-v1', restoration: 'succeeded', health: 'healthy' });
+            expect(buildDispatches).toBe(0);
+            expect(link.members[2].state).toBe('joining');
+            dispatched.push('enroll:machine-c');
+            return mode === 'joiningRouteRefused' ? { ok: false as const, errorCode: 'native_route_unavailable', error: 'native_route_unavailable' }
+                : { ok: true as const, environmentId: environment.environment.id, revision: environment.environment.revision,
+                    deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: 'running' as const };
+        } } : {}),
         async dispatchBuild() {
             buildDispatches += 1;
             expect(receipt.deployment.state).toBe('running');
-            expect(dispatched.filter(phase => !phase.startsWith('observe:'))).toEqual([]);
+            expect(dispatched.filter(phase => !phase.startsWith('observe:'))).toEqual(enrollJoining
+                ? mode === 'joiningMultiple' ? ['restore:machine-c', 'restore:machine-d', 'enroll:machine-c']
+                    : ['restore:machine-c', 'enroll:machine-c'] : []);
             receipt.content.images = builtImages;
             const builderId = receipt.content.buildMachineId;
             const builderInstallationId = builderId === 'builder-c' ? 'installation-c' : 'installation-a';
@@ -858,9 +885,9 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
                 return { ok: false, errorCode: 'rollback_image_unavailable', error: 'rollback_image_unavailable' };
             }
             if (mode === 'missingBaseline' || mode === 'missingPlatform' || mode === 'missingVariant' || mode === 'incompleteBuild') return { ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable' };
-            if (input.phase === 'activate' && input.machineId === 'machine-a' && mode !== 'joiningNoRoute') { beginActivation(); await activationGate; }
+            if (input.phase === 'activate' && input.machineId === 'machine-a' && mode !== 'joiningNoRoute' && !enrollJoining) { beginActivation(); await activationGate; }
             if (input.phase !== 'observe' && input.machineId === 'machine-b' && mode !== 'joiningNoRoute'
-                && mode !== 'baselineObserve' && mode !== 'keepPartialBaselineObserve') {
+                && mode !== 'baselineObserve' && mode !== 'keepPartialBaselineObserve' && !enrollJoining) {
                 const errorCode = mode === 'unknown' || mode === 'staleSettlement' || mode === 'revokedSettlement' ? 'outcome_unknown' : 'machine_unavailable';
                 if (mode === 'unknown') return projectDeploymentTransitionOutcomeUnknownForHost({ response: {
                     status: 503, data: { error: 'database_transaction_conflict_exhausted' },
@@ -869,7 +896,8 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
             }
             if (input.phase !== 'observe') {
                 receipt.content.machineResults = receipt.content.machineResults.map(row => row.machineId === input.machineId ? {
-                    ...row, actionOperationId: receipt.deployment.actionOperationId, health: 'healthy',
+                    ...row, actionOperationId: receipt.deployment.actionOperationId,
+                    health: mode === 'joiningUnhealthy' && input.phase === 'restore' ? 'unhealthy' : 'healthy',
                     currentDeploymentId: input.selectedDeploymentId,
                     ...(input.phase === 'restore' ? { restoration: 'succeeded' } : { activation: 'succeeded' }),
                 } : row);
@@ -881,6 +909,24 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: 'running' };
         },
     });
+    if (enrollJoining) {
+        const successful = mode === 'joiningHealthy' || mode === 'joiningMultiple';
+        const outcome = await target.execute(request);
+        expect(outcome, JSON.stringify({ outcome, dispatched, failure: receipt.content.failure })).toMatchObject({ ok: successful,
+            ...(successful ? { state: 'succeeded' } : { errorCode: mode === 'joiningUnhealthy'
+                ? 'deployment_health_failed' : 'native_route_unavailable' }) });
+        expect(dispatched[0]).toBe('restore:machine-c');
+        expect(dispatched).toContainEqual(mode === 'joiningUnhealthy' ? 'restore:machine-c' : 'enroll:machine-c');
+        if (mode === 'joiningMultiple') expect(dispatched.slice(0, 3)).toEqual(['restore:machine-c', 'restore:machine-d', 'enroll:machine-c']);
+        expect(dispatched.filter(phase => phase.startsWith('enroll:'))).toHaveLength(mode === 'joiningUnhealthy' ? 0 : 1);
+        expect(dispatched.filter(phase => phase.startsWith('activate:'))).toHaveLength(successful ? link.members.length : 0);
+        expect(buildDispatches).toBe(successful ? 1 : 0);
+        expect(receipt.deployment.state).toBe(successful ? 'succeeded' : 'failed');
+        expect(uniform).toEqual(immutableUniform);
+        // The server transition owner alone commits membership after final route proofs.
+        expect(link.members[2].state).toBe('joining');
+        return;
+    }
     if (mode === 'baselineObserve' || mode === 'keepPartialBaselineObserve') {
         continueActivation();
         await target.execute(request);

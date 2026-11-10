@@ -1,22 +1,17 @@
 import axios from 'axios';
-import nacl from 'tweetnacl';
 import { createHash } from 'node:crypto';
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { create as createTar } from 'tar';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1 } from '@happier-dev/protocol';
+import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentCandidatePublicationV1, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
-import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import * as persistence from '@/persistence';
-import * as installation from '@/daemon/identity/store';
 import { prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploymentChildRequesterHarness';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createNativeComposeImageIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
@@ -34,10 +29,6 @@ describe('installed receipt image archive copy', () => {
         let prepared: Awaited<ReturnType<typeof prepareInstalledRequesterAccountActionContext>> = null;
         let custodyReads = 0;
         try {
-            const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(82));
-            const identity = { version: 1 as const, createdAt: 1, installationId: 'installed',
-                publicKey: Buffer.from(keys.publicKey).toString('base64url'), privateKey: Buffer.from(keys.secretKey).toString('base64url') };
-            vi.spyOn(installation, 'readInstallationIdentityIfExistsSync').mockReturnValue(identity);
             const credentials = { token: 'installed-account', encryption: null, credentialProvenance: 'stored_session' as const };
             const storedCredentials = vi.spyOn(persistence, 'readStoredCredentialsForServerId').mockResolvedValue(credentials);
             const primary = createDeploymentReceiptDetailV1().content;
@@ -45,7 +36,7 @@ describe('installed receipt image archive copy', () => {
             primary.sourceIntent.sha = (kind === 'compact_mismatch' ? 'b' : 'a').repeat(40);
             const sourceReads: string[] = [];
             vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
-                if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'requester' } };
+                if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
                 if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
                 if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
                     mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
@@ -60,34 +51,17 @@ describe('installed receipt image archive copy', () => {
                 throw new Error('Local adopted bytes must not resolve a remote transport');
             });
             const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'member', actionId: 'deployments.deploy',
-                machineId: 'machine', installationId: identity.installationId, phase: 'activate', deploymentId: 'receipt',
+                machineId: 'machine', installationId: 'installed', phase: 'activate', deploymentId: 'receipt',
                 selectedDeploymentId: 'receipt', actionOperationId: 'operation',
                 input: { serverId: 'home', environmentId: 'environment', targetLinkId: 'link', expectedRevision: 1,
                     expectedTargetLinkRevision: 1, requestKey: 'request', contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 } });
-            const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'root-request',
-                target: { kind: 'machine', machineId: 'controller' }, input: kind === 'explicit' ? job.input : {
+            const requester = await createDeploymentChildRequesterHarness({ encryptionMode: 'plain', job,
+                receivingIdentity: { machineId: job.machineId, installationId: job.installationId, homeIdentityId: 'home' },
+                source: { id: primary.sourceIntent.projectSourceId, revision: primary.sourceIntent.sourceRevision },
+                rootInput: kind === 'explicit' ? job.input : {
                     serverId: 'home', environmentId: 'environment', targetLinkId: 'link', requestKey: 'request', sha: 'a'.repeat(40),
                 } });
-            const requestId = envelope.requestId;
-            if (!requestId) throw new Error('Expected the root request id in the child fixture');
-            const requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(envelope);
-            const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'root', binding: {
-                accountId: 'requester', custodianAccountId: 'controller-owner', accountEncryptionMode: 'plain', serverIdentityId: 'home',
-                machineId: 'controller', installationId: 'controller-installation', actionId: job.actionId, requestId,
-                requestEnvelopeDigest, target: envelope.target,
-                deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ accountId: 'requester', serverIdentityId: 'home',
-                    actionId: job.actionId, requestId, requestEnvelopeDigest, environmentId: job.input.environmentId,
-                    source: { id: primary.sourceIntent.projectSourceId, revision: primary.sourceIntent.sourceRevision } }),
-                authentication: { kind: 'account', tokenEpoch: 1 } } });
-            const purpose = { kind: 'machine_rpc', method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: job,
-                recipient: { machineId: job.machineId, installationId: job.installationId } } as const;
-            const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-                credentials: { token: 'requester-account', secret: null, encryption: null }, installationPublicKey: keys.publicKey,
-                randomBytes: nacl.randomBytes });
-            const packet = { method: `machine:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`, requestId: 'child-request', params: job,
-                originalActionEnvelope: envelope, externalActionExecution: { v: 1 as const, authorization: sealed,
-                    effectActionId: job.actionId, target: root.binding.target, installationId: root.binding.installationId,
-                    machineSignature: 'a'.repeat(86), deploymentChildRouting: projectDeploymentChildRoutingV1(job) } };
+            const { installed: identity, envelope, sealed, purpose, packet } = requester;
             prepared = await prepareInstalledRequesterAccountActionContext({ authorization: sealed, purpose,
                 deploymentChildExecution: packet, machineId: job.machineId, serverId: 'profile', serverHttpBaseUrl: 'https://home.test',
                 verifyServiceMoveChildCurrent: async () => { custodyReads++; return true; },
