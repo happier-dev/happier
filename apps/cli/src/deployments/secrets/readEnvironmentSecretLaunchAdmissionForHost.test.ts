@@ -2,7 +2,7 @@ import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DeploymentDomainHeaderV1Schema, DeploymentTemplateInstantiateInputV1Schema, encodeBase64, verifyMachineInstallationProof } from '@happier-dev/protocol';
-import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions';
+import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions';
 import { computeExternalActionRequestEnvelopeDigestV1, decodeReviewedActionChildHttpProofV1, decodeDeploymentChildExecutionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -12,7 +12,7 @@ import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunc
     type EnvironmentSecretBindingV1, type EnvironmentSecretLaunchAdmissionResultV1 } from '@happier-dev/deployment-protocol';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER, ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1,
-    projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    projectDeploymentPreparationAdmissionV1, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import * as installationStore from '@/daemon/identity/store';
 import type { OwnServerSecretLaunchAdmissionRequest } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
 import { openMachineSecretGrant, sealMachineSecretGrant } from './machineSecretGrant';
@@ -38,6 +38,52 @@ describe('installed Environment secret launch reader', () => {
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1, createdAt: 1,
             installationId: 'installation', publicKey: encodeBase64(keys.publicKey, 'base64url'), privateKey: encodeBase64(keys.secretKey, 'base64url') });
     }
+
+    it('signs only the exact service-keyed read-role acquisition without a deployment mutation', async () => {
+        install();
+        const reader = await import('./readEnvironmentSecretLaunchAdmissionForHost');
+        const actionId = 'deployments.data.query' as const;
+        const target = { kind: 'machine' as const, machineId: 'machine' };
+        const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3,
+            deploymentId: 'deployment', targetLinkId: 'link', machineId: 'machine', installationId: 'installation',
+            service: 'postgres', sql: 'SELECT 1', params: {} };
+        const envelope = { v: 1 as const, requestId: 'query-request', target, input };
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'query-root', binding: {
+            accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home',
+            actionId, target, machineId: 'machine', installationId: 'installation', custodianAccountId: 'owner',
+            accountEncryptionMode: 'plain', requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, input),
+        } });
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root, serverId: 'home',
+            serverIdentityId: 'home', serverHttpBaseUrl: request.serverHttpBaseUrl, target,
+            installationId: 'installation', privateKey: keys.secretKey, rootAdmitted: true });
+        if (!authorization) throw new Error('Expected the query read HTTP projection');
+        const sent: unknown[] = [];
+        vi.spyOn(axios, 'request').mockImplementation(async config => {
+            const { proof, ...body } = EnvironmentSecretLaunchAdmissionInputV1Schema.parse(config.data);
+            expect(verifyMachineInstallationProof({ payload: { version: 1, accountId: 'owner', machineId: 'machine',
+                installationId: 'installation', deploymentSecretLaunch: {
+                    requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } }, proof, publicKey: keys.publicKey })).toBe(true);
+            expect(config.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBe(actionId);
+            expect(verifyExternalActionMachineRequestV1({ authorizationToken: root.token, effectActionId: actionId,
+                target, installationId: 'installation', requestId: envelope.requestId, method: 'POST',
+                path: '/v1/deployments/environments/environment/secret-launch-admission', body: config.data,
+                signature: String(config.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER] ?? ''), publicKey: keys.publicKey })).toBe(true);
+            sent.push(body);
+            return { status: 200, data: { ok: true, grants: [] } };
+        });
+        const admitted = await reader.readEnvironmentDataRoleLaunchAdmissionForHost({ ...request,
+            expectedRevision: 3, deploymentId: 'deployment', service: 'postgres', context: {
+                externalActionExecutionAuthorization: authorization, externalActionTarget: target, originalActionEnvelope: envelope } });
+        expect(sent).toEqual([{ serverId: 'home', environmentId: 'environment', targetLinkId: 'link',
+            machineId: 'machine', installationId: 'installation',
+            materialization: { kind: 'dataRole', expectedRevision: 3, deploymentId: 'deployment', service: 'postgres' } }]);
+        expect(admitted.grants).toEqual([]);
+        await admitted.assertCurrent();
+        admitted.release();
+        await expect(admitted.assertCurrent()).rejects.toMatchObject({ code: 'secret_missing' });
+    });
 
     it('continues template Domain facts with its real admitted child proof and preserves Home refusal', async () => {
         install();
@@ -173,9 +219,10 @@ describe('installed Environment secret launch reader', () => {
             accountEncryptionMode: 'plain', requestId: 'restore-request', requestEnvelopeDigest: 'a'.repeat(43),
             environmentId: 'environment', deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, {
                 mode: 'prepare', serverId: 'home', environmentId: 'environment', deploymentId: 'failed-capture',
-                targetLinkId: 'link', machineId: 'machine', installationId: 'installation', restoreBackupId: 'backup', expectedRevision: 2,
-                ...(kind === 'copySourceRead' ? { copy: { source: { environmentId: 'environment', targetLinkId: 'link' },
-                    destination: { service: 'database', database: 'copied_database' } } } : {}),
+                targetLinkId: 'link', machineId: 'machine', installationId: 'installation', expectedRevision: 2,
+                source: { kind: 'repository', snapshotId: 'backup', ...(kind === 'copySourceRead'
+                    ? { origin: { environmentId: 'environment', targetLinkId: 'link' } } : {}) },
+                ...(kind === 'copySourceRead' ? { destination: { kind: 'database', service: 'database', database: 'copied_database' } } : {}),
             }),
         } });
         const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root, serverId: 'home',
