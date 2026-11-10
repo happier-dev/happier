@@ -52,14 +52,14 @@ export function createDaemonAccountConnectionManagedConsumerOpen(input: Readonly
       return {
         access: opened.access,
         revalidate: async (signal) => {
-          if (!await admitConsumer(undefined, signal)) return false;
+          if (!await isCurrent(signal)) return false;
           try { await opened.readHttpBinding(signal); return await isCurrent(signal); } catch { return false; }
         },
         cleanup,
         retire: cleanup,
       };
     }
-    return await createAccountConnectionManagedConsumerSourceOpen({
+    const opened = await createAccountConnectionManagedConsumerSourceOpen({
       homeId: input.homeId, accountId: input.accountId, machineId,
       expectedAccountSettingsScopeKey: context.expectedAccountSettingsScopeKey,
       getAccountSettingsSnapshot: () => ownedSnapshot,
@@ -73,5 +73,8 @@ export function createDaemonAccountConnectionManagedConsumerOpen(input: Readonly
         signal: context.signal, isCurrent,
       }),
     })({ ...context.request, signal: context.signal });
+    return opened ? { ...opened,
+      revalidate: async (signal?: AbortSignal) => await isCurrent(signal) && await opened.revalidate(signal),
+    } : null;
   };
 }

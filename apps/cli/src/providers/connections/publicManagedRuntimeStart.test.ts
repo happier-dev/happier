@@ -157,6 +157,30 @@ it.each(['cold', 'activated'] as const)('acquires connected-account broker custo
   });
 });
 
+it('refuses initial Home consumer admission before starting a physical gateway', async () => {
+  await withConfiguredDaemonTestHome({ prefix: 'broker-denied-admission-' }, async ({ homeDir }) => {
+    const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
+      controller: createPluginReloadController(), physicalGateway: true });
+    const gateway = fixture.gateway!;
+    const custody = createManagedProviderExplicitStartCustody({ machineId: fixture.machineId, happyHomeDir: homeDir,
+      controller: gateway.controller });
+    let admissions = 0;
+    try {
+      expect(await custody.acquire({ identity: gateway.identity,
+        contributionKey: `${gateway.identity.pluginId}/${gateway.identity.localId}`,
+        request: { reason: 'explicitStartLocal', endpointTemplateIds: ['api'] }, purposeBindings: gateway.purposeBindings,
+        operationClaim: { kind: 'providerBroker', operation: { kind: 'execution_run', executionRunId: 'denied-run' } },
+        signal: new AbortController().signal, isAuthorizationCurrent: () => true,
+        revalidateAuthorization: async () => true,
+        // Authenticated Home admission is the network boundary; startup is real.
+        revalidateRetainedCurrentness: async () => { admissions++; return false; },
+      })).toBeNull();
+      expect(admissions).toBe(1);
+      await expect(readFile(join(gateway.directory, 'gateway-started'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await fixture.cleanup(); }
+  });
+});
+
 it('revalidates only the exact broker claim and Home consumer before retiring its process', async () => {
   await withConfiguredDaemonTestHome({ prefix: 'broker-exact-currentness-' }, async ({ homeDir }) => {
     const controller = createPluginReloadController();
@@ -480,6 +504,7 @@ it.each(['Start', 'next-request', 'new-stream'] as const)('G1 recovers retained 
         'first input', 'fresh input one', 'fresh input two', 'interrupted input',
       ]);
       admitted = false;
+      await custody.revalidateRetainedClaims();
       expect((await read('withdrawn input')).status).toBe(403);
       expect(await readFile(processFile, 'utf8')).toBe(String(replacementPid));
     } finally {

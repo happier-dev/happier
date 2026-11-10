@@ -59,11 +59,16 @@ it('acquires the real own-source gateway but refuses unauthorized or foreign pro
       consumer: { kind: 'execution_run', executionRunId: 'run-positive' }, executionRunOccurrenceId: 'occurrence-positive', application },
       signature: { alg: 'Ed25519', keyId: 'key', valueBase64Url: Buffer.alloc(64).toString('base64url') } };
     let projectionKind: 'own' | 'unauthorized' | 'foreign' = 'own';
+    let consumerAdmissions = 0;
+    let consumerAdmitted = true;
+    const custody = createManagedProviderExplicitStartCustody({ machineId: 'machine', happyHomeDir: fixture.happyHomeDir, controller: fixture.controller });
     const open = createAccountConnectionBrokerSourceOpen({ homeId: 'home', accountId: 'account', machineId: 'machine',
       expectedAccountSettingsScopeKey: snapshot.scopeKey!,
-      custody: createManagedProviderExplicitStartCustody({ machineId: 'machine', happyHomeDir: fixture.happyHomeDir, controller: fixture.controller }),
+      custody,
       withRegistry: async read => await read(registry), getAccountSettingsSnapshot: () => snapshot,
-      resolveBindingIntent: fixture.purposeBindingOwner.resolveBindingIntent, admitConsumer: async () => true,
+      resolveBindingIntent: fixture.purposeBindingOwner.resolveBindingIntent,
+      // Home admission is the network boundary; source custody and wakes stay real.
+      admitConsumer: async () => { consumerAdmissions++; return consumerAdmitted; },
       // Genuine Machine RPC response boundary; private source, purpose and
       // operation admission plus OS gateway supervision execute for real.
       projectModels: async () => DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: application.agentTargetKey,
@@ -85,6 +90,10 @@ it('acquires the real own-source gateway but refuses unauthorized or foreign pro
     if (!positive) throw new Error('Expected real acquired gateway');
     accesses.push(positive);
     expect(Number(await readFile(join(directory, 'gateway-started'), 'utf8'))).toBeGreaterThan(0);
+    expect(consumerAdmissions).toBe(1);
+    expect(await positive.revalidate(signal)).toBe(true);
+    expect(await positive.revalidate(signal)).toBe(true);
+    expect(consumerAdmissions).toBe(1);
     for (const denied of ['unauthorized', 'foreign'] as const) {
       projectionKind = denied;
       const deniedAccess = await open({ authority: { ...authority, payload: { ...authority.payload,
@@ -99,6 +108,16 @@ it('acquires the real own-source gateway but refuses unauthorized or foreign pro
     if (changedAccount) accesses.push(changedAccount);
     expect(changedAccount).toBeNull();
     expect(await positive.revalidate(signal)).toBe(false);
+    snapshot = { ...snapshot, scopeKey: resolveAccountSettingsScopeKeyForToken('account') };
+    expect(await positive.revalidate(signal)).toBe(true);
+    // Pushed withdrawal still retires an admitted operation; a later request
+    // cannot recover its old permission by reacquiring the shared gateway.
+    consumerAdmitted = false;
+    await custody.revalidateRetainedClaims(signal);
+    const admissionsAfterWithdrawal = consumerAdmissions;
+    expect(await positive.revalidate(signal)).toBe(false);
+    expect(await positive.revalidate(signal)).toBe(false);
+    expect(consumerAdmissions).toBe(admissionsAfterWithdrawal);
   } finally {
     for (const access of accesses) { await access.retire(); await access.cleanup(); }
     await fixture.controller.shutdown(); fixture.disposeCredentialBoundary();

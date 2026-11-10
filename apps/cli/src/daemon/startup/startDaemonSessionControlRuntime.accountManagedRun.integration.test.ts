@@ -6,7 +6,9 @@ import { createAttachedManagedRunFixture } from './startDaemonSessionControlRunt
 
 it('admits exact Account Run proofs, recovers only captured proofs after transport loss, isolates release, and refuses an Account lifetime replacement', async () => {
   let homeAvailable = true;
+  let runAuthorityReads = 0;
   const fixture = await createAttachedManagedRunFixture({ resolveRunAuthority: request => {
+    runAuthorityReads++;
     if (!homeAvailable) throw new Error('Authenticated Home RPC unavailable');
     return { status: 'current', executionRunId: request.executionRunId, occurrenceId: request.expectedOccurrenceId!,
       parentSessionId: 'parent-session', intent: 'review', runtimeState: 'idle', teamCredentialProviderModel: null };
@@ -16,12 +18,15 @@ it('admits exact Account Run proofs, recovers only captured proofs after transpo
     const opened = await dispatch({ kind: 'provider_managed.binding.open', requestId: 'open', ...proof });
     expect(opened, JSON.stringify(opened)).toMatchObject({ ok: true, result: { kind: 'provider_managed.binding' } });
     if (!opened.ok || opened.result.kind !== 'provider_managed.binding') throw new Error('Expected real private consumer');
+    expect(runAuthorityReads).toBe(1);
     const physicalPid = Number(await readFile(join(fixture.directory, 'gateway-started'), 'utf8'));
     expect(physicalPid).toBeGreaterThan(0);
     const send = (binding: typeof opened.result) => fetch(`${binding.endpointUrl}/responses`, {
       method: 'POST', headers: binding.headers, body: JSON.stringify({ model: 'example', input: 'hello' }),
     });
     expect((await send(opened.result)).ok).toBe(true);
+    expect((await send(opened.result)).ok).toBe(true);
+    expect(runAuthorityReads).toBe(1);
     const changed = await dispatch({ kind: 'provider_managed.binding.read', requestId: 'tampered', ...proof,
       bindingId: opened.result.bindingId, modelId: 'different-model' });
     expect(changed).toMatchObject({ ok: false, error: { code: 'provider_endpoint_unavailable' } });
@@ -47,12 +52,20 @@ it('admits exact Account Run proofs, recovers only captured proofs after transpo
     await dispatch({ kind: 'provider_managed.binding.close', requestId: 'close-recovered', bindingId: recovered.result.bindingId });
     expect((await send(second.result)).ok).toBe(true);
 
-    // Transport loss withdraws the old listener; restoration permits a later
-    // genuine read of only the original proof, never replaying an inference.
+    // An admitted call uses its captured Run proof and local lifetime; losing
+    // the admission RPC does not re-decide it on each later model request.
     homeAvailable = false;
+    const readsBeforeContinuedTurn = runAuthorityReads;
     await expect(dispatch({ kind: 'provider_managed.binding.read', requestId: 'home-outage', ...secondProof,
-      bindingId: second.result.bindingId })).resolves.toMatchObject({ ok: false, error: { code: 'provider_endpoint_unavailable' } });
+      bindingId: second.result.bindingId })).resolves.toMatchObject({ ok: true, result: { kind: 'provider_managed.binding' } });
+    expect((await send(second.result)).ok).toBe(true);
+    expect(runAuthorityReads).toBe(readsBeforeContinuedTurn);
+    // End releases the existing listener. Reopening is a new admission and
+    // requires the original Run authority again, never an inference replay.
+    await dispatch({ kind: 'provider_managed.binding.close', requestId: 'close-second', bindingId: second.result.bindingId });
     await expect(send(second.result)).rejects.toBeDefined();
+    await expect(dispatch({ kind: 'provider_managed.binding.read', requestId: 'home-unavailable-new-admission', ...secondProof,
+      bindingId: second.result.bindingId })).resolves.toMatchObject({ ok: false, error: { code: 'provider_endpoint_unavailable' } });
     homeAvailable = true;
     const afterOutage = await dispatch({ kind: 'provider_managed.binding.read', requestId: 'home-restored', ...secondProof,
       bindingId: second.result.bindingId });

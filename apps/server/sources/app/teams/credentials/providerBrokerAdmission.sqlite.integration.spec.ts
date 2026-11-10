@@ -39,6 +39,7 @@ import { deleteMachinePool } from '@/app/machines/pools/machinePoolService';
 import type { MachineDaemonPresenceSocketServer } from '@/app/machines/machineDaemonPresence';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { DaemonExecutionRunBrokerAuthorityRequestV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
 import { selectMachinePoolCandidate } from '@happier-dev/protocol/machines/pools';
 import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
 import { setTeamPolicyInTx } from '@/app/teams/policy';
@@ -74,7 +75,7 @@ import {
 
 // Observe the real database boundary: each invocation traverses signed
 // Account and Session authority once, in its deciding transaction.
-async function observeAdmission<T>(operation: () => Promise<T>): Promise<T> {
+async function observeAdmission<T>(operation: () => Promise<T>, expectedReads = { account: 1, session: 1 }): Promise<T> {
     const originalTransaction = db.$transaction;
     const reads = { account: 0, session: 0 };
     db.$transaction = new Proxy(originalTransaction, { apply(target, receiver, args) {
@@ -105,7 +106,7 @@ async function observeAdmission<T>(operation: () => Promise<T>): Promise<T> {
     } });
     try {
         const result = await operation();
-        expect(reads).toEqual({ account: 1, session: 1 });
+        expect(reads).toEqual(expectedReads);
         return result;
     } finally {
         db.$transaction = originalTransaction;
@@ -969,9 +970,74 @@ describe('Team credential Provider broker admission', () => {
         }
     });
 
+    it('continues a signed personal Run with only credential currentness after its one open admission', async () => {
+        const fixture = await createBrokerFixture('personal-run-continuation');
+        await db.machine.update({ where: { id: fixture.worker.id }, data: { accountId: fixture.custodian.id,
+            installationId: crypto.randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'worker', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) } });
+        await expect(inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: fixture.custodian.id,
+            machineId: fixture.worker.id, principal: { kind: 'account', accountId: fixture.requester.id }, level: 'view' })))
+            .resolves.toMatchObject({ kind: 'saved', readiness: 'ready' });
+        const hub = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: fixture.requester.id,
+            metadata: '{}', active: true, operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1, 2] },
+                irohMachineEndpoint: { protocolVersions: [1], endpointId: '3'.repeat(64) } }, operationProtocolCapabilitiesRevision: 1 } });
+        let rpcCalls = 0;
+        const resolveExecutionRunCurrentness = createExecutionRunBrokerCurrentnessResolver({
+            app: { forwardRpcForUser: async ({ params: rawParams, userId }) => {
+                const params = DaemonExecutionRunBrokerAuthorityRequestV1Schema.parse(rawParams);
+                rpcCalls += 1;
+                expect(userId).toBe(fixture.custodian.id);
+                return { ok: true as const, result: { status: 'current', requestNonce: params.requestNonce,
+                    serverIdentityId: params.serverIdentityId, requestingAccountId: params.requestingAccountId,
+                    workerMachineId: params.workerMachineId, executionRunId: params.executionRunId,
+                    occurrenceId: 'personal-run-occurrence', parentSessionId: null, intent: 'voice_agent',
+                    runtimeState: 'active_turn', activeTurnId: 'personal-run-turn', teamCredentialProviderModel: null } };
+            } },
+            resolveServerIdentityId: async () => 'personal-run-home', createNonce: () => crypto.randomUUID(),
+        });
+        let presenceReads = 0;
+        const common = { homeId: 'personal-run-home', actorAccountId: fixture.requester.id, resolveExecutionRunCurrentness,
+            readCurrentPresence: async () => {
+                presenceReads += 1;
+                return { initiatorPresence: { state: 'partial' as const, machineIds: new Set([fixture.worker.id]) },
+                    targetPresence: { state: 'partial' as const, machineIds: new Set([hub.id]) } };
+            } };
+        const signing = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(49));
+        const verifyAuthority = (authority: unknown) => verifyProviderBrokerRouteGrantSignatureV2({ authority, nowMs: 100,
+            signingCapability: { keyId: common.homeId, publicKey: Buffer.from(signing.publicKey).toString('base64url'), expiresAt: null } });
+        const opened = await openAccountConnectionProviderBroker({ ...common, tokenEpoch: 0, nowMs: 100,
+            grantId: crypto.randomUUID(), signingKey: { keyId: common.homeId, secretKey: signing.secretKey }, verifyRefreshAuthority: verifyAuthority,
+            request: { v: 2, initiatorMachineId: fixture.worker.id, targetMachineId: hub.id,
+                consumer: { kind: 'execution_run', executionRunId: 'personal-run' }, application: FIXTURE_APPLICATION,
+                source: { kind: 'account_connection', connectionId: ProviderConnectionIdSchema.parse('personal-run'),
+                    expectedConnectionSecurityFingerprint: 'connection-security:v1:test',
+                    expectedManagedRuntimeBindingFingerprint: 'managed-runtime-binding:v1:test' } } });
+        if (!opened.ok) throw new Error(opened.reasonCode);
+        expect(rpcCalls).toBe(1);
+        const admit = (overrides: Partial<Parameters<typeof admitAccountConnectionProviderBroker>[0]> = {}) =>
+            admitAccountConnectionProviderBroker({ ...common, verifyAuthority, request: { v: 2, authority: opened.authority }, ...overrides });
+        rpcCalls = 0;
+        presenceReads = 0;
+        for (const operation of [admit, admit]) {
+            await expect(observeAdmission(() => operation(), { account: 1, session: 0 })).resolves.toEqual({ ok: true });
+        }
+        expect({ rpcCalls, presenceReads }).toEqual({ rpcCalls: 0, presenceReads: 0 });
+        await expect(admit({ actorAccountId: fixture.custodian.id })).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        await expect(admit({ homeId: 'other-home' })).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        await expect(admit({ request: { v: 2, authority: { ...opened.authority,
+            payload: { ...opened.authority.payload, consumer: { kind: 'execution_run', executionRunId: 'other-run' } } } } }))
+            .resolves.toEqual({ ok: false, reasonCode: 'invalid_request' });
+        await auth.signOutEverywhere(fixture.requester.id);
+        await expect(admit()).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        expect(rpcCalls).toBe(0);
+    });
+
     it.each([
         ['session', 'open'], ['session', 'refresh'], ['session', 'admit'],
-        ['execution_run', 'open'], ['execution_run', 'refresh'], ['execution_run', 'admit'],
+        // A signed Run continues without re-admission; expiry refresh is the
+        // next admission boundary (VOICE-LATENCY-1109 owner decision).
+        ['execution_run', 'open'], ['execution_run', 'refresh'],
     ] as const)('settles personal %s %s authority inside the transaction before grant withdrawal', async (consumerKind, operation) => {
         const fixture = await createBrokerFixture(`personal-transaction-${consumerKind}-${operation}`);
         await db.machine.update({ where: { id: fixture.worker.id }, data: {

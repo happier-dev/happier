@@ -406,15 +406,24 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                     } } });
                     if (!opened.ok) throw new Error(opened.reasonCode);
                     expect(verifyAuthority(opened.authority)).toBe(true);
-                    expect(await admitAccountConnectionProviderBroker({ ...common, verifyAuthority,
-                        request: { v: 2, authority: opened.authority } })).toEqual({ ok: true });
+                    if (consumer.kind === 'session') {
+                        expect(await admitAccountConnectionProviderBroker({ ...common, verifyAuthority,
+                            request: { v: 2, authority: opened.authority } })).toEqual({ ok: true });
+                    }
                     expect(await openAccountConnectionProviderBroker({ ...openInput,
                         request: { ...openInput.request, refreshAuthority: opened.authority } })).toMatchObject({ ok: true });
                     personalAuthorities.push(opened.authority);
                 }
-                expect(fencedFinalAdmissions).toBe(6);
+                expect(fencedFinalAdmissions).toBe(5);
             } finally {
                 db.$transaction = originalTransaction;
+            }
+            // VOICE-LATENCY-1109: the signed Run has already been admitted.
+            // Continuation checks its credential, without another Machine fence.
+            for (const personalAuthority of personalAuthorities) {
+                if (personalAuthority.payload.consumer.kind !== 'execution_run') continue;
+                expect(await admitAccountConnectionProviderBroker({ ...common, verifyAuthority,
+                    request: { v: 2, authority: personalAuthority } })).toEqual({ ok: true });
             }
             // Schedule at the reviewer's real final Machine SELECT boundary.
             // A conflicting writer must wait; never await it inside the signer.
@@ -424,6 +433,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
             for (const consumer of [{ kind: 'session', sessionId: session.id },
                 { kind: 'execution_run', executionRunId: 'pg-run' }] as const) {
                 for (const operation of ['open', 'refresh', 'admit'] as const) {
+                    if (consumer.kind === 'execution_run' && operation === 'admit') continue;
                     for (const withdrawal of ['revoke', 'replace'] as const) {
                         const openInput = { ...common, tokenEpoch: requester.tokenEpoch,
                             nowMs: 1, grantId: randomUUID(), signingKey: { keyId: 'pg-home', secretKey: signing.secretKey },
@@ -505,8 +515,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                             const reads = presenceReads;
                             expect(await openAccountConnectionProviderBroker(openInput)).toMatchObject({ ok: false });
                             expect(await admitAccountConnectionProviderBroker({ ...common, verifyAuthority,
-                                request: { v: 2, authority: retained.authority } })).toMatchObject({ ok: false });
-                            expect(presenceReads).toBe(reads + 2);
+                                request: { v: 2, authority: retained.authority } })).toMatchObject({ ok: consumer.kind === 'execution_run' });
+                            expect(presenceReads).toBe(reads + (consumer.kind === 'execution_run' ? 1 : 2));
                         } finally {
                             db.$transaction = originalTransaction;
                             if (replacement) {
@@ -522,7 +532,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                     }
                 }
             }
-            expect(custodianFences).toBe(12);
+            expect(custodianFences).toBe(10);
             await inTx(tx => removeMachineAccessGrantInTx(tx, {
                 actorAccountId: custodian.id, machineId: worker.id,
                 principal: { kind: 'account', accountId: requester.id },
@@ -531,9 +541,10 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
             const readsBeforeRevocation = presenceReads;
             for (const personalAuthority of personalAuthorities) {
                 expect(await admitAccountConnectionProviderBroker({ ...common, verifyAuthority,
-                    request: { v: 2, authority: personalAuthority } })).toMatchObject({ ok: false });
+                    request: { v: 2, authority: personalAuthority } })).toMatchObject({ ok: personalAuthority.payload.consumer.kind === 'execution_run' });
             }
-            expect(presenceReads).toBe(readsBeforeRevocation + personalAuthorities.length);
+            expect(presenceReads).toBe(readsBeforeRevocation
+                + personalAuthorities.filter(authority => authority.payload.consumer.kind === 'session').length);
         } finally {
             await db.team.delete({ where: { id: team.id } });
             await db.accessKey.deleteMany({ where: { accountId: requester.id } });

@@ -12234,12 +12234,11 @@ export async function startDaemonSessionControlRuntime(
       resources.register(account.release);
       const resolveManagedPurposeBindingIntent = account.resolveManagedPurposeBindingIntent;
       if (!resolveManagedPurposeBindingIntent) return null;
-      const isRunCurrent = async (currentSignal: AbortSignal = signal) => {
+      const admitRun = async (currentSignal: AbortSignal = signal) => {
         const readSignal = AbortSignal.any([signal, currentSignal]);
         try {
-          // Session transport and its nested Account readers form one read
-          // preparation. Never retain that observation across the Run RPC's
-          // result-publication fence or a later consumer validation.
+          // Resolve the exact Run occurrence and Provider selection once when
+          // opening this binding; subsequent effects consume that admission.
           const current = await (async () => {
             if (!await account.isCurrent()) return null;
             return await account.withHome(async () => {
@@ -12261,7 +12260,12 @@ export async function startDaemonSessionControlRuntime(
         } catch { return false; }
       };
       input.signal.throwIfAborted();
-      if (!await trace('binding_run_authority', () => isRunCurrent(preparationSignal))) return null;
+      if (!await trace('binding_run_authority', () => admitRun(preparationSignal))) return null;
+      // The existing binding lifetime is released by End/close and PID cleanup.
+      // Its original identity and selection are in proof, not a fresh Run RPC.
+      const isRunCurrent = async (currentSignal: AbortSignal = signal) =>
+        !signal.aborted && !currentSignal.aborted && account.isCurrentPidOwner()
+        && account.readCurrentAccountSettingsSnapshot() !== null;
       const targetMachineId = basis.deployment.gatewayPlacement?.kind === 'machine'
         ? basis.deployment.gatewayPlacement.machineId : params.machineId;
       const application = { agentTargetKey: basis.agentTargetKey, implementationIdentity: basis.deployment.implementationIdentity,
@@ -12274,7 +12278,8 @@ export async function startDaemonSessionControlRuntime(
             expectedManagedRuntimeBindingFingerprint: createProviderManagedRuntimeBindingFingerprintV1({
               implementationIdentity: deployment.implementationIdentity, managedRuntime: deployment.managedRuntime,
               purposeBindings: deployment.purposeBindings }) } },
-        expectedAccountSettingsScopeKey: proof.expectedAccountSettingsScopeKey, readAccountSettingsSnapshot: account.readAccountSettingsSnapshot,
+        expectedAccountSettingsScopeKey: proof.expectedAccountSettingsScopeKey,
+        readAccountSettingsSnapshot: async () => account.readCurrentAccountSettingsSnapshot(),
         resolveManagedPurposeBindingIntent, signal: preparationSignal, isCurrent: isRunCurrent }));
       if (!opened) return null;
       resources.register(opened.retire);
@@ -12283,7 +12288,9 @@ export async function startDaemonSessionControlRuntime(
       let cleanup: (() => Promise<void>) | null = null;
       const consumer = await trace('consumer_application_start', () => startManagedProviderConsumerApplication({ signal, endpointUrl, credentialTransport: basis.runtimeCredentialTransport,
         request: async request => {
-          if (await opened.revalidate(request.signal)) return { ok: true, response: await opened.access.request(request) };
+          if (await isRunCurrent(request.signal) && await opened.revalidate(request.signal)) {
+            return { ok: true, response: await opened.access.request(request) };
+          }
           lifetime.abort();
           void cleanup?.().catch(() => undefined); // The existing PID cleanup retains failed release custody.
           return { ok: false, reasonCode: 'resource_forbidden' };
@@ -12314,7 +12321,7 @@ export async function startDaemonSessionControlRuntime(
           if (!isDeepStrictEqual(currentProof, proof)) return null;
           if (!consumer.isCurrent()) { await cleanup?.(); return null; }
           const readSignal = currentSignal ? AbortSignal.any([signal, currentSignal]) : signal;
-          if (!await opened.revalidate(readSignal)) {
+          if (!await isRunCurrent(readSignal) || !await opened.revalidate(readSignal)) {
             if (!readSignal.aborted) await cleanup?.();
             return null;
           }

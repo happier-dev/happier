@@ -1195,6 +1195,12 @@ existing scoped environment, binding and exact redaction values. The retained
 snapshot owns in-flight preparation and cleanup, including abandoned runner
 exit. Typed incompatible/unverified child-choice details survive the service
 boundary. Existing Team credential preparation keeps its separate authority.
+In development, an attached managed Run binding admits its exact occurrence,
+Agent, model and Provider selection once when opened. Later sends and private
+binding reads consume that proof and the existing binding cancellation, tracked
+PID ownership and Account-scope lifetime; they do not repeat the Run-authority
+RPC. End/close releases the binding. Recovering a released binding is a new
+admission and never replays a model request.
 Review host Action provenance and grant caller references instead read the
 daemon's current registry through the authenticated tracked-runner service;
 they do not turn a retained executable declaration into current write authority.

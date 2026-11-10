@@ -195,6 +195,14 @@ export async function admitAccountConnectionProviderBroker(input: Common & Reado
     if (!parsed.success || !input.verifyAuthority(parsed.data.authority)) return { ok: false, reasonCode: 'invalid_request' };
     const payload = parsed.data.authority.payload;
     if (payload.homeId !== input.homeId || payload.accountId !== input.actorAccountId) return { ok: false, reasonCode: 'resource_forbidden' };
+    if (payload.consumer.kind === 'execution_run') {
+        // The signed open already admits this exact Run occurrence, source and
+        // Machines. Its executor owns cancellation; a later application request
+        // checks only the Account credential, without asking the Run to re-admit.
+        // Grant expiry bounds new carrier streams, not work already admitted.
+        return await inTx(async tx => await auth.isSignedCredentialCurrent(tx, input.actorAccountId, payload.initiatorTokenEpoch)
+            ? { ok: true } as const : { ok: false, reasonCode: 'operation_not_current' } as const);
+    }
     return await withCurrentMachines<ProviderBrokerAccountAdmissionResponseV2>({ ...input, tokenEpoch: payload.initiatorTokenEpoch,
         initiatorMachineId: payload.initiator.machineId, targetMachineId: payload.target.machineId,
         consumer: payload.consumer, expectedOccurrenceId: payload.executionRunOccurrenceId ?? null }, admitted => {

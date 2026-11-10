@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 import { onTestFailed, vi } from 'vitest';
 import axios from 'axios';
 import { DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
@@ -311,30 +312,55 @@ export async function createAttachedManagedRunControlTransport(
     sessionId: 'parent-session', runner: { ...fixture.context.runner, snapshotIdentity: 'fixture-runner' },
     retainedAgent: fixture.context.retainedAgent,
   };
-  await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 43127, capability: 'a'.repeat(43) });
-  const originalFetch = globalThis.fetch;
   type Binding = Extract<Extract<AgentRuntimeDaemonServiceResponseV1, { ok: true }>['result'], { kind: 'provider_managed.binding' }>;
   let binding: Binding | null = null;
-  vi.stubGlobal('fetch', async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
-    const target = new URL(url instanceof Request ? url.url : String(url));
-    if (target.port !== '43127' || target.pathname !== AGENT_RUNTIME_DAEMON_SERVICES_PATH) return await originalFetch(url, init);
-    if (new Headers(init?.headers).get('x-happier-daemon-token') !== 'a'.repeat(43)) return new Response('', { status: 401 });
-    const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
-    const refused = await input.beforeDispatch?.(request);
-    if (refused) return refused;
-    const response = await fixture.dispatchRequest(request, init?.signal ?? undefined);
-    if (response.ok && response.result.kind === 'provider_managed.binding') binding = response.result;
-    await input.afterDispatch?.(request, response);
-    return Response.json(response);
+  // The control client owns its Undici dispatcher, so exercise its real HTTP
+  // boundary instead of substituting the unrelated global fetch function.
+  const server = createServer(async (incoming, outgoing) => {
+    const cancellation = new AbortController();
+    outgoing.once('close', () => { if (!outgoing.writableEnded) cancellation.abort(); });
+    try {
+      if (incoming.url !== AGENT_RUNTIME_DAEMON_SERVICES_PATH) { outgoing.writeHead(404).end(); return; }
+      if (incoming.headers['x-happier-daemon-token'] !== 'a'.repeat(43)) { outgoing.writeHead(401).end(); return; }
+      const chunks: Buffer[] = [];
+      for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
+      const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      const refused = await input.beforeDispatch?.(request);
+      if (refused) {
+        outgoing.writeHead(refused.status, Object.fromEntries(refused.headers)).end(await refused.text());
+        return;
+      }
+      const response = await fixture.dispatchRequest(request, cancellation.signal);
+      if (response.ok && response.result.kind === 'provider_managed.binding') binding = response.result;
+      await input.afterDispatch?.(request, response);
+      outgoing.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(response));
+    } catch {
+      outgoing.writeHead(500).end();
+    }
   });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Expected private control listener');
+  try {
+    await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: address.port, capability: 'a'.repeat(43) });
+  } catch (error) {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    throw error;
+  }
   return { services: createCurrentRunnerManagedProviderRunServices(authority),
     readBinding() {
       if (!binding) throw new Error('Expected real daemon binding response');
       return binding;
     },
     async cleanup() {
-      if (binding) await fixture.dispatch({ kind: 'provider_managed.binding.close', requestId: 'finally-close', bindingId: binding.bindingId });
-      vi.unstubAllGlobals();
+      try {
+        if (binding) await fixture.dispatch({ kind: 'provider_managed.binding.close', requestId: 'finally-close', bindingId: binding.bindingId });
+      } finally {
+        await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      }
     },
   };
 }

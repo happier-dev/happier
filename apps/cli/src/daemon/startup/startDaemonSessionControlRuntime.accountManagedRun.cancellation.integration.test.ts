@@ -2,17 +2,19 @@ import { expect, it } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createAttachedManagedRunFixture } from './startDaemonSessionControlRuntime.accountManagedRun.testkit';
 
-it('cancels the actual managed Run open, read and commit while its Home authority transport is pending', async () => {
+it('cancels pending managed Run admission and recovery, and refuses a cancelled commit without a new authority read', async () => {
   let defer = false;
   let enter = () => {};
   let release = () => {};
   let released = Promise.resolve();
   let observedSignal: AbortSignal | undefined;
+  let authorityReads = 0;
   const fixture = await createAttachedManagedRunFixture({ browserStartup: {
     resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
       features: { providers: { enabled: true } },
     }) }),
   }, resolveRunAuthority: async (request, signal) => {
+    authorityReads++;
     if (defer) {
       observedSignal = signal;
       enter();
@@ -50,19 +52,27 @@ it('cancels the actual managed Run open, read and commit while its Home authorit
         const opened = await fixture.dispatch({ kind: 'provider_managed.binding.open', requestId: 'open', ...fixture.proof });
         if (!opened.ok || opened.result.kind !== 'provider_managed.binding') throw new Error(JSON.stringify(opened));
         bindingId = opened.result.bindingId;
+        // A released binding needs a new admission; reading an active binding
+        // consumes its admitted proof without another Home RPC.
+        await fixture.dispatch({ kind: 'provider_managed.binding.close', requestId: 'release-before-recovery', bindingId });
       }
       defer = true;
+      const readsBeforeCommit = authorityReads;
+      if (phase === 'commit') controller.abort();
       pending = fixture.dispatchRequest({ v: 1,
         context: { token: 'a'.repeat(43), sessionId: 'parent-session', ...(snapshotId ? { executionRunSnapshotId: snapshotId } : {}) },
         operation: phase === 'commit' ? { kind: 'execution_run.provider.revalidate_v1' }
           : { kind: phase === 'read' ? 'provider_managed.binding.read' : 'provider_managed.binding.open',
               requestId: 'cancelled-read', ...fixture.proof, ...(bindingId ? { bindingId } : {}) } }, controller.signal);
-      await entered;
-      controller.abort();
-      expect(observedSignal?.aborted).toBe(true);
+      if (phase !== 'commit') {
+        await entered;
+        controller.abort();
+        expect(observedSignal?.aborted).toBe(true);
+      }
       await expect(pending).resolves.toMatchObject(phase === 'commit'
-        ? { ok: true, result: { kind: 'execution_run.provider.revalidated', result: { ok: false } } }
+        ? { ok: false }
         : { ok: false, error: { code: 'provider_endpoint_unavailable' } });
+      if (phase === 'commit') expect(authorityReads).toBe(readsBeforeCommit);
       release();
     }
   } finally {

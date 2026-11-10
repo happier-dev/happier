@@ -4,7 +4,7 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createAttachedManagedRunFixture } from './startDaemonSessionControlRuntime.accountManagedRun.testkit';
 import { logger } from '@/ui/logger';
 
-it('shares requester observations within each Run authority read and rechecks authority after preparation', async () => {
+it('admits Run authority once, reuses it at commit, and refuses an explicitly withdrawn preparation', async () => {
   let runReads = 0;
   let withdrawDuringRunRead = () => {};
   const fixture = await createAttachedManagedRunFixture({ issuedRequester: true, coldProviderCatalog: true,
@@ -41,14 +41,11 @@ it('shares requester observations within each Run authority read and rechecks au
     expect(prepared, JSON.stringify({ prepared, source: fixture.sourceDiagnostics })).toMatchObject({
       ok: true, result: { kind: 'execution_run.provider.prepared', ok: true } });
     const after = readCounts();
-    // Thirteen Run witnesses each retain a fresh entry and post-RPC fence.
-    // The two Account-context acquisitions each share their nested read.
-    // Each purpose read shares only its requester entry observation with the
-    // nested Connected Account admission. The post-read fence remains fresh.
-    // Previously ten such entries repeated Profile reads (71 total).
+    // The initial Run witness captures occurrence and selection once. Later
+    // preparation phases consume it instead of repeating transport discovery.
     expect({ profile: after.profile - before.profile, accounts: after.accounts - before.accounts,
       catalog: after.catalog - before.catalog, history: after.history - before.history, runReads })
-      .toEqual({ profile: 61, accounts: 11, catalog: 1, history: 0, runReads: 13 });
+      .toEqual({ profile: 0, accounts: 6, catalog: 1, history: 0, runReads: 1 });
     const phases = diagnostics.mock.calls.flatMap(([marker, record]) =>
       marker === '[PROVIDER] Run preparation phase' ? [record] : []);
     // One bounded completion record per awaited preparation step, never per poll.
@@ -64,14 +61,19 @@ it('shares requester observations within each Run authority read and rechecks au
     for (const phase of phases) {
       expect(phase).toEqual(expect.objectContaining({ elapsedMs: expect.toSatisfy((value: number) => value >= 0) }));
     }
-    // Revocation during the RPC must defeat its otherwise-current Run answer,
-    // not just the next request after the preparation checkpoint has ended.
-    withdrawDuringRunRead = fixture.withdrawRequesterAdmission;
+    // Commit consumes the admitted Run, even if its discovery RPC is unavailable.
+    withdrawDuringRunRead = () => { throw new Error('Run authority must not be read again'); };
+    const committed = await fixture.dispatchRequest({ v: 1,
+      context: { token: 'a'.repeat(43), sessionId: 'parent-session', executionRunSnapshotId: snapshotId },
+      operation: { kind: 'execution_run.provider.revalidate_v1' } });
+    expect(committed).toMatchObject({ ok: true, result: { kind: 'execution_run.provider.revalidated', result: { ok: true } } });
+    expect(runReads).toBe(1);
+    fixture.withdrawRequesterAdmission();
     const revalidated = await fixture.dispatchRequest({ v: 1,
       context: { token: 'a'.repeat(43), sessionId: 'parent-session', executionRunSnapshotId: snapshotId },
       operation: { kind: 'execution_run.provider.revalidate_v1' } });
     expect(revalidated).toMatchObject({ ok: true, result: { kind: 'execution_run.provider.revalidated', result: { ok: false } } });
-    expect(runReads).toBeGreaterThan(13);
+    expect(runReads).toBe(1);
     expect(diagnostics.mock.calls.filter(([marker]) => marker === '[PROVIDER] Run preparation phase')).toHaveLength(14);
   } finally {
     diagnostics.mockRestore();

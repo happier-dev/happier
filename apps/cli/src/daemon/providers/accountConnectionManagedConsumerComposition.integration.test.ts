@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { createProviderManagedRuntimeBindingFingerprintV1 } from '@happier-dev/protocol/providers/contributions';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 import { projectProviderBrokerApplication } from '@/providers/broker/applicationProjection';
 import { createManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
@@ -11,7 +12,7 @@ import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/a
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createDaemonAccountConnectionManagedConsumerOpen } from './accountConnectionManagedConsumerComposition';
 
-it('composes the real owned Run source and withdraws it when its issued Account reader disappears', async () => {
+it('consumes the admitted Run source without rereading Account selection, and withdraws with its issuing lifetime', async () => {
   const fixture = await createManagedRunLaunchFixture({ physicalGateway: true });
   const gateway = fixture.gateway;
   if (!gateway || fixture.record.deployment.kind !== 'managedLocal') throw new Error('Expected real managed source');
@@ -42,11 +43,12 @@ it('composes the real owned Run source and withdraws it when its issued Account 
     resolveManagedPurposeBindingIntent: gateway.purposeBindingOwner.resolveBindingIntent,
   });
   if (!authorization.ok) { await fixture.cleanup(); throw new Error(authorization.error.code); }
+  const custody = createManagedProviderExplicitStartCustody({ machineId: fixture.machineId,
+    happyHomeDir: fixture.happyHomeDir, controller: gateway.controller });
   const open = createDaemonAccountConnectionManagedConsumerOpen({ homeId: 'home', accountId: 'account',
     machineId: () => fixture.machineId,
     isHomeCurrent: () => true,
-    custody: machineId => createManagedProviderExplicitStartCustody({ machineId,
-      happyHomeDir: fixture.happyHomeDir, controller: gateway.controller }),
+    custody: () => custody,
     withRegistry: async read => {
       const lease = await acquireRuntimeLease();
       try { return await read(resolveProviderContributionRegistryView(lease.registry.contributes,
@@ -57,13 +59,15 @@ it('composes the real owned Run source and withdraws it when its issued Account 
     openRemote: async (): Promise<never> => { throw new Error('A local source cannot contact another machine'); },
   });
   let issuedSnapshot: ActiveAccountSettingsSnapshot | null = fixture.snapshot;
+  let issuedCurrent = true;
+  let accountReads = 0;
   const context = { accountId: 'account', targetMachineId: fixture.machineId, expectedAccountSettingsScopeKey: fixture.snapshot.scopeKey!,
     runtimeBindingBasis: projectProviderRuntimeBindingBasis(authorization.attempt.authorization),
     agentId: fixture.agentId, modelId: authorization.attempt.authorization.binding.selection.model.id,
     // The issued Account catalog reader is the persistent-data boundary.
-    readAccountSettingsSnapshot: async () => issuedSnapshot,
+    readAccountSettingsSnapshot: async () => { accountReads++; return issuedSnapshot; },
     resolveManagedPurposeBindingIntent: gateway.purposeBindingOwner.resolveBindingIntent,
-    signal: new AbortController().signal, isCurrent: async () => true,
+    signal: new AbortController().signal, isCurrent: async () => issuedCurrent,
     request: { source, application, consumer: { kind: 'execution_run' as const, executionRunId: 'owned-run' },
       executionRunOccurrenceId: 'owned-occurrence', consumerMachineId: fixture.machineId } };
   let opened: Awaited<ReturnType<typeof open>> = null;
@@ -72,7 +76,10 @@ it('composes the real owned Run source and withdraws it when its issued Account 
     opened = await open(context);
     expect(opened).not.toBeNull();
     if (!opened) throw new Error('Expected real canonical source acquisition');
+    const readsAfterAdmission = accountReads;
     expect(await opened.revalidate()).toBe(true);
+    expect(await opened.revalidate()).toBe(true);
+    expect(accountReads).toBe(readsAfterAdmission);
     // Transported credentials may name the same Account without being the
     // daemon's token. The canonical cache scope is token-bound, not Account id.
     const issuedToken = `e30.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.issued`;
@@ -87,6 +94,18 @@ it('composes the real owned Run source and withdraws it when its issued Account 
     expect(await issuedOpened.revalidate()).toBe(true);
     await expect(open({ ...issuedContext, accountId: 'another-account' })).resolves.toBeNull();
     issuedSnapshot = null;
+    // An unavailable admission reader is not a new decision about this call.
+    expect(await issuedOpened.revalidate()).toBe(true);
+    const catalog = fixture.snapshot.providerConnectionsCatalog;
+    if (catalog?.status !== 'ready') throw new Error('Expected the admitted source catalog');
+    // A pushed source withdrawal refreshes the issued snapshot before comparing
+    // its source with the captured selection, without waiting for another turn.
+    issuedSnapshot = { ...fixture.snapshot, scopeKey: issuedScope, providerConnectionsCatalog: {
+      ...catalog, revision: catalog.revision + 1, catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+    } };
+    await custody.revalidateRetainedClaims();
+    expect(await issuedOpened.revalidate()).toBe(false);
+    issuedCurrent = false;
     expect(await opened.revalidate()).toBe(false);
     expect(await issuedOpened.revalidate()).toBe(false);
     await expect(open({ ...context, request: { ...context.request,

@@ -1704,10 +1704,17 @@ service startup or endpoint projection. Explicit Start, Session-demand startup
 and catalog startup share this owner. Runtime identity, local cancellation,
 resource cleanup and secret-acquisition boundaries remain enforced. Retained
 access and later requests keep their own admission boundaries.
-Account-connection broker open and admit prepare the actual Machine custodian
-and endpoint identities for presence discovery, then authorize once in the
-final transaction that signs or returns admission. A foreign initiator's
-custodian remains distinct from the requesting Account and its private hub.
+Account-connection broker open prepares the actual Machine custodian and
+endpoint identities for presence discovery, then authorizes in the final
+transaction that signs admission. A foreign initiator's custodian remains
+distinct from the requesting Account and its private hub. In development,
+Execution Run consumers reuse that signed admission for later carrier streams
+until the existing grant expiry; acquiring its replacement is a new admission.
+Home verifies the signed Run proof and current Account credential on subsequent
+admit calls without repeating Run-authority RPCs or Machine/presence discovery.
+New streams retain the carrier's expiry and authenticated endpoint checks;
+admitted streams keep their existing cancellation and release lifecycle.
+Session consumers retain their own open and admission boundaries.
 
 Connected Account/Pool Team sources have no Provider Connection gateway binding.
 In development source, they use the same consumer-access document and process

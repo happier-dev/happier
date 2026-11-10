@@ -6,6 +6,7 @@ import tweetnacl from 'tweetnacl';
 
 import {
   createProviderBrokerRouteGrantSigningInputV1,
+  ProviderConnectionIdSchema,
   type ProviderBrokerOpenResponseV1,
   type ProviderBrokerRouteGrantPayloadV1,
   type SignedProviderBrokerRouteGrantV1,
@@ -28,6 +29,7 @@ import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecyc
 import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 import { presentSessionTeamCredentialDenial } from '../../../../../ui/sources/components/sessions/presentation/sessionTeamCredentialDenialPresentation';
 import { createSessionBrokerApplicationEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
+import { createProviderBrokerRouteGrantSigningInputV2, type ProviderBrokerAccountOpenResponseV2, type SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
 const root = { keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('base64url') };
@@ -93,6 +95,55 @@ function brokerOpen(
 }
 
 describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
+  it('continues signed V2 Runs without Home opens until the existing stream-admission expiry', async () => {
+    let now = 200;
+    const sign = (issuedAt: number, expiresAt: number): SignedProviderBrokerRouteGrantV2 => {
+      const payload: SignedProviderBrokerRouteGrantV2['payload'] = {
+        v: 2, grantId: `run-grant-${issuedAt}`, aud: 'happier-provider-broker-route-v2',
+        issuedAt, expiresAt, homeId: 'home-1', accountId: 'account-worker', initiatorTokenEpoch: 0,
+        initiator: { accountId: 'account-worker', machineId: 'machine-worker', endpointId: initiatorEndpoint },
+        target: { custodianAccountId: 'account-worker', machineId: 'machine-broker', endpointId: targetEndpoint },
+        source: { kind: 'account_connection', connectionId: ProviderConnectionIdSchema.parse('personal-run'),
+          expectedConnectionSecurityFingerprint: 'connection-security:v1:test',
+          expectedManagedRuntimeBindingFingerprint: 'managed-runtime-binding:v1:test' },
+        consumer: { kind: 'execution_run', executionRunId: 'run-1' }, executionRunOccurrenceId: 'occurrence-1',
+        application: authority().payload.application,
+      };
+      return { payload, signature: { alg: 'Ed25519', keyId: root.keyId,
+        valueBase64Url: Buffer.from(tweetnacl.sign.detached(Buffer.from(createProviderBrokerRouteGrantSigningInputV2(payload)), key.secretKey)).toString('base64url') } };
+    };
+    const opened = (signed: SignedProviderBrokerRouteGrantV2): Extract<ProviderBrokerAccountOpenResponseV2, { ok: true }> => ({
+      ok: true, authority: signed, target: { custodianAccountId: 'account-worker', brokerMachineId: 'machine-broker',
+        endpointId: targetEndpoint, endpointRevision: 7, endpoint: { endpointId: targetEndpoint } },
+    });
+    const initial = sign(100, 10_000);
+    const refreshed = sign(10_000, 20_000);
+    const refreshBrokerOpen = vi.fn(async () => opened(now < 10_000 ? initial : refreshed));
+    const openHttpTunnel = vi.fn<DaemonMachineIrohRuntime['openHttpTunnel']>(async () => ({
+      localPort: 41_001, localCapability: 'c'.repeat(64), remoteEndpointId: targetEndpoint,
+      observedPath: 'direct', close: async () => undefined,
+    }));
+    const open = createProviderBrokerMachineCarrierTunnelOpen({
+      homeId: 'home-1', accountId: 'account-worker', localMachineId: 'machine-worker',
+      runtime: { endpoint: { endpointId: initiatorEndpoint }, openHttpTunnel },
+      resolveTrustRoots: () => [root], nowMs: () => now,
+    });
+    const tunnel = await open({ brokerOpen: opened(initial), refreshBrokerOpen });
+    const provider = openHttpTunnel.mock.calls[0]?.[0].handshakeProvider;
+    expect(refreshBrokerOpen).toHaveBeenCalledTimes(0);
+    for (const _stream of [1, 2]) {
+      await expect(provider?.()).resolves.toMatchObject({ authority: initial });
+    }
+    expect(refreshBrokerOpen).toHaveBeenCalledTimes(0);
+    now = 10_000;
+    await expect(provider?.()).resolves.toMatchObject({ authority: refreshed });
+    expect(refreshBrokerOpen).toHaveBeenCalledOnce();
+    await expect(provider?.()).resolves.toMatchObject({ authority: refreshed });
+    expect(refreshBrokerOpen).toHaveBeenCalledOnce();
+    await tunnel.close();
+    await expect(provider?.()).rejects.toMatchObject({ code: 'broker_consumer_closed' });
+  });
+
   it('keeps pending remote retirement in native shutdown custody without redial', async () => {
     let opened = 0;
     let rejectResponse!: (error: Error) => void;

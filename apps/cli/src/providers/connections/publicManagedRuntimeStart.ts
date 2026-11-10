@@ -379,17 +379,18 @@ export function createManagedProviderExplicitStartCustody(input: Readonly<{
         signal: request.signal,
       });
       try {
-        const projection = await start(request);
+        // Home admits the consumer before startup can materialize credentials
+        // or physical custody. The same callback remains the retained wake owner.
+        request.signal.throwIfAborted();
         const retainedCurrent = request.revalidateRetainedCurrentness
           ? await request.revalidateRetainedCurrentness(request.signal)
           : true;
         if (!request.signal.aborted && !retainedCurrent) {
-          if (!await retire(request)) {
-            await Promise.resolve(projection.cleanup()).catch(() => undefined);
-          }
+          await retire(request);
           throw createProviderErrorV1('provider_authorization_changed', { machineId: input.machineId });
         }
-        return projection;
+        request.signal.throwIfAborted();
+        return await start(request);
       } catch (error) {
         const providerError = ProviderErrorV1Schema.safeParse(error);
         try {

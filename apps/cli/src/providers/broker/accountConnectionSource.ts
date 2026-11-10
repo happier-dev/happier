@@ -60,8 +60,7 @@ export function createAccountConnectionManagedConsumerSourceOpen(input: AccountC
   (request: AccountConnectionManagedConsumerRequest & Readonly<{ signal: AbortSignal }>) => Promise<ProviderBrokerAccountConnectionAccess | null> {
   return async ({ signal, ...payload }) => {
     const captured = input.getAccountSettingsSnapshot();
-    if (!captured?.scopeKey || captured.scopeKey !== input.expectedAccountSettingsScopeKey
-      || !await input.admitConsumer(payload, signal)) return null;
+    if (!captured?.scopeKey || captured.scopeKey !== input.expectedAccountSettingsScopeKey) return null;
     const scopeKey = captured.scopeKey;
     const catalog = captured.providerConnectionsCatalog?.status === 'ready'
       ? captured.providerConnectionsCatalog : await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: scopeKey });
@@ -149,8 +148,8 @@ export function createAccountConnectionManagedConsumerSourceOpen(input: AccountC
     return {
       access: opened.projection.access,
       revalidate: async (currentSignal = signal) => {
-        if (currentSignal.aborted || !await input.admitConsumer(payload, currentSignal)) return false;
-        return await opened.revalidateAuthorization(currentSignal);
+        return !currentSignal.aborted && input.getAccountSettingsSnapshot()?.scopeKey === scopeKey
+          && opened.isAuthorizationCurrent();
       },
       cleanup: async () => await opened.projection.cleanup(),
       retire: async () => { await opened.retire(); await opened.projection.cleanup(); },

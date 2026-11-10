@@ -221,16 +221,27 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
         throw error;
       }
     };
-    // Home work can outlive native's first-stream custody window. Complete
-    // the first refresh before dial, then consume that exact witness once.
-    // Later streams still acquire their own fresh authority.
-    let firstHandshake = refreshBrokerOpen ? await refreshHandshake() : null;
+    const admittedRun = payload.v === 2 && payload.consumer.kind === 'execution_run';
+    // A signed Run open owns its admission until the existing grant expiry.
+    // Sessions still refresh before dial and for each later carrier stream.
+    let firstHandshake = admittedRun ? handshake : refreshBrokerOpen ? await refreshHandshake() : null;
     const transportInput: ProviderBrokerMachineCarrierTransportOpenInput = {
       alpn: MACHINE_ALPN,
       remoteEndpointId: payload.target.endpointId,
       flow: 'provider_broker',
       handshake: firstHandshake ?? handshake,
       handshakeProvider: async () => {
+        if (admittedRun && firstHandshake) {
+          if (releasing) throw new MachineCarrierError('broker_consumer_closed', 'Provider broker consumer has been withdrawn.');
+          signal?.throwIfAborted();
+          const verified = verifyAuthority(firstHandshake.authority, (input.nowMs ?? Date.now)());
+          if (verified.valid) return firstHandshake;
+          if (verified.reasonCode !== 'grant_expired') {
+            throw new MachineCarrierError(verified.reasonCode, 'Provider broker authority is no longer current.');
+          }
+          firstHandshake = await refreshHandshake();
+          return firstHandshake;
+        }
         if (!firstHandshake) return refreshHandshake();
         const first = firstHandshake;
         firstHandshake = null;

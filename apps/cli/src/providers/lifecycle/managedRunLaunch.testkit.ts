@@ -73,7 +73,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
     engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
     hostAccess: { required: [{ id: 'agent-process', capability: 'process',
       reason: 'Admit the external Agent Provider environment through the real host boundary',
-      scope: { envKeys: ['RUN_PROVIDER_TOKEN'], executables: [{ kind: 'systemTool', id: 'fixture-runtime' }] } }], optional: [] },
+      scope: { envKeys: ['RUN_PROVIDER_TOKEN', 'RUN_PROVIDER_URL'], executables: [{ kind: 'systemTool', id: 'fixture-runtime' }] } }], optional: [] },
     contributes: {
       ...(localAccountServices.length ? { connectedAccountDescriptors: localAccountServices.map(id => ({ id, title: 'Source account',
         authentication: { defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
@@ -93,7 +93,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
           ...(input.supportsReasoningEffort !== undefined ? { supportsReasoningEffort: input.supportsReasoningEffort } : {}),
           credentialSupport: { supportsNoAuth: true, apiKeyTransports: [{ protocol: 'openai-responses',
             destination: { kind: 'httpHeader', names: 'anyValidated', formats: input.acceptedCredentialFormats ?? [input.runtimeCredentialHeader?.format ?? 'bearer'] } }] },
-          authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['RUN_PROVIDER_TOKEN'] },
+          authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['RUN_PROVIDER_TOKEN', 'RUN_PROVIDER_URL'] },
           materialization: 'spawnEnv', applyPolicy: 'restart_session', supportsFreeformModelIds: input.supportsFreeformModelIds ?? false } }],
       ...(gateway ? {} : { providers: [{ v: 1, id: 'gateway', name: 'Gateway', kind: input.modelLoad ? 'local' : 'aggregator',
         ...(input.modelLoad ? { modelLoad: input.modelLoad } : {}),
@@ -115,7 +115,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
   }), 'utf8');
   await writeFile(join(pluginRoot, 'agentRuntime.mjs'), `import { createFiniteExecutionRunHostRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
   async function requestEndpoint(request, input, signal) {
-    const endpoint = request.providerBinding?.upstream.normalizedUrl;
+    const endpoint = request.launchEnvironment?.values.RUN_PROVIDER_URL;
     if (!endpoint) return;
     const response = await fetch((endpoint.endsWith('/') ? endpoint.slice(0, -1) : endpoint) + '/responses', { method: 'POST',
       headers: { [${JSON.stringify(input.runtimeCredentialHeader?.name ?? 'authorization')}]: ${input.runtimeCredentialHeader?.format === 'raw'
@@ -174,7 +174,10 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
       prepare() { return { v: 1, materialization: 'spawnEnv' }; },
       async materialize(input) { if (input.credential.kind !== 'apiKey') throw new Error('Expected consumer bearer');
         ${input.materializationUrl ? `await fetch(${JSON.stringify(input.materializationUrl)});` : ''}
-        return { v: 1, kind: 'spawnEnv', env: [{ name: 'RUN_PROVIDER_TOKEN', value: input.credential.value, source: 'provider' }] }; }
+        return { v: 1, kind: 'spawnEnv', env: [
+          { name: 'RUN_PROVIDER_TOKEN', value: input.credential.value, source: 'provider' },
+          { name: 'RUN_PROVIDER_URL', value: input.binding.endpoint.normalizedUrl, source: 'provider' }
+        ] }; }
     } });
   }`, 'utf8');
   const distribution = await createLocalPathPluginDistributionIdentity(pluginRoot);

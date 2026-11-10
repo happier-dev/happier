@@ -59,7 +59,7 @@ export async function acquireBrokerSourceOperation(input: Readonly<{
   let authorizationCurrent = true;
   // Asserted so TypeScript does not narrow this closure-written local to 'current'.
   let lastSourceRead = 'current' as 'current' | 'stale' | 'unknown';
-  const isAuthorizationCurrent = (): boolean => authorizationCurrent;
+  const isAuthorizationCurrent = (): boolean => authorizationCurrent && !retired && !retireInFlight;
   const revalidateAuthorization = async (
     signal: AbortSignal = input.callerSignal,
   ): Promise<boolean> => {
@@ -129,7 +129,12 @@ export async function acquireBrokerSourceOperation(input: Readonly<{
               && !providerBrokerRetainedCurrentnessAffected(invalidation, input.retainedCurrentnessScope)) {
               return authorizationCurrent;
             }
-            return await input.isSourceCurrent(signal) && await revalidateOperationAuthorization(signal);
+            // Refresh the issued Account snapshot before comparing its source
+            // with the admitted selection. A cancelled read is not withdrawal.
+            const current = await revalidateOperationAuthorization(signal) && await input.isSourceCurrent(signal);
+            if (signal.aborted) return false;
+            authorizationCurrent = authorizationCurrent && current;
+            return isAuthorizationCurrent();
           },
         }
       : {}),
