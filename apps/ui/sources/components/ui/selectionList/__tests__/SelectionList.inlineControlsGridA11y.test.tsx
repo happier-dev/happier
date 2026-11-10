@@ -24,6 +24,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { findAllHostTestInstances, renderScreen } from '@/dev/testkit';
 
 import type { SelectionListProps, SelectionListStep } from '../_types';
+import { SelectionList } from '../SelectionList';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -88,7 +89,6 @@ function ancestorWithRole(node: unknown, role: string): boolean {
 
 describe('SelectionList inline row controls require the grid ARIA pattern', () => {
     it('keeps the listbox role set exactly when no option carries expandedContent', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps(makeStep(false), false)} />);
 
         const body = screen.findByTestId('sl:body');
@@ -115,7 +115,6 @@ describe('SelectionList inline row controls require the grid ARIA pattern', () =
     });
 
     it('emits the whole grid role set when the caller declares inline row controls', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps(makeStep(true), true)} />);
 
         // Container: grid, never listbox — a listbox owning a tab bar is invalid.
