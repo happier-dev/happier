@@ -204,9 +204,10 @@ export function createBundledRealtimeProviderRuntime(
     kind: string,
     reason: string,
     diagnosticReason?: VoiceRuntimeFailureDiagnosticReason,
+    providerCode?: string,
   ): void => {
     startOutcomeNamed = true;
-    recordVoiceRuntimeFailure(providerId, outcome, kind, reason, diagnosticReason);
+    recordVoiceRuntimeFailure(providerId, outcome, kind, reason, diagnosticReason, providerCode);
   };
   /**
    * Guards already recorded for the current Start, keyed by attempt and guard.
@@ -833,11 +834,12 @@ export function createBundledRealtimeProviderRuntime(
         }
         host.machine.transitionToDisconnected(controlSessionId, providerId, declineError, attemptId);
       },
-      failed: ({ controlSessionId, attemptId, code, diagnosticReason }: Readonly<{
+      failed: ({ controlSessionId, attemptId, code, diagnosticReason, providerCode }: Readonly<{
         controlSessionId: string;
         attemptId: number;
         code: string;
         diagnosticReason?: VoiceRuntimeFailureDiagnosticReason;
+        providerCode?: string;
       }>) => {
         clearHostedLeaseNotices();
         activeHostedLease = null;
@@ -845,7 +847,7 @@ export function createBundledRealtimeProviderRuntime(
         closeLevelWriters();
         retireUnpreparedResourceAttempt(attemptId);
         const kind = resolveVoiceMachineErrorKind(code);
-        recordMachinePortFailure('failed', kind, code, diagnosticReason);
+        recordMachinePortFailure('failed', kind, code, diagnosticReason, providerCode);
         host.machine.setError(
           controlSessionId,
           providerId,
@@ -2037,7 +2039,12 @@ export function createBundledRealtimeProviderRuntime(
       return {
         hostAuthoredContext,
         sendContextualUpdate: (update) => { sendContextEvents(config.encodeContextUpdate(update)); },
-        sendTextMessage: (text) => { sendContextEvents(config.encodeTextTurn(text)); },
+        sendTextMessage: (text, context) => {
+          sendContextEvents([
+            ...(context === undefined ? [] : config.encodeContextUpdate(context)),
+            ...config.encodeTextTurn(text),
+          ]);
+        },
       };
     },
   });

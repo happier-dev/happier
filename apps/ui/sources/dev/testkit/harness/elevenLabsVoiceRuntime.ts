@@ -24,6 +24,7 @@ export async function withGeneratedElevenLabsVoiceRuntime(
     const { PendingLocalIdSchema } = await import('@happier-dev/protocol/sessions/pending/pendingLocalId');
     const { PendingRequestedActionV1Schema } = await import('@happier-dev/protocol/sessions/pending/pendingRequestedActionV1');
     const { SessionStoredMessageContentSchema } = await import('@happier-dev/protocol/sessions/messages/sessionStoredMessageContent');
+    const { SessionMessageRoleSchema } = await import('@happier-dev/protocol/sessions/messages/sessionMessageRole');
     const { serveAccountHomes } = await import('./actionHomesHttpHarness');
     const { createSessionMetadataHttpBoundary } = await import('./sessionMetadataHttpBoundary');
     const { createSessionReadBatchHttpBoundary } = await import('./sessionReadBatchHttpBoundary');
@@ -44,6 +45,7 @@ export async function withGeneratedElevenLabsVoiceRuntime(
     const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(value => value.pluginId === 'happier.voice.elevenlabs');
     if (!entry) throw new Error('Missing generated ElevenLabs contribution');
     const metadata = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
+    const transcriptAcknowledgements = new Map<string, { id: string; seq: number; localId: string; createdAt: number }>();
     const features = createRootLayoutFeaturesResponse();
     features.capabilities.session.pendingInput = { protocolVersion: 1 };
     const home = await serveAccountHomes({
@@ -74,6 +76,20 @@ export async function withGeneratedElevenLabsVoiceRuntime(
                 return Response.json({ requestedAction, pending: { localId, deliveryStatus: { status: 'external_handoff' } } });
             }
             if (request.method === 'POST' && /\/delivery\/handled$/.test(request.path)) return Response.json({});
+            if (request.method === 'POST' && /\/messages$/.test(request.path)) {
+                const body = request.body;
+                if (!body || typeof body !== 'object' || !('localId' in body) || typeof body.localId !== 'string'
+                    || !('content' in body) || !('messageRole' in body)) {
+                    throw new Error('Expected canonical transcript message write');
+                }
+                SessionStoredMessageContentSchema.parse(body.content);
+                SessionMessageRoleSchema.parse(body.messageRole);
+                const existing = transcriptAcknowledgements.get(body.localId);
+                const message = existing ?? { id: `qa-transcript-${transcriptAcknowledgements.size + 1}`,
+                    seq: transcriptAcknowledgements.size + 1, localId: body.localId, createdAt: Date.now() };
+                transcriptAcknowledgements.set(body.localId, message);
+                return Response.json({ didWrite: !existing, didUpdate: !!existing, message });
+            }
             if (/\/messages$/.test(request.path)) return Response.json({ messages: [], hasMore: false });
             const init = { method: request.method, headers: request.headers,
                 body: request.body === undefined ? undefined : JSON.stringify(request.body) };

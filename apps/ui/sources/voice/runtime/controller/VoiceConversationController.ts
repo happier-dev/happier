@@ -88,6 +88,7 @@ export type VoiceConversationControllerMachinePort = Readonly<{
     attemptId: number;
     code: string;
     diagnosticReason?: VoiceRuntimeFailureDiagnosticReason;
+    providerCode?: string;
   }>): void;
 }>;
 
@@ -459,17 +460,20 @@ export function createVoiceConversationController(
     });
   };
 
-  const claimAttemptOwnership = async (attempt: Attempt): Promise<void> => {
+  const claimAttemptOwnership = (attempt: Attempt): Promise<void> | void => {
     const previous = current;
-    if (previous) {
-      previous.abortController.abort();
-      await closeAttempt(previous, { code: 'replaced' });
-      if (current === previous) current = null;
+    if (!previous) {
+      current = attempt;
+      return;
     }
-    if (sequence === attempt.id) current = attempt;
+    previous.abortController.abort();
+    return closeAttempt(previous, { code: 'replaced' }).then(() => {
+      if (current === previous) current = null;
+      if (sequence === attempt.id) current = attempt;
+    });
   };
 
-  const settleReconnectFailure = async (attempt: Attempt, code: string): Promise<void> => {
+  const settleReconnectFailure = async (attempt: Attempt, code: string, providerCode?: string): Promise<void> => {
     if (!owns(attempt) || attempt.terminalSettled) return;
     await closeAttempt(attempt, { code: 'error', detail: code });
     if (!owns(attempt) || attempt.terminalSettled) return;
@@ -479,6 +483,7 @@ export function createVoiceConversationController(
       controlSessionId: attempt.controlSessionId,
       attemptId: attempt.id,
       code,
+      ...(providerCode === undefined ? {} : { providerCode }),
     });
   };
 
@@ -742,7 +747,7 @@ export function createVoiceConversationController(
           }
           if (event.type === 'provider_error') {
             if (event.terminal) {
-              await settleReconnectFailure(attempt, event.code);
+              await settleReconnectFailure(attempt, event.code, event.providerCode);
               return;
             }
             recordVoiceRuntimeFailure(
@@ -750,6 +755,8 @@ export function createVoiceConversationController(
               'provider_error',
               'provider_error',
               event.code,
+              undefined,
+              event.providerCode,
             );
             await deps.onCanonicalEvent(event, attempt.abortController.signal);
             continue;
@@ -929,7 +936,8 @@ export function createVoiceConversationController(
       providerPreparationReleasePromise: null,
       connectionSequence: 0,
     };
-    await claimAttemptOwnership(attempt);
+    const claiming = claimAttemptOwnership(attempt);
+    if (claiming) await claiming;
 
     try {
       if (!owns(attempt)) {

@@ -494,25 +494,33 @@ describe('VoiceConversationController', () => {
 
   it('retains ElevenLabs user and assistant SDK messages through the generated runtime', async () => {
     const { withGeneratedElevenLabsVoiceRuntime } = await import('@/dev/testkit/harness/elevenLabsVoiceRuntime');
+    const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
+    const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
     elevenLabsSdk.startSession.mockResolvedValue(createElevenLabsSdkSession('elevenlabs-transcript'));
     await withGeneratedElevenLabsVoiceRuntime(async ({ adapter }) => {
+      // Exercise actual direct-media carrier publication, not the harness's
+      // pre-admitted binding used by its unrelated context consumers.
+      voiceSessionBindingStore.getState().unbind('qa-history');
       await adapter.start({ sessionId: '', requestedTargetSessionAddress: null });
+      expect(voiceSessionBindingStore.getState().getByControlSessionId(adapter.getSnapshot().sessionId ?? ''))
+        .toMatchObject({ conversationSessionId: 'qa-history', lifetime: 'runtime_attempt' });
       const callbacks: ElevenLabsSdkStartOptions = elevenLabsSdk.startSession.mock.calls[0]?.[0];
       // @elevenlabs/client 1.18.0 BaseConversation.handleUserTranscript /
       // handleAgentResponse project these exact payloads from the provider wire.
       callbacks.onMessage?.({ source: 'user', role: 'user', event_id: 42, message: 'What is two plus two?' });
       callbacks.onMessage?.({ source: 'ai', role: 'agent', event_id: 43, message: 'Two plus two is four.' });
-      await waitForTestEvent(storage.subscribe, () => readCanonicalVoiceTranscriptSnapshot('qa-history'),
-        entries => entries.some(entry => entry.role === 'assistant' && entry.text === 'Two plus two is four.'));
-      expect(readCanonicalVoiceTranscriptSnapshot('qa-history')).toEqual([
-        expect.objectContaining({ role: 'user', text: 'What is two plus two?' }),
-        expect.objectContaining({ role: 'assistant', text: 'Two plus two is four.' }),
-      ]);
+      const retained = () => readStoredSessionMessages(storage.getState(), 'qa-history');
+      await waitForTestEvent(storage.subscribe, retained,
+        entries => entries.some(entry => entry.kind === 'agent-text' && entry.text === 'Two plus two is four.'));
+      expect(retained()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'user-text', text: 'What is two plus two?' }),
+        expect.objectContaining({ kind: 'agent-text', text: 'Two plus two is four.' }),
+      ]));
       await adapter.stop({ sessionId: adapter.getSnapshot().sessionId ?? '' });
-      expect(readCanonicalVoiceTranscriptSnapshot('qa-history')).toEqual([
-        expect.objectContaining({ role: 'user', text: 'What is two plus two?' }),
-        expect.objectContaining({ role: 'assistant', text: 'Two plus two is four.' }),
-      ]);
+      expect(retained()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'user-text', text: 'What is two plus two?' }),
+        expect.objectContaining({ kind: 'agent-text', text: 'Two plus two is four.' }),
+      ]));
     });
   });
 
@@ -1664,6 +1672,58 @@ describe('VoiceConversationController', () => {
       composed.hostLease.revoke();
       await environment.dispose();
       browser.restore();
+    }
+  });
+
+  it.each(['internal_error', 'invalid_request_error', 'permission_denied'])(
+    'settles a Grok request failure %s with diagnostic code, retained question and canonical retry recovery', async (providerCode) => {
+    const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
+    const { resolveVoiceAttemptRecoveryAvailable } = await import('@/components/voice/attempt/voiceAttemptRecovery');
+    const { resolveVoiceSurfaceRecovery } = await import('@/components/voice/surface/resolveVoiceSurfaceRecovery');
+    const environment = await createXaiVoiceRuntimeEnvironment();
+    await environment.installSettings(true);
+    const composed = await environment.createRuntime();
+    try {
+      await composed.runtime.adapter.start({ sessionId: '', requestedTargetSessionAddress: null });
+      const socket = environment.physicalSockets[0]!;
+      socket.emit('message', { data: JSON.stringify({
+        type: 'conversation.item.input_audio_transcription.completed', event_id: 'grok-question',
+        item_id: 'question', transcript: 'What is the capital of Japan?',
+      }) });
+      await waitForTestEvent(storage.subscribe, () => readCanonicalVoiceTranscriptSnapshot(environment.historySessionId),
+        entries => entries.some(entry => entry.text === 'What is the capital of Japan?'));
+      log.clear();
+      socket.emit('message', { data: JSON.stringify({
+        type: 'error', event_id: 'grok-request-failed',
+        error: { code: providerCode, message: 'private-provider-detail' },
+      }) });
+      await waitForTestEvent(composed.runtime.adapter.subscribe!, () => composed.runtime.adapter.getSnapshot(),
+        snapshot => snapshot.errorMessage === 'provider_response_invalid');
+      const snapshot = composed.runtime.adapter.getSnapshot();
+      expect(snapshot).toMatchObject({
+        status: 'disconnected', errorCode: 'provider_error', errorMessage: 'provider_response_invalid',
+        errorRecoveryAction: 'retry', canStop: false,
+      });
+      expect(resolveVoiceSurfaceState(snapshot)).toBe('error');
+      expect(resolveVoiceAttemptRecoveryAvailable(resolveVoiceSurfaceRecovery(snapshot.errorRecoveryAction), {
+        connectRecoveryTarget: { kind: 'unavailable' }, runtimeRecoveryTarget: null,
+        attemptSessionId: snapshot.sessionId, startSessionId: null, globalStartAuthorized: true,
+      })).toBe(true);
+      expect(composed.getController().getOwnedAttemptId()).toBeNull();
+      expect(environment.physicalSockets).toHaveLength(1);
+      await waitForTestEvent(XaiVoiceWebSocket.subscribe, () => socket.readyState,
+        state => state === XaiVoiceWebSocket.CLOSED);
+      const retained = () => readStoredSessionMessages(storage.getState(), environment.historySessionId);
+      await waitForTestEvent(storage.subscribe, retained,
+        entries => entries.some(entry => entry.kind === 'user-text' && entry.text === 'What is the capital of Japan?'));
+      expect(retained()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'user-text', text: 'What is the capital of Japan?' }),
+      ]));
+      expect(log.getLogs().join('\n')).toContain(`"providerCode":"${providerCode}"`);
+      expect(log.getLogs().join('\n')).not.toContain('private-provider-detail');
+    } finally {
+      await composed.dispose();
+      await environment.dispose();
     }
   });
 
