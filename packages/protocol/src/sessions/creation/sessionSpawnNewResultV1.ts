@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { OperationUpdateRequiredV1Schema } from '../../compat/operationUpdateRequiredV1.js';
 import { ProviderErrorV1Schema } from '../../providers/errors.js';
@@ -164,6 +165,8 @@ export const SessionSpawnNewResultV1Schema = lazyZodSchema(() => z.union([
     type: z.literal('error'),
     code: SessionSpawnNewErrorCodeV1Schema,
     retryable: z.boolean(),
+    /** Content-free lower-layer cause, retaining its original admission phase. */
+    failureCause: z.optional(ActionFailureCauseV1Schema),
     agentId: z.optional(z.string().check(z.refine((value) => value.trim().length > 0))),
     providerError: z.optional(ProviderErrorV1Schema),
     terminalHostError: z.optional(TerminalHostUnavailableSpawnErrorDetailSchema),

@@ -443,12 +443,15 @@ describe('Session directory preflight through the Action and Machine transport o
         { errorCode: RPC_ERROR_CODES.FORBIDDEN, code: 'permission_denied' },
     ] as const)('retains the permanent directory refusal $errorCode through the real RPC binding', async ({ errorCode, code }) => {
         boundary.resetRequests();
+        const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error',
+            errorCode: 'machine_unavailable', httpStatus: 403 };
         const home = await boundary.addHome('https://spawn-preflight-refusal.test', 'spawn-account');
         const account = await captureLazyActionAccountContext(home.id);
         boundary.setRpcAckResponder(async request => {
             expect(request.method).toBe(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT);
             // A typed permanent refusal takes precedence over the bare Socket.IO timeout message.
-            return { ok: false, errorCode, error: 'operation has timed out' };
+            return { ok: false, errorCode, error: 'operation has timed out',
+                ...(errorCode === RPC_ERROR_CODES.FORBIDDEN ? { failureCause } : {}) };
         });
         const input = { creationKey: SessionCreationKeyV1Schema.parse('preflight-refusal'), executionTarget: { serverId: home.id, machineId: 'machine-1' },
             directory: { kind: 'path' as const, path: '/workspace/project' },
@@ -460,6 +463,7 @@ describe('Session directory preflight through the Action and Machine transport o
             const result = await sessionSpawnNewAction.executeSessionSpawnNewAction(input,
                 { surface: 'ui', authority: 'present_user' }, executor);
             expect(result).toMatchObject({ ok: true, result: { type: 'error', code, retryable: false } });
+            if (errorCode === RPC_ERROR_CODES.FORBIDDEN) expect(result).toMatchObject({ result: { failureCause } });
             expect(new Set(boundary.requests.map(request => request.method))).toEqual(new Set([RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT]));
             expect(JSON.stringify(result)).not.toContain('operation has timed out');
             if (!result.ok) throw new Error('Expected a typed Session creation refusal');
@@ -482,16 +486,7 @@ type FailureMessageKeyResolver = (result: Readonly<{
     error: string;
 }>) => 'newSession.actionMethodUnavailable' | 'newSession.failedToStart';
 
-type ResultFailureMessageKeyResolver = (
-    result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
-) =>
-    | 'newSession.launchStillPendingBody'
-    | 'newSession.daemonRpcUnavailableBody'
-    | 'newSession.failedToStart'
-    | 'session.access.repairBody'
-    | 'session.access.preparationKeyUnavailable'
-    | 'teams.policy.externalSharingDisabled'
-    | 'teams.policy.externalSharingAdmins';
+type ResultFailureMessageKeyResolver = typeof import('./sessionSpawnFailurePresentation').resolveSessionSpawnNewResultFailureMessageKey;
 
 describe('session.spawn_new Action failure presentation', () => {
     it('presents only the closed Account currentness cause without copying launch prose', () => {
@@ -643,6 +638,11 @@ describe('session.spawn_new Action failure presentation', () => {
                 resolveSessionSpawnNewResultFailureMessageKey?: ResultFailureMessageKeyResolver;
             }>
         ).resolveSessionSpawnNewResultFailureMessageKey;
+
+        expect(resolveResultFailureMessageKey?.({ type: 'error', code: 'incompatible_target', retryable: false,
+            incompatibleTarget: { reason: 'checkout_unavailable' } })).toBe('newSession.checkoutUnavailableBody');
+        expect(resolveResultFailureMessageKey?.({ type: 'error', code: 'incompatible_target', retryable: false,
+            incompatibleTarget: { reason: 'requester_credentials_unavailable' } })).toBe('newSession.requesterCredentialsUnavailableBody');
 
         expect(resolveResultFailureMessageKey?.({
             type: 'pending',

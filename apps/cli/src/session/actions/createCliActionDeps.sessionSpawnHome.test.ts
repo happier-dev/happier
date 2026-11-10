@@ -17,6 +17,26 @@ import * as machineRpc from '@/session/transport/rpc/machineRpc';
 
 describe('Session spawn Home admission', () => {
   afterEach(() => vi.restoreAllMocks());
+  it('retains machine admission cause on a refused /tmp directory spawn', async () => {
+    const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error',
+      errorCode: 'machine_unavailable', httpStatus: 403 };
+    // Home Machine RPC is the transport boundary; creation decoding and projection stay real.
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockResolvedValue({
+      error: 'Forbidden', errorCode: 'RPC_FORBIDDEN', failureCause,
+    });
+    const deps = createCliActionDeps({ token: 'fixture-token',
+      credentials: { token: 'fixture-token', encryption: null }, sessionId: '', mode: 'plain', ctx: null,
+      serverId: 'local-profile', serverIdentityId: 'portable-home', serverHttpBaseUrl: 'https://home.test' });
+    const input = SessionSpawnNewInputV2Schema.parse({
+      executionTarget: { serverId: 'portable-home', machineId: 'target-machine' },
+      directory: { kind: 'path', path: '/tmp' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'worker' } },
+    });
+    const preflight = deps.sessionSpawnNewDirectoryApprovalPreflight;
+    if (!preflight) throw new Error('Missing Session directory preflight');
+    await expect(preflight({ input })).resolves.toEqual({ type: 'error',
+      result: { type: 'error', code: 'permission_denied', retryable: false, failureCause } });
+  });
   it('keeps an admitted requester directory preflight inside its receiving Machine', async () => {
     // Receiving authorization is the Home/native-ingress boundary; registration,
     // transport selection, parsing and filesystem preparation remain real.

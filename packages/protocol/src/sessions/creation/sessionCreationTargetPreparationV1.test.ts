@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readMachineActionRpcResult } from '../../actions/executor/actionFailureEnvelope.js';
 import { deriveSessionCreationTagV1 } from './sessionCreationIdentityV1.js';
+import { SessionSpawnNewResultV1Schema } from './sessionSpawnNewResultV1.js';
 
 import {
   SessionCreationTargetPreparationRequestV1Schema,
@@ -9,6 +10,42 @@ import {
 } from './sessionCreationTargetPreparationV1.js';
 
 describe('Session creation target preparation V1', () => {
+  it.each(['raw', 'transport'] as const)('preserves machine admission cause through %s path-directory preflight', shape => {
+    const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error',
+      errorCode: 'machine_unavailable', httpStatus: 403 };
+    const raw = { error: 'Forbidden', errorCode: 'RPC_FORBIDDEN', failureCause };
+    let refusal: unknown = raw;
+    if (shape === 'transport') {
+      try { readMachineActionRpcResult(raw); } catch (error) { refusal = error; }
+    }
+    const prepared = readSessionCreationTargetPreparationResultV1(refusal);
+    expect(prepared).toEqual({ ok: false, result: { type: 'error', code: 'permission_denied',
+      retryable: false, failureCause } });
+    if (!prepared.ok) expect(SessionSpawnNewResultV1Schema.parse(prepared.result)).toEqual(prepared.result);
+  });
+
+  it.each([401, 403])('preserves an HTTP %s admission cause without exposing transport details', status => {
+    const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error',
+      errorCode: 'machine_unavailable', httpStatus: status };
+    const error = Object.assign(new Error('private transport detail'), {
+      response: { status }, failureCause,
+    });
+    expect(readSessionCreationTargetPreparationResultV1(error)).toEqual({ ok: false,
+      result: { type: 'error', code: 'permission_denied', retryable: false, failureCause } });
+  });
+
+  it('keeps legacy forbidden replies readable and rejects arbitrary cause contents', () => {
+    const legacy = { type: 'error', code: 'permission_denied', retryable: false };
+    expect(SessionSpawnNewResultV1Schema.parse(legacy)).toEqual(legacy);
+    expect(readSessionCreationTargetPreparationResultV1({ error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' }))
+      .toEqual({ ok: false, result: legacy });
+    const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error',
+      errorCode: 'machine_unavailable', httpStatus: 403, message: 'private transport detail' };
+    expect(SessionSpawnNewResultV1Schema.safeParse({ ...legacy, failureCause }).success).toBe(false);
+    expect(readSessionCreationTargetPreparationResultV1({ error: 'Forbidden', errorCode: 'RPC_FORBIDDEN', failureCause }))
+      .toEqual({ ok: false, result: legacy });
+  });
+
   it('retains the directory preflight refusal through the public creation result', () => {
     expect(readSessionCreationTargetPreparationResultV1({ ok: false, code: 'invalid_directory' }))
       .toMatchObject({ ok: false, result: { type: 'error', code: 'spawn_failed', retryable: false,

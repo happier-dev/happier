@@ -111,6 +111,15 @@ including scoped local changes, has no `voice/attemptPresentation.ts` contract.
 
 ## Machine Setup prerequisite presentation (unreleased 0.3)
 
+The receiving effects Plan optionally reports
+`review.administratorUnavailable: { reasonCode: 'mode_none' }` when its existing
+administrator requirement meets the captured None policy. Review displays the
+canonical administrator prerequisite and disables Apply; Ask remains usable.
+This optional closed presentation fact never enters Apply or persisted state.
+New readers accept its absence; matching development readers reload together
+because older strict Plan readers reject it. The inspected `../0.2` frontier
+at `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no Machine Setup contract.
+
 An unperformed Setup item check is `unverifiable`, and an unimplemented native
 declaration check is `unavailable`; positively observed native `unsupported`
 results retain that classification. The target Plan's support
@@ -7886,6 +7895,17 @@ predecessor adapter is introduced.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Session spawn errors accept optional `failureCause` through the
+existing closed `ActionFailureCauseV1` schema. Directory preparation preserves
+the lower admission phase and code for path and managed creation callers; the
+field grants no authority and carries no transport prose. The result and nested
+cause remain closed. New readers accept earlier errors without the field; older
+strict development readers require matching Protocol, CLI, UI and SDK source. This
+direct development cut changes no wire epoch, input, persistence or error code.
+The scoped-clean `../0.2` frontier at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no SessionSpawnNewResultV1 contract;
+no predecessor adapter is added.
+
 Unreleased 0.3 `scm.log.list` accepts the closed optional
 `revisionRangeFromRef: {baseOid, headRef}` selector, exclusive with other log
 selectors. The existing SCM Git ref resolver selects one immutable head; the
@@ -10656,3 +10676,24 @@ their launch or resource. This changes no wire epoch and adds
 no fallback or person-entered digest. The inspected `../0.2` frontier
 `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no Devcontainer plugin or managed
 Machine preset contracts.
+
+## Managed guest authority (unreleased 0.3)
+
+Each enrolled managed Machine keeps its own Account, Team and Group grants.
+Manage on a controller also supplies Manage on its guests, including nested
+guests; Can use on a controller supplies no guest authority. Cyclic controller
+references propagate only existing Manage authority. The managed-role owner
+(`managedRows.ts`, with its pure rule in `managedRole.ts`) supplies the same rule
+to managed list/detail/control and the ordinary Machine permission graph.
+Session, terminal, service and Action admission consume that Machine result.
+Team workload authority uses the Team's grant, independently of any member's
+personal Machine grant. Pools retain their separate ownership and audience
+contract.
+
+Guest publication and recipient-envelope work follow the same controller
+ancestry. Permission does not supply encrypted key material: an E2EE guest still
+requires its own current recipient envelope, and a plain Account is not given
+fabricated encryption material. Withdrawal affects the next admission; a finite
+native effect already admitted keeps its signed authority through settlement.
+This is a server authority correction with no wire, persisted-shape, schema or
+protocol-epoch change.

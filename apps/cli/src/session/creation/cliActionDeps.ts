@@ -57,7 +57,7 @@ import type { projectSessionSpawnFailure } from '@/session/creation/projectSessi
 import type { dispatchRequesterSessionSpawnNewRpc, readMachineRpcRequestDisposition } from '@/session/transport/rpc/machineRpc';
 import type { resolveLiveDaemonControlTargetForServer } from '@/daemon/multiDaemon';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 import { type RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
 import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
@@ -249,13 +249,6 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         return {
           ok: false,
           result: incompatibleSessionSpawnTarget('target_preparation_rpc_unavailable'),
-        };
-      }
-      const { isAuthenticationError } = await import("@/api/client/httpStatusError");
-      if (isAuthenticationError(error) || readRpcErrorCode(error) === RPC_ERROR_CODES.FORBIDDEN) {
-        return {
-          ok: false,
-          result: { type: 'error', code: 'permission_denied', retryable: false },
         };
       }
       const [{ MachineRpcTargetNotCurrentError }, { projectSessionSpawnFailure }] = await Promise.all([

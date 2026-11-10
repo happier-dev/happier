@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
-import { readRpcErrorCode } from '../../rpc/errors.js';
+import { readRpcErrorCode, RPC_ERROR_CODES } from '../../rpc/errors.js';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../../actions/actionExecutionResult.js';
 
 import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../authoring/creationFieldsV1.js';
 import { SessionExecutionTargetV1Schema } from './sessionExecutionTargetV1.js';
@@ -106,9 +107,17 @@ export function projectSessionCreationTargetPreparationRpcFailureV1(
       && 'error' in error && typeof error.error === 'string' && 'errorCode' in error
       ? error.errorCode : undefined
   );
+  const carriedCause = ActionFailureCauseV1Schema.safeParse(
+    error !== null && typeof error === 'object' && 'failureCause' in error ? error.failureCause : undefined,
+  );
+  const failureCause = carriedCause.success ? { failureCause: carriedCause.data } : {};
+  const { httpStatus } = projectActionFailureCauseV1(error);
+  if (code === RPC_ERROR_CODES.FORBIDDEN || httpStatus === 401 || httpStatus === 403) {
+    return { type: 'error', code: 'permission_denied', retryable: false, ...failureCause };
+  }
   return code === 'agent_isolation_unavailable' || code === 'filesystem_identity_custody_unavailable'
     || code === 'MACHINE_ENCRYPTION_UNAVAILABLE'
-    ? { type: 'error', code: 'spawn_failed', retryable: false,
+    ? { type: 'error', code: 'spawn_failed', retryable: false, ...failureCause,
       launchError: { kind: 'launch_error', code, message: code } }
     : null;
 }
