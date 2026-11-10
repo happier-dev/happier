@@ -23,9 +23,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('U
         try {
             await db.$executeRaw`
                 INSERT INTO "UsageEvent" ("id", "accountId", "observedAt", "agentId", "source", "scope",
-                    "inputTokens", "totalTokens", "updatedAt")
+                    "inputTokens", "totalTokens", "metadata", "updatedAt")
                 SELECT ${prefix} || '-' || n, ${account.id}, CAST('1970-01-01T00:00:00.150Z' AS timestamp),
-                    'codex', 'runtime', 'turn_delta', 1, 1, now()
+                    'codex', 'runtime', 'turn_delta', 1, 1,
+                    '{"usageAccounting":{"path":"runtime","status":"available","historyComplete":true}}'::jsonb, now()
                 FROM generate_series(1, ${eventCount}::int) AS n`;
             // Non-personal events must not turn a fully covered personal window into a historical scan.
             await db.usageEvent.create({ data: { accountId: account.id, observedAt: new Date(50), agentId: 'codex',
@@ -33,7 +34,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('U
             const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 100, endMs: 200 },
                 includeActivity: true, includeInsights: false, includeMessageStats: false });
             const capture = async (startMs: number) => {
-                const cost = { evidenceRows: 0, bodyRows: 0 };
+                const cost = { evidenceRows: 0, bodyRows: 0, bodyMetadataRows: 0 };
                 const request = { ...query, dateRange: { startMs, endMs: 200 } };
                 const snapshot = await inReadSnapshot(tx => captureUsageAnalyticsBatchInTx(new Proxy(tx, {
                     get(target, property, receiver) {
@@ -42,8 +43,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('U
                         return async (...args: unknown[]) => {
                             const rows: unknown = await Reflect.apply(target.$queryRaw, target, args);
                             if (Array.isArray(rows) && rows[0] && Object.hasOwn(rows[0], 'observedAt')) {
-                                if (Object.hasOwn(rows[0], 'totalTokens')) cost.bodyRows += rows.length;
-                                else cost.evidenceRows += rows.length;
+                                if (Object.hasOwn(rows[0], 'totalTokens')) {
+                                    cost.bodyRows += rows.length;
+                                    cost.bodyMetadataRows += rows.filter(row => typeof row === 'object' && row !== null
+                                        && Reflect.get(row, 'metadata') != null).length;
+                                } else cost.evidenceRows += rows.length;
                             }
                             return rows;
                         };
@@ -54,16 +58,32 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('U
             };
             const covered = await capture(100);
             expect(covered.cost, 'a covering window must not transfer the same event history twice')
-                .toEqual({ evidenceRows: 0, bodyRows: eventCount });
+                .toEqual({ evidenceRows: 0, bodyRows: eventCount, bodyMetadataRows: eventCount });
             const coveredResult = covered.result.results[0]!;
             if (!('value' in coveredResult)) throw new Error('Covered Usage query failed');
             expect(coveredResult.value.totals.tokens.total).toBe(eventCount);
 
             await db.usageEvent.create({ data: { accountId: account.id, observedAt: new Date(50), agentId: 'codex',
                 source: 'historical', scope: 'turn_delta', inputTokens: 7, totalTokens: 7 } });
+            const nativeMetadata = { usageAccounting: { path: 'native', status: 'available',
+                historyComplete: true, nativeSessionId: 'required-history' } };
+            await db.usageEvent.createMany({ data: [50, 150].map((at, index) => ({
+                accountId: account.id, observedAt: new Date(at), agentId: 'codex', source: 'native',
+                scope: 'session_cumulative', isCumulative: true,
+                inputTokens: index ? 120 : 100, totalTokens: index ? 120 : 100, metadata: nativeMetadata,
+            })) });
+            const windowed = await capture(100);
+            const windowedResult = windowed.result.results[0]!;
+            if (!('value' in windowedResult)) throw new Error('Windowed Usage query failed');
+            expect(windowedResult.value.totals.tokens.total,
+                'native metadata must retain the historical cumulative baseline after body hydration').toBe(eventCount + 20);
+            expect(windowedResult.value.coverage?.sources.some(source => source.source === 'historical')).toBe(true);
+            expect(windowed.cost, 'candidate bodies reuse captured metadata and exclude unrelated historical bodies')
+                .toEqual({ evidenceRows: eventCount + 3, bodyRows: eventCount + 2, bodyMetadataRows: 0 });
+
             const narrow = await capture(160);
             expect(narrow.cost, 'a changed window keeps complete coverage evidence without hydrating unrelated bodies')
-                .toEqual({ evidenceRows: eventCount + 1, bodyRows: 0 });
+                .toEqual({ evidenceRows: eventCount + 3, bodyRows: 0, bodyMetadataRows: 0 });
             const narrowResult = narrow.result.results[0]!;
             if (!('value' in narrowResult)) throw new Error('Narrow Usage query failed');
             expect(narrowResult.value.totals.tokens.total).toBeNull();

@@ -172,8 +172,9 @@ describe('Usage analytics PostgreSQL event transport', () => {
         { readOnly: true, isolationLevel: 'Serializable' });
         expect(empty.rows).toEqual([]);
         expect(emptyCount).toEqual({ reads: 1, ormRows: 0 });
+        // usageAggregation.createEmptyUsageTokens retains null until a measurement is admitted.
         expect(projectUsageAnalytics(empty, UsageAnalyticsQueryRequestSchema.parse({ dateRange: { endMs: 100 } }))
-            .totals.tokens.total).toBe(0);
+            .totals.tokens.total).toBeNull();
     });
 
     it('keeps opaque native competitors, fallback baselines and malformed historical metadata coherent', async () => {
@@ -236,6 +237,6 @@ describe('Usage analytics PostgreSQL event transport', () => {
             rows: baselineRows, legacyReports: captured.legacyReports, priceCatalog: captured.priceCatalog,
             messageCountsBySession: undefined,
         }, request));
-        expect(count).toMatchObject({ reads: 2, ormRows: 0, rowCounts: [33_658, 7_262], metadataRows: 40_920, bodyRows: 7_262 });
+        expect(count).toMatchObject({ reads: 2, ormRows: 0, rowCounts: [33_658, 7_262], metadataRows: 33_658, bodyRows: 7_262 });
     });
 });

@@ -449,6 +449,62 @@ describe('native Agent account-usage host owner', () => {
         });
     });
 
+    it('retries an unreachable daemon and settles its pending observation after recovery', async () => {
+        vi.useFakeTimers();
+        const controller = new AbortController();
+        notifySnapshot.mockResolvedValueOnce({ error: 'No daemon running, no state file found' })
+            .mockResolvedValue({ ok: true, result: { status: 'snapshot_advanced' } });
+        const service = createNativeAgentAccountUsageService({
+            sessionId: 'session-1', signal: controller.signal,
+            session: { getMetadataSnapshot: () => ({ path: '/workspace', host: 'test-host', homeDir: '/home/test',
+                happyHomeDir: '/home/test/.happier', happyLibDir: '/home/test/.happier/lib', happyToolsDir: '/home/test/.happier/tools' }) },
+        });
+        try {
+            await expect(service.recordSnapshot({ sessionId: 'session-1', snapshot: createSnapshot() }))
+                .resolves.toEqual({ status: 'unavailable', reason: 'daemon_unavailable' });
+
+            await vi.advanceTimersByTimeAsync(1_000);
+            expect(notifySnapshot).toHaveBeenCalledTimes(2);
+            expect(notifySnapshot.mock.calls[1]?.[0]).toEqual(notifySnapshot.mock.calls[0]?.[0]);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(notifySnapshot).toHaveBeenCalledTimes(2);
+        } finally {
+            controller.abort();
+            vi.useRealTimers();
+        }
+    });
+
+    it('settles a refused intake without automatic retries and accepts a later observation', async () => {
+        vi.useFakeTimers();
+        const controller = new AbortController();
+        notifySnapshot.mockResolvedValue({
+            error: 'Request failed: /provider-account-usage-snapshot, HTTP 503',
+            errorCode: 'provider_account_usage_snapshot_intake_failed',
+            response: { ok: false, errorCode: 'provider_account_usage_snapshot_intake_failed' },
+        });
+        const service = createNativeAgentAccountUsageService({
+            sessionId: 'session-1', signal: controller.signal,
+            session: { getMetadataSnapshot: () => ({ path: '/workspace', host: 'test-host', homeDir: '/home/test',
+                happyHomeDir: '/home/test/.happier', happyLibDir: '/home/test/.happier/lib', happyToolsDir: '/home/test/.happier/tools' }) },
+        });
+        try {
+            const result = await service.recordSnapshot({ sessionId: 'session-1', snapshot: createSnapshot() });
+
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(notifySnapshot).toHaveBeenCalledTimes(1);
+            expect(result).toEqual({ status: 'rejected', reason: 'daemon_rejected' });
+
+            notifySnapshot.mockResolvedValue({ ok: true, result: { status: 'snapshot_advanced' } });
+            await expect(service.recordSnapshot({ sessionId: 'session-1',
+                snapshot: { ...createSnapshot(), observedAtMs: 2, fetchedAtMs: 2 },
+            })).resolves.toEqual({ status: 'recorded' });
+            expect(notifySnapshot).toHaveBeenCalledTimes(2);
+        } finally {
+            controller.abort();
+            vi.useRealTimers();
+        }
+    });
+
     it('validates adoption at the session owner and fences work after retirement', async () => {
         const adoption = createAdoption();
         notifyAdoption.mockResolvedValue({

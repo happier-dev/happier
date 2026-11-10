@@ -36,8 +36,9 @@ export async function loadUsageEventCandidatesForQuery(tx: Tx, accountId: string
             nativeKey: identity[3].replace(/[^a-zA-Z0-9]/g, ''),
         });
     }
-    const columns = prismaRuntime.join(Object.keys(usageEventSelect).map(key => key === 'metadata'
-        ? prismaRuntime.raw('e."metadata" #>> \'{}\' AS "metadata"') : prismaRuntime.raw(`e."${key}"`)));
+    // The captured evidence owns metadata admission for every hydrated body.
+    const columns = prismaRuntime.join(Object.keys(usageEventSelect).filter(key => key !== 'metadata')
+        .map(key => prismaRuntime.raw(`e."${key}"`)));
     return await tx.$queryRaw<UsageQueryEvent[]>(prismaRuntime.sql`
         WITH history AS MATERIALIZED (
             SELECT "id", "sessionId", "agentId", "machineId",

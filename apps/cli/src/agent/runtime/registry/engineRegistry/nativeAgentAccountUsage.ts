@@ -184,6 +184,11 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
                 }
                 return { status: 'rejected' };
             }
+            // A completed intake refusal settles this observation. The next native
+            // observation can try again without treating the daemon as unreachable.
+            if (responseRecord?.errorCode === 'provider_account_usage_snapshot_intake_failed') {
+                return { status: 'rejected' };
+            }
             return responseRecord?.error
                 ? { status: 'unavailable' }
                 : { status: 'rejected' };
