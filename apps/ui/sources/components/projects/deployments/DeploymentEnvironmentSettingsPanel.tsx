@@ -1,3 +1,5 @@
+import { DeploymentMigrationSettings } from './DeploymentMigrationSettings';
+import { DeploymentRegistryCredentials } from './DeploymentRegistryCredentials';
 import { EnvironmentMachineChoice } from './EnvironmentMachineChoice';
 export { EnvironmentMachineChoice } from './EnvironmentMachineChoice';
 import * as React from 'react';
@@ -28,8 +30,6 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { useProjectSource } from '@/components/projects/sources/useProjectSources';
-import { readProjectRepositoryIdentityV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { useSettingReveal } from '@/components/settings/shell/SettingRow';
 import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
 import { guidedStarterEventSeed } from '@/components/workflows/triggers/guidedAutomation';
@@ -41,6 +41,9 @@ import type { DeploymentRetainedBackup } from './deploymentRestore';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { DeploymentTabState } from './DeploymentTabState';
 import { DeploymentPrivateServiceExports } from './DeploymentPrivateServiceExports';
+import { DeploymentFleetIngress } from './DeploymentFleetIngress';
+import { MoveDefinitionToRepository } from './MoveDefinitionToRepository';
+import { StoredDefinitionEditor, type StoredDefinitionDocument } from './StoredDefinitionEditor';
 import {
   DeploymentBackupControls,
   DeploymentBackupDestinationRow,
@@ -51,12 +54,13 @@ import {
   deploymentBackupAttention,
   useDeploymentBackupFacts,
 } from './DeploymentBackupControls';
-import { deploymentDataTargetOperands } from './deploymentRestore';
+import { deploymentDataTargetOperands } from '@happier-dev/deployments';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { createDeploymentActions } from './deploymentActions';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
-import { DeploymentPreviewBranchChoice } from './DeploymentPreviewBranchChoice';
+import { PreviewTemplateRows } from './DeploymentPreviewTemplateRows';
+import { DeploymentPreviewVariables } from './DeploymentPreviewVariables';
 import { useDeploymentEnvironmentPreviews } from './useDeploymentProject';
 import {
   useDeploymentEnvironmentBackups,
@@ -68,7 +72,7 @@ const noop = () => {};
 /** What a manager can change from Settings and Permissions, through the Action owner. */
 export type DeploymentEnvironmentEditing = Readonly<{
   actions: Pick<ReturnType<typeof createDeploymentActions>, 'setController' | 'updateEnvironment'>
-    & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'inspectPlatformTarget'>>;
+    & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'inspectPlatformTarget' | 'moveToRepository' | 'prepareConfigurationDefaults' | 'setBindings'>>;
   serverId: string;
   review: DeploymentReviewHandle;
   /** A settled change moved the Environment's revision: re-read it. */
@@ -85,6 +89,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
   function DeploymentEnvironmentSettingsPanel(
     props: Readonly<{
       detail: DeploymentEnvironmentReadDetailV1;
+      phone?: boolean;
       controller: DeploymentReadControllerV1;
       demand: DeploymentReadDemandV1;
       machineName: (machineId: string) => string;
@@ -96,6 +101,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       onUnlink?: ((targetLinkId: string) => void) | null;
       /** Opens the Link a machine sheet; null where this viewer cannot link one. */
       onLink?: (() => void) | null;
+      /** Reuses Link a machine to replace a first placement before anything has deployed. */
+      onChangeMachine?: (() => void) | null;
       /** Opens the Add platform target sheet; null where this viewer cannot link one. */
       onAddPlatform?: (() => void) | null;
       /** The backup the serving deploy kept before its migration, with the restore sheet that replaces data with it. */
@@ -105,6 +112,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       lifetime?: ServerAccountScopeLifetime | null;
       /** The Action owner's manager edits; absent where this viewer cannot change settings. */
       editing?: DeploymentEnvironmentEditing | null;
+      definitionDocument: StoredDefinitionDocument;
       review?: DeploymentReviewHandle;
       /** Opens a Machine's Services page (health checks); absent where no Home is known. */
       onOpenMachineServices?: ((machineId: string) => void) | null;
@@ -124,7 +132,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
     // A row's subtitle is styled text only as a string; the descriptor's own name, or its kind until that loads.
     const platformTitle = useDeploymentPlatformTargetTitles(props.lifetime ?? null, platformSource !== null);
     const platformName = platformSource ? platformTitle(platformSource) ?? detail.runtimeTargetLink?.targetKind : undefined;
-    const { onUnlink, onLink, onAddPlatform } = props;
+    const { onUnlink, onLink, onChangeMachine, onAddPlatform } = props;
     const buildMachineId = detail.environment.buildMachineId;
     const ownServer = detail.content.ownServer;
     const machineIcon = (
@@ -163,12 +171,22 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             copy="setting"
           />
         ) : null}
+        {detail.content.definition.kind === 'stored' ? <StoredDefinitionEditor environment={detail.environment}
+          definition={detail.content.definition} document={props.definitionDocument} editing={editing} change={change} /> : null}
+        {editing ? <MoveDefinitionToRepository detail={detail} lifetime={props.lifetime ?? null}
+          move={editing.actions.moveToRepository ?? null} review={editing.review} onChanged={editing.onChanged} /> : null}
         <ItemGroup
           testID={section('servers-build')}
           title={t('projects.deployments.sectionServersBuild')}
           description={t('projects.deployments.sectionServersBuildDescription')}
-          // Nothing runs it yet: a platform is the other way to give it somewhere to run.
-          action={onAddPlatform && !runtimeLinkId ? (
+          action={onChangeMachine ? (
+            <SectionActionButton
+              testID={`${section('servers-build')}.change`}
+              title={t('common.change')}
+              icon="arrows-left-right"
+              onPress={onChangeMachine}
+            />
+          ) : onAddPlatform && !runtimeLinkId ? (
             <SectionActionButton
               testID={`${section('servers-build')}.addPlatform`}
               title={t('projects.deployments.platformLink.add')}
@@ -250,6 +268,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               mode="info"
             />
           )}
+          <DeploymentFleetIngress detail={detail} editing={editing} machineName={machineName} />
         </ItemGroup>
 
         <DeploymentPrivateServiceExports detail={detail} editing={editing} />
@@ -380,6 +399,9 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
           )}
         </ItemGroup>
 
+        <DeploymentMigrationSettings detail={detail} editing={editing} machineName={machineName} />
+        <DeploymentRegistryCredentials detail={detail} editing={editing} lifetime={props.lifetime ?? null} machineName={machineName} />
+
         <ItemGroup
           testID={section('checks-alerts')}
           title={t('projects.deployments.sectionChecks')}
@@ -443,12 +465,15 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             {detail.environment.purpose !== 'preview' ? (
               <PreviewTemplateRows
                 detail={detail}
+                controller={props.controller}
+                demand={props.demand}
                 machineName={machineName}
                 onSave={editing ? (next) => {
                   void change.press(() => editing.actions.updateEnvironment(detail.environment, { previewTemplate: next }));
                 } : null}
                 saving={change.running}
                 inspect={editing?.actions.inspectPlatformTarget ?? null}
+                prepareDefaults={editing?.actions.prepareConfigurationDefaults ?? null}
                 lifetime={props.lifetime ?? null}
                 testID={`${section('previews')}.template`}
               />
@@ -464,6 +489,12 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               />
             ) : null}
           </ItemGroup>
+        ) : null}
+        {detail.environment.purpose !== 'preview' && detail.content.previewTemplate && props.lifetime && props.review ? (
+          <DeploymentPreviewVariables detail={detail} lifetime={props.lifetime} editing={editing}
+            review={props.review}
+            phone={props.phone === true} environmentName={props.environmentTitle}
+            sealedOn={detail.runtimeTargetLink?.machines?.map(machineName).join(', ') ?? null} />
         ) : null}
       </>
     );
@@ -690,234 +721,6 @@ function retentionLabel(retention: DeploymentBackupConfigurationV1['retention'])
     retention.weekly !== undefined ? t('projects.deployments.backupKeepWeekly', { count: retention.weekly }) : null,
     retention.monthly !== undefined ? t('projects.deployments.backupKeepMonthly', { count: retention.monthly }) : null,
   ].filter((part): part is string => part !== null).join(' · ');
-}
-
-/**
- * The preview template this Environment carries (lab `d5d/template`, `previewdb/template`, `previewdb/branch`,
- * `d5d/prodmachine`): whether new pull requests get previews, where they run, their address pattern and their data.
- * Read from the Environment's own content; forks never get previews, which is a fact rather than a choice here.
- */
-type PreviewTemplate = NonNullable<DeploymentEnvironmentReadDetailV1['content']['previewTemplate']>;
-type PreviewData = 'own' | 'branch' | 'none';
-
-function previewDataKind(template: PreviewTemplate): PreviewData {
-  const data = template.data[0];
-  return !data ? 'none' : data.kind === 'managed' ? 'branch' : 'own';
-}
-
-function PreviewTemplateRows(props: Readonly<{
-  detail: DeploymentEnvironmentReadDetailV1;
-  machineName: (machineId: string) => string;
-  /** Saves the whole next template once through `environments.update` (patch.previewTemplate); absent for viewers. */
-  onSave: ((next: PreviewTemplate) => void) | null;
-  saving: boolean;
-  inspect: ReturnType<typeof createDeploymentActions>['inspectPlatformTarget'] | null;
-  /** The captured Home/Account the Project repository is read under; absent while it is not current. */
-  lifetime: ServerAccountScopeLifetime | null;
-  testID: string;
-}>) {
-  const { theme } = useUnistyles();
-  const template = props.detail.content.previewTemplate;
-  const onSaveTemplate = props.onSave;
-  // The saved data selections this page has seen, so switching to None and back keeps the exact choice.
-  const [seenData, setSeenData] = React.useState<Readonly<Partial<Record<'own' | 'branch', PreviewTemplate['data']>>>>({});
-  const [choosingBranch, setChoosingBranch] = React.useState(false);
-  React.useEffect(() => {
-    const kind = template ? previewDataKind(template) : 'none';
-    if (template && kind !== 'none') setSeenData((seen) => seen[kind] === template.data ? seen : { ...seen, [kind]: template.data });
-  }, [template]);
-  if (!template) {
-    return <PreviewSetupRow detail={props.detail} lifetime={props.lifetime} onSave={onSaveTemplate} saving={props.saving}
-      testID={props.testID} />;
-  }
-  const { onSave } = props;
-  const runtimeLinks = props.detail.targetLinks.map((row) => row.targetLink).filter((link) => link.role === 'runtime');
-  const linkName = (link: (typeof runtimeLinks)[number] | undefined) => {
-    const machines = link && 'machines' in link && Array.isArray(link.machines) ? link.machines.map(props.machineName) : [];
-    return machines.join(', ') || link?.targetKind || '';
-  };
-  const link = runtimeLinks.find((candidate) => candidate.id === template.runtimeTargetLinkId);
-  const sharesProduction = template.runtimeTargetLinkId === (props.detail.environment.runtimeTargetLinkId ?? props.detail.runtimeTargetLink?.id);
-  const dataKind = previewDataKind(template);
-  const save = (patch: Partial<PreviewTemplate>) => onSave?.({ ...template, ...patch });
-  const canChooseBranch = !!props.lifetime && !!props.inspect
-    && props.detail.targetLinks.some(row => row.targetLink.role === 'data' && row.targetLink.source.kind === 'plugin');
-  // A reason marks its segment unavailable (the shared segmented row rule), so only an option that cannot be chosen carries
-  // one. Under the row the reason stands alone, so a single unavailable option names itself.
-  const ownUnavailable = !seenData.own && dataKind !== 'own';
-  const branchUnavailable = !seenData.branch && dataKind !== 'branch' && !canChooseBranch;
-  const bothUnavailable = ownUnavailable && branchUnavailable;
-  const unavailable = (own: boolean) => bothUnavailable ? t('projects.deployments.settingsSections.previewsDataUnavailable')
-    : own ? t('projects.deployments.settingsSections.previewsDataOwnUnavailable')
-      : t('projects.deployments.settingsSections.previewsDataBranchUnavailable');
-  const dataOptions: ReadonlyArray<SegmentedChoiceOption<PreviewData>> = [
-    { id: 'own', label: t('projects.deployments.settingsSections.previewsDataOwn'),
-      ...(ownUnavailable ? { disabled: true, unavailableReason: unavailable(true) } : {}) },
-    { id: 'branch', label: t('projects.deployments.settingsSections.previewsDataBranch'),
-      ...(branchUnavailable ? { disabled: true, unavailableReason: unavailable(false) } : {}) },
-    { id: 'none', label: t('projects.deployments.settingsSections.previewsDataNone') },
-  ];
-  const runsOnSubtitle = sharesProduction ? t('projects.deployments.settingsSections.previewsProductionMachine') : undefined;
-  const runsOnLeading = sharesProduction ? <StatusDot size={6} color={theme.colors.state.warning.foreground} /> : undefined;
-  return (
-    <>
-      <Item
-        testID={`${props.testID}.enabled`}
-        title={t('projects.deployments.settingsSections.previewsTitle')}
-        subtitle={template.enabled
-          ? t('projects.deployments.settingsSections.previewsOn')
-          : t('projects.deployments.settingsSections.previewsOff')}
-        mode={onSave ? undefined : 'info'}
-        rightElement={onSave ? (
-          <Switch value={template.enabled} disabled={props.saving}
-            onValueChange={(enabled) => save({ enabled })} />
-        ) : undefined}
-      />
-      {onSave && runtimeLinks.length > 1 && runtimeLinks.length <= 4 ? (
-        <SegmentedChoiceItem<string>
-          testID={`${props.testID}.runsOn`}
-          testIDPrefix={`${props.testID}.runsOn`}
-          title={t('projects.deployments.settingsSections.previewsRunsOn')}
-          subtitle={runsOnSubtitle}
-          subtitleLeading={runsOnLeading}
-          accessoryLayout="adaptive"
-          options={runtimeLinks.map((candidate) => ({ id: candidate.id, label: linkName(candidate) }))}
-          value={template.runtimeTargetLinkId}
-          disabled={props.saving}
-          onChange={(runtimeTargetLinkId) => save({ runtimeTargetLinkId })}
-        />
-      ) : (
-        <Item
-          testID={`${props.testID}.runsOn`}
-          title={t('projects.deployments.settingsSections.previewsRunsOn')}
-          subtitle={runsOnSubtitle}
-          subtitleLeading={runsOnLeading}
-          detail={linkName(link)}
-          mode="info"
-        />
-      )}
-      {template.domain ? (
-        onSave ? (
-          <FieldValueItem
-            testID={`${props.testID}.address`}
-            fieldTestID={`${props.testID}.address.input`}
-            title={t('projects.deployments.settingsSections.previewsAddress')}
-            accessoryLayout="stacked"
-            monospace
-            autoCapitalize="none"
-            value={template.domain.hostnamePattern}
-            disabled={props.saving}
-            onCommit={(draft) => {
-              const hostnamePattern = draft.trim();
-              if (template.domain && hostnamePattern !== '' && hostnamePattern !== template.domain.hostnamePattern) {
-                save({ domain: { ...template.domain, hostnamePattern } });
-              }
-              // The settled Environment re-read replaces this value.
-              return template.domain?.hostnamePattern ?? '';
-            }}
-          />
-        ) : (
-          <Item
-            testID={`${props.testID}.address`}
-            title={t('projects.deployments.settingsSections.previewsAddress')}
-            detail={template.domain.hostnamePattern}
-            mode="info"
-          />
-        )
-      ) : null}
-      {onSave ? (
-        <SegmentedChoiceItem<PreviewData>
-          testID={`${props.testID}.data`}
-          testIDPrefix={`${props.testID}.data`}
-          title={t('projects.deployments.settingsSections.previewsData')}
-          accessoryLayout="adaptive"
-          options={dataOptions}
-          value={choosingBranch ? 'branch' : dataKind}
-          disabled={props.saving}
-          onChange={(next) => {
-            setChoosingBranch(next === 'branch');
-            if (next === dataKind) return;
-            const data = next === 'none' ? [] : seenData[next];
-            if (data) save({ data });
-          }}
-        />
-      ) : (
-        <Item
-          testID={`${props.testID}.data`}
-          title={t('projects.deployments.settingsSections.previewsData')}
-          detail={dataOptions.find((option) => option.id === dataKind)?.label}
-          mode="info"
-        />
-      )}
-      {onSave && props.lifetime && props.inspect && (choosingBranch || dataKind === 'branch') ? (
-        <DeploymentPreviewBranchChoice detail={props.detail} lifetime={props.lifetime} inspect={props.inspect}
-          saving={props.saving} onSave={(data) => save({ data })} testID={`${props.testID}.branch`} />
-      ) : null}
-      {template.forkPreviews === 'off' ? (
-        <Item testID={`${props.testID}.forks`} title={t('projects.deployments.settingsSections.previewsForks')} mode="info" />
-      ) : null}
-    </>
-  );
-}
-
-/**
- * No template yet (J6 entry): a repository-backed Environment turns previews on from its Project repository and its
- * own runtime link, saved once through `environments.update` (patch.previewTemplate). A stored definition says why
- * previews need a repository instead. The rest of the template is edited in the rows above once it exists.
- */
-function PreviewSetupRow(props: Readonly<{
-  detail: DeploymentEnvironmentReadDetailV1;
-  lifetime: ServerAccountScopeLifetime | null;
-  onSave: ((next: PreviewTemplate) => void) | null;
-  saving: boolean;
-  testID: string;
-}>) {
-  if (props.detail.content.definition.kind === 'stored') {
-    return (
-      <Item
-        testID={`${props.testID}.needsRepository`}
-        title={t('projects.deployments.settingsSections.previewsNeedRepository')}
-        subtitle={t('projects.deployments.settingsSections.previewsNeedRepositoryBody')}
-        mode="info"
-      />
-    );
-  }
-  const runtimeTargetLinkId = props.detail.environment.runtimeTargetLinkId;
-  // Without a manager's save path or a runtime link there is nothing to turn on; the preview list says there are none.
-  if (!props.onSave || !props.lifetime || !runtimeTargetLinkId) return null;
-  return <PreviewTurnOnRow {...props} lifetime={props.lifetime} onSave={props.onSave} runtimeTargetLinkId={runtimeTargetLinkId} />;
-}
-
-function PreviewTurnOnRow(props: Readonly<{
-  detail: DeploymentEnvironmentReadDetailV1;
-  lifetime: ServerAccountScopeLifetime;
-  onSave: (next: PreviewTemplate) => void;
-  saving: boolean;
-  runtimeTargetLinkId: string;
-  testID: string;
-}>) {
-  const project = useProjectSource(props.lifetime, props.detail.environment.projectSourceId);
-  const repository = readProjectRepositoryIdentityV1({ source: project.source?.source ?? null });
-  if (!repository) {
-    return project.status === 'loading' ? null : (
-      <Item testID={`${props.testID}.noRepository`}
-        title={t('projects.deployments.settingsSections.previewsNoRepository')} mode="info" />
-    );
-  }
-  return (
-    <Item
-      testID={`${props.testID}.setup`}
-      title={t('projects.deployments.settingsSections.previewsTitle')}
-      subtitle={t('projects.deployments.settingsSections.previewsSetUpOff')}
-      rightElement={
-        <Switch value={false} disabled={props.saving} onValueChange={(enabled) => {
-          if (!enabled) return;
-          props.onSave({ v: 1, enabled: true, forkPreviews: 'off', repository, runtimeTargetLinkId: props.runtimeTargetLinkId,
-            domain: null, bindingBlueprints: [], data: [] });
-        }} />
-      }
-    />
-  );
 }
 
 /** A preview Environment names the pull request it serves and the template it was made from. */

@@ -262,6 +262,13 @@ If column metadata alone cannot fit, the result has empty columns and rows with
 the same explicit reason. The shared presenter also preserves native capture
 incompleteness and provider completeness uncertainty.
 
+The existing native Exec capture buffer also bounds what reaches the decoder.
+Query execution retains its captured prefix and reports
+`native_output_truncated` when that boundary fires; incomplete final rows are
+omitted. Other native callers keep their existing strict truncation failure.
+A nonzero process exit or cancellation remains a failure even when usable rows
+were captured.
+
 The dedicated `happier_ro` login is a database security boundary. Its Saved
 Secret password is configured through the ordinary reviewed
 `deployments.bindings.set` data-role effect. Bootstrap validates role authority
@@ -1521,10 +1528,12 @@ The app deploy runs only after verified restoration. A later PR event also check
 the original Run's immutable copy outcome before starting the app. An incomplete
 copy requires review or closing and reopening the preview; synchronization does
 not silently bypass it. This first native path uses one runtime Machine.
-Repositories without that service require a companion data Environment. That
-path remains unfinished: the current preview relation admits only one live
-Environment for each template, repository, PR and runtime link, so a companion
-needs an approved extension of the existing Create and cleanup relationship.
+Repositories without that service require a companion data Environment. The
+approved companion extension is being implemented at the same preview Create,
+list and close owners: one named companion belongs to the main PR preview,
+uses a catalog definition and connects through the existing private service
+reference. It does not claim a second PR preview identity or modify repository
+Compose. Its persistence migration remains a draft until feature FINAL.
 
 The child's private content records its creation Workflow Run. On close, the
 caller reads that Run's authenticated branch captures and invokes ordinary data
@@ -1924,8 +1933,15 @@ review through the existing host-reviewed-child policy owner.
 The strict template review retains the selected descriptor's optional
 `firstRunSetup: true` hint, including inside the Machine setup parent's app
 reviews. It describes first-visitor administrator setup; it does not report that
-the app is configured or create a credential. The consuming page presentation
-and loaded-runtime journey remain separate integration work.
+the app is configured or create a credential. In development (0.3), the
+Environment Overview consumes that hint and the catalog's declared login fields.
+It shows the runtime username, uses the shared Saved Secret disclosure controls
+for secret values, and offers an admitted serving address for first-admin setup
+or the Domains panel when no address is available. The guidance stays conditional:
+an already configured app uses its existing administrator. Captured image
+references and manifest digests identify the serving receipt; a new deployment
+can resolve a newer tag, while an exact release keeps its captured digest.
+Loaded-runtime verification of this presentation remains pending.
 
 For new Environments, the host reads the requesting Account's exact private
 Project-defaults Artifact and captured Account preferences, then uses the shared
@@ -4031,7 +4047,7 @@ runtime target declares `actions.domains.read/add/verify/remove`; the installed
 host invokes those roles through its existing reviewed-child port. Provider DNS
 instructions stay in the private Domain Artifact. A controller-signed observation
 settles the public Domain state without putting the hostname or DNS values in
-server-readable metadata or an agent result.
+server-readable metadata or the root Domain Action result.
 
 Cloudflare Pages custom domains apply to Production. An initializing or pending
 domain remains pending and retains the provider's CNAME and, when supplied, TXT
@@ -4044,11 +4060,19 @@ custom domains return `unsupported_action`; neither request changes the
 Production target. These are unreleased 0.3 source contracts.
 
 Cloudflare's Pages add and Workers attach responses return the Domain object,
-and a successful delete acknowledges removal. The adapter consumes those
+and a successful Cloudflare or Vercel delete acknowledges removal. The adapter consumes those
 responses directly. It does not re-read its own writes to demand a stronger
 absence or visibility guarantee. A separate Check again remains a read of the
 provider's current state. See the official [Pages domain API](https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/domains/)
-and [Workers domain API](https://developers.cloudflare.com/api/resources/workers/subresources/domains/).
+and [Workers domain API](https://developers.cloudflare.com/api/resources/workers/subresources/domains/),
+and Vercel's [project Domain removal API](https://vercel.com/docs/rest-api/projects/remove-a-domain-from-a-project).
+
+Own-server teardown includes removal of retained provider Domains from earlier
+runtime Links. Its review includes their provider children. The accepted job captures their private Domain,
+Environment and Link references under the same controller and request proof.
+Cleanup invokes those exact reviewed children and settles their signed Domain
+observations through the existing removal owner. The bundled platform targets
+use the explicit detach-and-keep-running path; their remote resources and Domains stay.
 
 A Domain's reviewed Cloudflare Named selection also selects tunnel placement when
 the Environment has no ingress setting. The Domain route-selection owner supplies

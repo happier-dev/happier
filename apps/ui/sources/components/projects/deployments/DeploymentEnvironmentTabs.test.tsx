@@ -159,7 +159,7 @@ async function renderTab(
 ) {
   const receipt = createDeploymentReceiptDetailV1();
   const controller = createDeploymentReadControllerV1({
-    scope,
+    scope: { ...scope, serverId: detail.environment.serverId },
     transport: {
       listEnvironments: async () => ({
         ok: true,
@@ -181,7 +181,7 @@ async function renderTab(
   const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
   // Sheets the page opens (Backups setup) render through the canonical modal testkit host.
   const { ModalProvider } = await import('@/modal');
-  const page = (
+  const page = (selectedTab: string) => (
     <ModalProvider>
     <PresentedDetailNavigationProvider>
       <DeploymentEnvironmentDetail
@@ -194,21 +194,22 @@ async function renderTab(
         deploy={null}
         review={noReview}
         onOpenReceipt={() => {}}
-        destination={{ tab: tab as never, section: null }}
+        destination={{ tab: selectedTab as never, section: null }}
         {...detailProps}
       />
     </PresentedDetailNavigationProvider>
     </ModalProvider>
   );
-  const screen = await renderScreen(pluginUiProjection ? (
+  const element = (selectedTab: string) => pluginUiProjection ? (
     <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: pluginUiProjection.value as never,
       pluginBrowserProjection: null, phase: 'current', interactionEnabled: true, machineId: null,
       serverId: pluginUiProjection.serverId, platform: 'web', accountLifetime: pluginUiProjection.accountLifetime as never,
       clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
       reloadConnectedAccountProjection: () => {} }}>
-      {page}
+      {page(selectedTab)}
     </AppShellPluginUiProjectionValueProvider>
-  ) : page);
+  ) : page(selectedTab);
+  const screen = await renderScreen(element(tab));
   // Bounded, so a row that never renders fails its assertion instead of hanging the file.
   const settle = async (testID: string) => {
     await act(async () => {
@@ -223,7 +224,7 @@ async function renderTab(
     });
     return screen.findByTestId(testID);
   };
-  return { screen, controller, settle };
+  return { screen, controller, settle, updateTab: (next: string) => screen.update(element(next)) };
 }
 
 describe('Environment → Domains', () => {
@@ -807,6 +808,110 @@ describe('Environment → Overview before the first deploy', () => {
 });
 
 describe('Environment → manager edits', () => {
+  it.each(['neverDeployed', 'deployed', 'failed'] as const)('offers first-Machine replacement only before deployment history exists (%s)', async state => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'First Machine', serverUrl: 'https://first-machine.test',
+      accountId: scope.accountId, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const link = createDeploymentTargetLinkHeaderV1({ state: state === 'deployed' ? 'deployed' : 'configured',
+      activeDeploymentId: state === 'deployed' ? 'deployment-a' : undefined });
+    const detail = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment, serverId },
+      targetLinks: [{ targetLink: link, content: base.targetLinks[0]!.content }] });
+    const actions = (await import('./deploymentActions')).createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
+    const { screen, controller, settle } = await renderTab('settings', detail, {
+      listHistory: async () => ({ ok: true, value: { ok: true, items: state === 'failed'
+        ? [{ ...createDeploymentReceiptDetailV1().deployment, targetLinkId: link.id, state: 'failed' as const }]
+        : [], nextCursor: null } }),
+    }, {
+      serverId, disposition: actions, lifetime: account.accountLifetime,
+    });
+    const id = 'project-deployments.environment.settings.servers-build.change';
+    try {
+      expect(await settle('project-deployments.environment.settings.servers-build')).not.toBeNull();
+      if (state !== 'neverDeployed') expect(screen.findByTestId(id)).toBeNull();
+      else {
+        expect(await settle(id)).not.toBeNull();
+        await screen.pressByTestIdAsync(id);
+        expect(screen.findByTestId('project-deployments.link')).not.toBeNull();
+      }
+      expect(homes.requestsFor('/v1/actions/deployments.targets.link')).toHaveLength(0);
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); }
+  });
+
+  it.each([false, true])('saves fleet ingress through the real Environment Action without saving a suggestion on mount (%s)', async hasEdgeFacts => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Fleet ingress', serverUrl: 'https://fleet-ingress.test',
+      serverIdentityId: 'srv_fleet_ingress', accountId: scope.accountId, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const link = createDeploymentTargetLinkHeaderV1({ machines: ['machine-a', 'machine-b'], members: [
+      { machineId: 'machine-a', installationId: 'installation-a', state: 'active' },
+      { machineId: 'machine-b', installationId: 'installation-b', state: 'active' },
+    ] });
+    const detail = createDeploymentEnvironmentDetailV1({
+      environment: { ...base.environment, serverId },
+      targetLinks: [{ targetLink: link, content: base.targetLinks[0]!.content }],
+    });
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { MachineReachabilityObservationV1Schema } = await import('@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1');
+    const reachability = (edge: boolean) => MachineReachabilityObservationV1Schema.parse({
+      revision: 0, management: { daemon: 'ready', providers: [], publicSsh: 'unknown' },
+      privateNetworks: [{ provider: { kind: 'builtin', id: 'tailscale' }, networkIdentity: 'fleet-network',
+        displayName: null, dnsName: null, addresses: [edge ? '100.64.0.11' : '100.64.0.10'], state: 'ready',
+        interfaceName: 'tailscale0', sourceRanges: ['100.64.0.0/10'], magicDnsEnabled: false }],
+      ingress: edge ? [{ revision: 0, provider: { kind: 'builtin', id: 'caddy' }, exposure: 'public',
+        inboundPorts: [{ port: 443, protocol: 'tcp', exposure: 'public' }],
+        https: { hostname: 'custom', ports: [443], paths: true }, state: 'ready', remedies: [] }] : [],
+    });
+    await publishMachineInventoryForTest({ serverId, accountId: scope.accountId }, [
+      createMachineFixture({ id: 'machine-a', installationId: 'installation-a',
+        ...(hasEdgeFacts ? { daemonState: { reachability: reachability(false) } } : {}) }),
+      createMachineFixture({ id: 'machine-b', installationId: 'installation-b',
+        ...(hasEdgeFacts ? { daemonState: { reachability: reachability(true) } } : {}) }),
+    ]);
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, {
+      body: { ok: true, environment: detail.environment, targetLinks: [link] },
+    });
+    const effects: unknown[] = [];
+    await answerExternalActionAccountForHome(homes, serverId, {
+      actionId: 'deployments.environments.update', machineId: detail.environment.controllerMachineId,
+      installationId: 'installation-a', tokenEpoch: 0,
+      execute: input => { effects.push(input); return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 }; },
+    });
+    const actions = (await import('./deploymentActions')).createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, {
+      serverId, environmentActions: actions, lifetime: account.accountLifetime,
+    });
+    const id = 'project-deployments.environment.settings.servers-build.ingress';
+    try {
+      expect(await settle('project-deployments.environment.settings.servers-build')).not.toBeNull();
+      expect(await settle(id)).not.toBeNull();
+      expect(effects).toEqual([]);
+      const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+      const picker = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === id)!;
+      expect(picker().props.selectedId).toBe(hasEdgeFacts ? 'edge:machine-b' : null);
+      if (!hasEdgeFacts) {
+        await publishMachineInventoryForTest({ serverId, accountId: scope.accountId }, [
+          createMachineFixture({ id: 'machine-a', installationId: 'installation-a',
+            daemonState: { reachability: reachability(false) } }),
+          createMachineFixture({ id: 'machine-b', installationId: 'installation-b',
+            daemonState: { reachability: reachability(true) } }),
+        ]);
+        await vi.waitFor(() => expect(picker().props.selectedId).toBe('edge:machine-b'));
+        expect(effects).toEqual([]);
+      }
+      await act(async () => picker().props.onSelect('edge:machine-b'));
+      await vi.waitFor(() => expect(effects).toHaveLength(1));
+      expect(effects[0]).toMatchObject({ environmentId: detail.environment.id,
+        patch: { ingress: { kind: 'edgeCaddy', edgeMachineId: 'machine-b' } } });
+      await act(async () => picker().props.onSelect('tunnel'));
+      await vi.waitFor(() => expect(effects).toHaveLength(2));
+      expect(effects[1]).toMatchObject({ patch: { ingress: { kind: 'cloudflareTunnel' } } });
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
   it('moves the controller and the build Machine, and changes who may deploy, through the Environment Actions', async () => {
     const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
     const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
@@ -1157,6 +1262,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
       const address = screen.findAllByType(FieldValueItem).find((node) => node.props.testID === `${id}.address`)!;
       expect(address.props.value).toBe('pr-{number}.preview.happier.dev');
       await act(async () => { address.props.onCommit('pr-{number}.staging.happier.dev'); });
+      await screen.pressByTestIdAsync(`${id}.domain.save`);
       expect(updateEnvironment).toHaveBeenLastCalledWith(detail.environment, { previewTemplate: { ...template,
         domain: { ...template.domain!, hostnamePattern: 'pr-{number}.staging.happier.dev' } } });
       const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
@@ -1202,7 +1308,58 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
-  it('turns previews on from the Project repository when none are set up, through the same update an agent sends', async () => {
+  it('opens Configure Previews runtime and first-address choices beyond four links', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const links = Array.from({ length: 5 }, (_, index) => ({ ...base.targetLinks[0]!, targetLink:
+      createDeploymentTargetLinkHeaderV1({ id: `runtime-${index}`, machines: [`machine-${index}`],
+        members: [{ machineId: `machine-${index}`, installationId: `installation-${index}`, state: 'active' }] }) }));
+    const template = { v: 1 as const, enabled: true, forkPreviews: 'off' as const,
+      repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/shop' },
+      runtimeTargetLinkId: 'runtime-0', domain: null, bindingBlueprints: [], data: [] };
+    const detail = createDeploymentEnvironmentDetailV1({ targetLinks: links,
+      environment: { ...base.environment, runtimeTargetLinkId: 'runtime-0' },
+      content: { ...base.content, previewTemplate: template } });
+    const updateEnvironment = vi.fn(async (..._args: unknown[]) => ({ ok: true as const,
+      environmentId: detail.environment.id, revision: detail.environment.revision + 1 }));
+    const { screen, controller, settle } = await renderTab('settings', detail,
+      { listDomains: async () => ({ ok: true, value: { items: [domain('wildcard', '*.preview.example', 'active')], nextCursor: null } }) },
+      { environmentActions: { setController: vi.fn(), updateEnvironment } });
+    const id = 'project-deployments.environment.settings.previews.template';
+    try {
+      expect(await settle(`${id}.enabled`)).not.toBeNull();
+      const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+      await vi.waitFor(() => expect(screen.findAllByType(DropdownMenu).some(node => node.props.testID === `${id}.runsOn`)).toBe(true));
+      const runtime = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.runsOn`);
+      expect(runtime).toBeDefined();
+      await act(async () => runtime!.props.onSelect('runtime-4'));
+      expect(updateEnvironment).toHaveBeenLastCalledWith(detail.environment, { previewTemplate: { ...template, runtimeTargetLinkId: 'runtime-4' } });
+      await settle(`${id}.domain`);
+      const chooseDomain = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.domain`)!;
+      await act(async () => chooseDomain.props.onSelect('wildcard'));
+      const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
+      const slug = screen.findAllByType(FieldValueItem).find(node => node.props.testID === `${id}.slug`)!;
+      await act(async () => slug.props.onCommit('shop'));
+      await screen.pressByTestIdAsync(`${id}.domain.save`);
+      expect(updateEnvironment).toHaveBeenLastCalledWith(detail.environment, { previewTemplate: { ...template,
+        domain: { domainId: 'wildcard', templateSlug: 'shop', hostnamePattern: 'pr-{number}-{template-slug}' } } });
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it.each(['permissions', 'overview'])('opens Configure Previews from %s at the canonical Settings section', async tab => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Preview navigation', serverUrl: 'https://preview-navigation.test',
+      accountId: 'account-owner', currentAccount: true });
+    const onNavigate = vi.fn();
+    const { screen, controller, settle } = await renderTab(tab, createDeploymentEnvironmentDetailV1(), {}, { serverId, onNavigate });
+    try {
+      const id = `project-deployments.environment.${tab}.previews`;
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      await vi.waitFor(() => expect(onNavigate).toHaveBeenCalledWith({ tab: 'settings', section: 'previews' }));
+    } finally { await screen.unmount(); controller.retire(); await homes.reset(); }
+  });
+
+  it.each(['none', 'own'] as const)('opens Configure Previews defaults once and saves the reviewed explicit choices (%s)', async previewDatabase => {
     await homes.reset();
     const serverId = await homes.addHome({ name: 'Previews setup', serverUrl: 'https://previews-setup.test',
       accountId: 'account-owner', currentAccount: true });
@@ -1213,13 +1370,26 @@ describe('Environment → Settings: checks, backups, previews', () => {
         repository: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
           repository: { nameWithOwner: 'acme/shop' }, protocol: 'https' } } } });
     const settled = { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
+    const prepareConfigurationDefaults = vi.fn(async () => ({ values: { retainPreviousDeployments: 1, previewDatabase },
+      sources: { retainPreviousDeployments: 'builtin' as const, previewDatabase: 'account' as const } }));
     const updateEnvironment = vi.fn(async (..._args: unknown[]) => settled);
     const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
-      environmentActions: { setController: vi.fn(), updateEnvironment } });
+      environmentActions: { setController: vi.fn(), updateEnvironment, prepareConfigurationDefaults } });
     const id = 'project-deployments.environment.settings.previews.template';
     try {
       expect(await settle(`${id}.setup`)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.setup`);
+      await vi.waitFor(() => expect(prepareConfigurationDefaults).toHaveBeenCalledWith(detail.environment, 'previews'));
+      expect(updateEnvironment).not.toHaveBeenCalled();
+      await settle(`${id}.setup.save`);
+      if (previewDatabase === 'own') {
+        expect(await settle(`${id}.data.default`)).not.toBeNull();
+        await screen.pressByTestIdAsync(`${id}.setup.save`);
+        expect(updateEnvironment).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync(`${id}.data:none`);
+      }
+      await screen.pressByTestIdAsync(`${id}.setup.save`);
+      expect(prepareConfigurationDefaults).toHaveBeenCalledTimes(1);
       expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(detail.environment, { previewTemplate: expect.objectContaining({
         v: 1, enabled: true, forkPreviews: 'off', runtimeTargetLinkId: detail.environment.runtimeTargetLinkId,
         repository: expect.objectContaining({ kind: 'github', repository: 'acme/shop' }), domain: null, data: [] }) });
@@ -1228,6 +1398,68 @@ describe('Environment → Settings: checks, backups, previews', () => {
         expectedRevision: 1, contentArtifactId: detail.environment.contentArtifactId,
         contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
         patch: updateEnvironment.mock.calls[0]![1] }).success).toBe(true);
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('shows missing preview enrollment again after the Settings page remounts', async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Preview enrollment', serverUrl: 'https://preview-enrollment.test',
+      accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment, serverId },
+      content: { ...base.content, previewTemplate: {
+        v: 1, enabled: true, forkPreviews: 'off',
+        repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/app' },
+        runtimeTargetLinkId: base.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [], data: [],
+      } } });
+    // Only the persisted Account collection is synthetic; the real Workflow Action and subscribed read hook run.
+    homes.answer(serverId, 'GET /v3/automations', { body: { automations: [], nextCursor: null } });
+    const { screen, controller, settle, updateTab } = await renderTab('settings', detail, {},
+      { serverId, lifetime: account.accountLifetime });
+    const warning = 'project-deployments.environment.settings.preview-enrollment';
+    try {
+      expect(await settle(warning)).not.toBeNull();
+      expect(homes.requestsFor('/v3/automations/query').length).toBeGreaterThan(0);
+      await updateTab('overview');
+      await updateTab('settings');
+      expect(await settle(warning)).not.toBeNull();
+      expect(homes.requestsFor('/v1/actions/deployments.environments.update')).toHaveLength(0);
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('keeps unsaved preview blueprints when switching Environment pages', async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Preview draft', serverUrl: 'https://preview-draft.test',
+      accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = createDeploymentEnvironmentDetailV1({ content: { ...base.content, previewTemplate: {
+      v: 1, enabled: true, forkPreviews: 'off',
+      repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/app' },
+      runtimeTargetLinkId: base.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [], data: [],
+    } } });
+    const { createDeploymentActions } = await import('./deploymentActions');
+    const actions = createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
+    const { screen, controller, settle, updateTab } = await renderTab('settings', detail, {},
+      { serverId, lifetime: account.accountLifetime, environmentActions: actions });
+    try {
+      const id = 'project-deployments.environment.variables';
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.add`);
+      await vi.waitFor(() => expect(screen.findHostByTestId(`${id}.add.plain`)).not.toBeNull());
+      await screen.pressByTestIdAsync(`${id}.add.plain`);
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.add.name`, 'PREVIEW_MODE');
+        screen.changeTextByTestId(`${id}.add.value`, 'true');
+      });
+      await screen.pressByTestIdAsync(`${id}.add.save`);
+      await updateTab('overview');
+      await updateTab('settings');
+      const { measureMountedCollections } = await import('@/dev/testkit/render/renderInCollectionLayout');
+      await measureMountedCollections(screen);
+      expect(await settle('project-deployments.environment.variable.PREVIEW_MODE')).not.toBeNull();
+      expect(homes.requestsFor('/v1/actions/deployments.environments.update')).toHaveLength(0);
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
