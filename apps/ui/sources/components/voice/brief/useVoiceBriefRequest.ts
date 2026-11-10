@@ -5,6 +5,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useVoiceAttemptControl, VOICE_ATTEMPT_IDLE_TARGET_GLOBAL, type VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { useVoiceSurfaceModel } from '@/components/voice/surface/useVoiceSurfaceModel';
 import { useInboxModel } from '@/hooks/inbox/useInboxModel';
+import { useActiveRetainedSessionListNeedsYou } from '@/components/sessions/shell/sessionListPaneRetention';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { captureActiveServerAccountScopeCurrentness, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { useSetting } from '@/sync/store/settingsReadHooks';
@@ -65,7 +66,9 @@ export function useVoiceBriefRequest(onClose?: () => void): {
     stopReply: () => Promise<ActionExecuteResult>;
     closeBrief: () => Promise<ActionExecuteResult>;
 } {
-    const inbox = useInboxModel();
+    const sourceInbox = useInboxModel();
+    const needsYouShelf = useActiveRetainedSessionListNeedsYou();
+    const inbox = React.useMemo(() => ({ ...sourceInbox, needsYouShelf }), [sourceInbox, needsYouShelf]);
     const voiceSettings = useSetting('voice');
     const brief = React.useMemo(() => buildVoiceBrief({ inbox, settings: { voice: voiceSettings } }), [inbox, voiceSettings]);
     const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);

@@ -25,13 +25,14 @@ import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatu
 import { presentExecutionRunFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { resolveVoiceSessionAuthoredLabel } from './resolveVoiceSessionLabel';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { countInboxNeedsYou, isInboxNeedsYouItem } from '@/components/inbox/inboxCounts';
 import type { InboxItem } from '@/components/inbox/inboxItems';
+import type { SessionListNeedsYouProjection } from '@/components/sessions/shell/sessionListPaneRetention';
 
 export type VoiceBriefSource = Pick<InboxModel, 'sessionPresentation' | 'workGroups' | 'automationAttentionItems'
     | 'workflowAttention' | 'automationAttention' | 'isLoading' | 'showCaughtUp' | 'items'
     | 'openApprovals' | 'openUsageNotices' | 'actionOperationEntries' | 'friendRequests'> & Readonly<{
     source: Pick<InboxModel['source'], 'isDataReady' | 'personalSessionListCoverageComplete' | 'sessionListHomeObservationByServerId'>;
+    needsYouShelf?: SessionListNeedsYouProjection | null;
 }>;
 export type VoiceBriefItem = Readonly<{
     key: string;
@@ -55,8 +56,11 @@ function freshnessFacts(source: WorkflowAttentionSource) {
 export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; settings: unknown; currentTarget?: SessionAddress | null }>) {
     const { inbox } = input;
     const items: VoiceBriefItem[] = [];
-    const needsYouKeys = new Set(inbox.items.filter(isInboxNeedsYouItem)
-        .map(item => JSON.stringify([item.source.kind, item.source.serverId, item.source.id])));
+    const shelf = inbox.needsYouShelf;
+    const needsYouKeys = new Set(shelf?.items.map(item => JSON.stringify([
+        item.type === 'session' ? 'session' : 'workflow_run', item.serverId,
+        item.type === 'session' ? item.sessionId : item.runId,
+    ])));
     const needsYou = (kind: InboxItem['source']['kind'], serverId: string | null | undefined, id: string) =>
         needsYouKeys.has(JSON.stringify([kind, serverId, id]));
     const speechByKey = new Map<string, Readonly<{ title?: string; requests?: readonly string[] }>>();
@@ -165,23 +169,31 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
     // Provider context is not the navigation model: never serialize route/identity,
     // callbacks or private records from Inbox. Decisions stay with canonical request tools/UI.
     const approval = formatVoiceApprovalGuidance(getVoiceContextFormatterPrefs({ settings: input.settings }).voiceCanApproveRequests);
-    const counts = { needs_you: countInboxNeedsYou(inbox), failed: 0, ready: 0 };
+    const counts = { needs_you: shelf?.count ?? null, failed: 0, ready: 0 };
     let projectedNeedsYou = 0;
+    const spokenCounts = { needs_you: 0, failed: 0, ready: 0 };
     const speechGroups = new Map<string, Readonly<{ category: VoiceBriefItem['category']; title?: string; requests?: readonly string[] }> & { count: number }>();
     for (const item of items) {
         if (item.category === 'needs_you') projectedNeedsYou += 1;
         else counts[item.category] += 1;
         const speech = { category: item.category, ...speechByKey.get(item.key) };
+        // A transient display title or a withheld identity is not an authored
+        // speech label. Keep those rows in the total, without an unnamed group.
+        if (!speech.title) continue;
+        spokenCounts[item.category] += 1;
         const key = JSON.stringify(speech);
         const existing = speechGroups.get(key);
         if (existing) existing.count += 1;
         else speechGroups.set(key, { ...speech, count: 1 });
     }
-    // The count owner also knows admitted kinds/windows whose navigable details
-    // are not in this Brief. Keep its total and state that the details are partial.
-    const incomplete = sourceIncomplete || counts.needs_you > projectedNeedsYou;
+    // A collapsed/partial shelf may retain its exact total without all navigable
+    // details. Missing sidebar scope never becomes an Account-wide Inbox count.
+    const incomplete = sourceIncomplete || !shelf || shelf.incomplete
+        || (counts.needs_you !== null && counts.needs_you > projectedNeedsYou);
     const caughtUp = inbox.showCaughtUp && !incomplete && items.length === 0;
-    const context = JSON.stringify({ incomplete, caughtUp, counts, items: [...speechGroups.values()], approval });
+    const remaining = { needs_you: counts.needs_you === null ? null : counts.needs_you - spokenCounts.needs_you,
+        failed: counts.failed - spokenCounts.failed, ready: counts.ready - spokenCounts.ready };
+    const context = JSON.stringify({ incomplete, caughtUp, counts, remaining, items: [...speechGroups.values()], approval });
     return { items, freshness, incomplete, caughtUp, context };
 }
 

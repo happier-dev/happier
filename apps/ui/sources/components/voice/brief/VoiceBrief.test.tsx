@@ -1,7 +1,7 @@
 import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
 import { VoiceNeedsYouPrompts } from '@/components/voice/presence/VoiceNeedsYouPrompts';
 import type { VoiceBriefItem } from '@/voice/context/buildVoiceBrief';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createCompactSessionListRowFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createAccountSettingsHttpBoundary, installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import * as React from 'react';
@@ -20,7 +20,7 @@ import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceS
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
-import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { resetVoiceAdapterRegistryForTests } from '@/voice/session/voiceAdapterRegistry';
 import type { VoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
 import { getVoiceSessionLifecycleController, resetVoiceSessionLifecycleControllerStoreForTests } from '@/voice/session/voiceSessionLifecycleControllerStore';
@@ -32,6 +32,7 @@ import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { answerVoiceRealtimePreparationHttpRequest } from '@/dev/testkit/harness/voiceRealtimePreparationHttpBoundary';
 import { createSessionFixture } from '@/dev/testkit';
+import { createPlainSessionByIdResponseFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from '@/voice/registry/generatedBundledVoiceRuntimeEntries';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
@@ -62,13 +63,26 @@ import { useVoiceBriefHomeRequest, useVoiceBriefRequest } from './useVoiceBriefR
 import { VoiceTopBarPresence } from '@/components/voice/presence/VoiceTopBarPresence';
 import { useVoiceAttemptControl, VOICE_ATTEMPT_IDLE_TARGET_GLOBAL } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { setVoiceGlanceOpen } from '@/components/voice/presence/voiceCompanionSectionReveal';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { captureActiveServerAccountScopeCurrentness, getActiveServerAccountScope, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { disconnectActiveServerConnectionIfCurrent } from '@/sync/runtime/orchestration/connectionManager';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { decodeVoiceAssistantActions } from '@happier-dev/protocol/voice/actions';
 import { createVoiceToolHandlers } from '@/voice/tools/handlers';
+import { useInboxModel } from '@/hooks/inbox/useInboxModel';
+import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
+import { ActivityPersonalSessionMembershipProvider, useActivityPersonalSessionMembership } from '@/activity/source/activityPersonalSessionMembership';
+import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
+import { computeVisibleSessionListIndex } from '@/sync/domains/session/listing/computeVisibleSessionListIndex';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { projectSessionListNeedsYou, retainSessionListPaneState, resetSessionListPaneRetentionForTests } from '@/components/sessions/shell/sessionListPaneRetention';
+import { fetchAndApplySessionById } from '@/sync/engine/sessions/sessionById';
+import { createCapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { buildActivityOverviewFromSource } from '@/activity/source/buildActivityOverviewFromSource';
+import { areSessionValuesDeepEqual } from '@/sync/store/domains/areStoredSessionsEqual';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -183,6 +197,10 @@ let lifecycle: VoiceSessionLifecycleController | null = null;
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 let accountSettingsHttp: ReturnType<typeof createAccountSettingsHttpBoundary>;
 let accountSettingsVersion = 1;
+let activityQueryRows: ReturnType<typeof createCompactSessionListRowFixture>[] = [];
+let sessionHttp: ReturnType<typeof createSessionMetadataHttpBoundary>;
+const SCALE_BRIEF_TEST = 'keeps projection-only Brief work local across a thousand admitted Sessions';
+const SIDEBAR_BRIEF_TEST = 'sends the current sidebar ten through the real Home Brief entry with thirteen Account Sessions';
 let restorePopoverGlobals: (() => void) | null = null;
 const initialState = storage.getState();
 function setActionPolicy(value: Parameters<typeof normalizeActionsSettingsV1>[0]) {
@@ -196,16 +214,20 @@ async function pressBriefControl(testID: string) {
     });
     await screen?.pressByTestIdAsync(testID);
 }
-beforeEach(async () => {
+async function prepareBriefAccount(onlinePersonalQuery = false) {
+    resetSessionListPaneRetentionForTests();
+    activityQueryRows = [];
     resetVoiceSessionStoreForTests();
     navigation.push.mockReset();
     resetServerFeaturesClientForTests();
-    setRuntimeFetch(vi.fn(async () => new Response(JSON.stringify(buildServerFeaturesResponse({ voiceEnabled: true })), {
+    const features = buildServerFeaturesResponse({ voiceEnabled: true });
+    if (onlinePersonalQuery) expect(tryWriteServerEnabledBitInPlace(features, 'sessions.filteredListing', true)).toBe(true);
+    setRuntimeFetch(vi.fn(async () => new Response(JSON.stringify(features), {
         status: 200, headers: { 'content-type': 'application/json' },
     })));
     storage.setState({ ...initialState, settings: settingsParse({ voice: { providerId: 'off' } }) }, true);
     const purposes = createConnectedPurposeCatalogHttpBoundary();
-    const sessions = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
+    const sessions = sessionHttp = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
     accountSettingsVersion = 1;
     accountSettingsHttp = createAccountSettingsHttpBoundary({ serverUrl: 'https://brief-account.example.test',
         initialAccounts: [{ accountId: 'account-a', snapshot: { version: accountSettingsVersion,
@@ -221,10 +243,11 @@ beforeEach(async () => {
         throw new Error(`Unexpected provider HTTP request: ${path}`);
     });
     account = await restoreServerAccountForTest({ serverUrl: 'https://brief-account.example.test', additionalRequestOrigins: ['https://api.openai.com'],
+        configureSocket: onlinePersonalQuery ? configureConnectedServerSocketBoundary : undefined,
         credentialScope: 'restored-home', request: createSessionReadBatchFetchBoundary(async (url, init) => {
         if (new URL(String(url)).origin === 'https://api.openai.com') return providerFetch(url, init);
         const path = new URL(String(url)).pathname;
-        if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(buildServerFeaturesResponse({ voiceEnabled: true }));
+        if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
         if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'account-a' }));
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
@@ -245,6 +268,11 @@ beforeEach(async () => {
         const preparation = answerVoiceRealtimePreparationHttpRequest(url, storage.getState().settings);
         if (preparation) return preparation;
         if (path === '/v1/sessions' && init?.method === 'POST') return sessions.createSessionFromPost(historyId, init);
+        if (path === '/v2/sessions/query') {
+            if (activityQueryRows.length > 0) console.info('Brief scale query response', JSON.stringify({ rows: activityQueryRows.length }));
+            return Response.json({ sessions: activityQueryRows,
+                hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null });
+        }
         const sessionResponse = sessions.handle(url, init);
         if (sessionResponse) return sessionResponse;
         if (path === '/health') return Response.json({ status: 'ok' });
@@ -280,7 +308,8 @@ beforeEach(async () => {
         conversationSessionAddress: { serverId: account.home.id, sessionId: historyId }, targetSessionAddress: null, lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt: 1 });
     voiceConversationRuntimeMachine.reset();
     setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
-});
+}
+beforeEach(({ task }) => prepareBriefAccount(task.name === SCALE_BRIEF_TEST || task.name === SIDEBAR_BRIEF_TEST));
 afterEach(async () => {
     await screen?.unmount(); screen = null;
     restorePopoverGlobals?.(); restorePopoverGlobals = null;
@@ -295,6 +324,7 @@ afterEach(async () => {
     if (account) await disconnectActiveServerConnectionIfCurrent({ serverId: account.home.id, serverUrl: account.home.serverUrl });
     await account?.dispose(); account = null;
     browser?.restore();
+    resetSessionListPaneRetentionForTests();
 });
 
 async function installTransport() {
@@ -356,6 +386,304 @@ function expectApprovalGuidance(message: string | undefined, canApproveRequests 
 }
 
 describe('mounted Voice Brief request', () => {
+    it(SIDEBAR_BRIEF_TEST, async () => {
+        const serverId = account!.home.id;
+        const now = Date.now();
+        const sessions = Array.from({ length: 13 }, (_, index) => {
+            const session = createSessionFixture({ id: `sidebar-request-${index}`, serverId,
+                metadata: { path: '/project', summary: { text: `Review deployment ${index}`, updatedAt: now } },
+                active: true, activeAt: now, pendingBlockedCount: 1, latestTurnStatus: 'completed',
+            });
+            return { ...session, viewer: createSessionOwnerViewerFixture(session) };
+        });
+        activityQueryRows = sessions.map(session => createCompactSessionListRowFixture({
+            ...createPlainSessionByIdResponseFixture(session).session, viewer: session.viewer,
+        }));
+        storage.getState().applySessions(sessions);
+        const rows = new Map(sessions.map(session => [session.id, buildSessionListRenderableFromSession(session)]));
+        const index = computeVisibleSessionListIndex({
+            source: sessions.slice(0, 10).map(session => ({ type: 'session' as const, serverId, sessionId: session.id })),
+            resolveSessionRow: (_serverId, id) => rows.get(id) ?? null,
+            hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+            sessionListAttentionPlacementV1: 'both', attentionPlacement: { mode: 'global' },
+            presentation: { enabled: false, presentation: 'grouped' }, nowMs: now,
+        })!;
+        const header = index.find(item => item.type === 'header' && item.headerKind === 'attention');
+        expect(header?.type === 'header' ? header.eligibleCount : null).toBe(10);
+        retainSessionListPaneState({ storageKind: 'all', pathname: '/', sourceScopeKey: 'brief-account-a',
+            selectedServerIds: [serverId], queryMembershipActive: true, referenceCorpusActive: true,
+            paneState: { summary: { sessionsReady: true, sessionCount: 10 }, visibleSessionListIndex: index,
+                filterResult: { matchedCount: 10, coverage: 'complete' }, hasHiddenInactiveSessions: false,
+                folderFeatureEnabledServerIds: [], showLoading: false, showEmptyState: false } });
+        const speech = await installTransport();
+        await selectService();
+        screen = await renderScreen(<AuthProvider initialCredentials={account!.credentials}>
+            <ActivityPersonalSessionMembershipProvider enabled><InboxSummaryProvider>
+                <BriefHome available />
+            </InboxSummaryProvider></ActivityPersonalSessionMembershipProvider>
+        </AuthProvider>);
+        // Home admits Brief before demand-mounting Inbox. Its sidebar total
+        // does not wait for a separate Account census to hydrate.
+        await act(async () => { expect(executeVoiceBriefOperation('request').ok).toBe(true); });
+        await speech.waitForStart();
+        await act(async () => speech.connect());
+        await speech.waitForSpoken();
+        const snapshot = speech.context.at(-1)?.match(/INBOX BRIEF\n\n(\{[^\n]+\})/);
+        expect(snapshot).not.toBeNull();
+        expect(JSON.parse(snapshot![1]!).counts.needs_you).toBe(10);
+        expect(speech.spoken).toEqual([t('voiceMoments.briefMe')]);
+        for (const excluded of sessions.slice(10)) {
+            expect(screen.findByTestId(`voice-brief.item.${sessionAddressKey({ serverId, sessionId: excluded.id })}`)).toBeNull();
+        }
+    });
+    it(SCALE_BRIEF_TEST, async () => {
+        // Home's strict personal census is available only on an online, filtered-listing Home.
+        expect(storage.getState().socketStatus).toBe('connected');
+        const serverId = account!.home.id;
+        const now = Date.now();
+        const sessionCount = 1_000; // Existing Activity reference census, not a product limit.
+        const sessions = Array.from({ length: sessionCount }, (_, index) => {
+            const session = createSessionFixture({
+            id: `brief-scale-${index}`, serverId, createdAt: now - 10_000, updatedAt: now - 1_000,
+            activeAt: now - 1_000, lastViewedSessionSeq: 100,
+            agentState: { requests: {}, completedRequests: {} },
+            metadata: { path: `/repos/brief-scale-${index}`, host: 'test', machineId: 'brief-machine' },
+            });
+            return { ...session, viewer: createSessionOwnerViewerFixture(session) };
+        });
+        const records = sessions.map(session => ({
+            ...createPlainSessionByIdResponseFixture(session).session, viewer: session.viewer,
+        }));
+        for (const record of records) sessionHttp.replaceSession(record.id, record);
+        activityQueryRows = records.map(createCompactSessionListRowFixture);
+        // Current compact rows and full owner documents share one real HTTP tuple.
+        // The by-ID owner opens/adopts that tuple; the fixture never fabricates admission.
+        const readTransport = createCapturedServerReadTransport({ serverId,
+            profile: { serverUrl: account!.home.serverUrl }, credentials: account!.credentials });
+        let observePublications = (values: Parameters<Parameters<typeof fetchAndApplySessionById>[0]['applySessions']>[0]) => values;
+        const applySessions: Parameters<typeof fetchAndApplySessionById>[0]['applySessions'] = values => storage.getState().applySessions(observePublications(values));
+        const sessionDataKeys = new Map<string, Uint8Array>();
+        const hydrate = (sessionId: string) => fetchAndApplySessionById({
+            sessionId, serverId, credentials: account!.credentials,
+            accountCurrentness: createPlainAccountEncryptionCurrentnessFixture(),
+            encryption: { decryptEncryptionKey: async () => null, initializeSessions: async () => {}, getSessionEncryption: () => null },
+            sessionDataKeys, includeTurnsProjection: false, readTransport,
+            request: (path, init) => runtimeFetch(new URL(path, account!.home.serverUrl).href, init),
+            applySessions, getExistingSession: id => storage.getState().sessions[id], log: { log() {} },
+        });
+        const hydration = await Promise.all(sessions.map(session => hydrate(session.id)));
+        expect(hydration.every(result => result.ok)).toBe(true);
+        const admitted = storage.getState().sessions;
+        for (const row of activityQueryRows) {
+            expect(admitted[row.id]?.metadataLayoutVersion).toBe(row.metadataLayoutVersion);
+            expect(readSessionOwnerMetadataView(admitted[row.id]!)).not.toBeNull();
+        }
+        const firstId = sessions[0]!.id;
+        const one = buildActivityOverviewFromSource({ nowMs: now, source: {
+            isDataReady: true, sessionsById: { [firstId]: admitted[firstId]! },
+            sessionListRowsByServerId: storage.getState().sessionListRowsByServerId,
+            ordinarySessionListMembershipByServerId: { [serverId]: [firstId] },
+            personalSessionListMembershipByServerId: { [serverId]: [firstId] },
+            sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {}, activeServerId: serverId,
+        } });
+        expect(one.candidates).toHaveLength(1);
+
+        const sidebarRows = new Map(sessions.map(session => [session.id, buildSessionListRenderableFromSession(session)]));
+        const retainSidebar = () => retainSessionListPaneState({ storageKind: 'all', pathname: '/',
+            sourceScopeKey: 'brief-scale', selectedServerIds: [serverId], queryMembershipActive: true,
+            referenceCorpusActive: true, paneState: {
+                summary: { sessionsReady: true, sessionCount },
+                visibleSessionListIndex: computeVisibleSessionListIndex({
+                    source: sessions.map(session => ({ type: 'session' as const, serverId, sessionId: session.id })),
+                    resolveSessionRow: (_serverId, id) => sidebarRows.get(id) ?? null,
+                    hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+                    sessionListAttentionPlacementV1: 'both', attentionPlacement: { mode: 'global' },
+                    presentation: { enabled: false, presentation: 'grouped' }, nowMs: now,
+                }),
+                filterResult: { matchedCount: sessionCount, coverage: 'complete' },
+                hasHiddenInactiveSessions: false, folderFeatureEnabledServerIds: [], showLoading: false, showEmptyState: false,
+            } });
+        retainSidebar();
+        const previousStackLimit = Error.stackTraceLimit;
+        Error.stackTraceLimit = 80;
+        const overviewReads = new Set<string>();
+        let metadataPathReads = 0;
+        // Observe reads of real input records; Activity, storage, Inbox and Brief remain real.
+        const observeMetadata = (id: string, metadata: NonNullable<ReturnType<typeof readSessionOwnerMetadataView>>) => new Proxy(metadata, {
+            get(target, key, receiver) {
+                if (key === 'path') metadataPathReads += 1;
+                if (key === 'path' && !overviewReads.has(id)
+                    && /buildActivityOverviewFromSource\.tsx?:/.test(new Error().stack ?? '')) {
+                    overviewReads.add(id);
+                }
+                return Reflect.get(target, key, receiver);
+            },
+        });
+        const observedMetadata = new Map(sessions.map(seed => [seed.id,
+            observeMetadata(seed.id, readSessionOwnerMetadataView(admitted[seed.id]!)!)]));
+        // Keep the read census attached when the genuine HTTP owner publishes a new document.
+        observePublications = values => values.map(session => {
+            const metadata = readSessionOwnerMetadataView(session);
+            return metadata && session.id.startsWith('brief-scale-')
+                ? { ...session, ownerMetadataView: observeMetadata(session.id, metadata) } : session;
+        });
+        const state = storage.getState();
+        storage.setState({
+            sessions: Object.fromEntries(Object.entries(state.sessions).map(([id, session]) => [id,
+                observedMetadata.has(id) ? { ...session, ownerMetadataView: observedMetadata.get(id)! } : session])),
+            sessionListRowsByServerId: { ...state.sessionListRowsByServerId, [serverId]: Object.fromEntries(
+                Object.entries(state.sessionListRowsByServerId[serverId] ?? {}).map(([id, row]) => [id,
+                    observedMetadata.has(id) ? { ...row, metadata: observedMetadata.get(id)! } : row]),
+            ) },
+        });
+        const commits = createRenderCommitCounter();
+        let latestBrief: ReturnType<typeof useVoiceBriefRequest>['brief'] | undefined;
+        let latestInbox: ReturnType<typeof useInboxModel> | undefined;
+        let latestMembership: ReturnType<typeof useActivityPersonalSessionMembership> | undefined;
+        let inboxPublications = 0;
+        function InboxObserver() {
+            const inbox = useInboxModel();
+            const membership = useActivityPersonalSessionMembership();
+            React.useLayoutEffect(() => { latestInbox = inbox; });
+            React.useLayoutEffect(() => {
+                latestMembership = membership;
+                console.info('Brief scale admitted census', JSON.stringify({
+                    personalMembership: membership.membershipByServerId[serverId]?.length ?? 0,
+                    personalPhase: membership.statesByServerId[serverId]?.phase,
+                    candidates: inbox.sessionCandidates.filter(candidate => candidate.sessionId.startsWith('brief-scale-')).length,
+                }));
+            }, [membership]);
+            React.useLayoutEffect(() => { inboxPublications += 1; }, [inbox]);
+            return null;
+        }
+        function Probe() {
+            useRenderCommitCounter(commits);
+            const { brief } = useVoiceBriefRequest();
+            React.useLayoutEffect(() => { latestBrief = brief; });
+            return <VoiceBriefList brief={brief} onOpen={() => {}} />;
+        }
+        let sessionPublications = 0;
+        let rowPublications = 0;
+        let messagePublications = 0;
+        let storeNotifications = 0;
+        const stop = storage.subscribe((next, previous) => {
+            storeNotifications += 1;
+            if (next.sessions !== previous.sessions) sessionPublications += 1;
+            if (next.sessionListRowsByServerId !== previous.sessionListRowsByServerId) rowPublications += 1;
+            if (next.sessionMessages !== previous.sessionMessages) messagePublications += 1;
+        });
+        const matrix: Record<string, unknown>[] = [];
+        const capture = async (phase: string, update: () => void | Promise<unknown>) => {
+            overviewReads.clear();
+            metadataPathReads = 0;
+            commits.reset();
+            sessionPublications = 0;
+            rowPublications = 0;
+            messagePublications = 0;
+            storeNotifications = 0;
+            inboxPublications = 0;
+            const before = latestBrief;
+            const beforeSession = storage.getState().sessions[sessions[42]!.id]!;
+            const beforeSource = latestInbox!.source;
+            const beforeRevision = storage.getState().sessionListRenderableDelta?.revision;
+            const previousCandidates = new Map(latestInbox!.sessionCandidates.map(candidate => [candidate.sessionId, candidate]));
+            await act(async () => { await update(); });
+            const afterSession = storage.getState().sessions[beforeSession.id]!;
+            const result = { phase, storeNotifications, sessionPublications, rowPublications, messagePublications,
+                inboxPublications, ...commits.read(),
+                changedSessionFields: [...new Set([...Reflect.ownKeys(beforeSession), ...Reflect.ownKeys(afterSession)])]
+                    .filter(key => Object.hasOwn(beforeSession, key) !== Object.hasOwn(afterSession, key)
+                        || !areSessionValuesDeepEqual(Reflect.get(beforeSession, key), Reflect.get(afterSession, key)))
+                    .map(String),
+                changedSourceFields: (Object.keys(latestInbox!.source) as Array<keyof typeof beforeSource>)
+                    .filter(key => beforeSource[key] !== latestInbox!.source[key]),
+                rowRevisionAdvanced: storage.getState().sessionListRenderableDelta?.revision !== beforeRevision,
+                overviewRowsRead: overviewReads.size, briefValueRetained: latestBrief === before,
+                replacedCandidates: latestInbox!.sessionCandidates.filter(candidate => candidate.sessionId.startsWith('brief-scale-')
+                    && previousCandidates.get(candidate.sessionId) !== candidate).length,
+                metadataPathReads,
+                sourceCensus: Object.keys(latestInbox!.source.sessionsById).filter(id => id.startsWith('brief-scale-')).length,
+                candidates: latestInbox!.sessionCandidates.filter(candidate => candidate.sessionId.startsWith('brief-scale-')).length,
+                inboxNeedsYou: latestInbox!.sessionPresentation.sessionsNeedingAttention
+                    .filter(entry => entry.candidate.sessionId.startsWith('brief-scale-')).length,
+                targetAttentionReasons: storage.getState().sessions[beforeSession.id]?.viewer?.attention.reasons,
+                needsYou: latestBrief!.items.filter(item => item.category === 'needs_you').length };
+            matrix.push(result);
+            return result;
+        };
+        try {
+            screen = await renderScreen(<AuthProvider initialCredentials={account!.credentials}>
+                <ActivityPersonalSessionMembershipProvider enabled><InboxSummaryProvider>
+                    <InboxModelBoundary><InboxObserver /><Probe /></InboxModelBoundary>
+                </InboxSummaryProvider></ActivityPersonalSessionMembershipProvider>
+            </AuthProvider>);
+            console.info('Brief scale mounted census', JSON.stringify({
+                source: Object.keys(latestInbox?.source.sessionsById ?? {}).filter(id => id.startsWith('brief-scale-')).length,
+                candidates: latestInbox?.sessionCandidates.filter(candidate => candidate.sessionId.startsWith('brief-scale-')).length ?? 0,
+                queriedRows: activityQueryRows.length,
+                personalMembership: latestMembership?.membershipByServerId[serverId]?.length ?? 0,
+                personalPhase: latestMembership?.statesByServerId[serverId]?.phase,
+            }));
+            await waitForTestEvent(screen.subscribe, () => expect(latestInbox?.sessionCandidates
+                .filter(candidate => candidate.sessionId.startsWith('brief-scale-'))).toHaveLength(sessionCount));
+            await waitForTestEvent(screen.subscribe, () => expect(latestInbox?.isLoading).toBe(false));
+            expect(latestInbox!.sessionCandidates.filter(candidate => candidate.sessionId.startsWith('brief-scale-'))).toHaveLength(sessionCount);
+            console.info('Brief scale settled census', JSON.stringify({
+                source: Object.keys(latestInbox!.source.sessionsById).filter(id => id.startsWith('brief-scale-')).length,
+                candidates: sessionCount, overviewRowsRead: overviewReads.size,
+                personalMembership: latestMembership?.membershipByServerId[serverId]?.length ?? 0,
+            }));
+            expect(overviewReads.size).toBe(sessionCount);
+            expect(latestBrief!.items).toHaveLength(0);
+            const targetId = sessions[42]!.id;
+            await capture('direct normalized replay (diagnostic)', () => {
+                storage.getState().applySessions([{ ...storage.getState().sessions[targetId]! }]);
+            });
+            // The HTTP owner receives the original server facts, never a client-normalized shell.
+            await act(async () => { expect((await hydrate(targetId)).ok).toBe(true); });
+            const identical = await capture('identical HTTP hydration', () => hydrate(targetId));
+            const progress = await capture('sequence-only progress', () => {
+                const target = storage.getState().sessions[targetId]!;
+                storage.getState().applySessions([{ ...target, seq: target.seq + 1 }]);
+            });
+            const message = await capture('message-only progress (fallback census)', () => {
+                storage.getState().applyMessages(targetId, [{ id: 'brief-scale-message', localId: null,
+                    seq: storage.getState().sessions[targetId]!.seq + 1, createdAt: Date.now(),
+                    isSidechain: false, role: 'user', content: { type: 'text', text: 'Fixture follow-up' } }]);
+            });
+            expect(storage.getState().sessionMessages[targetId]?.messageIdsOldestFirst).toContain('brief-scale-message');
+            const attention = await capture('new permission request', async () => {
+                const target = storage.getState().sessions[targetId]!;
+                const changed = { ...target, viewer: undefined, agentStateVersion: target.agentStateVersion + 1,
+                    pendingPermissionRequestCount: 1, pendingVersion: (target.pendingVersion ?? 0) + 1,
+                    updatedAt: Date.now(), agentState: { requests: {
+                        req_1: { tool: 'Bash', kind: 'permission' as const, arguments: {}, createdAt: Date.now() },
+                    }, completedRequests: {} } };
+                const next = { ...changed, viewer: createSessionOwnerViewerFixture(changed) };
+                const record = { ...createPlainSessionByIdResponseFixture(next).session, viewer: next.viewer };
+                sessionHttp.replaceSession(next.id, record);
+                activityQueryRows = activityQueryRows.map(row => row.id === next.id ? createCompactSessionListRowFixture(record) : row);
+                expect((await hydrate(next.id)).ok).toBe(true);
+                sidebarRows.set(next.id, buildSessionListRenderableFromSession(storage.getState().sessions[next.id]!));
+                retainSidebar();
+            });
+            console.info('Brief projection cost matrix', JSON.stringify(matrix));
+            expect(identical).toMatchObject({ sessionPublications: 0, rowPublications: 0, inboxPublications: 0, commits: 0, overviewRowsRead: 0 });
+            // The full Inbox carries raw sequence facts for current Actions and may publish them.
+            // Its classification work and candidate replacement follow the changed address.
+            expect(progress).toMatchObject({ sourceCensus: sessionCount, candidates: sessionCount, needsYou: 0 });
+            expect(progress.overviewRowsRead).toBeLessThanOrEqual(1);
+            expect(progress.replacedCandidates).toBeLessThanOrEqual(1);
+            expect(message).toMatchObject({ sourceCensus: sessionCount, candidates: sessionCount, needsYou: 0 });
+            expect(attention).toMatchObject({ sourceCensus: sessionCount, candidates: sessionCount, needsYou: 1 });
+            expect(attention.overviewRowsRead).toBeLessThanOrEqual(1);
+            expect(attention.replacedCandidates).toBeLessThanOrEqual(1);
+        } finally {
+            stop();
+            Error.stackTraceLimit = previousStackLimit;
+        }
+    });
+
     it('keeps the Brief projection stable on unrelated settings and refreshes consumed Voice preferences', async () => {
         const projections: Array<ReturnType<typeof useVoiceBriefRequest>['brief']> = [];
         function Probe() {
@@ -495,8 +823,19 @@ describe('mounted Voice Brief request', () => {
         const workGroups = buildInboxWorkGroups({ sessionEntries: sessionPresentation.sessionsNeedingAttention,
             workflowRuns: [], automationRuns: [], automationServerId: null, openApprovals: [], stalledSessions: [], landings: [], snoozed: [],
             resolveSession: () => null, resolveOriginRunId: () => null });
+        const rows = new Map(sessions.map(session => [session.id, buildSessionListRenderableFromSession(session)]));
+        const needsYouShelf = projectSessionListNeedsYou({ showLoading: false,
+            filterResult: { matchedCount: sessions.length, coverage: 'complete' },
+            visibleSessionListIndex: computeVisibleSessionListIndex({
+                source: sessions.map(session => ({ type: 'session' as const, serverId: account!.home.id, sessionId: session.id })),
+                resolveSessionRow: (_serverId, id) => rows.get(id) ?? null,
+                hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+                sessionListAttentionPlacementV1: 'both', attentionPlacement: { mode: 'global' },
+                presentation: { enabled: false, presentation: 'grouped' }, nowMs: 1000,
+            }),
+        });
         const brief = buildVoiceBrief({ inbox: {
-            sessionPresentation, workGroups,
+            sessionPresentation, workGroups, needsYouShelf,
             items: buildInboxItems({ sessionPresentation, workGroups, workflowServerId: account!.home.id, accountServerId: account!.home.id, notices: [] }),
             openApprovals: [], openUsageNotices: [], actionOperationEntries: [], friendRequests: [],
             automationAttentionItems: [], isLoading: false, showCaughtUp: false,

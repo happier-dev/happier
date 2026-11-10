@@ -5,6 +5,29 @@ import type { SessionListStorageFilter } from '@/sync/domains/session/sessionSto
 import type { SessionListQueryHomeState } from '@/sync/domains/session/listing/sessionListQueryController';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { readSessionAddressLookupQueryMembership } from '@/sync/domains/session/resolveSessionAddressFromLocalState';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+
+export type SessionListNeedsYouProjection = Readonly<{
+    count: number;
+    items: readonly Extract<SessionListIndexItem, { type: 'session' | 'workflow_run' }>[];
+    incomplete: boolean;
+}>;
+
+/** The displayed shelf owns both its total and membership; Inbox totals have a different scope. */
+export function projectSessionListNeedsYou(pane: Pick<VisibleSessionListPaneState, 'visibleSessionListIndex' | 'showLoading' | 'filterResult'>): SessionListNeedsYouProjection | null {
+    const index = pane.visibleSessionListIndex;
+    if (!index || pane.showLoading) return null;
+    const header = index.find(item => item.type === 'header' && item.headerKind === 'attention');
+    if (!header) return { count: 0, items: [], incomplete: pane.filterResult?.coverage !== 'complete' };
+    if (header.type !== 'header' || header.eligibleCount === undefined) return null;
+    // Interaction may retain a slot after placement withdraws its earned reason;
+    // that visible slot no longer belongs to the header's current count.
+    const items = index.filter((item): item is SessionListNeedsYouProjection['items'][number] =>
+        item.type === 'session' && item.occurrenceRole === 'needsYou' && item.attentionPlacementReason !== undefined
+        || item.type === 'workflow_run' && item.groupKind === 'attention');
+    return { count: header.eligibleCount, items,
+        incomplete: pane.filterResult?.coverage !== 'complete' || header.eligibleCount > items.length };
+}
 
 export type RetainedSessionListPaneState = Readonly<{
     storageKind: SessionListStorageFilter;
@@ -24,8 +47,33 @@ type SessionListPaneRetentionIdentity = Pick<RetainedSessionListPaneState, 'stor
 const retainedPaneStateByKey = new Map<string, RetainedSessionListPaneState>();
 const retentionListeners = new Set<() => void>();
 let retentionRevision = 0;
+const needsYouListeners = new Set<() => void>();
+let needsYouProjection: SessionListNeedsYouProjection | null = null;
+
+function activeRetainedPane(): RetainedSessionListPaneState | null {
+    const active = [...retainedPaneStateByKey.values()].filter(state => state.queryMembershipActive);
+    const focused = active.filter(state => state.referenceCorpusActive === true);
+    const candidates = focused.length > 0 ? focused : active;
+    return candidates.length === 1 ? candidates[0]! : null;
+}
+
+function publishNeedsYouChange(): void {
+    const retained = activeRetainedPane();
+    const next = retained ? projectSessionListNeedsYou(retained.paneState) : null;
+    const previous = needsYouProjection;
+    if (next === previous || (next && previous && next.count === previous.count && next.incomplete === previous.incomplete
+        && next.items.length === previous.items.length && next.items.every((item, index) => {
+            const before = previous.items[index]!;
+            return item.type === before.type && item.serverId === before.serverId
+                && (item.type === 'session' && before.type === 'session' ? item.sessionId === before.sessionId
+                    : item.type === 'workflow_run' && before.type === 'workflow_run' && item.runId === before.runId);
+        }))) return;
+    needsYouProjection = next;
+    for (const listener of needsYouListeners) listener();
+}
 
 function publishRetentionChange(): void {
+    publishNeedsYouChange();
     retentionRevision += 1;
     for (const listener of retentionListeners) listener();
 }
@@ -107,6 +155,9 @@ export function retainSessionListPaneState(
         || previous.referenceCorpusActive !== state.referenceCorpusActive
         || !sameRetainedQueryMembership(previous.paneState.query, state.paneState.query)
     ) publishRetentionChange();
+    else if (previous.paneState.visibleSessionListIndex !== state.paneState.visibleSessionListIndex
+        || previous.paneState.showLoading !== state.paneState.showLoading
+        || previous.paneState.filterResult?.coverage !== state.paneState.filterResult?.coverage) publishNeedsYouChange();
     return state;
 }
 
@@ -157,11 +208,8 @@ export type ActiveRetainedSessionListReferenceCorpus = Readonly<{
 export function readActiveRetainedSessionListReferenceCorpus(input?: Readonly<{
     ordinaryMembershipByServerId?: Readonly<Record<string, readonly string[] | undefined>>;
 }>): ActiveRetainedSessionListReferenceCorpus | null {
-    const dataActive = [...retainedPaneStateByKey.values()].filter((retained) => retained.queryMembershipActive);
-    const focused = dataActive.filter((retained) => retained.referenceCorpusActive === true);
-    const candidates = focused.length > 0 ? focused : dataActive;
-    if (candidates.length !== 1) return null;
-    const retained = candidates[0]!;
+    const retained = activeRetainedPane();
+    if (!retained) return null;
     const activeQuery = retained.paneState.query;
 
     if (activeQuery?.active !== true) {
@@ -208,6 +256,21 @@ export function useActiveRetainedSessionListQueryStates(): readonly SessionListQ
         () => retentionRevision,
     );
     return React.useMemo(() => readActiveRetainedSessionListQueryStates(), [revision]);
+}
+
+export function readActiveRetainedSessionListNeedsYou(): SessionListNeedsYouProjection | null {
+    return needsYouProjection;
+}
+
+export function useActiveRetainedSessionListNeedsYou(): SessionListNeedsYouProjection | null {
+    return React.useSyncExternalStore(
+        React.useCallback((listener) => {
+            needsYouListeners.add(listener);
+            return () => needsYouListeners.delete(listener);
+        }, []),
+        readActiveRetainedSessionListNeedsYou,
+        readActiveRetainedSessionListNeedsYou,
+    );
 }
 
 export function updateRetainedSessionListPaneSurfaceRoutePathname(

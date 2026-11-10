@@ -10,6 +10,7 @@ import { t } from '@/text';
 const attention: VoiceBriefSource['workflowAttention'] = { serverId: null, available: false, phase: 'idle', runIds: [], refreshFailed: false,
     knownAt: null, hasMore: false, loadingMore: false, loadMoreFailed: false, retry: async () => {}, loadMore: async () => {} };
 const inbox: VoiceBriefSource = { source: { isDataReady: true, personalSessionListCoverageComplete: true },
+    needsYouShelf: null,
     items: [], openApprovals: [], openUsageNotices: [], actionOperationEntries: [], friendRequests: [],
     sessionPresentation: { sessionsNeedingAttention: [], readySessions: [], markAllReadTargets: [], pendingRequestHydrationTargets: [] }, workGroups: [], automationAttentionItems: [],
     workflowAttention: attention, automationAttention: attention, isLoading: false, showCaughtUp: true };

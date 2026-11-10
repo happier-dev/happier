@@ -224,6 +224,7 @@ describe('local conversation voice adapter', () => {
     try {
       expect(voiceHooks.onBriefRequested(VOICE_AGENT_GLOBAL_SESSION_ID, {
         source: { isDataReady: true, personalSessionListCoverageComplete: true },
+        needsYouShelf: null,
         items: [], openApprovals: [], openUsageNotices: [], actionOperationEntries: [], friendRequests: [],
         sessionPresentation: { sessionsNeedingAttention: [], readySessions: [], markAllReadTargets: [], pendingRequestHydrationTargets: [] },
         workGroups: [], automationAttentionItems: [], workflowAttention: attention, automationAttention: attention,

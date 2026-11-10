@@ -4,7 +4,7 @@ import { buildSessionActivityAttention } from '@/activity/attention/buildSession
 import { buildActivityOverviewFromCandidates, buildActivityOverviewSnapshot } from '@/activity/attention/buildActivityOverviewSnapshot';
 import { buildInboxSessionPresentation } from '@/activity/presentation/buildInboxSessionPresentation';
 import type { WorkflowAttentionSource } from '@/hooks/inbox/useWorkflowAttentionSource';
-import { buildVoiceBrief, type VoiceBriefSource } from './buildVoiceBrief';
+import { buildVoiceBrief as buildBrief, type VoiceBriefSource } from './buildVoiceBrief';
 import { createWorkflowRunSummaryFixture, createAutomationRunFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { buildInboxWorkGroups } from '@/activity/presentation/buildInboxWorkGroups';
@@ -16,9 +16,39 @@ import { buildSessionListRenderableFromSession } from '@/sync/domains/session/li
 import { createSessionListPresentationSource } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { buildInboxItems } from '@/components/inbox/inboxItems';
 import { countInboxNeedsYou } from '@/components/inbox/inboxCounts';
+import { computeVisibleSessionListIndex } from '@/sync/domains/session/listing/computeVisibleSessionListIndex';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { projectSessionListNeedsYou } from '@/components/sessions/shell/sessionListPaneRetention';
+import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 const EMPTY_WORKFLOW_ATTENTION_SOURCE: WorkflowAttentionSource = { serverId: null, available: false, phase: 'idle', runIds: [], refreshFailed: false,
     knownAt: null, hasMore: false, loadingMore: false, loadMoreFailed: false, retry: async () => {}, loadMore: async () => {} };
+
+/** Most cases vary Inbox content; keep their sidebar input on the actual list producer too. */
+function buildVoiceBrief(input: Parameters<typeof buildBrief>[0]) {
+    const { inbox } = input;
+    if ('needsYouShelf' in inbox) return buildBrief(input);
+    const candidates = [...inbox.sessionPresentation.sessionsNeedingAttention.map(entry => entry.candidate), ...inbox.sessionPresentation.readySessions];
+    const workflowRuns = inbox.workGroups.flatMap(group => group.items.flatMap(item =>
+        item.kind === 'workflow_run' && item.row.summary
+            ? [{ serverId: inbox.workflowAttention.serverId ?? 'home-a', summary: item.row.summary }] : []));
+    const index = computeVisibleSessionListIndex({
+        source: candidates.map(candidate => ({ type: 'session' as const, serverId: candidate.address.serverId, sessionId: candidate.sessionId })),
+        resolveSessionRow: (serverId, id) => {
+            const candidate = candidates.find(candidate => candidate.sessionId === id && candidate.address.serverId === serverId);
+            return candidate ? candidate.presentationSource?.row ?? buildSessionListRenderableFromSession(candidate.session) : null;
+        },
+        hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+        sessionListAttentionPlacementV1: 'both', attentionPlacement: { mode: 'global' },
+        presentation: { enabled: false, presentation: 'grouped' }, nowMs: 1_000,
+        workflowRuns, workFilter: normalizeSessionListFilterV1({ show: 'both',
+            homeServerIds: [...new Set([...candidates.map(candidate => candidate.address.serverId), ...workflowRuns.map(run => run.serverId)])] }),
+        viewerAccountIdByServerId: new Map(workflowRuns.map(run => [run.serverId, run.summary.ownerAccountId])),
+    });
+    return buildBrief({ ...input, inbox: { ...inbox, needsYouShelf: projectSessionListNeedsYou({
+        visibleSessionListIndex: index, showLoading: false, filterResult: { matchedCount: candidates.length, coverage: 'complete' },
+    }) } });
+}
 
 function source(): VoiceBriefSource {
     const candidates = [
@@ -59,7 +89,85 @@ function buildBriefFromInboxFixture(input: Parameters<typeof buildVoiceBrief>[0]
 }
 
 describe('Voice brief from the mounted Inbox', () => {
-    it.each([false, true])('shares the Inbox Needs you count at the observed mixed Brief scale (unloaded run=%s)', (unloadedRun) => {
+    it('uses the displayed sidebar membership and total instead of the larger Account Inbox', () => {
+        // This discriminates the observed numeric shape; RUN113 did not retain the
+        // contemporaneous breakdown needed to attribute its extra requests.
+        const base = source();
+        const original = base.sessionPresentation.readySessions[0]!.session;
+        const candidates = ([['pending_blocked', 13], ['failed', 29], ['ready_after_read', 49]] as const)
+            .flatMap(([reason, count]) => Array.from({ length: count }, (_, index) => buildSessionActivityAttention({
+                session: createSessionFixture({ ...original, id: `${reason}-sidebar-${index}`,
+                    pendingBlockedCount: reason === 'pending_blocked' ? 1 : 0,
+                    viewer: { ...original.viewer!, attention: { needsAttention: true, reasons: [reason], primary: reason, presentation: 'full' } },
+                }), nowMs: 1_000,
+            })));
+        const rows = new Map(candidates.map(candidate => [candidate.session.id, buildSessionListRenderableFromSession(candidate.session)]));
+        const index = computeVisibleSessionListIndex({
+            source: candidates.filter(candidate => !['pending_blocked-sidebar-10', 'pending_blocked-sidebar-11', 'pending_blocked-sidebar-12'].includes(candidate.session.id))
+                .map(candidate => ({ type: 'session' as const, serverId: 'home-a', sessionId: candidate.session.id })),
+            resolveSessionRow: (_serverId, id) => rows.get(id) ?? null,
+            hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+            sessionListAttentionPlacementV1: 'both', attentionPlacement: { mode: 'global' },
+            presentation: { enabled: false, presentation: 'grouped' }, nowMs: 1_000,
+        })!;
+        const header = index.find(item => item.type === 'header' && item.headerKind === 'attention');
+        if (!header || header.type !== 'header') throw new Error('The real sidebar producer must admit its Needs you shelf');
+        const shelfItems = index.filter((item): item is Extract<SessionListIndexItem, { type: 'session' | 'workflow_run' }> =>
+            (item.type === 'session' && item.occurrenceRole === 'needsYou') || (item.type === 'workflow_run' && item.groupKind === 'attention'));
+        expect(header.eligibleCount).toBe(10);
+        const sessionPresentation = buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates(candidates) });
+        const workGroups = buildInboxWorkGroups({ sessionEntries: sessionPresentation.sessionsNeedingAttention,
+            workflowRuns: [], automationRuns: [], automationServerId: null, openApprovals: [], stalledSessions: [], landings: [], snoozed: [],
+            resolveSession: () => null, resolveOriginRunId: () => null });
+        const inbox = { ...base, sessionPresentation, workGroups,
+            workflowAttention: { ...base.workflowAttention, serverId: 'home-a', available: true, phase: 'loaded' as const,
+                runIds: Array.from({ length: 646 }, (_, index) => `other-inbox-run-${index}`) },
+            items: buildInboxItems({ sessionPresentation, workGroups, workflowServerId: 'home-a', accountServerId: 'home-a', notices: [] }),
+            needsYouShelf: { count: header.eligibleCount!, items: shelfItems, incomplete: false },
+        };
+        expect(countInboxNeedsYou(inbox)).toBe(659);
+        const brief = buildVoiceBrief({ inbox, settings: {} });
+        expect(JSON.parse(brief.context).counts).toEqual({ needs_you: 10, failed: 29, ready: 49 });
+        expect(brief.items.filter(item => item.category === 'needs_you').map(item => item.destination)).toEqual(
+            shelfItems.flatMap(item => item.type === 'session' ? [{ kind: 'session', address: { serverId: item.serverId, sessionId: item.sessionId } }] : []));
+        expect(brief.context).not.toContain('other-inbox-run-');
+    });
+    it('reports the sidebar total unavailable when its projection is absent rather than using an Account Inbox total', () => {
+        const inbox = source();
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, needsYouShelf: null }, settings: {} });
+        expect(JSON.parse(brief.context).counts).toEqual({ needs_you: null, failed: 1, ready: 1 });
+        expect(brief.items.some(item => item.category === 'needs_you')).toBe(false);
+        expect(brief.incomplete).toBe(true);
+    });
+    it('leaves thirteen unnamed requests and fourteen unnamed failures out of speech while retaining honest remaining totals', () => {
+        const inbox = source();
+        const base = inbox.sessionPresentation.readySessions[0]!.session;
+        const unnamed = ([['pending_blocked', 13], ['failed', 14]] as const).flatMap(([reason, count]) =>
+            Array.from({ length: count }, (_, index) => {
+                const session = createSessionFixture({ ...base, id: `${reason}-unnamed-${index}`,
+                    metadata: { path: '/private/unnamed-work' }, pendingBlockedCount: reason === 'pending_blocked' ? 1 : 0,
+                    viewer: { ...base.viewer!, attention: { needsAttention: true, reasons: [reason], primary: reason, presentation: 'full' } },
+                });
+                const row = buildSessionListRenderableFromSession(session, undefined, [{ id: 'first-message', kind: 'user-text',
+                    localId: null, createdAt: 1, text: 'Unapproved first-message display title' }]);
+                return buildSessionActivityAttention({ session,
+                    presentationSource: createSessionListPresentationSource(row, { baseSession: session }), nowMs: 1_000 });
+            }));
+        const candidates = [...inbox.sessionPresentation.sessionsNeedingAttention.map(entry => entry.candidate),
+            ...inbox.sessionPresentation.readySessions, ...unnamed];
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation:
+            buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates(candidates) }) },
+            settings: { voice: { privacy: { shareSessionSummary: true, sharePermissionRequests: true } } } });
+        const context = JSON.parse(brief.context);
+        expect(context.counts).toEqual({ needs_you: 14, failed: 15, ready: 1 });
+        expect(context.remaining).toEqual({ needs_you: 13, failed: 14, ready: 0 });
+        expect(context.items).toHaveLength(3);
+        expect(context.items.every((item: { title?: string }) => Boolean(item.title))).toBe(true);
+        expect(brief.items).toHaveLength(30);
+        expect(brief.context).not.toContain('Unapproved first-message display title');
+        expect(brief.context).not.toContain('/private/unnamed-work');
+    });
+    it.each([false, true])('preserves the sidebar count when the Account Inbox has another unloaded Run (unloaded run=%s)', (unloadedRun) => {
         const base = source();
         const session = base.sessionPresentation.readySessions[0]!.session;
         const candidates = ([['pending_blocked', 11], ['manual', 8], ['failed', 31], ['ready_after_read', 45]] as const)
@@ -78,16 +186,16 @@ describe('Voice brief from the mounted Inbox', () => {
             items: buildInboxItems({ sessionPresentation, workGroups, workflowServerId: 'home-a', accountServerId: 'home-a', notices: [] }),
             openApprovals: [], openUsageNotices: [], actionOperationEntries: [], friendRequests: [],
         };
-        const sidebarCount = countInboxNeedsYou(inbox);
-        expect(sidebarCount).toBe(11 + Number(unloadedRun));
+        const accountCount = countInboxNeedsYou(inbox);
+        expect(accountCount).toBe(11 + Number(unloadedRun));
         const brief = buildVoiceBrief({ inbox, settings: {} });
         const context = JSON.parse(brief.context);
-        expect(context.counts).toEqual({ needs_you: sidebarCount, failed: 31, ready: 45 });
+        expect(context.counts).toEqual({ needs_you: 11, failed: 31, ready: 45 });
         expect(brief.items).toHaveLength(11 + 31 + 45);
         expect(brief.items.filter(item => item.category === 'needs_you')).toHaveLength(11);
-        expect(context.items.filter((item: { category: string }) => item.category === 'needs_you')
-            .reduce((count: number, item: { count: number }) => count + item.count, 0)).toBe(11);
-        expect(context.incomplete).toBe(unloadedRun);
+        expect(context.items.filter((item: { category: string }) => item.category === 'needs_you')).toEqual([]);
+        expect(context.remaining.needs_you).toBe(11);
+        expect(context.incomplete).toBe(false);
         expect(brief.items.filter(item => item.destination.kind === 'session'
             && item.destination.address.sessionId.startsWith('pending_blocked-'))).toHaveLength(11);
         expect(brief.context).not.toContain('pending_blocked-');
@@ -138,7 +246,10 @@ describe('Voice brief from the mounted Inbox', () => {
         expect(brief.items).toHaveLength(5);
         const spoken = JSON.parse(brief.context).items;
         if (shareSessionSummary) expect(spoken[1]).toEqual({ category: 'needs_you', title: 'Publish release notes', count: 1 });
-        else expect(spoken).toEqual([{ category: 'needs_you', count: 2 }, { category: 'failed', count: 2 }, { category: 'ready', count: 1 }]);
+        else {
+            expect(spoken).toEqual([]);
+            expect(JSON.parse(brief.context).remaining).toEqual({ needs_you: 2, failed: 2, ready: 1 });
+        }
         expect(spoken.find((item: { title?: string }) => item.title?.startsWith('Nightly')))
             .toEqual(shareSessionSummary ? { category: 'failed', title: 'Nightly dependency check <path_redacted>', count: 1 } : undefined);
         expect(brief.context).not.toContain('/home/alice');
@@ -283,11 +394,11 @@ describe('Voice brief from the mounted Inbox', () => {
             } }, settings });
             expect(brief.items[0]?.title).toBe(title ?? dictated);
             expect(brief.context).not.toContain(dictated);
-            return JSON.parse(brief.context).items[0]?.requests[0] as string;
+            return JSON.parse(brief.context);
         };
-        expect(permissionSpeech()).toContain('needs permission');
-        expect(permissionSpeech()).not.toContain(dictated);
-        expect(permissionSpeech('Second notes')).toContain('Second notes');
+        expect(permissionSpeech().items).toEqual([]);
+        expect(permissionSpeech().remaining.needs_you).toBe(1);
+        expect(permissionSpeech('Second notes').items[0]?.requests[0]).toContain('Second notes');
     });
 
     it('does not substitute a status word when the Inbox request reason is not yet known', () => {
@@ -307,7 +418,7 @@ describe('Voice brief from the mounted Inbox', () => {
             } },
         }), nowMs: 1_000 });
         const sessionPresentation = buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates([candidate]) });
-        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation }, settings: { voice: { privacy: { sharePermissionRequests: true, shareToolArgs: true } } } });
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation }, settings: { voice: { privacy: { shareSessionSummary: true, sharePermissionRequests: true, shareToolArgs: true } } } });
         expect(brief.items[0]).toMatchObject({ subtitle: 'Resume from the summary?', hasRequestControls: false });
         expect(brief.context).toContain('Resume from the summary?');
         expect(brief.context).not.toContain('do not revive stale permission');
@@ -385,6 +496,8 @@ describe('Voice brief from the mounted Inbox', () => {
         expect(brief.context).not.toContain('private');
         expect(brief.context).not.toContain('home-a');
         expect(brief.context).not.toContain('permission_required');
+        expect(JSON.parse(brief.context).items).toEqual([]);
+        expect(JSON.parse(brief.context).remaining).toEqual({ needs_you: 1, failed: 1, ready: 1 });
         const allowed = buildBriefFromInboxFixture({ inbox, settings: { voice: { privacy: { shareSessionSummary: true } } } });
         expect(JSON.parse(allowed.context).items.map((item: { title?: string }) => item.title)).toEqual([
             'needs <path_redacted>', 'failed <path_redacted>', 'ready <path_redacted>',

@@ -7,9 +7,17 @@ import {
     resetSessionListPaneRetentionForTests,
     retainSessionListPaneState,
     useActiveRetainedSessionListQueryStates,
+    projectSessionListNeedsYou,
+    useActiveRetainedSessionListNeedsYou,
+    readActiveRetainedSessionListNeedsYou,
+    setRetainedSessionListPaneReferenceCorpusActive,
 } from './sessionListPaneRetention';
 import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionListGlobalPlacements } from '@/sync/domains/session/listing/sessionListAttentionPlacement';
+import { createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 function paneState(sessionCount: number) {
     return {
@@ -26,6 +34,69 @@ function paneState(sessionCount: number) {
 afterEach(() => resetSessionListPaneRetentionForTests());
 
 describe('session list pane retention identity', () => {
+    it('excludes a held shelf slot after the canonical placement owner removes its current request', () => {
+        const source: SessionListIndexItem[] = [{ type: 'session', serverId: 'home-a', sessionId: 'held' }];
+        let session = createSessionFixture({ id: 'held', serverId: 'home-a', pendingBlockedCount: 1,
+            viewer: createSessionViewerFixture({ attention: {
+                needsAttention: true, reasons: ['pending_blocked'], primary: 'pending_blocked', presentation: 'full',
+            } }),
+        });
+        const project = (previousPresentedIndex?: readonly SessionListIndexItem[], holdMembership = false) => buildSessionListGlobalPlacements({
+            source, placement: 'both', previousPresentedIndex, holdMembership,
+            attentionOptions: { mode: 'global' }, workingOptions: { mode: 'global' }, nowMs: 1_000,
+            resolveSessionRow: () => buildSessionListRenderableFromSession(session),
+        })!;
+        const initial = project();
+        session = { ...session, pendingBlockedCount: 0, viewer: createSessionViewerFixture({ attention: {
+            needsAttention: false, reasons: [], primary: null, presentation: 'full',
+        } }) };
+        const held = project(initial.attentionItems, true);
+        expect(held.attentionItems).toEqual([
+            expect.objectContaining({ type: 'header', eligibleCount: 0 }),
+            expect.objectContaining({ type: 'session', occurrenceRole: 'needsYou' }),
+        ]);
+        expect(held.attentionItems[1]).not.toHaveProperty('attentionPlacementReason');
+        expect(projectSessionListNeedsYou({ visibleSessionListIndex: held.attentionItems, showLoading: false,
+            filterResult: { matchedCount: 1, coverage: 'complete' } })).toEqual({ count: 0, items: [], incomplete: false });
+    });
+    it('keeps the sidebar header total honest when its navigable rows are collapsed or unavailable', () => {
+        const index: SessionListIndexItem[] = [{ type: 'header', headerKind: 'attention', title: 'Needs you', eligibleCount: 10 }];
+        expect(projectSessionListNeedsYou({ visibleSessionListIndex: index, showLoading: false,
+            filterResult: { matchedCount: 10, coverage: 'complete' } })).toEqual({ count: 10, items: [], incomplete: true });
+        expect(projectSessionListNeedsYou({ visibleSessionListIndex: null, showLoading: false })).toBeNull();
+    });
+
+    it('pushes changed shelf membership to Brief without waking query-retention consumers or unrelated row writes', async () => {
+        const identity = { storageKind: 'all' as const, pathname: '/', sourceScopeKey: 'sidebar-account' };
+        const retain = (id: string, title = id) => retainSessionListPaneState({ ...identity,
+            queryMembershipActive: true, referenceCorpusActive: true,
+            paneState: { ...paneState(1), filterResult: { matchedCount: 1, coverage: 'complete' }, visibleSessionListIndex: [
+                { type: 'header', headerKind: 'attention', title, eligibleCount: 1 },
+                { type: 'session', serverId: 'home-a', sessionId: id, occurrenceRole: 'needsYou', attentionPlacementReason: 'action_required' },
+            ] },
+        });
+        retain('first');
+        let queryRenders = 0;
+        let shelfRenders = 0;
+        const query = await renderHook(() => { queryRenders += 1; return useActiveRetainedSessionListQueryStates(); });
+        const shelf = await renderHook(() => { shelfRenders += 1; return useActiveRetainedSessionListNeedsYou(); });
+        try {
+            const initialQueryRenders = queryRenders;
+            const initialShelfRenders = shelfRenders;
+            await act(async () => { retain('first', 'Updated display only'); });
+            expect(shelfRenders).toBe(initialShelfRenders);
+            await act(async () => { retain('replacement'); });
+            expect(shelf.getCurrent()).toMatchObject({ count: 1, items: [{ sessionId: 'replacement' }], incomplete: false });
+            expect(shelfRenders - initialShelfRenders).toBe(1);
+            expect(queryRenders).toBe(initialQueryRenders);
+            const other = { ...identity, sourceScopeKey: 'other-sidebar-account' };
+            await act(async () => { retainSessionListPaneState({ ...other, paneState: paneState(0), queryMembershipActive: true,
+                referenceCorpusActive: true }); });
+            expect(readActiveRetainedSessionListNeedsYou()).toBeNull();
+            await act(async () => { setRetainedSessionListPaneReferenceCorpusActive(other, false); });
+            expect(shelf.getCurrent()?.items).toMatchObject([{ sessionId: 'replacement' }]);
+        } finally { await shelf.unmount(); await query.unmount(); }
+    });
     it('keeps ordinary rows visible without promoting released GET exhaustion to strict corpus completeness', () => {
         const identity = { storageKind: 'all' as const, pathname: '/', sourceScopeKey: 'account-a' };
         retainSessionListPaneState({
