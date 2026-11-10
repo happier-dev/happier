@@ -23,6 +23,29 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
+// Keep SDK startup catalog fetching at the same network boundary used by the
+// upstream characterization harness. The embedded generation equality test must
+// not race public catalog updates from an earlier service in this test process.
+// Other HTTP traffic and real registry/executor behavior remain unchanged.
+func TestMain(m *testing.M) {
+	previous := http.DefaultTransport
+	http.DefaultTransport = embeddedCatalogTransport{next: previous}
+	code := m.Run()
+	http.DefaultTransport = previous
+	os.Exit(code)
+}
+
+type embeddedCatalogTransport struct{ next http.RoundTripper }
+
+func (transport embeddedCatalogTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.URL.Host == "raw.githubusercontent.com" && request.URL.Path == "/router-for-me/models/refs/heads/main/models.json" ||
+		request.URL.Host == "models.router-for.me" && request.URL.Path == "/models.json" {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header),
+			Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
+	}
+	return transport.next.RoundTrip(request)
+}
+
 func TestPinnedSDKRequestAuthRefusalKeepsTypedStatusWithoutUpstreamOrReplay(t *testing.T) {
 	vectors := readRequestAuthHTTPVectors(t)
 	for _, scenario := range []struct {
