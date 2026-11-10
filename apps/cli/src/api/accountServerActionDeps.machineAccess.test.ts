@@ -21,12 +21,75 @@ import { addServerProfile, getServerProfile, resolveServerProfileHomeIdentityId 
 import { readStoredCredentials, readStoredCredentialsForServerId, updateSettings, writeCredentialsTokenOnlyForServerId } from '@/persistence';
 import { resolveActionCliCredentialTarget } from '@/cli/actions/actionServerTarget';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { handleActionsCommand } from '@/cli/commands/actions';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
 
 let app: FastifyInstance | undefined;
 let restore: (() => void) | undefined;
 afterEach(async () => { restore?.(); restore = undefined; await app?.close(); app = undefined; });
 
 describe('Machine access headless Action transport', () => {
+  it('dispatches CLI machines.list for the owner beside key-pending Machines with withheld metadata', async () => {
+    await withTempDir('machine-inventory-dispatch-', async home => {
+      const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
+      const previousExitCode = process.exitCode;
+      let restoreStdout: (() => void) | undefined;
+      try {
+        scope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: undefined, HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+        reloadConfiguration();
+        const serverId = 'inventory-dispatch-home';
+        const homeId = 'srv_inventory_dispatch';
+        const origin = 'https://inventory-dispatch.example.test';
+        await seedTestServerProfile({ id: serverId, homeId, serverUrl: origin });
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'bob', session: 'fixture-inventory-owner' })).toString('base64url')}.signature`;
+        const secret = new Uint8Array(32).fill(9);
+        const credentials = { token, encryption: { type: 'legacy' as const, secret } };
+        const codec = createMachineContentCodec({ encryptionMode: 'e2ee', encryptionVariant: 'legacy', encryptionKey: secret });
+        const access = { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' };
+        const own = MachinePublishedRowV1Schema.parse({ id: 'own-machine', managedMachineRef: null,
+          metadata: codec.encodeStored(MachinePublishedMetadataV1Schema.parse({ host: 'own-computer', platform: 'linux',
+            happyCliVersion: 'test', homeDir: '/home/bob', happyHomeDir: '/home/bob/.happier' })),
+          metadataVersion: 1, daemonState: null, daemonStateVersion: 0, storageMode: 'e2ee', access,
+          active: true, activeAt: Date.now(), revokedAt: null, replacedByMachineId: null });
+        const pending = MachinePublishedRowV1Schema.parse({ ...own, id: 'shared-key-pending', metadata: null,
+          access: { ...access, custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', accessState: 'key_pending' } });
+        app = fastify();
+        let inventoryReads = 0;
+        app.get('/v1/machines', async request => {
+          expect(request.headers.authorization).toBe(`Bearer ${token}`);
+          inventoryReads++;
+          return [pending, own];
+        });
+        await app.ready();
+        restore = installAxiosFastifyAdapter({ app, origin });
+        let output = '';
+        // HTTP, stored credentials and stdout are the boundaries; CLI binding,
+        // credentialed dispatch, inventory parsing and content opening stay real.
+        const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, encodingOrCallback, callback) => {
+          output += String(chunk);
+          if (typeof encodingOrCallback === 'function') encodingOrCallback();
+          else callback?.();
+          return true;
+        });
+        restoreStdout = () => stdout.mockRestore();
+        await handleActionsCommand(['invoke', 'machines.list', '--server-id', serverId,
+          '--input-json', JSON.stringify({ serverId: homeId }), '--request-id', 'net-inventory-dispatch', '--json'], {
+          readCredentialsFn: async () => credentials,
+          readCredentialsForServerIdFn: async requested => requested === serverId ? credentials : null,
+        });
+        expect(JSON.parse(output), output).toMatchObject({ ok: true, data: { items: [
+          { serverId: homeId, machineId: pending.id, access: { accessState: 'key_pending' } },
+          { serverId: homeId, machineId: own.id, label: 'own-computer', access: { role: 'manage', accessState: 'ready' } },
+        ] } });
+        expect(inventoryReads).toBe(1);
+      } finally {
+        restoreStdout?.(); process.exitCode = previousExitCode;
+        scope.restore(); reloadConfiguration();
+      }
+    });
+  });
   it.each(['alice', 'bob'])('executes the presence setup dependency for owner/Manage requester %s', async accountId => {
     app = fastify();
     const transitions = { v: 1, revision: 2, offline: null, online: { revision: 2, occurredAt: 1000 } };
@@ -117,7 +180,7 @@ describe('Machine access headless Action transport', () => {
       return [
         { id: 'local', metadata: JSON.stringify({ host: 'coordinator' }), active: true, revokedAt: null, replacedByMachineId: null },
         { id: 'remote', metadata: JSON.stringify({ host: 'remote-builder' }), active: true, revokedAt: null, replacedByMachineId: null },
-        { id: 'shared', active: false, revokedAt: null, replacedByMachineId: null,
+        { id: 'shared', metadata: null, active: false, revokedAt: null, replacedByMachineId: null,
           access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'e2ee', accessState: 'key_pending' } },
       ];
     });

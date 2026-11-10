@@ -23,7 +23,7 @@ import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/clie
 // CLI projections of that metadata and never alter machine identity.
 const ACCOUNT_MACHINE_ROW_SCHEMA = z.looseObject({ ...ExternalActionMachineBootstrapV1Schema.shape,
     managedInputRuntime: z.optional(z.nullable(ManagedMachineInputRuntimeV1Schema)),
-    metadata: z.optional(z.string()), activeAt: z.optional(z.nullable(z.number())), access: z.optional(AccessibleMachineAccessV1Schema),
+    metadata: z.optional(MachinePublishedRowV1Schema.shape.metadata), activeAt: z.optional(z.nullable(z.number())), access: z.optional(AccessibleMachineAccessV1Schema),
     presenceProtocolVersion: MachinePublishedRowV1Schema.shape.presenceProtocolVersion,
     devcontainerChild: z.optional(z.nullable(DevcontainerChildProjectionV1Schema)) });
 
@@ -59,7 +59,7 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function readMachineNameMetadata(metadata: string | undefined): MachineNameMetadata | null {
+function readMachineNameMetadata(metadata: string | null | undefined): MachineNameMetadata | null {
   if (!metadata) return null;
   try {
     const value: unknown = JSON.parse(metadata);

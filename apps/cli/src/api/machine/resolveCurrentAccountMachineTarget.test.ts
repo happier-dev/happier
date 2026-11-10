@@ -19,6 +19,7 @@ import { createMachineContentCodec } from './machineStoredContent';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { DEFAULT_MACHINE_ONLINE_GRACE_MS } from '@happier-dev/protocol/machines/machineReachabilityV1';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import tweetnacl from 'tweetnacl';
 
 function currentMachine(id: string, host?: string) {
@@ -224,9 +225,17 @@ describe('resolveCurrentAccountMachineTarget', () => {
     expect(boundaries.axiosGet).toHaveBeenCalledWith('https://fixed-home.example.test/v1/account/encryption',
       expect.objectContaining({ headers: { Authorization: 'Bearer token' } }));
   });
-  it('preserves accessible Machine readiness and never auto-selects a pending shared target', async () => {
+  it('resolves usable Machines beside key-pending rows with withheld metadata and preserves their access state', async () => {
     const access = { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'e2ee', accessState: 'key_pending' };
-    boundaries.axiosGet.mockResolvedValue({ data: [{ ...currentMachine('shared'), access }] });
+    const pending = MachinePublishedRowV1Schema.parse({ ...currentMachine('shared'), access,
+      metadata: null, metadataVersion: 1, daemonState: null, daemonStateVersion: 0 });
+    boundaries.axiosGet.mockResolvedValue({ data: [pending, currentMachine('usable', 'worker')] });
+    expect(await resolveCurrentAccountMachineTarget({ token: 'token' })).toMatchObject({
+      kind: 'selected', target: { machineId: 'usable', machineLabel: 'worker' },
+    });
+    expect(boundaries.axiosGet).toHaveBeenCalledTimes(1);
+    expect(await listCurrentAccountAdministrationMachines({ token: 'token' })).toEqual(['usable']);
+    boundaries.axiosGet.mockResolvedValue({ data: [pending] });
     expect(await listCurrentAccountMachines({ token: 'token' })).toEqual([
       { id: 'shared', label: 'shared', kind: 'persistent', installationId: null, active: true, revokedAt: null, replacedByMachineId: null, managedMachineRef: null, access },
     ]);
