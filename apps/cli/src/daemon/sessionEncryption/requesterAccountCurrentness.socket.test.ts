@@ -1450,7 +1450,7 @@ describe('requester Account currentness over the installed socket wiring', () =>
         } finally { await accepted?.dispose(); await channel.close(); }
     });
 
-    it.each(['unbound', 'bound'] as const)('revalidates requester bootstrap and projected custody against fresh HTTP facts (%s)', async binding => {
+    it.each(['unbound', 'bound'] as const)('invalidates requester bootstrap and projected custody on a pushed Account change (%s)', async binding => {
         const channel = await createRequesterCurrentnessSocketHarness();
         let serverFact: AccountEncryptionCurrentnessResponse = { mode: 'plain', version: 1, updatedAt: 1,
             signingKeyFingerprint: null, contentKeyFingerprint: null };
@@ -1483,6 +1483,7 @@ describe('requester Account currentness over the installed socket wiring', () =>
             expect(channel.clients).toHaveLength(1);
             serverFact = { mode: 'e2ee', version: 2, updatedAt: 2,
                 signingKeyFingerprint: 'changed-signing', contentKeyFingerprint: 'changed-content' };
+            await channel.push('bob', serverFact);
             expect(await projected?.requesterAccountProjection?.isCurrent()).toBe(false);
             expect(await custody.admitted.isCurrent()).toBe(false);
         } finally {
