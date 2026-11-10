@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@happier-dev/session-core/state';
+import { serializeSessionModeActionOptions } from '@/sync/ops/actions/sessionModeActionSupport';
+
+import {
+  computeSessionModePickerControl,
+  getSessionModePickerOptions,
+  resolveRequestedSessionModeIdForMetadata,
+} from './sessionModeControl';
 
 function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
   return {
@@ -11,15 +18,13 @@ function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('sessionModeControl', () => {
-  it('keeps CodeBuddy native Default separate from clearing its permission override after custom runtime publication', async () => {
-    const { getSessionModePickerOptions } = await import('./sessionModeControl');
+  it('keeps CodeBuddy native Default separate from clearing its permission override after custom runtime publication', () => {
     const native = [{ id: 'default', name: 'Native default' }];
     expect(getSessionModePickerOptions(native, 'codebuddy').map(option => option.id)).toEqual(['', 'default']);
     expect(getSessionModePickerOptions(native, 'droid').map(option => option.id)).toEqual(['default']);
   });
 
-  it('does not reinterpret a different Agent mode catalog as an explicit override before catalog arrival', async () => {
-    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+  it('does not reinterpret a different Agent mode catalog as an explicit override before catalog arrival', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1, agentId: 'opencode', updatedAt: 2, currentModeId: 'build',
@@ -33,8 +38,7 @@ describe('sessionModeControl', () => {
       requestedModeId: null, isExplicitOverride: false });
     expect(ownStaticModes?.options.map(mode => mode.id)).toContain('plan');
   });
-  it.each(['antigravity', 'acp:fixture', 'opencode'])('infers legacy Plan only when %s advertises it, while preserving explicit intent', async (agentId) => {
-    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+  it.each(['antigravity', 'acp:fixture', 'opencode'])('infers legacy Plan only when %s advertises it, while preserving explicit intent', (agentId) => {
     const metadata = createMetadata({
       permissionMode: 'plan',
       sessionModesV2: { v: 2, agentId, updatedAt: 1, currentModeId: 'default', availableModes: [
@@ -60,8 +64,7 @@ describe('sessionModeControl', () => {
       requestedModeId: null, effectiveModeId: 'default', isPending: false,
     });
   });
-  it('keeps known native choices selectable when current is unknown, without accepting desired state or stale V1 current', async () => {
-    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+  it('keeps known native choices selectable when current is unknown, without accepting desired state or stale V1 current', () => {
     const metadata = createMetadata({
       sessionModesV2: { v: 2, agentId: 'opencode', updatedAt: 3, currentModeId: null, availableModes: [{ id: 'plan', name: 'Plan' }] },
       sessionModesV1: { v: 1, agentId: 'opencode', updatedAt: 1, currentModeId: 'build', availableModes: [{ id: 'build', name: 'Build' }] },
@@ -82,8 +85,7 @@ describe('sessionModeControl', () => {
     });
   });
 
-  it('keeps an explicit non-default override reversible before a mode catalog arrives', async () => {
-    const { computeSessionModePickerControl, getSessionModePickerOptions } = await import('./sessionModeControl');
+  it('keeps an explicit non-default override reversible before a mode catalog arrives', () => {
     const control = computeSessionModePickerControl({
       agentId: 'opencode',
       metadata: createMetadata({
@@ -99,8 +101,7 @@ describe('sessionModeControl', () => {
     expect(getSessionModePickerOptions(control?.options ?? [], 'opencode').map((option) => option.id))
       .toEqual(['default', 'plan']);
   });
-  it('computeSessionModePickerControl returns ACP modes and effective selection', async () => {
-    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+  it('computeSessionModePickerControl returns ACP modes and effective selection', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
@@ -121,8 +122,7 @@ describe('sessionModeControl', () => {
     expect(res?.options.map((option) => option.id)).toEqual(['build', 'plan']);
   });
 
-  it('projects producer-declared modes for an external Agent', async () => {
-    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+  it('projects producer-declared modes for an external Agent', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
@@ -139,8 +139,7 @@ describe('sessionModeControl', () => {
     });
   });
 
-  it('computeSessionModePickerControl marks pending when requested override differs from current (ACP)', async () => {
-    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+  it('computeSessionModePickerControl marks pending when requested override differs from current (ACP)', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
@@ -158,8 +157,7 @@ describe('sessionModeControl', () => {
     expect(res?.requestedModeId).toBe('plan');
   });
 
-  it('computeSessionModePickerControl supports static modes (Claude)', async () => {
-    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+  it('computeSessionModePickerControl supports static modes (Claude)', () => {
     const metadata = createMetadata();
     const res = computeSessionModePickerControl({ agentId: 'claude', metadata });
     expect(res).not.toBeNull();
@@ -168,8 +166,7 @@ describe('sessionModeControl', () => {
     expect(res?.options.map((o) => o.id)).toContain('plan');
   });
 
-  it('computeSessionModePickerControl treats legacy permissionMode=plan as requested plan mode', async () => {
-    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+  it('computeSessionModePickerControl treats legacy permissionMode=plan as requested plan mode', () => {
     const metadata = createMetadata({ permissionMode: 'plan', permissionModeUpdatedAt: 10 } as any);
     const res = computeSessionModePickerControl({ agentId: 'claude', metadata });
     expect(res?.requestedModeId).toBe('plan');
@@ -180,8 +177,7 @@ describe('sessionModeControl', () => {
     });
   });
 
-  it('falls back to legacy ACP metadata keys when canonical keys are absent', async () => {
-    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+  it('falls back to legacy ACP metadata keys when canonical keys are absent', () => {
     const metadata = createMetadata({
       acpSessionModesV1: {
         v: 1,
@@ -197,8 +193,7 @@ describe('sessionModeControl', () => {
     expect(res?.effectiveModeId).toBe('plan');
   });
 
-  it('uses the newest session-mode override alias when canonical and legacy diverge', async () => {
-    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+  it('uses the newest session-mode override alias when canonical and legacy diverge', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
@@ -216,8 +211,7 @@ describe('sessionModeControl', () => {
     expect(res?.requestedModeId).toBe('plan');
   });
 
-  it('computeSessionModePickerControl returns Codex app-server modes from generic session metadata', async () => {
-    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+  it('computeSessionModePickerControl returns Codex app-server modes from generic session metadata', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
@@ -239,8 +233,7 @@ describe('sessionModeControl', () => {
     expect(res?.options.map((option) => option.id)).toEqual(['default', 'plan']);
   });
 
-  it('publishes the real default mode id when the provider exposes default as an actual option', async () => {
-    const { computeSessionModePickerControl, resolveRequestedSessionModeIdForMetadata } = await import('./sessionModeControl');
+  it('publishes the real default mode id when the provider exposes default as an actual option', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
@@ -256,13 +249,10 @@ describe('sessionModeControl', () => {
 
     const control = computeSessionModePickerControl({ agentId: 'codex', metadata });
     expect(resolveRequestedSessionModeIdForMetadata(control, 'default')).toBe('default');
-    const { serializeSessionModeActionOptions } = await import('@/sync/ops/actions/sessionModeActionSupport');
     expect(serializeSessionModeActionOptions(control).map((option) => option.value)).toEqual(['default', 'plan']);
   });
 
-  it('offers mapped permission restoration separately from a provider native default', async () => {
-    const { computeSessionModePickerControl } = await import('./sessionModeControl');
-    const { serializeSessionModeActionOptions } = await import('@/sync/ops/actions/sessionModeActionSupport');
+  it('offers mapped permission restoration separately from a provider native default', () => {
     const control = computeSessionModePickerControl({
       agentId: 'devin',
       metadata: createMetadata({
@@ -275,8 +265,7 @@ describe('sessionModeControl', () => {
     expect(serializeSessionModeActionOptions(control).map((option) => option.value)).toEqual(['', 'default', 'plan']);
   });
 
-  it('treats default as a clear sentinel when the provider does not expose a real default option', async () => {
-    const { computeSessionModePickerControl, resolveRequestedSessionModeIdForMetadata } = await import('./sessionModeControl');
+  it('treats default as a clear sentinel when the provider does not expose a real default option', () => {
     const metadata = createMetadata({
       sessionModesV1: {
         v: 1,
