@@ -848,20 +848,28 @@ export const WorkflowInvocationRetryInputV1Schema = lazyZodSchema(() => z.strict
 }));
 export type WorkflowInvocationRetryInputV1 = z.infer<typeof WorkflowInvocationRetryInputV1Schema>;
 
-export const WORKFLOW_OPERATION_ERROR_CODES_V1 = [
-  'invalid_input', 'run_not_found', 'not_authenticated', ...AGENT_START_REFUSAL_CODES_V1,
+const WORKFLOW_OPERATION_ERROR_CODES_WITHOUT_DETAILS_V1 = [
+  'not_authenticated',
   'admission_unavailable', 'invalid_token',
-  'approval_required',
-  'currentness_conflict', 'missing_reference', 'invalid_reference_scope',
+  'run_not_found',
+  'approval_required', 'present_user_required',
+  'missing_reference', 'invalid_reference_scope',
   'workflow_input_too_large', 'workflow_outcome_unresolved',
-  'workflow_http_error',
   'workflow_interaction_capacity_exceeded',
-  'workflow_conversation_unavailable', 'continuation_unavailable',
+  'continuation_unavailable',
   'workflow_workspace_restore_unavailable', 'workflow_workspace_restore_failed',
-  'workflow_wait_self_dependency',
-  'ineligible_state', 'custody_pending', 'requester_custody_unavailable', 'content_unavailable', 'source_unavailable', 'legacy_conversion_unsupported',
+  'ineligible_state', 'custody_pending', 'requester_custody_unavailable',
+  'source_unavailable',
   'history_not_readable', 'encryption_setup_required', 'waiting_for_keys', 'storage_unavailable',
   'native_goal_owner', 'session_already_started',
+] as const;
+
+export const WORKFLOW_OPERATION_ERROR_CODES_V1 = [
+  ...WORKFLOW_OPERATION_ERROR_CODES_WITHOUT_DETAILS_V1,
+  ...AGENT_START_REFUSAL_CODES_V1,
+  'invalid_input', 'currentness_conflict', 'workflow_http_error',
+  'workflow_conversation_unavailable', 'workflow_wait_self_dependency',
+  'content_unavailable', 'legacy_conversion_unsupported',
 ] as const;
 export const WorkflowOperationErrorCodeV1Schema = lazyZodSchema(() => z.enum(WORKFLOW_OPERATION_ERROR_CODES_V1));
 export type WorkflowOperationErrorCodeV1 = z.infer<typeof WorkflowOperationErrorCodeV1Schema>;
@@ -877,22 +885,6 @@ export const WorkflowHttpErrorDetailsV1Schema = lazyZodSchema(() => z.strictObje
     'event_contribution_not_current',
   ])])),
 }));
-
-const WORKFLOW_OPERATION_ERROR_CODES_WITHOUT_DETAILS_V1 = [
-  'not_authenticated',
-  'admission_unavailable', 'invalid_token',
-  'run_not_found',
-  'approval_required',
-  'missing_reference', 'invalid_reference_scope',
-  'workflow_input_too_large', 'workflow_outcome_unresolved',
-  'workflow_interaction_capacity_exceeded',
-  'continuation_unavailable',
-  'workflow_workspace_restore_unavailable', 'workflow_workspace_restore_failed',
-  'ineligible_state', 'custody_pending', 'requester_custody_unavailable',
-  'source_unavailable',
-  'history_not_readable', 'encryption_setup_required', 'waiting_for_keys', 'storage_unavailable',
-  'native_goal_owner', 'session_already_started',
-] as const;
 
 export const WorkflowTargetUnavailableDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   code: z.literal('target_unavailable'), reason: WorkflowTargetUnavailableReasonV1Schema,

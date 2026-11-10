@@ -110,6 +110,16 @@ Eligibility comes from provider retry headers or a deliberate source period;
 the SDK adds no polling default. A handled provider failure may return the
 existing source-status `state` and `code` with that eligibility.
 
+Continuous observers retain the original candidate while its Event admission
+awaits approval. A source normally waits for settlement before observing again.
+Set the adapter's `observeWhileAdmissionPending: true` only when further
+observations preserve that pending occurrence and checkpoint until `save`; the
+health adapter uses this to continue publishing current health on the configured
+period. The SDK still owns one admission. On settlement, it saves the original
+checkpoint before the next observation cycle. Buffered immediate work waits for settlement or an
+authenticated wake when its deadline cannot advance. Finite `once` mode awaits
+admission and save.
+
 The runner uses its own host-stamped `context.materialization` to admit the
 source assignment once for each finite cycle. An absent or mismatched value leaves observation
 unavailable. Caller materialization describes a different invocation and cannot

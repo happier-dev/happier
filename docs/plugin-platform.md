@@ -4938,6 +4938,17 @@ checkpoint progression. Finite adapters retain provider clients, pagination,
 closed codecs and existing cursor/CAS storage. Equal/no-event observations do
 not launch user work, and a healthy empty catalog has no polling timer.
 
+In continuous mode, an admission awaiting person approval retains its original
+observation and checkpoint. An adapter may set `observeWhileAdmissionPending`
+when further observations preserve that candidate until save; otherwise that
+source waits for admission settlement. The health adapter opts in so advancing
+provider deadlines may publish current health without opening a second admission
+or replacing the retained candidate. For an opted-in source, admission settlement wakes
+the same runner, which saves that candidate before the next observation; removal
+or cancellation discards late checkpoint effects. A buffered immediate drain that
+cannot advance before admission settles waits for settlement or an authenticated
+wake. Finite `once` mode still awaits admission and checkpoint completion.
+
 The Account change-feed producer marks credential/settings-only Host Event wakes
 with `definitionsChanged: false`. The observer retains its existing adopted
 catalog for those wakes and provider eligibility cycles; it confirms definitions

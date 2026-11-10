@@ -45,6 +45,8 @@ export type PluginCheckpointedEventAttemptResultV1<TCheckpoint> = Readonly<{
 export type PluginCheckpointedEventSourceAdapterV1<TSource, TCheckpoint> = Readonly<{
     decode(definition: PluginCheckpointedEventSourceDefinitionV1): TSource | null;
     observe(input: PluginCheckpointedEventAttemptContextV1<TSource>): Promise<PluginCheckpointedEventAttemptResultV1<TCheckpoint>>;
+    /** Continue advancing provider deadlines during admission; observe must preserve the retained candidate until save. */
+    observeWhileAdmissionPending?: boolean;
     save(input: PluginCheckpointedEventAttemptContextV1<TSource> & Readonly<{
         checkpoint: TCheckpoint;
         /** Supplied after all observations are safe and this admitted cycle was not cancelled. */
@@ -186,6 +188,14 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
     const transports: readonly ('checkpointedPull' | 'durablePush')[] = input.transportKinds ?? ['checkpointedPull'];
     const state: ObserverState = { catalogs: new Map(), nextEligibleAt: new Map(), pendingObservations: new Map(), retiredRevision: null, owner: null,
         adoptedRevision: null, reconciliationStartedAt: null };
+    // Admission can await a person's approval. Keep its original candidate in
+    // custody while the same source's advancing provider schedule keeps running.
+    const admitting = new Map<string, {
+        context: PluginCheckpointedEventAttemptContextV1<TSource>;
+        result: PluginCheckpointedEventAttemptResultV1<TCheckpoint>;
+        nextEligibleAt: number | null;
+        outcome?: { disposition: PluginEventDispositionV1 } | { error: unknown };
+    }>();
     let changed = false;
     let definitionsInvalidated = true;
     let wake: (() => void) | undefined;
@@ -278,6 +288,7 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                     state.nextEligibleAt.delete(key);
                 }
                 for (const key of state.pendingObservations.keys()) if (!groups.has(key)) state.pendingObservations.delete(key);
+                for (const key of admitting.keys()) if (!groups.has(key)) admitting.delete(key);
                 const ownKey = own === undefined ? null : JSON.stringify(own);
                 const canRetire = ownKey !== null && own?.pluginId === context.plugin.id
                     && (groups.size > 0 || state.owner === ownKey || definitions.length === 0);
@@ -296,8 +307,6 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                     cycleContext.signal.throwIfAborted();
                     const definition = group[0]!;
                     const requested = requestedSources.has(undefined) || requestedSources.has(definition.sourceInstanceId);
-                    const next = state.nextEligibleAt.get(key);
-                    if (!requested && (next === null || (next !== undefined && next > now()))) continue;
                     const reportSource = async (status: NonNullable<PluginCheckpointedEventAttemptResultV1<TCheckpoint>['status']>, nextRetryAt: number | null) => {
                         for (const member of group) await reportPluginEventSourceStatus(cycleContext, {
                             kind: 'source', automationId: member.automationId, triggerId: member.triggerId, triggerRevision: member.triggerRevision,
@@ -306,20 +315,10 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                             observedDelta: 0, admittedDelta: 0, skippedDelta: 0,
                         });
                     };
-                    try {
-                        const decoded = source.decode(definition);
-                        if (decoded === null || !(await isCurrent())) continue;
-                        const attemptContext: PluginCheckpointedEventAttemptContextV1<TSource> = { context: cycleContext, definition, definitions: group, source: decoded, isCurrent };
-                        const result = await source.observe(attemptContext);
-                        cycleContext.signal.throwIfAborted();
-                        let pending = state.pendingObservations.get(key);
-                        if (pending === undefined && result.observations.length > 0) {
-                            pending = new Set(); state.pendingObservations.set(key, pending);
-                        }
-                        const disposition = await processCheckpointedAttempt({ context: cycleContext, definitions: group, observations: result.observations, complete: result.complete,
-                            isCurrent, save: async disposition => { if (result.checkpoint !== undefined) await source.save({ ...attemptContext, checkpoint: result.checkpoint, disposition }); } }, pending);
+                    const finish = async (result: PluginCheckpointedEventAttemptResultV1<TCheckpoint>, disposition: PluginEventDispositionV1,
+                        reportedEligibleAt: number | null) => {
                         if (disposition.kind === 'checkpointSafe') state.pendingObservations.delete(key);
-                        const reportedEligibleAt = disposition.failure?.retryable === false ? null : eligibility(result.nextEligibleAt);
+                        reportedEligibleAt = disposition.failure?.retryable === false ? null : eligibility(reportedEligibleAt);
                         // An unsettled admission retries on the source's own backoff, never
                         // sooner: a replaying source may report a probe deadline it did not advance.
                         const failureRetryAt = disposition.failure === undefined || reportedEligibleAt === null ? null
@@ -332,6 +331,63 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                             await reportSource({ state: 'backingOff', code: disposition.failure.code }, nextEligibleAt);
                         } else if (disposition.failure === undefined && result.status !== undefined) await reportSource(result.status, nextEligibleAt);
                         else if (result.observations.length === 0 && disposition.kind === 'checkpointSafe') await reportSource({ state: 'observing', code: 'none' }, null);
+                    };
+                    try {
+                        const completed = admitting.get(key);
+                        if (completed?.outcome !== undefined) {
+                            admitting.delete(key);
+                            if ('error' in completed.outcome) throw completed.outcome.error;
+                            const disposition = completed.outcome.disposition;
+                            // The runner serializes checkpoint effects with observations;
+                            // an approval callback never writes or retires a newer cursor.
+                            if (disposition.kind === 'checkpointSafe' && completed.result.checkpoint !== undefined) {
+                                cycleContext.signal.throwIfAborted();
+                                await source.save({ ...completed.context, checkpoint: completed.result.checkpoint, disposition });
+                            }
+                            await finish(completed.result, disposition, completed.nextEligibleAt);
+                            continue;
+                        }
+                        const next = state.nextEligibleAt.get(key);
+                        if (!requested && (next === null || (next !== undefined && next > now()))) continue;
+                        const decoded = source.decode(definition);
+                        if (decoded === null || !(await isCurrent())) continue;
+                        const attemptContext: PluginCheckpointedEventAttemptContextV1<TSource> = { context: cycleContext, definition, definitions: group, source: decoded, isCurrent };
+                        const startedAt = now();
+                        const result = await source.observe(attemptContext);
+                        cycleContext.signal.throwIfAborted();
+                        const retained = admitting.get(key);
+                        if (retained !== undefined) {
+                            retained.nextEligibleAt = eligibility(result.nextEligibleAt);
+                            // A buffered cursor can request an immediate drain without
+                            // advancing while admission is pending. Its settlement or an
+                            // authenticated wake releases that work; never hot-loop it.
+                            state.nextEligibleAt.set(key, retained.nextEligibleAt !== null && retained.nextEligibleAt > startedAt
+                                ? retained.nextEligibleAt : null);
+                            continue;
+                        }
+                        let pending = state.pendingObservations.get(key);
+                        if (pending === undefined && result.observations.length > 0) {
+                            pending = new Set(); state.pendingObservations.set(key, pending);
+                        }
+                        const detached = input.mode !== 'once' && source.observeWhileAdmissionPending === true && result.observations.length > 0;
+                        const processing = processCheckpointedAttempt({ context: cycleContext, definitions: group, observations: result.observations, complete: result.complete,
+                            isCurrent, save: async disposition => {
+                                if (!detached && result.checkpoint !== undefined) await source.save({ ...attemptContext, checkpoint: result.checkpoint, disposition });
+                            } }, pending);
+                        if (detached) {
+                            const attempt: NonNullable<ReturnType<typeof admitting.get>> = { context: attemptContext, result,
+                                nextEligibleAt: eligibility(result.nextEligibleAt) };
+                            admitting.set(key, attempt);
+                            state.nextEligibleAt.set(key, attempt.nextEligibleAt !== null && attempt.nextEligibleAt > startedAt
+                                ? attempt.nextEligibleAt : null);
+                            const settled = () => {
+                                if (admitting.get(key) !== attempt || context.signal.aborted) return;
+                                changed = true;
+                                wake?.();
+                            };
+                            void processing.then(disposition => { attempt.outcome = { disposition }; settled(); },
+                                error => { attempt.outcome = { error }; settled(); });
+                        } else await finish(result, await processing, result.nextEligibleAt);
                     } catch (error) {
                         if (cycleContext.signal.aborted) throw error;
                         const nextEligibleAt = eligibility(source.retryAt({ error, now: now(), definition }));
@@ -371,6 +427,7 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
             });
         } while (!context.signal.aborted);
     } finally {
+        admitting.clear();
         pendingWake?.reject(context.signal.reason ?? new Error('Event observer retired'));
         await providerSubscription?.dispose();
         await hostSubscription.dispose();

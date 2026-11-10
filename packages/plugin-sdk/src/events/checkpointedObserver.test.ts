@@ -100,6 +100,188 @@ function fixture() {
 }
 
 describe('checkpointed observer ownership', () => {
+    it('keeps the provider schedule observing while one admission waits and saves its original candidate on settlement', async () => {
+        const f = fixture();
+        let clock = 1000;
+        let finishAdmission!: (value: unknown) => void;
+        f.setAdmissionResult(new Promise(resolve => { finishAdmission = resolve; }));
+        const rawResults: string[] = [];
+        let finishObservation: (() => void) | undefined;
+        f.observe.mockImplementation(async () => {
+            rawResults.push(clock === 1000 ? 'down' : 'up');
+            if (clock === 2000) await new Promise<void>(resolve => { finishObservation = resolve; });
+            return { ...f.observation(), checkpoint: `cursor-${clock}`, nextEligibleAt: clock + 1000 };
+        });
+        let resume: (() => void) | undefined;
+        const sleep = vi.fn((_delay: number, signal: AbortSignal) => new Promise<void>(resolve => {
+            resume = resolve;
+            signal.addEventListener('abort', () => resolve(), { once: true });
+        }));
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context,
+            source: { ...f.source, observeWhileAdmissionPending: true }, sleep, now: () => clock });
+        const settled = { results: [{ kind: 'admitted', checkpointSafe: true, runId: 'run-held' }] };
+        try {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(f.executions.filter(id => id === 'automation.event.admit')).toHaveLength(1);
+            expect(sleep).toHaveBeenCalledOnce();
+            clock = 2000;
+            resume?.();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(rawResults).toEqual(['down', 'up']);
+            expect(f.executions.filter(id => id === 'automation.event.admit')).toHaveLength(1);
+            expect(f.save).not.toHaveBeenCalled();
+            finishAdmission(settled);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(f.save).not.toHaveBeenCalled();
+            finishObservation?.();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(f.save).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ checkpoint: 'cursor-1000',
+                disposition: expect.objectContaining({ kind: 'checkpointSafe' }) }));
+            expect(rawResults).toEqual(['down', 'up']);
+        } finally {
+            finishObservation?.();
+            finishAdmission(settled);
+            f.controller.abort();
+            await running;
+        }
+    });
+
+    it.each(['removed', 'cancelled'] as const)('does not save a late admission after its source is %s', async retirement => {
+        const f = fixture();
+        let finishAdmission!: (value: unknown) => void;
+        f.setAdmissionResult(new Promise(resolve => { finishAdmission = resolve; }));
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context,
+            source: { ...f.source, observeWhileAdmissionPending: true }, now: () => 1000,
+            sleep: (_delay, signal) => new Promise<void>(resolve => {
+                signal.addEventListener('abort', () => resolve(), { once: true });
+                if (signal.aborted) resolve();
+            }) });
+        const settled = { results: [{ kind: 'admitted', checkpointSafe: true, runId: 'run-held' }] };
+        try {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(f.executions.filter(id => id === 'automation.event.admit')).toHaveLength(1);
+            if (retirement === 'removed') f.replace([]);
+            else f.controller.abort();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            finishAdmission(settled);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(f.save).not.toHaveBeenCalled();
+        } finally {
+            finishAdmission(settled);
+            f.controller.abort();
+            await running;
+        }
+    });
+
+    it('parks a buffered immediate drain while its one admission awaits settlement', async () => {
+        const f = fixture();
+        let finishAdmission!: (value: unknown) => void;
+        f.setAdmissionResult(new Promise(resolve => { finishAdmission = resolve; }));
+        f.observe.mockResolvedValue({ ...f.observation(), nextEligibleAt: 1000 });
+        let wake: ((sourceInstanceId?: string) => Promise<void>) | undefined;
+        const sleep = vi.fn(async () => { throw new Error('A buffered pending cursor has no advancing deadline'); });
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context,
+            source: { ...f.source, observeWhileAdmissionPending: true,
+                subscribeWake(listener) { wake = listener; return { dispose() {} }; } }, now: () => 1000, sleep });
+        const settled = { results: [{ kind: 'admitted', checkpointSafe: true, runId: 'run-held' }] };
+        try {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            for (let index = 0; index < 3; index += 1) {
+                await new Promise<void>(resolve => setImmediate(resolve));
+            }
+            expect(f.observe).toHaveBeenCalledOnce();
+            expect(f.executions.filter(id => id === 'automation.event.admit')).toHaveLength(1);
+            expect(sleep).not.toHaveBeenCalled();
+            expect(f.save).not.toHaveBeenCalled();
+            await wake?.('source:1');
+            expect(f.observe).toHaveBeenCalledTimes(2);
+            expect(f.executions.filter(id => id === 'automation.event.admit')).toHaveLength(1);
+            expect(sleep).not.toHaveBeenCalled();
+        } finally {
+            f.controller.abort();
+            finishAdmission(settled);
+            await running;
+        }
+    });
+
+    it('retains a non-opted-in adapter cursor without observing again during admission', async () => {
+        const f = fixture();
+        let clock = 1000;
+        let finishAdmission!: (value: unknown) => void;
+        f.setAdmissionResult(new Promise(resolve => { finishAdmission = resolve; }));
+        let cursor = 'initial';
+        f.observe.mockImplementation(async () => {
+            cursor = `cursor-${clock}`;
+            return { ...f.observation(), checkpoint: cursor, nextEligibleAt: clock + 1000 };
+        });
+        let wake: ((sourceInstanceId?: string) => Promise<void>) | undefined;
+        const sleep = vi.fn(async () => { throw new Error('An adapter with retained admission must wait for settlement'); });
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context,
+            source: { ...f.source, subscribeWake(listener) { wake = listener; return { dispose() {} }; } }, now: () => clock, sleep });
+        const settled = { results: [{ kind: 'admitted', checkpointSafe: true, runId: 'run-held' }] };
+        let notified: Promise<void> | undefined;
+        try {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            clock = 2000;
+            notified = wake?.('source:1').catch(() => {});
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(cursor).toBe('cursor-1000');
+            expect(f.executions.filter(id => id === 'automation.event.admit')).toHaveLength(1);
+            expect(sleep).not.toHaveBeenCalled();
+            expect(f.save).not.toHaveBeenCalled();
+        } finally {
+            f.controller.abort();
+            finishAdmission(settled);
+            await running;
+            await notified;
+        }
+    });
+
+    it('yields through the existing deadline after an expired candidate settles immediately', async () => {
+        const f = fixture();
+        let observations = 0;
+        f.observe.mockImplementation(async () => {
+            observations += 1;
+            if (observations > 1) throw new Error('The next observation must wait for its eligibility wake');
+            return { ...f.observation(), nextEligibleAt: 500 };
+        });
+        const sleep = vi.fn(async () => { f.controller.abort(); });
+        await runCheckpointedPluginEventObserverV1({ context: f.context,
+            source: { ...f.source, observeWhileAdmissionPending: true }, now: () => 1000, sleep });
+        expect(f.observe).toHaveBeenCalledOnce();
+        expect(f.save).toHaveBeenCalledOnce();
+        expect(sleep).toHaveBeenCalledExactlyOnceWith(0, expect.any(AbortSignal));
+    });
+
+    it('keeps a rejected pending admission typed and parks a nonretryable refusal without saving', async () => {
+        const f = fixture();
+        let rejectAdmission!: (error: unknown) => void;
+        f.setAdmissionResult(new Promise((_resolve, reject) => { rejectAdmission = reject; }));
+        const sleep = vi.fn((_delay: number, signal: AbortSignal) => new Promise<void>(resolve => {
+            signal.addEventListener('abort', () => resolve(), { once: true });
+            if (signal.aborted) resolve();
+        }));
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context,
+            source: { ...f.source, observeWhileAdmissionPending: true }, now: () => 1000, sleep });
+        const refusal = new PluginError({ code: 'verification_purpose', retryable: false });
+        try {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(sleep).toHaveBeenCalledOnce();
+            rejectAdmission(refusal);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            const statuses = f.execute.mock.calls.filter(([id, value]) => id === 'automation.event.source.status.report' && value.kind === 'source')
+                .map(([, value]) => value);
+            expect(statuses).toContainEqual(expect.objectContaining({ state: 'attention', code: 'verification_purpose', nextRetryAt: null }));
+            expect(f.observe).toHaveBeenCalledOnce();
+            expect(f.save).not.toHaveBeenCalled();
+            expect(sleep).toHaveBeenCalledOnce();
+        } finally {
+            rejectAdmission(refusal);
+            f.controller.abort();
+            await running;
+        }
+    });
+
     it('settles an unavailable attempt without a deadline and resumes only on source invalidation', async () => {
         const f = fixture();
         let available = false;

@@ -1212,6 +1212,15 @@ and `nextEligibleAt`. `save` preserves its existing cursor codec and CAS store.
 source period. A finite provider failure can also return the existing typed
 source `status` (`state` and `code`). Adapters own no observation loop or timer.
 
+Continuous observers retain one original candidate while its admission awaits
+approval. By default, that source waits for settlement before observing again.
+An adapter whose `observe` preserves the retained candidate until `save` can set
+`observeWhileAdmissionPending: true` to continue its advancing provider deadlines,
+as the health adapter does for current health publication. The runner still
+admits once and serializes the original checkpoint save before the next
+observation. A non-advancing buffered drain waits for settlement or an
+authenticated wake. Finite `once` mode awaits admission and save.
+
 The runner compares the assignment with **its own host-stamped
 `context.materialization`** before provider or checkpoint work. Missing or
 mismatched materialization refuses observation; `context.caller` is not a

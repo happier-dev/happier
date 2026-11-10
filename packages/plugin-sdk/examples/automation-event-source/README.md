@@ -33,6 +33,13 @@ or invented polling period. Its save port logs settlement only after all observa
 this example has no durable provider cursor. A real source keeps its existing cursor/CAS there
 and derives its next eligibility from provider headers or a deliberate source period. An
 unsettled admission must retain the same occurrence for retry.
+This example leaves `observeWhileAdmissionPending` omitted: its source waits for
+admission settlement before observing again. A scheduled adapter can set
+`observeWhileAdmissionPending: true` only if every intervening `observe` preserves
+the original pending occurrence and checkpoint until `save`. For example, the
+health adapter opts in to refresh current health on its configured period while
+the first transition awaits approval. The SDK owns the single admission and
+serializes its checkpoint save; the adapter adds no approval coordinator or timer.
 The settlement log preserves `disposition.admissions`: each observation's exact selector,
 transport scope and server result. `checkpointSafe` alone does not prove execution: a filtered
 or stale observation can safely settle without admitting a Run. Admission-only effects require

@@ -30,6 +30,7 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
     const live = new Map<string, { basis: string; source: HealthCheckSourceConfigV1;
         due: Map<string, number | null>; failures: Map<string, number>; pendingChecks: Set<string> }>();
     return {
+        observeWhileAdmissionPending: true,
         decode(definition) {
             if (![HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT].includes(definition.eventRef.localId)) return null;
             const parsed = HealthCheckSourceConfigV1ProtocolSchema.safeParse(definition.sourceConfig);

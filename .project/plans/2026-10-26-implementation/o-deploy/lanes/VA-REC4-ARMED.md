@@ -1,82 +1,80 @@
-READY FOR RELOAD — #111 recovery/withdrawal owner fixes GREEN; current-source entry-loads13/13.
+READY FOR RELOAD — #113 recovery and misleading removal refusal fixed; loaded replay pending.
 
-O-DEPLOY: reload the named daemon after the committed RESULT, then have
-QA-HEALTH-PUBLISH-1109 replay up → down → recovered → observation removal through
-both widths and public service Actions. No loaded success for these fixes is
-claimed. No typechecks ran; typecheck left to the package wave.
+O-DEPLOY: reload the matching daemon/readers, then QA-HEALTH-PUBLISH-1109 replays
+up → native stop/down → restart/HTTP200/up while the failure Event awaits approval,
+then withdrawal, at both widths and through public Actions. Source checks pass;
+loaded success is not claimed. Broader Workflow checks have 7 unattributed failures;
+docs check finds 2 stale generated API pages. No typechecks ran;
+typecheck left to the package wave. O-DEPLOY/Systemic: route normal declaration
+and generated-reference refresh to the integration wave; no lane compiler ran.
 
-Observed loaded basis: #111 source23:18:00.650Z, prior publisher54da234df1;
-HTTP200→up and stop→down PASS, but recovery/removal retain down/current.
-Machine eadc2422-b42b-478d-97b1-af9b530d5f08, service
-d2c77738-2a18-4515-8556-9ef22faad499. Evidence: QA-HEALTH-PUBLISH-1109.md
-and .project/tmp/QA-HEALTH-PUBLISH-1109/r111-*; fixture was cleaned by QA.
+Observed #113 basis: ad265db371, source2026-11-10T03:08:55.044Z; up/down/withdrawal
+PASS. Machine eadc2422-b42b-478d-97b1-af9b530d5f08; service
+01d36db6-e765-4773-a8c0-3810d53e233a. QA evidence: QA-HEALTH-PUBLISH-1109.md
+and .project/tmp/QA-HEALTH-PUBLISH-1109/r113-*. Its fixture was cleaned.
+Exact retained daemon: nl3, agent-qa-servers-deploy/cli/logs/
+2026-11-10-04-29-54-pid-2720953-daemon.log (log clock UTC+1).
 
-Recovery owner: packages/plugins/machine-services/src/healthObserver.ts.
-Observed source suppressed finite probes whenever the cursor retained an
-unsettled Event. Constructed composed RED uses the real SDK runner, adopted
-source, saved HTTP host, publisher and P30 row owner: up→down, admission held,
-HTTP restored200, row incorrectly remains down. Fix runs already-due reads
-while replaying the retained Event, preserving its identity/payload/first clock;
-transition reduction resumes after settlement. No approval bypass or default
-change. Raw health updates before any new recovery Event is admitted.
-Loaded incident attribution remains derived: QA retained no observer failure
-code/request id. Ordinary approval_request_created becomes retryable
-admissionUnavailable at the SDK owner; it uses the person's existing period.
-Explicit nonretryable refusal still parks by the existing policy.
+Observed: final health transport03:55:51.686–.688Z; approval.wait03:55:52.597Z,
+executionRequestId c000746a-35fb-43dc-9f46-33abe7fd3871:automation.event.admit:62,
+artifact55aaa2e9-4092-85c5-aea2-febfa3bf09b7. Zero health transport attempts
+follow the native restart03:56:37Z through04:14Z, despite HTTP200 at04:02:32Z.
+Sanitized evidence in .project/tmp/VA-REC4-ARMED-r113-daemon-probe-summary-v3.jsonl,
+daemon-last-probe-stages.jsonl and daemon-approval-proof.jsonl (same lane prefix).
+Earlier v1/v2 correlation extracts are superseded.
 
-Withdrawal owner: automationEventAdoptedDefinitionSet.ts commits its adopted
-snapshot before notifying the registry. Previously the broker invalidation
-reconciled health against the old snapshot and adoption never reconciled again.
-The internal onAdopted callback is forwarded through Host and automationAssembly;
-the registry reconciles both service and Domain owners after adoption. Initial
-reconciliation follows consumer construction. The premature broker subscription
-and its disposal are removed. Dynamic incumbent service owner selection remains.
-The regression drives actual Home HTTP source revision2 adoption; it never calls
-refresh/reconcile directly and retains unrelated service and Domain health.
+Canonical cause: checkpointedObserver.ts awaited retained Event admission inside
+its observation loop. ad265's pending-cursor fix could resume only after admission
+returned; the real Action retained its input while waiting for approval.
+The SDK now owns one in-memory pending attempt for an explicitly opted-in adapter.
+Health opts in; its existing period keeps publishing raw results while original
+Event evidence/identity/checkpoint stay retained. Settlement saves the original
+candidate serially after any outstanding observation. Removal/cancellation drops
+late save effects. Immediate buffered work parks rather than spinning.
+No approval bypass, new timer, poll, period, default or consumer coordinator.
 
-Deciding AUTO evidence under .project/tmp/:
-- VA-REC4-ARMED-r111-recovery-probe.log: terminal0, direct down→up1/1 on old code;
-  disproves a plain publisher replacement defect, not the pending Event case.
-- VA-REC4-ARMED-r111-pending-recovery-RED-corrected.log: terminal1, intended
-  down-versus-up row failure at recovery while original failed Event is pending.
-- VA-REC4-ARMED-r111-pending-source-RED.log: terminal1, pending replay prevented
-  the due probe after reload; original Event identity remains asserted.
-- VA-REC4-ARMED-r111-recovery-GREEN.log: terminal1,20 passed/1 failed;
-  producer6/6 and source14/14 pass; restart fixture substituted obsolete HTTP
-  request instead of current requestStream, yielding unknown before admission.
-  Corrected that transport boundary; recovery-GREEN-final.log terminal0,21/21.
-- r111-withdrawal-recorded-red.log: terminal1 after revision2 adoption; removed
-  source still down/current. Earlier no-knownRevision attempt is superseded.
-- r111-withdrawal-green-adjacent.log: terminal0,49/49 across registry regression,
-  adopted Host/DefinitionSet and configured activation. Final recorded-shape
-  r111-withdrawal-recorded-green.log: terminal0,1/1, retains unrelated health.
-- VA-REC4-ARMED-r111-entry-loads.log: terminal0,13/13 (required7/7).
-- QA-HEALTH-PUBLISH-1109/r111-sdk-status-falsifier.log: terminal0,2/2;
-  real SDK keeps next finite observation through catalog/source reporting throws.
-  r111-sdk-observer-suite.log: terminal0,35/35. No SDK production change.
-- Wrong-config RED attempt64913: NOT RUN, cancelled while queued; corrected
-  existing vitest.config.ts command above supplies the meaningful RED.
+Same-shape sweep: triage may replace a pending cursor on signature change, so it
+cannot safely observe during admission. Retained-fact, deployment, triage, GitHub
+and SDK example adapters retain their original awaited path. Only health opts in.
+UI and public service Actions continue consuming the same P30 health row.
+Sweep: .project/tmp/VA-REC4-ARMED-r113-observer-consumer-sweep.log.
 
-Same-shape sweep: pending admission suppressing finite health reads — one live
-adapter site, corrected; SDK owns admission/backoff, not health status. Health
-withdrawal before adoption — one registry listener, replaced for both P30 service
-and Domain projections. Other pending arrays found by the sweep are unrelated
-parser/Agent/SCM state. Sweep: VA-REC4-ARMED-r111-same-shape.log and
-r111-withdrawal-sweep.log; final sweep: r111-same-shape-final.log (same lane prefix).
-Compatibility health-status and failed/recovered Events
-continue through one adapter. UI and public Actions already consume one P30 row;
-no UI or Action-specific health inference was added. Docs: plugin-platform.md.
+Separate removal-read cause: recorded agent workflow.trigger.list {automationId,
+review:true} requests private legacy-conversion review, refused before storage
+at workflowTriggerActions.ts:618. Its existing present_user_required code was
+missing from WorkflowActionFailureV1Schema and became storage_unavailable.
+The canonical Workflow vocabulary now admits that existing refusal; its full enum
+derives the no-details subset. Authority is unchanged. Ordinary trigger detail
+uses automationId + triggerId. This is distinct from the health approval wait.
+Matching unpublished0.3 readers reload together; no persisted format/epoch changes.
 
-Self-review: tests reject skipping pending probes, replacing pending Event evidence,
-and clearing all health on adoption. Equal results still suppress row pushes and
-cursor writes. SDK status failure was falsified rather than patched.
-Net mechanism delta: +1 internal adoption notification /−1 premature broker
-subscription; one pending-probe suppression replaced by Event-custody preservation;
-+0 authority checks, states, error codes, timers, retries or persisted fields.
-Files:5 production owners,5 tests,1 canonical doc,1 designated report.
-File delta:+1 regression/−0; no new runtime modules.
+Deciding AUTO checks (all terminal; paths under .project/tmp/):
+- VA-REC4-ARMED-r113-recovery-red.log: exit1; returned-unsettled passes, held
+  approval leaves last raw result181000 instead of recovery241000.
+- VA-REC4-ARMED-r113-sdk-red.log: exit1; blocked schedule and late removed save.
+- VA-REC4-ARMED-r113-recovery-green-final.log: exit0,22/22 across saved health,
+  source and restart suites, including held approval/native recovery/withdrawal.
+- VA-REC4-ARMED-r113-sdk-final-full.log: exit0,42/42; serialized original save,
+  one admission, cancellation/removal, no spin, typed rejection and default wakes.
+- QA-HEALTH-PUBLISH-1109/r113-agent-review-red.log: exit1, storage vs refusal.
+  r113-agent-review-focused-green.log: exit0,1/1; r113-agent-review-green.log:
+  Workflow schema45/45 and Action schema26/26 pass; total168pass/7fail.
+  Unattributed: workflowAccountActions.test.ts:63,70,115,157,173 and legacy host
+  approval expectations:179,183. No A/B or unrelated authority edits.
+- VA-REC4-ARMED-r113-entry-loads.log: exit0,13/13 (required7/7).
+- VA-REC4-ARMED-r113-docs-check.log: exit1, only generated plugins/api/surface.mdx
+  and host-actions.mdx stale; no changed-guide/link failures. Left untouched.
+Interim SDK spin/OOM and default-wake regression were fixed and covered by final42;
+first composed GREEN had stale native-reason push counts, corrected in final22.
 
-Residual risk: fresh loaded recovery/removal replay is still required after
-ORCH-TOP reload. Exact #111 admission failure is unmeasured; do not equate the
-constructed pending-admission RED with a logged cause. Approval delivery remains
-APPROVAL-DELIVERY-1109's corridor. No Stack lifecycle or Account settings changed.
+Self-review rejected generic concurrent observations because triage overwrites
+pending evidence; the optional capability preserves that sibling's old contract.
+Net: +1 SDK capability/+1 in-memory pending-attempt owner; +0 timers/retries/new
+error codes/persisted fields/runtime files. One existing refusal gains schema
+membership; duplicated vocabulary entries are removed. Three production owners,
+three tests, five docs and this report. Tracked API export census unchanged;
+signature reports are ignored/generated by the normal package build.
+
+Residual risk: loaded recovery with a real pending approval still needs the named
+reload/replay. No new daemon/browser/Account mutation or lifecycle change was run.
+The broader Workflow and generated-doc failures remain unattributed, not green.

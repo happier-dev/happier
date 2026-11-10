@@ -2167,6 +2167,14 @@ adapter or reverse-development-binary promise is added.
 
 ## Shared Workflow projections (0.3 development)
 
+The closed Workflow failure vocabulary retains the trigger owner's existing
+`present_user_required` refusal when an agent requests private legacy-conversion
+review. This read is refused before storage access; it no longer appears as
+`storage_unavailable`. Matching Protocol, CLI/daemon and UI readers reload
+together under the unpublished 0.3 direct cut because older strict readers do
+not recognize this code. Approval and review authority, persisted formats and
+wire epochs do not change.
+
 Retained original step input and recovery replacement values share
 `WorkflowAuthoredInputV1Schema`: composer document, input values and optional
 `renderedText`. The rendered text freezes the admitted input and survives

@@ -150,6 +150,15 @@ async function conversionApprovalFixture(surface: 'agent' | 'mcp' | 'cli' = 'mcp
 }
 
 describe('0.2 Automation Account trigger host', () => {
+  it('preserves the present-user refusal when an agent requests legacy trigger review through an Action', async () => {
+    const f = await conversionApprovalFixture('agent');
+
+    expect(await f.executor.execute('workflow.trigger.list', {
+      automationId: '457d8250-0352-4823-b261-80e1044e8c92', review: true,
+    }, f.context)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(f.writes()).toBe(0);
+  });
+
   it.each(['agent', 'mcp', 'cli'] as const)('converts a %s request only after the exact default present-user approval', async (surface) => {
     const f = await conversionApprovalFixture(surface);
     expect(await f.executor.execute('workflow.trigger.update', f.input, f.context))

@@ -131,7 +131,7 @@ describe('saved source finite native producer binding', () => {
         } finally { await handle.dispose(); await runtime.dispose(); }
     });
 
-    it('publishes recorded saved HTTP results into adopted service health without clock-only pushes', async () => {
+    it.each(['unsettled', 'waitingApproval'] as const)('publishes saved HTTP recovery while Event admission is %s without clock-only pushes', async admissionState => {
         const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
         try {
             await withTempDir('happier-saved-service-health-home-', async homeDir => {
@@ -154,12 +154,13 @@ describe('saved source finite native producer binding', () => {
                         periodMs: 60000, consecutiveFailuresBeforeAlerting: 2 }] };
                 const f = await adopted(sourceConfig, machineId);
                 const owner = runtime.registry.projectManagedServices;
+                let nativePhase: 'running' | 'stopped' = 'running';
                 const handle = await owner.superviseMachine({ serverId: homeId, machineId,
                     watch: { v: 1, watchId: serviceId, name: 'QA-HEALTH-PUBLISH-1109-http.service',
                         adapter: { pluginId: 'happier.machine.services', localId: 'systemd' },
                         nativeResourceId: 'user/QA-HEALTH-PUBLISH-1109-http.service', lifecyclePurpose: 'development' },
                     isCurrent: () => true, releaseObservation: async () => {}, lifecycle: {
-                        async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
+                        async inspect() { return { phase: nativePhase, readiness: 'not_reported', endpoint: null }; },
                         async stop() { return { status: 'stopped' }; },
                     } });
                 let status = 200;
@@ -169,10 +170,14 @@ describe('saved source finite native producer binding', () => {
                 const published: SavedMachineServiceHealthResult[] = [];
                 const service = createSavedHealthChecksHost({ serverId: profile.id, resolveAdoptedDefinitionSet: () => f.owner,
                     readObserver: () => f.observer, now: () => now, openDomainArtifact: async () => null,
-                    onServiceResult: value => { published.push(value); return publishSavedServiceHealthResult(owner, value); },
+                    onServiceResult: async value => { await publishSavedServiceHealthResult(owner, value); published.push(value); },
                 }).bind(f.seed, { actions: { execute: async () => ({ kind: 'service', service: owner.machineServiceRows.read(handle) }) } as unknown as ActionsService,
                     http: { requestStream: async () => ({ status, finalUrl: 'http://127.0.0.1:40797', headers: {},
                         chunks: (async function* () {})(), dispose: async () => {} }) } as unknown as HttpService });
+                let observer: Promise<void> | undefined;
+                let releaseProbe: (() => void) | undefined;
+                let approve: (() => void) | undefined;
+                const approval = new Promise<void>(resolve => { approve = resolve; });
                 try {
                     let admissionSettles = false;
                     const admissions: ReturnType<typeof AutomationEventAdmitInputV1Schema.parse>[] = [];
@@ -200,6 +205,7 @@ describe('saved source finite native producer binding', () => {
                                 if (id === 'automation.event.admit') {
                                     const request = AutomationEventAdmitInputV1Schema.parse(input);
                                     admissions.push(request);
+                                    if (admissionState === 'waitingApproval' && !admissionSettles) await approval;
                                     return { results: admissionSettles ? request.definitions.map(() => ({
                                         kind: 'admitted', checkpointSafe: true, runId: 'run',
                                     })) : [] };
@@ -208,13 +214,32 @@ describe('saved source finite native producer binding', () => {
                             } }, events: { host: { subscribe: () => ({ dispose() {} }) } } },
                     } as unknown as BackgroundServiceContext;
                     const adapter = createHealthCheckSourceAdapter(() => now);
-                    const read = () => runCheckpointedPluginEventObserverV1({ context, source: adapter, mode: 'once', now: () => now });
+                    const read = async () => {
+                        if (admissionState === 'unsettled') {
+                            await runCheckpointedPluginEventObserverV1({ context, source: adapter, mode: 'once', now: () => now });
+                            return;
+                        }
+                        // The real retained Action waits for its one approval. A
+                        // boundary-held Promise must not stop the chosen probe period.
+                        if (observer === undefined) {
+                            observer = runCheckpointedPluginEventObserverV1({ context, source: adapter, now: () => now,
+                                sleep: (_delay, signal) => new Promise<void>(resolve => {
+                                    const done = () => { signal.removeEventListener('abort', done); releaseProbe = undefined; resolve(); };
+                                    releaseProbe = done;
+                                    signal.addEventListener('abort', done, { once: true });
+                                    if (signal.aborted) done();
+                                }) });
+                            void observer.catch(() => {});
+                        } else releaseProbe?.();
+                        await vi.waitFor(() => expect(published.at(-1)?.result.observedAt).toBe(now));
+                    };
                     await read();
                     expect(owner.machineServiceRows.read(handle).health).toMatchObject({ status: 'up', freshness: 'current', observedAtMs: 1000 });
                     expect(changes).toHaveLength(1);
                     now += 60000; await read(); await handle.inspectCurrentOccurrence();
                     expect(owner.machineServiceRows.read(handle).health?.status).toBe('up');
                     expect(changes).toHaveLength(1);
+                    nativePhase = 'stopped'; await handle.inspectCurrentOccurrence();
                     status = 503; now += 60000; await read();
                     expect(owner.machineServiceRows.read(handle).health?.status).toBe('down');
                     expect(changes).toHaveLength(2);
@@ -224,15 +249,21 @@ describe('saved source finite native producer binding', () => {
                     await publishSavedServiceHealthResult(owner, { ...published[0]!, serverId: 'srv_unrelated_home' });
                     expect(owner.machineServiceRows.read(handle).health?.status).toBe('down');
                     expect(changes).toHaveLength(2);
+                    nativePhase = 'running'; await handle.inspectCurrentOccurrence();
+                    expect(owner.machineServiceRows.read(handle).health?.status).toBe('down');
+                    const changesBeforeRecoveryProbe = changes.length;
                     status = 200; now += 60000; await read();
                     expect(owner.machineServiceRows.read(handle).health?.status).toBe('up');
-                    expect(changes).toHaveLength(3);
+                    expect(changes).toHaveLength(changesBeforeRecoveryProbe + 1);
                     expect(admissions.at(-1)).toMatchObject({ occurrenceId: failed?.occurrenceId,
                         occurredAt: failed?.occurredAt, payload: failed?.payload });
-                    admissionSettles = true; now += 60000; await read();
-                    expect(admissions.at(-1)?.payload).toMatchObject({ transition: 'failed' });
+                    if (admissionState === 'waitingApproval') expect(admissions).toHaveLength(1);
+                    admissionSettles = true; approve?.(); now += 60000; await read();
+                    if (admissionState === 'unsettled') expect(admissions.at(-1)?.payload).toMatchObject({ transition: 'failed' });
+                    else expect(admissions.filter(value => value.occurrenceId === failed?.occurrenceId)).toHaveLength(1);
                     now += 60000; await read();
                     expect(admissions.at(-1)?.payload).toMatchObject({ transition: 'recovered' });
+                    const changesBeforeWithdrawal = changes.length;
                     const page = await f.readStoredDefinitions.mock.results[0]!.value;
                     f.readStoredDefinitions.mockResolvedValueOnce({ ...page, revision: '2', definitions: [] });
                     expect(await f.owner.refresh()).toEqual({ kind: 'adopted', revision: '2' });
@@ -241,8 +272,12 @@ describe('saved source finite native producer binding', () => {
                         sourceInstanceId: entry.sourceInstanceId, signal: f.seed.signal,
                     }).kind === 'available');
                     expect(owner.machineServiceRows.read(handle).health?.status).toBe('unknown');
-                    expect(changes).toHaveLength(4);
-                } finally { subscription.dispose(); await handle.dispose(); await runtime.dispose(); }
+                    expect(changes).toHaveLength(changesBeforeWithdrawal + 1);
+                } finally {
+                    f.invocationAbort.abort(); approve?.(); releaseProbe?.();
+                    await observer?.catch(error => { if (error !== f.seed.signal.reason) throw error; });
+                    subscription.dispose(); await handle.dispose(); await runtime.dispose();
+                }
             });
         } finally { env.restore(); reloadConfiguration(); }
     });
