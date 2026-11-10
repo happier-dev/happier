@@ -444,9 +444,12 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
   // The Session transport is the boundary fixture. The host, real Agent catalog,
   // MCP selection, SavedSecret materializer, permission and queue owners stay real.
   const publishedMutations: unknown[] = [];
+  let sessionClosed = false;
   const session = createMutableApiSessionClientFixture({ sessionId: 'pi-session', metadata,
     serverBinding: { serverId: profileId, serverUrl },
     overrides: {
+      close: async () => { sessionClosed = true; },
+      readPendingQueueStateForLiveWork: async () => ({ known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 0 }),
       getServerIdentityId: () => kind === 'missing-home' ? undefined : 'srv_pi_owner',
       claimCurrentSessionPublisherAuthorityForStartup: async () => ({ status: 'claimed' }),
       refreshSessionSnapshotFromServerRequired: async () => undefined,
@@ -470,7 +473,9 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
   // preserve the canonical fixture's synchronous view update underneath it.
   const updateFixtureMetadata = session.updateMetadata.bind(session);
   session.updateMetadata = async update => { updateFixtureMetadata(update); };
-  const opened = new Error('Agent open boundary observed');
+  const { SessionTeamCredentialLaunchUnavailableError } = await import('@/session/services/sessionTeamCredentialLaunchError');
+  const opened = nativeCase ? new SessionTeamCredentialLaunchUnavailableError('resource_unavailable')
+    : new Error('Agent open boundary observed');
   const nativeExecRefusal = new PluginError({ code: 'project_requester_credentials_unavailable',
     message: 'PRIVATE_PLUGIN_FAILURE', retryable: false,
     details: { cause: { code: 'ingress_missing', stage: 'dispatch' }, private: 'PRIVATE_PLUGIN_DETAILS' } });
@@ -851,6 +856,9 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
     expect(entry!.includes('PRIVATE_PLUGIN')).toBe(false);
   } else if (nativeCase) {
     await expect(outcome).rejects.toBe(opened);
+    expect(sessionClosed).toBe(true);
+    expect(publishedMutations).toContainEqual(expect.objectContaining({ action: 'fail',
+      issue: expect.objectContaining({ code: 'resource_unavailable', source: 'team_credential' }) }));
     expect(nativeFactoryCalls).toBe(1);
     expect(machineReads).toBe(1);
     expect(sessionReads).toBe(0);

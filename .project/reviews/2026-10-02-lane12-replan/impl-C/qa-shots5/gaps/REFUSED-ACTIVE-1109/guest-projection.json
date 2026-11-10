@@ -1,0 +1,11 @@
+{
+  "method": "read-only nl3 SSH, limactl shell, sudo python allowlist projection; no lifecycle changes",
+  "guest": "happier-jms44hvppno430sw2cjnfunqtgyz8xn4gscc4mqhybacw20ey",
+  "observedAtUtc": "2026-11-10T00:18-00:30Z",
+  "runnerLogs": [
+    { "path": "/home/happier.guest/.happier/logs/2026-11-09-21-00-14-pid-3008.log", "sessionId": "cmw9or1al005hmcqik8km95jx", "failureLine": 96, "failureCode": "resource_unavailable", "phase": "agent_runtime_open", "pendingLines": [97, 98, 99], "pendingResultType": "no_pending", "deliveryTiming": "after_foreground_ready", "pidAlive": true },
+    { "path": "/home/happier.guest/.happier/logs/2026-11-10-00-53-07-pid-5504.log", "sessionId": "cmw9x2j9f0036mc0pbenly5xw", "failureLine": 96, "failureCode": "resource_unavailable", "phase": "agent_runtime_open", "pendingLines": [97, 98, 99], "pendingResultType": "no_pending", "deliveryTiming": "after_foreground_ready", "pidAlive": true }
+  ],
+  "ownerRunner": { "pid": 5441, "sessionId": "cmw9x2ewa002xmc0pmjhxqlc9", "pidAlive": true },
+  "transportExit": 0
+}

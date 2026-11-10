@@ -9,6 +9,21 @@ import { createSessionProviderInputConsumer } from '@/agent/runtime/session/inpu
 import { serveFailedStartupInputs } from './serveFailedStartupInputs';
 
 describe('serveFailedStartupInputs', () => {
+    it('retires a refused launch when its authoritative input projection is empty', async () => {
+        const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(() => 'default');
+        const consumer = createSessionProviderInputConsumer({
+            messageQueue: queue,
+            session: {
+                waitForMetadataUpdate: () => new Promise<boolean>(() => {}),
+                readPendingQueueStateForLiveWork: async () => ({ known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 1 }),
+            },
+        });
+        await expect(serveFailedStartupInputs({ consumer, signal: new AbortController().signal,
+            diagnostic: { code: 'resource_unavailable', severity: 'error' },
+            observe: () => { throw new Error('No input was admitted'); },
+            retireAfterInput: true, retryable: true,
+        })).resolves.toBe(false);
+    });
     it.each([false, true])('retires the failed receiver independently of refusal retryability %s', async retryable => {
         const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(() => 'default', {
             batcher: combinePermissionModeQueuedPrompts,

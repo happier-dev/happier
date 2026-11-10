@@ -4284,8 +4284,10 @@ export async function runHostSessionRuntime(
               // Outcome normalization starts the canonical Pending settlement.
               // Drain its existing writes before retiring this failed receiver.
               await session.flush();
-              await deferredFailureProjection.afterInput?.();
             }
+            // With no admitted original, the refusal still needs its transcript
+            // projection before construction cleanup withdraws durable delivery.
+            await deferredFailureProjection.afterInput?.();
           });
           runtimeStopDelegate = async () => {
             startupRegistrationLifetime.abort();

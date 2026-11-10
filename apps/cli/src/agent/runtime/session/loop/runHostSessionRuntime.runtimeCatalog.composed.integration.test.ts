@@ -8246,6 +8246,29 @@ describe('runHostSessionRuntime', () => {
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
   });
 
+  it.each(['codex', 'claude'] as const)('closes a %s Team-refused launch without waiting for an unadmitted original', async agentId => {
+    const { SessionTeamCredentialLaunchUnavailableError } = await import('@/session/services/sessionTeamCredentialLaunchError');
+    const harness = createHarness();
+    harness.config.policyAgentId = agentId;
+    harness.session.hasPendingProviderInput.mockReturnValue(false);
+    const failure = new SessionTeamCredentialLaunchUnavailableError('resource_unavailable');
+    setSessionRuntimeFactory(harness.config, () => { throw failure; });
+    let stop: (() => Promise<void>) | undefined;
+    harness.config.onRuntimeStopReady = value => { stop = value; };
+    const result = runHostSessionRuntime(harness.opts, harness.config, harness.deps).catch(error => error);
+    try {
+      await vi.waitFor(() => expect(harness.session.close).toHaveBeenCalledOnce());
+      expect(await result).toBe(failure);
+      expect(harness.session.enqueueSessionTurnMutation).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'fail', issue: expect.objectContaining({ code: 'resource_unavailable', source: 'team_credential' }),
+      }));
+      expect(harness.runtime.sendPrompt).not.toHaveBeenCalled();
+    } finally {
+      await stop?.();
+      await result;
+    }
+  });
+
   it.each(['plugin_generation_stale', 'AGENT_RESUME_PROVIDER_STATE_MISSING', 'native_agent_session_mode_unavailable'])(
     'retains retryable first input and startup cleanup for an unproven plugin refusal (%s)', async code => {
       const { PluginError } = await import('@happier-dev/plugin-sdk');
