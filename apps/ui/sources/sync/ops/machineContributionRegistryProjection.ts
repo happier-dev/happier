@@ -972,11 +972,13 @@ export async function machinePluginStructuredMessageActionExecute(
                 }
                 const requestId = payload.requestId ?? randomUUID();
                 const actionInput = { action, ...(payload.expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId: payload.expectedContributorOccurrenceId }), ...(payload.input === undefined ? {} : { input: payload.input }),
+                    ...(payload.sessionId === undefined ? {} : { sessionId: payload.sessionId }),
                     ...(payload.messageActionReference ? { messageActionReference: payload.messageActionReference } : {}) };
                 const target = { kind: 'machine' as const, machineId };
                 const context = { surface: payload.executionSurface, authority: 'present_user' as const,
                     actionCaller: { kind: 'host' as const }, actionRequestId: requestId,
                     runtimeAccountId: account.accountId, serverId: account.serverId,
+                    ...(payload.sessionId === undefined ? {} : { defaultSessionId: payload.sessionId }),
                     ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
                     externalActionTarget: target };
                 const invocation = projectExternalActionRequesterInvocationV1({ actionId: ACTION_INVOKE_ACTION_ID_V1,

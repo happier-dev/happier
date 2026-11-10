@@ -9,6 +9,8 @@ import { SessionReadStateSetResultV1Schema } from '@happier-dev/protocol/session
 
 import { createMachineFixture, createSessionFixture, createSessionAccessFixture, createRootLayoutFeaturesResponse, flushHookEffects, renderHook, renderScreen, standardCleanup, withPopoverWebGlobals } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
 import { storage } from '@/sync/domains/state/storage';
@@ -16,7 +18,7 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resetScopedMachineTransportCacheForTests } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
 import { serverScopedRpcSocketPool } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
-import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
+import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SESSION_ACTION_MARK_READ_ID, SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_STOP_ID } from './sessionActionIds';
 import { SessionHeaderActionMenu } from './SessionHeaderActionMenu';
@@ -59,20 +61,28 @@ vi.mock('socket.io-client', () => ({ io: (...args: unknown[]) => ioSpy(...args) 
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 const MACHINE_ID = 'machine-projection';
+const SERVER_IDENTITY_ID = 'srv_header_projection_home';
 const OCCURRENCE_ID = 'acme-preview-occurrence-7';
 const MENU_ID = 'plugin-ui:sessionHeaderAction:acme.preview:run-preview';
 
-function createProjection() {
-    return normalizePluginUiProjection({
+function createProjection(serverIdentityId: string) {
+    const executionOrigin = { serverIdentityId,
+        materializationRef: { pluginId: 'acme.preview', machineId: MACHINE_ID, materializationId: 'preview-installation' } };
+    return publishDaemonMergedProjectionInputs({ projection: {
         v: 2,
         generation: 7,
-        installedPackagesById: {},
+        installedPackagesById: { 'acme.preview': {
+            id: 'acme.preview', displayName: 'Preview', version: '1.0.0', enabled: true,
+            source: { kind: 'localPath', locator: '/plugins/acme.preview' },
+            occurrenceId: OCCURRENCE_ID, executionOrigin,
+        } },
         agentsById: {},
         actionsById: {
             'acme.preview/run': {
                 id: 'run', pluginId: 'acme.preview', occurrenceId: OCCURRENCE_ID,
                 title: 'Preview', scopes: ['session'], surfaces: ['ui'],
                 execution: { target: 'daemon' }, placementBindings: ['detailsPanel'],
+                executionOrigin,
                 dangerLevel: 'safe', available: true,
             },
         },
@@ -95,7 +105,7 @@ function createProjection() {
             },
         },
         diagnostics: [],
-    });
+    } }).pluginUiProjection;
 }
 
 describe('SessionHeaderActionMenu real runtime boundaries', () => {
@@ -103,10 +113,12 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
     let boundary: ReturnType<typeof createSocketIoBoundaryStub>;
     let previousState: ReturnType<typeof storage.getState>;
     let readStateReply: (() => Response) | null;
+    let externalAction: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null;
 
     beforeEach(async () => {
         previousState = storage.getState();
         readStateReply = null;
+        externalAction = null;
         voiceSessionBindingStore.setState({
             bindingsByConversationSessionId: {}, runtimeBindingsByConversationSessionId: {}, persistedBindingsByConversationSessionId: {},
         });
@@ -116,11 +128,17 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         boundary.socket.emitWithAck.mockResolvedValue({ ok: true, result: { ok: true, result: { opened: true } } });
         homes = await serveActionHomes({
             homes: [
-                { key: 'projection', serverUrl: 'https://projection.home.test', accountId: 'header-account' },
+                { key: 'projection', serverUrl: 'https://projection.home.test', accountId: 'header-account',
+                    currentAccount: true, serverIdentityId: SERVER_IDENTITY_ID },
                 { key: 'focused', serverUrl: 'https://focused.home.test', accountId: 'header-account' },
             ],
-            route: ({ path, body }) => {
-                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            route: async ({ path, body, url, method, headers }) => {
+                const actionResponse = await externalAction?.handle(url, { method, headers,
+                    ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+                if (actionResponse) return actionResponse;
+                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({
+                    capabilities: { serverIdentity: { serverIdentityId: url.hostname === 'projection.home.test' ? SERVER_IDENTITY_ID : null } },
+                }));
                 if (path === '/v2/sessions/sess_1/read-state' && readStateReply) return readStateReply();
                 if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(body,
                     id => id === MACHINE_ID ? createPlainMachineRowFixture({ id, accountId: 'header-account' }) : null);
@@ -170,6 +188,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
     ] as const)('keeps Compact in the incumbent menu with the owner availability and accessible disabled reason: %s', async (publication, disabled) => {
         const base = storage.getState().sessions.sess_1!;
         const session = createSessionFixture({ ...base, active: true, metadata: { ...base.metadata!, flavor: 'external/agent',
+            runtimeDescriptorV1: { v: 1, agentId: 'external/agent', agent: {} },
             ...(publication ? { agentRuntimeCapabilitiesV1: publication } : {}) } });
         storage.getState().applySessions([session]);
         const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
@@ -349,7 +368,20 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
     // Moved from the legacy handoff suite: one normalized descriptor must have
     // the same admitted occurrence and omitted input through both UI arms.
     it('dispatches one normalized executeAction descriptor through both overflow and direct header arms', async () => {
-        const projection = createProjection();
+        const calls: Array<{ input: unknown; defaultSessionId?: string }> = [];
+        const account = await captureLazyActionAccountContext(homes.homes.projection!.id);
+        try {
+            externalAction = await createExternalActionAccountHttpBoundary({
+                serverUrl: account.endpointUrl, serverIdentityId: account.serverIdentityId!,
+                accountId: account.accountId, machineId: MACHINE_ID, installationId: 'preview-installation',
+                actionId: 'action.invoke', tokenEpoch: 0,
+                execute: (input, { invocation }) => {
+                    calls.push({ input, defaultSessionId: invocation.defaultSessionId });
+                    return { opened: true };
+                },
+            });
+        } finally { account.dispose(); }
+        const projection = createProjection(SERVER_IDENTITY_ID);
         const scopedLaunchFacts = {
             serverId: homes.homes.projection!.id, machineId: MACHINE_ID,
             generation: 7, interactionEnabled: true,
@@ -369,22 +401,18 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         const dropdown = screen.findByType(DropdownMenu);
         expect(dropdown.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: MENU_ID, title: 'Preview' })]));
 
-        const actionRequests = () => boundary.socket.emitWithAck.mock.calls.filter(([event, request]) => (
-            event === SOCKET_RPC_EVENTS.CALL && typeof request === 'object' && request !== null
-            && 'method' in request && request.method === `${MACHINE_ID}:${RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE}`
-        ));
+        const actionRequests = () => calls;
         const expectRequest = () => {
-            const request = actionRequests().at(-1)?.[1];
+            const request = actionRequests().at(-1);
             expect(request).toMatchObject({
-                method: `${MACHINE_ID}:${RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE}`,
-                params: {
-                    machineId: MACHINE_ID, expectedContributorOccurrenceId: OCCURRENCE_ID,
-                    qualifiedActionId: 'acme.preview/run', sessionId: session.id, executionSurface: 'ui',
+                defaultSessionId: session.id,
+                input: {
+                    expectedContributorOccurrenceId: OCCURRENCE_ID,
+                    action: { pluginId: 'acme.preview', localId: 'run' }, sessionId: session.id,
                 },
             });
-            if (!request || typeof request !== 'object' || !('params' in request)
-                || !request.params || typeof request.params !== 'object') throw new Error('Missing Action transport payload');
-            expect(Object.hasOwn(request.params, 'input')).toBe(false);
+            if (!request?.input || typeof request.input !== 'object') throw new Error('Missing Action transport payload');
+            expect(Object.hasOwn(request.input, 'input')).toBe(false);
         };
         await act(async () => {
             dropdown.props.onSelect(MENU_ID);
@@ -409,9 +437,10 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             home: 'projection', accountId: 'header-account', path: '/v1/machines/read-batch',
             body: expect.objectContaining({ machineIds: expect.arrayContaining([MACHINE_ID]) }),
         })]));
-        expect(ioSpy).toHaveBeenCalledWith(homes.homes.projection!.serverUrl, expect.objectContaining({
-            auth: expect.objectContaining({ token: expect.any(String), clientType: 'user-scoped', clientPurpose: 'scoped-rpc' }),
-        }));
+        expect(homes.requests.filter(request => request.path === '/v1/actions/action.invoke')).toEqual([
+            expect.objectContaining({ home: 'projection', accountId: 'header-account', method: 'POST' }),
+            expect.objectContaining({ home: 'projection', accountId: 'header-account', method: 'POST' }),
+        ]);
         expect(modalAlert).not.toHaveBeenCalled();
         expect(modalShow).not.toHaveBeenCalled();
     });
