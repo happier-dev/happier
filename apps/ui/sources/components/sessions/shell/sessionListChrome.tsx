@@ -26,6 +26,7 @@ import { cancelSessionListLayoutFlight, captureSessionListLayoutFlight } from '.
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 
 import { SESSION_LIST_COLUMN_METRICS, sessionListStyles } from './sessionListStyles';
+import { SESSION_LIST_HEADER_CONTROL } from './sessionListColumnMetrics';
 import { resolveProjectGroupHeaderMenuItems } from './resolveProjectGroupHeaderMenuItems';
 import { useCustomSessionAppearanceColors } from '@/hooks/session/useSessionAppearance';
 import { resolveSessionAppearanceColor, type SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
@@ -49,7 +50,7 @@ import { useWorkspaceFavicon } from './useWorkspaceFavicon';
 import { resolveWorkspaceRootTreeRowId, treeRowId } from './drop-resolution/treeRowId';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
-import { useHeaderActionGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
+import { useHeaderControlMetrics } from '@/components/ui/icons/iconButtonGlyphSize';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { useSessionListViewOptionWriter } from './useSessionListViewOptionWriter';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -300,7 +301,7 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
         if (itemId.startsWith('layout:')) yieldLayoutIntent();
         setMenuOpen(false);
     }, [applyViewOption, openNewSection, organize, props, router, yieldLayoutIntent]);
-    const headerGlyphPx = useHeaderActionGlyphSize(ICON_SIZE.sm);
+    const headerControl = useHeaderControlMetrics(SESSION_LIST_HEADER_CONTROL);
 
     return (
         <DropdownMenu
@@ -328,8 +329,8 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
                     tooltip={t('sessionsList.viewOptions')}
                     tooltipHidden={menuOpen}
                     variant="plain"
-                    size={SESSION_LIST_COLUMN_METRICS.iconButtonSizePx}
-                    iconSize={headerGlyphPx}
+                    size={headerControl.sizePx}
+                    iconSize={headerControl.glyphPx}
                     interactiveTargetGapPx={SESSION_LIST_COLUMN_METRICS.iconButtonGapPx}
                     expanded={menuOpen}
                     hasPopup="menu"
@@ -357,6 +358,10 @@ export const SessionListLayoutSegment = React.memo(function SessionListLayoutSeg
     const applyViewOption = useSessionListViewOptionWriter();
     const iconColor = theme.colors.text.secondary;
     const reducedMotion = useReducedMotionPreference();
+    // One control size with the header's Search and ⋯ (owner 11-10): on a finger the full-height track and their glyph.
+    const headerControl = useHeaderControlMetrics(SESSION_LIST_HEADER_CONTROL);
+    const touchControl = headerControl !== SESSION_LIST_HEADER_CONTROL;
+    const glyphPx = touchControl ? headerControl.glyphPx : 15;
     const handleSelect = React.useCallback((next: SessionListLayoutChoice) => {
         if (next === effectiveLayout) return;
         // The rows glide to where the chosen layout puts them (P5 §6); reduced motion switches in place.
@@ -372,11 +377,12 @@ export const SessionListLayoutSegment = React.memo(function SessionListLayoutSeg
                 testIDPrefix="session-list-layout"
                 accessibilityLabel={t('settingsSession.sessionList.layoutTitle')}
                 role="radiogroup"
-                compact
+                compact={!touchControl}
+                {...(touchControl ? { iconGlyphPx: glyphPx } : {})}
                 segmentSizing="content"
                 tabs={[
-                    { id: 'projects', label: t('settingsSession.sessionList.layoutProjectsTitle'), icon: <Icon name="list-bullets" size={15} color={iconColor} /> },
-                    { id: 'recent_activity', label: t('settingsSession.sessionList.layoutRecentActivityTitle'), icon: <Icon name="clock" size={15} color={iconColor} /> },
+                    { id: 'projects', label: t('settingsSession.sessionList.layoutProjectsTitle'), icon: <Icon name="list-bullets" size={glyphPx} color={iconColor} /> },
+                    { id: 'recent_activity', label: t('settingsSession.sessionList.layoutRecentActivityTitle'), icon: <Icon name="clock" size={glyphPx} color={iconColor} /> },
                 ]}
                 activeTabId={effectiveLayout === 'recent_activity' ? 'recent_activity' : 'projects'}
                 onSelectTab={handleSelect}
