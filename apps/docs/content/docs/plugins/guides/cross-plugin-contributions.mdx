@@ -97,7 +97,7 @@ or routing API. The first-party IMAP/SMTP transport uses this same contract.
 
 ### PRs & Issues agent actions in 0.3 development source
 
-A plugin can add an agent action, such as "Triage this issue", to the action
+A plugin can add an agent action, such as "Investigate this issue", to the action
 buttons PRs & Issues shows on an item. Contribute to `happier.triage` at
 `agent-actions` with `TriageAgentActionsContributionProtocolV1` from
 `@happier-dev/triage-protocol/v1`. The protocol is a declaration only, so pass
@@ -116,7 +116,7 @@ export const { manifest, activate } = definePlugin({
       'agent-actions': {
         'triage-issue': TriageAgentActionsContributionProtocolV1.contribute({
           descriptor: {
-            label: 'Triage this issue',
+            label: 'Investigate this issue',
             appliesTo: ['issue'],
             workspaceMode: 'repository',
             launchMode: 'review',
