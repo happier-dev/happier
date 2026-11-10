@@ -1,5 +1,6 @@
 import { isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
+import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 
 import { t } from '@/text';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
@@ -82,7 +83,12 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     if (code === 'machine_network_review_required') return t('errors.machineNetworkReviewRequired');
     if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');
     const nativeFailure = describeMachineNativeFailureCode(code);
-    if (nativeFailure) return nativeFailure;
+    if (nativeFailure) {
+        const details = asRecord(record.details);
+        const failure = MachineElevationFailureV1Schema.safeParse(record.failure
+            ?? (details?.kind === 'machineSetup' ? details.failure : undefined));
+        return failure.success ? failure.data.remedy ?? nativeFailure : nativeFailure;
+    }
     if (code === 'invalid_setting_value' || code === 'account_settings_mutation_invalid') return t('settings.writeValueRefused');
     if (code === 'setting_not_bound' || code === 'action_account_scope_changed'
         || code === 'account_settings_mutation_conflict') return t('settings.writeContextChanged');

@@ -80,14 +80,14 @@ export function useSeparateUsersChange(
     operationId: operationId ?? '',
   });
   const operationState = operation?.snapshot.state;
-  const operationErrorCode = operation?.snapshot.error?.errorCode;
+  const operationError = operation?.snapshot.error;
   React.useEffect(() => {
     if (!operationId || !operationState || !isActionOperationTerminal(operationState)) return;
     setPhase(operationState === 'failed'
-      ? { kind: 'settled', tone: 'error', message: resolveActionExecutionErrorMessage({ code: operationErrorCode },
+      ? { kind: 'settled', tone: 'error', message: resolveActionExecutionErrorMessage(operationError,
           member ? t('machines.sharing.fallback.failed') : t('machineDetailPage.security.admin.agentsRunAsFailed')) }
       : { kind: 'offer' });
-  }, [member, operationErrorCode, operationId, operationState]);
+  }, [member, operationError, operationId, operationState]);
 
   const review = React.useCallback(async () => {
     lifetime.current?.abort();
@@ -112,7 +112,7 @@ export function useSeparateUsersChange(
           ? t('machines.sharing.fallback.adminCheckRequired')
           : setup?.reasonCode === 'managed_cli_unavailable'
             ? t('machines.sharing.fallback.managedCliRequired')
-            : setup ? resolveActionExecutionErrorMessage({ code: setup.reasonCode }, fallback) : fallback;
+            : setup ? resolveActionExecutionErrorMessage({ code: setup.reasonCode, failure: setup.failure }, fallback) : fallback;
       setPhase({ kind: 'settled', tone: 'unavailable', message });
     } else
       setPhase({
@@ -187,7 +187,7 @@ export function useSeparateUsersChange(
               ? t('machines.sharing.fallback.unknown', { machine })
               : value.code === 'locked'
                 ? t('machines.sharing.fallback.locked', { machine })
-                : failed,
+                : value.setup ? resolveActionExecutionErrorMessage({ code: value.setup.reasonCode, failure: value.setup.failure }, failed) : failed,
         });
     },
     [guestExecution, machine, member, target],

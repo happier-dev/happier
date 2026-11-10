@@ -28,6 +28,30 @@ vi.mock('react-native', async () => {
 });
 
 describe('separate users reviewed setup', () => {
+    it('explains a missing ACL tool when the reviewed Apply is refused', async () => {
+        const remedy = 'Install the acl package on this Machine, then try again.';
+        const preview = { kind: 'ready', policy: { enabled: false }, metadataVersion: 1, status: { kind: 'disabled' },
+            plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: true, planDigest: 'reviewed' } } as const;
+        const execute = createFrontDoorActionExecute(createActionExecutor({ presentUserActionConfirmation: async () => true,
+            machineAgentIsolationAction: async ({ actionId }) => actionId === 'machines.agentIsolation.preview' ? preview
+                : { kind: 'failed', code: 'denied', operationId: 'missing-acl', setup: { outcome: 'not_applied',
+                    reasonCode: 'native_effect_failed', failure: { kind: 'native_effect_failed',
+                        reason: 'required_fact_unavailable', requiredFact: 'commandExecutable', remedy } } },
+        }));
+        let change!: ReturnType<typeof useSeparateUsersChange>;
+        function Surface() {
+            const guestExecution = useMachineGuestExecution({ machineId: 'machine', scope: { serverId: 'home', accountId: 'owner' },
+                canManage: true, execute });
+            change = useSeparateUsersChange({ machine: 'Devbox', guestExecution, target: 'member' });
+            return <SeparateUsersChangeStep change={change} machine="Devbox" testID="machine-security-separate-users" />;
+        }
+        const screen = await renderScreen(<Surface />);
+        try {
+            await act(async () => { await change.review(); });
+            await screen.pressByTestIdAsync('machine-security-separate-users-confirm');
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(remedy));
+        } finally { await screen.unmount(); }
+    });
     it('finishes confirmed setup when its policy publication retires the offer', async () => {
         let release!: () => void;
         const ready = new Promise<void>(resolve => { release = resolve; });
@@ -68,6 +92,10 @@ describe('separate users reviewed setup', () => {
 
     const unavailable = { kind: 'unavailable', status: { kind: 'unavailable', code: 'provisioning_unavailable' } } as const;
     const refusals = [
+        { result: { ...unavailable, setup: { outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+            failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', requiredFact: 'commandExecutable',
+                remedy: 'Install the acl package on this Machine, then try again.' } } },
+            message: () => 'Install the acl package on this Machine, then try again.' },
         { result: { ...unavailable, setup: { outcome: 'not_applied', reasonCode: 'native_protocol_invalid' } },
             message: () => t('errors.machineNativeProtocolInvalid') },
         { result: { ...unavailable, setup: { outcome: 'not_applied', reasonCode: 'mode_none',
@@ -172,9 +200,12 @@ describe('Security tab: how agents run, changed through the same review', () => 
                         : { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } } } as typeof base],
                 true, { sourceServerId: serverId });
                 actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...operation, revision: 2, state, settledAt: 200,
-                    ...(state === 'failed' ? { error: { errorCode: 'isolation_failed' } } : {}) }] });
+                    ...(state === 'failed' ? { error: { errorCode: 'native_effect_failed', error: 'Native setup is unavailable', details: { kind: 'machineSetup',
+                        failure: { kind: 'native_effect_failed', reason: 'required_fact_unavailable', requiredFact: 'commandExecutable',
+                            remedy: 'Install the acl package on this Machine, then try again.' } } } } : {}) }] });
             });
-            if (state === 'failed') expect(change.phase).toMatchObject({ kind: 'settled', tone: 'error' });
+            if (state === 'failed') expect(change.phase).toMatchObject({ kind: 'settled', tone: 'error',
+                message: 'Install the acl package on this Machine, then try again.' });
             else {
                 expect(change.phase.kind).toBe('offer');
                 expect(screen.findAllByTestId('machine-security-separate-users-result')).toHaveLength(0);
