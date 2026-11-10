@@ -2472,17 +2472,16 @@ describe('voice tool handlers', () => {
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
     const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');
     const prompt = buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' });
-    const documented = prompt.match(/^- sendSessionMessage:.* Args: (\{.*\})\.$/m);
-    expect(documented, 'Voice must list the Session-send contract without requiring discovery').not.toBeNull();
-    const input = { ...JSON.parse(documented![1]!), sessionId: 's2', message: 'hello', reply: 'none' };
-    const parsed = extractVoiceActionsFromAssistantText(`<voice_actions>${JSON.stringify({
-      actions: [{ t: 'sendSessionMessage', args: input }],
-    })}</voice_actions>`);
+    const documented = prompt.split('\n').find(line => line.startsWith('- sendSessionMessage:'))
+      ?.match(/<voice_actions>.*<\/voice_actions>/)?.[0] ?? '';
+    const parsed = extractVoiceActionsFromAssistantText(documented);
     expect(parsed.actions).toHaveLength(1);
+    const example = parsed.actions[0]!;
+    if (!example.args || typeof example.args !== 'object' || Array.isArray(example.args)) throw new Error('Expected published Action arguments');
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ currentServerId: homeA, resolveSessionId: explicit => explicit || 's1' });
 
-    const action = parsed.actions[0]!;
+    const action = { t: example.t, args: { ...example.args, sessionId: 's2', message: 'hello', reply: 'none' } };
     const result = await tools[action.t]!(action.args, { serverId: homeA, effectId: 'run96-session-send' });
 
     expect(JSON.parse(result), result).toMatchObject({ ok: true });
