@@ -15,7 +15,7 @@ export const CLIPROXYAPI_MANAGED_HEALTH_IDENTITY = Object.freeze({
 // unsupported tool-round-trip facts for upstream image builtins. Older cached
 // descriptors must refresh; process restarts and credentials do not change facts.
 export const CLIPROXYAPI_MANAGED_CATALOG_SOURCE_REGISTRY_VERSION =
-  `${CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.sdkVersion}:header-facts-families-v3`;
+  `${CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.sdkVersion}:header-facts-families-v4`;
 
 export const CLIPROXYAPI_MANAGED_CONNECTED_ACCOUNTS = Object.freeze(
   CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.map((family) => Object.freeze({

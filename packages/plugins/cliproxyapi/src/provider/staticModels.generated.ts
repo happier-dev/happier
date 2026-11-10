@@ -17,7 +17,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-opus-5-5-high",
       "name": "claude-opus-5-5-high",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -55,7 +55,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-sonnet-5-5-high",
       "name": "claude-sonnet-5-5-high",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -85,7 +85,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3-flash",
       "name": "gemini-3-flash",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -119,7 +119,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3.1-flash-image",
       "name": "gemini-3.1-flash-image",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -145,7 +145,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3.1-flash-lite",
       "name": "gemini-3.1-flash-lite",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -179,7 +179,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3.5-flash-lite",
       "name": "gemini-3.5-flash-lite",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -213,7 +213,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3.8-flash-high",
       "name": "gemini-3.8-flash-high",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -243,7 +243,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-4-argon-high",
       "name": "gemini-4-argon-high",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -299,7 +299,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-fable-5",
       "name": "claude-fable-5",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -337,7 +337,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-fable-5-1",
       "name": "claude-fable-5-1",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -383,7 +383,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-haiku-5-5",
       "name": "claude-haiku-5-5",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -445,7 +445,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-opus-4-6",
       "name": "claude-opus-4-6",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -479,7 +479,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-opus-4-7",
       "name": "claude-opus-4-7",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -517,7 +517,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-opus-4-8",
       "name": "claude-opus-4-8",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -555,7 +555,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-opus-5",
       "name": "claude-opus-5",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -593,7 +593,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-opus-5-5",
       "name": "claude-opus-5-5",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -647,7 +647,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-sonnet-4-6",
       "name": "claude-sonnet-4-6",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -681,7 +681,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-sonnet-5",
       "name": "claude-sonnet-5",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -719,7 +719,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "claude-sonnet-5-5",
       "name": "claude-sonnet-5-5",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -759,7 +759,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "codex-auto-review",
       "name": "codex-auto-review",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -793,7 +793,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gpt-5.6-luna",
       "name": "gpt-5.6-luna",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -831,7 +831,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gpt-5.6-sol",
       "name": "gpt-5.6-sol",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -869,7 +869,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gpt-5.6-terra",
       "name": "gpt-5.6-terra",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -907,7 +907,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gpt-6-astra",
       "name": "gpt-6-astra",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -945,7 +945,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gpt-6-chat-thinking",
       "name": "gpt-6-chat-thinking",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -983,7 +983,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gpt-6-luna",
       "name": "gpt-6-luna",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1021,7 +1021,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gpt-6-sol",
       "name": "gpt-6-sol",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1059,7 +1059,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gpt-6.1-sol",
       "name": "gpt-6.1-sol",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1097,7 +1097,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gpt-6.1-terra",
       "name": "gpt-6.1-terra",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1225,7 +1225,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3-flash-preview",
       "name": "gemini-3-flash-preview",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1259,7 +1259,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3-pro-image-preview",
       "name": "gemini-3-pro-image-preview",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1285,7 +1285,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3-pro-preview",
       "name": "gemini-3-pro-preview",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1311,7 +1311,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3.1-flash-image-preview",
       "name": "gemini-3.1-flash-image-preview",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1337,7 +1337,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3.1-flash-lite-preview",
       "name": "gemini-3.1-flash-lite-preview",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1363,7 +1363,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3.1-pro-preview",
       "name": "gemini-3.1-pro-preview",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1393,7 +1393,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3.5-flash",
       "name": "gemini-3.5-flash",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1427,7 +1427,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3.5-flash-lite",
       "name": "gemini-3.5-flash-lite",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1461,7 +1461,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3.6-flash",
       "name": "gemini-3.6-flash",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1495,7 +1495,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-3.8-flash",
       "name": "gemini-3.8-flash",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1525,7 +1525,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "gemini-4-argon",
       "name": "gemini-4-argon",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1565,7 +1565,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "kimi-k2-thinking",
       "name": "kimi-k2-thinking",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1591,7 +1591,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "kimi-k2.5",
       "name": "kimi-k2.5",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1617,7 +1617,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "kimi-k2.6",
       "name": "kimi-k2.6",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1643,7 +1643,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "kimi-k2.7-code",
       "name": "kimi-k2.7-code",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1669,7 +1669,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "kimi-k2.7-code-highspeed",
       "name": "kimi-k2.7-code-highspeed",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1695,7 +1695,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "kimi-k2.8",
       "name": "kimi-k2.8",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1725,7 +1725,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "kimi-k2.8-code",
       "name": "kimi-k2.8-code",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1755,7 +1755,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "kimi-k3",
       "name": "kimi-k3",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1785,7 +1785,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "kimi-k3-256k",
       "name": "kimi-k3-256k",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1815,7 +1815,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "kimi-k3.1-pro",
       "name": "kimi-k3.1-pro",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1845,7 +1845,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "kimi-k3.1-pro-highspeed",
       "name": "kimi-k3.1-pro-highspeed",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1877,7 +1877,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "muse-spark-1.1",
       "name": "muse-spark-1.1",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1911,7 +1911,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "muse-spark-1.2",
       "name": "muse-spark-1.2",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1949,7 +1949,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "muse-spark-1.2-contributor",
       "name": "muse-spark-1.2-contributor",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -1987,7 +1987,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "muse-spark-1.3",
       "name": "muse-spark-1.3",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2029,7 +2029,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "muse-spark-1.3-contributor",
       "name": "muse-spark-1.3-contributor",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2071,7 +2071,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "muse-wonder-1.0",
       "name": "muse-wonder-1.0",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2113,7 +2113,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "muse-wonder-1.0-contributor",
       "name": "muse-wonder-1.0-contributor",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2155,7 +2155,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "muse-wonder-full-1.0",
       "name": "muse-wonder-full-1.0",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2197,7 +2197,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "muse-wonder-full-1.0-contributor",
       "name": "muse-wonder-full-1.0-contributor",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2241,7 +2241,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "grok-3-mini",
       "name": "grok-3-mini",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2271,7 +2271,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "grok-3-mini-fast",
       "name": "grok-3-mini-fast",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2317,7 +2317,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "grok-4.20-multi-agent-0309",
       "name": "grok-4.20-multi-agent-0309",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2347,7 +2347,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "grok-4.3",
       "name": "grok-4.3",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2381,7 +2381,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "grok-4.5",
       "name": "grok-4.5",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2411,7 +2411,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "grok-4.6",
       "name": "grok-4.6",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2445,7 +2445,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "grok-4.7",
       "name": "grok-4.7",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [
@@ -2479,7 +2479,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "id": "grok-4.7-build-fast",
       "name": "grok-4.7-build-fast",
       "capabilities": {
-        "reasoningControls": "unknown",
+        "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
       },
       "modelOptions": [

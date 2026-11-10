@@ -52,6 +52,17 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 	if len(rows["meta"]) == 0 {
 		t.Fatal("managed Meta family is missing its pinned SDK compatibility catalog")
 	}
+	for provider, models := range rows {
+		for _, model := range models {
+			wantCapability := "unknown"
+			if len(model.ModelOptions) > 0 {
+				wantCapability = "supported"
+			}
+			if model.Capabilities["reasoningControls"] != wantCapability {
+				t.Errorf("%s/%s reasoningControls = %q, want %q for declared effort options", provider, model.ID, model.Capabilities["reasoningControls"], wantCapability)
+			}
+		}
+	}
 	images := map[string]bool{
 		"gpt-image-1.5": false, "gpt-image-2": false,
 		"gpt-image-2.5": false, "gpt-image-2.5-flare": false, "gpt-image-2.5-sunburst": false,

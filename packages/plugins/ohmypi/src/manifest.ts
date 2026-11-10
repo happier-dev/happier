@@ -102,6 +102,7 @@ export const OH_MY_PI_PLUGIN = definePlugin({
           credentialKinds: [...row.credentialKinds],
         })),
         providerRequirements: {
+          supportsReasoningEffort: true,
           acceptsProtocols: ['openai-responses'],
           required: { streaming: true, toolRoundTrips: true },
           credentialSupport: {

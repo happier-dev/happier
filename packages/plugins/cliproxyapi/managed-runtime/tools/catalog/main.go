@@ -222,6 +222,9 @@ func generateRows(moduleDir string, families []familyRow) (map[string][]model, e
 				row.Capabilities["toolRoundTrips"] = entry.ToolRoundTrips
 			}
 			if entry.Thinking != nil && len(entry.Thinking.Levels) > 0 {
+				// Exact SDK effort choices are positive reasoning-control facts.
+				// Consumers require this capability before admitting the choices.
+				row.Capabilities["reasoningControls"] = "supported"
 				choices := make([]optionValue, 0, len(entry.Thinking.Levels))
 				for _, level := range entry.Thinking.Levels {
 					if level == "" {

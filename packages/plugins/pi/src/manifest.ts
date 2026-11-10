@@ -109,6 +109,7 @@ export const PI_PLUGIN = definePlugin({
           credentialKinds: [...declaration.credentialKinds],
         })),
         providerRequirements: {
+          supportsReasoningEffort: true,
           acceptsProtocols: ['openai-responses'],
           required: { streaming: true, toolRoundTrips: true },
           credentialSupport: {
