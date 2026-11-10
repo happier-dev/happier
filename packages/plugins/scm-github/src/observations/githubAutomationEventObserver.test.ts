@@ -1369,6 +1369,57 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     expect(http.request).toHaveBeenCalledTimes(3);
     expect(http.request.mock.calls.every(([request]) => (request as { url: string }).url.endsWith('/graphql'))).toBe(true);
   });
+  it('admits lifecycle and existing projections through one shared checkpointed provider scan', async () => {
+    const lifecycle = definition({ automationId: 'lifecycle', sourceSelectorId: sourceSelectorA, eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle });
+    const opened = definition({ automationId: 'opened', sourceSelectorId: sourceSelectorB, eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestOpened });
+    const push = definition({ automationId: 'push', sourceSelectorId: '00000000-0000-4000-8000-000000000003' });
+    const checkpoints = createCheckpointCollection([lifecycle, opened, push].map(source => checkpointRow({ automationId: source.automationId,
+      sourceSelectorId: source.sourceSelectorId, eventLocalId: source.eventRef.localId as GithubAutomationEventLocalIdV1 })));
+    const admissions: AutomationEventAdmitInput[] = [];
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [lifecycle, opened, push]);
+      if (action === 'automation.event.source.status.report') return {};
+      if (action === 'automation.event.admit') { const request = AutomationEventAdmitInputV1Schema.parse(input); admissions.push(request);
+        return { results: [{ kind: 'admitted', runId: 'pr-run', checkpointSafe: true }] }; }
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const http = { request: vi.fn(async () => ({ status: 200, headers: { etag: 'current-pr' },
+      body: new TextEncoder().encode(JSON.stringify([
+        { id: 'old', type: 'OtherEvent', created_at: '1970-01-01T00:00:00.900Z', repo: { id: 77, name: 'acme/widgets' }, payload: {} },
+        { id: 'push', type: 'PushEvent', created_at: '1970-01-01T00:00:01.050Z', repo: { id: 77, name: 'acme/widgets' },
+          payload: { ref: 'refs/heads/main', before: 'b'.repeat(40), head: 'c'.repeat(40) } },
+        { id: 'new', type: 'PullRequestEvent', created_at: '1970-01-01T00:00:01.100Z', repo: { id: 77, name: 'acme/widgets' },
+          payload: { action: 'opened', pull_request: { id: 455, number: 33, title: 'Preview', user: { id: 99, login: 'octocat', type: 'User' },
+            head: { sha: 'a'.repeat(40), ref: 'preview', repo: { id: 77, full_name: 'acme/widgets' } },
+            base: { ref: 'main', repo: { id: 77, full_name: 'acme/widgets' } } } } },
+      ])),
+    })) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    await observer.runCycle(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection, http })));
+    expect(admissions.map(value => value.eventRef.localId).sort()).toEqual([lifecycle.eventRef.localId, opened.eventRef.localId, push.eventRef.localId].sort());
+    expect(admissions.find(value => value.eventRef.localId === lifecycle.eventRef.localId)?.payload).toMatchObject({
+      pullRequest: { action: 'opened', headSha: 'a'.repeat(40) },
+    });
+    expect(http.request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['opened', 'reopened', 'closed', 'merged'] as const)('projects the available %s lifecycle fact from the checkpointed timeline', action => {
+    const result = normalizeGithubRepositoryEventForAutomation({
+      id: '108', type: 'PullRequestEvent', created_at: '2026-08-10T12:00:00Z', repo: { id: 77, name: 'acme/widgets' },
+      payload: { action: action === 'merged' ? 'closed' : action,
+        pull_request: { id: 455, number: 33, title: 'Preview', merge_commit_sha: 'c'.repeat(40), merged: action === 'merged', user: { id: 99, login: 'octocat', type: 'User' },
+          head: { sha: 'a'.repeat(40), ref: 'preview', repo: { id: 77, full_name: 'acme/widgets' } },
+          base: { ref: 'main', repo: { id: 77, full_name: 'acme/widgets' } } } },
+    }, { v: 1, repositoryId: '77', owner: 'acme', name: 'widgets', nameWithOwner: 'acme/widgets' }, 'automation/pull-request-lifecycle-v1');
+    expect(result.observation).toMatchObject({
+      eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: 'automation/pull-request-lifecycle-v1' },
+      payload: { pullRequest: { id: '455', number: 33, action, headSha: 'a'.repeat(40),
+        baseRepository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/widgets' },
+        headRepository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/widgets' },
+        author: { id: '99', login: 'octocat', kind: 'human' } } },
+    });
+  });
+
   it('maps all four repository timeline variants to the same semantic Event refs used by webhooks', () => {
     const repository = {
       v: 1 as const,

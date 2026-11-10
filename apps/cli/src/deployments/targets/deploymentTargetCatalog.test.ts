@@ -13,7 +13,7 @@ import { admitOwnServerDeploymentTargetLink } from './ownServer/ownServerTargetA
 
 const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
 
-function admittedRegistry(role: 'runtime' | 'data' = 'runtime') {
+function admittedRegistry(role: 'runtime' | 'data' = 'runtime', previewInput = false) {
     const pluginId = 'example.deploy';
     const manifest = normalizePluginManifestV2({
         schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'External target',
@@ -31,7 +31,8 @@ function admittedRegistry(role: 'runtime' | 'data' = 'runtime') {
             resources: [{ id: 'projects/list', source: 'dynamic', kind: 'config', contentType: 'application/json', execution: { target: 'daemon' } }],
             deploymentTargets: role === 'data' ? [{ id: 'database', targetKind: 'example', title: 'External data',
                 role: 'data', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
-                dataV1: { projects: { list: 'projects/list' }, query: { readOnly: 'read' } } }] : [{ id: 'own-server', targetKind: 'example', title: 'External target',
+                dataV1: { projects: { list: 'projects/list' }, query: { readOnly: 'read' },
+                    ...(previewInput ? { branches: { previewInput: { name: { kind: 'input', name: 'preview', path: ['name'] } } } } : {}) } }] : [{ id: 'own-server', targetKind: 'example', title: 'External target',
                 role: 'runtime', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
                 actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe',
                     cancel: 'cancel', variables: { read: 'read' } } }],
@@ -46,6 +47,13 @@ function admittedRegistry(role: 'runtime' | 'data' = 'runtime') {
 }
 
 describe('deployment target catalog at the admitted registry boundary', () => {
+    it('retains plugin preview bindings without treating their operands as contribution references', () => {
+        const declarations = admittedRegistry('data', true).deploymentTargets ?? [];
+        const target = readDeploymentTargetV1({ kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'database' } }, declarations);
+        expect(target).toMatchObject({ dataV1: { branches: { previewInput: {
+            name: { kind: 'input', name: 'preview', path: ['name'] },
+        } } } });
+    });
     it('projects admitted data Resources and Actions through the same catalog without runtime roles', () => {
         const declarations = admittedRegistry('data').deploymentTargets ?? [];
         const targets = listDeploymentTargetsV1(declarations);

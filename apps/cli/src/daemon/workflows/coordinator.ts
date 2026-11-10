@@ -40,6 +40,7 @@ import {
   materializeWorkflowStepInput,
   captureWorkflowDiscussionContext,
   resolveWorkflowValueReference,
+  resolveWorkflowActionFieldBinding,
   isWorkflowJsonObject,
   WorkflowInputResolutionError,
   type MaterializedWorkflowStepInput,
@@ -1840,11 +1841,8 @@ async function executeActionBlock(
     // attempt, reviewer decision or freshly resolved binding can change them.
     const heldInput = setupConsentHold && row.execution?.kind === 'action' ? row.execution.input : undefined;
     let input: Record<string, WorkflowJsonValue> = { ...(heldInput ?? frozen.actionInput) };
-    const resolve = async (reference: Exclude<WorkflowActionLeafV1['input'][string], { kind: 'list' }>) =>
-      reference.kind === 'origin_session_id' ? context.originSessionId ?? null : await resolveWorkflowValueReference(reference, runtime);
     for (const [field, binding] of Object.entries(heldInput ? {} : leaf.input)) {
-      input[field] = binding.kind === 'list'
-        ? await Promise.all(binding.items.map(resolve)) : await resolve(binding);
+      input[field] = await resolveWorkflowActionFieldBinding(binding, runtime, context.originSessionId);
     }
     const schema = frozen.actionContract.inputSchema;
     if (!isWorkflowJsonObject(schema)) return await fail('invalid_input', 'failed', true);

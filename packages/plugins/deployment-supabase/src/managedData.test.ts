@@ -195,6 +195,22 @@ describe('activated Supabase managed data target', () => {
     } finally { await h.kit.dispose(); }
   });
 
+  it('creates from the saved parent project ref independently of root link and branch UUID', async () => {
+    const parentBranchRef = { providerProjectId: 'saved-parent-project', branchId: 'saved-parent-uuid' };
+    const h = await host(() => ({ id: 'created-uuid', name: 'Preview', project_ref: 'created-ref',
+      parent_project_ref: parentBranchRef.providerProjectId, persistent: false, preview_project_status: 'ACTIVE_HEALTHY' }));
+    try {
+      const result = await h.kit.invokeAction('branches-create', { ...linked,
+        providerEnvironment: { kind: 'custom', id: 'current-parent-project' },
+        providerIdentity: { ...linked.providerIdentity, providerResourceId: 'root-project', providerEnvironment: 'current-parent-project' },
+        name: 'Preview', withData: false, parentBranchRef });
+      expect(result).toMatchObject({ status: 'provisioned', projectRef: 'created-ref', parentProjectRef: 'saved-parent-project',
+        providerIdentity: { providerResourceId: 'saved-parent-project', providerEnvironment: 'created-ref' } });
+      expect(h.requests[0]?.url).toBe('https://api.supabase.com/v1/projects/saved-parent-project/branches');
+      expect(JSON.parse(new TextDecoder().decode(h.requests[0]?.body))).toEqual({ branch_name: 'Preview', persistent: false, with_data: false });
+    } finally { await h.kit.dispose(); }
+  });
+
   it('refuses a persistent/default resource and never substitutes project deletion', async () => {
     const h = await host(() => [{ id: 'branch-id', name: 'Production', project_ref: 'persistent-ref', parent_project_ref: 'parent-ref', persistent: true }]);
     try {

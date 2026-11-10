@@ -1,4 +1,7 @@
 import { prepareWorkflowDataCreationResultCapture } from '@/deployments/targets/workflowDataCreationResult';
+import { resolveDeploymentPreviewWorkflowSourceForHost } from '@/deployments/previewWorkflowSourceForHost';
+import { ScmHostingPullRequestLifecycleV1Schema } from '@happier-dev/protocol/scm/pullRequestLifecycleV1';
+import { AutomationRunPluginEventTriggerEvidenceV1Schema } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import type {
   AccountApiTokensListActionOutputV1,
   WorkflowAcceptedAuthorizationV1,
@@ -424,6 +427,19 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
           ...(signal ? { signal } : {}),
         }),
         resolveMaterializationHost,
+        resolveDeploymentPreviewWorkflow: async ({ templateRef, evidence, runId, signal }) => {
+          const opened = AutomationRunPluginEventTriggerEvidenceV1Schema.safeParse(evidence);
+          const payload = opened.success ? opened.data.payload : null;
+          const event = ScmHostingPullRequestLifecycleV1Schema.safeParse(payload && typeof payload === 'object'
+            && !Array.isArray(payload) ? payload.pullRequest : null);
+          if (!event.success) return { kind: 'refused', reason: 'invalid_input' };
+          const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+          try {
+            return await resolveDeploymentPreviewWorkflowSourceForHost({ templateRef, event: event.data, occurrenceKey: runId,
+              executor: actionExecutor, credentials: params.credentials, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+              contributes: lease.registry.contributes, ...(signal ? { signal } : {}) });
+          } finally { await lease.release(); }
+        },
         resolveCurrentWorkspaceRefs: async (signal) => {
           const snapshot = await readProjectAccountRows({
             credentials: params.credentials,

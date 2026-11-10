@@ -26,6 +26,7 @@ import { parseGithubRepositorySetupInput } from './observations/githubRepository
 import { githubChecksSourceInstanceId, parseGithubChecksSource } from './observations/githubChecksSource.js';
 import {
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
+  GITHUB_CONNECTED_ACCOUNT_PURPOSE,
   GITHUB_CONNECTED_ACCOUNT_SERVICE,
   type GithubRepositorySourceConfigV1,
   type GithubAutomationRepositoryEventSourceConfigV1,
@@ -166,6 +167,12 @@ export async function setupGithubRepositoryEventSource(
   input: unknown,
   context: PluginInvocationContext,
 ): Promise<PluginEventAutomationSetupResultV1> {
+  context.signal.throwIfAborted();
+  if (input && typeof input === 'object' && !Array.isArray(input)
+    && Object.keys(input).length === 1 && 'repository' in input) {
+    const binding = await context.services.connectedAccounts.getBinding(GITHUB_CONNECTED_ACCOUNT_PURPOSE, { signal: context.signal });
+    input = { repository: input.repository, credentialRef: binding?.account };
+  }
   let deploymentReview: GithubAutomationRepositoryEventSourceConfigV1['deploymentReview'];
   let repositoryInput = input;
   if (input && typeof input === 'object' && !Array.isArray(input) && 'deploymentReview' in input) {

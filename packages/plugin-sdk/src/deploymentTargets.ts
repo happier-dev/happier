@@ -1,6 +1,8 @@
 import type { ReadonlyAuthorDeclaration } from './authorDeclaration.js';
 import type { ProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { DeploymentTargetContributionV1 as CanonicalDeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
+import { DeploymentDataParentBranchRefV1ProtocolSchema as canonicalParentBranch,
+    type DeploymentDataParentBranchRefV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import {
     DeploymentTargetRoleInputProtocolSchemasV1 as canonicalRoleInputs,
     DeploymentTargetRoleResultV1ProtocolSchema as canonicalRoleResult,
@@ -31,6 +33,7 @@ export const DeploymentTargetRoleInputProtocolSchemasV1: Readonly<{
 export { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export const DeploymentTargetRoleResultV1ProtocolSchema: ProtocolComposableSchema<DeploymentTargetRoleResultV1> = canonicalRoleResult;
 export const DeploymentTargetPreparationBaseV1ProtocolSchema: ProtocolComposableSchema<DeploymentTargetPreparationBaseV1> = canonicalPreparationBase;
+export const DeploymentDataParentBranchRefV1ProtocolSchema: ProtocolComposableSchema<DeploymentDataParentBranchRefV1> = canonicalParentBranch;
 
 /** Development-only declarations; admission does not grant invocation authority. */
 export type DeploymentTargetContributionV1 = ReadonlyAuthorDeclaration<CanonicalDeploymentTargetContributionV1>;

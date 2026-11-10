@@ -303,6 +303,7 @@ export type WorkflowActionValueReferenceV1 = z.infer<typeof WorkflowActionValueR
 export const WorkflowActionFieldBindingV1Schema = lazyZodSchema(() => z.union([
   WorkflowActionValueReferenceV1Schema,
   z.strictObject({ kind: z.literal('list'), items: z.array(WorkflowActionValueReferenceV1Schema) }),
+  z.strictObject({ kind: z.literal('object'), fields: z.record(z.string(), WorkflowActionValueReferenceV1Schema) }),
 ]));
 export type WorkflowActionFieldBindingV1 = z.infer<typeof WorkflowActionFieldBindingV1Schema>;
 const workflowLeafFields = { id: WorkflowBlockIdSchema, name: WorkflowBlockNameV1Schema, execution: zMini.optional(WorkflowStepSelectionV1Schema), onlyWhen: zMini.optional(WorkflowConditionSchema), runWhen: zMini.optional(WorkflowRunWhenV1Schema) };

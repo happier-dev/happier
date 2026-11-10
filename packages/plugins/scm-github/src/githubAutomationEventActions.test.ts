@@ -39,7 +39,7 @@ function jsonResponse(value: unknown, status = 200) {
 }
 
 function automationContext(params: Readonly<{
-  connectedAccounts: Readonly<{ materialize: ReturnType<typeof vi.fn> }>;
+  connectedAccounts: Readonly<{ materialize: ReturnType<typeof vi.fn>; getBinding?: ReturnType<typeof vi.fn> }>;
   http: Readonly<{ request: ReturnType<typeof vi.fn> }>;
   signal?: AbortSignal;
 }>): PluginInvocationContext {
@@ -61,6 +61,23 @@ function automationContext(params: Readonly<{
 }
 
 describe('GitHub Automation Event source setup', () => {
+  it('uses exactly the selected purpose binding when repository-only enrollment omits the account', async () => {
+    const connectedAccounts = { getBinding: vi.fn(async () => ({ account: GITHUB_ACCOUNT })),
+      materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer selected' } })) };
+    const http = { request: vi.fn(async () => jsonResponse({ id: 77, name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } })) };
+    const result = await setupGithubRepositoryEventSource({ repository: 'acme/widgets' }, automationContext({ connectedAccounts, http }));
+    expect(result.sourceConfig).toMatchObject({ credentialRef: GITHUB_ACCOUNT, repository: { repositoryId: '77' } });
+    expect(connectedAccounts.getBinding).toHaveBeenCalledWith(GITHUB_CONNECTED_ACCOUNT_PURPOSE, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(connectedAccounts.materialize).toHaveBeenCalledWith(GITHUB_CONNECTED_ACCOUNT_PURPOSE, expect.anything(), expect.objectContaining({ expectedAccount: GITHUB_ACCOUNT }));
+  });
+  it('refuses repository-only enrollment without a selected account before acquisition', async () => {
+    const connectedAccounts = { getBinding: vi.fn(async () => null), materialize: vi.fn() };
+    const http = { request: vi.fn() };
+    await expect(setupGithubRepositoryEventSource({ repository: 'acme/widgets' }, automationContext({ connectedAccounts, http })))
+      .rejects.toMatchObject({ code: 'github_setup_credential_invalid' });
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+    expect(http.request).not.toHaveBeenCalled();
+  });
   it('enrolls the selected Machine native login without fabricating an Account or execution recipe', async () => {
     const service = { pluginId: GITHUB_PLUGIN_ID, localId: 'github-account' };
     const materialize = vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer native-login' } }));

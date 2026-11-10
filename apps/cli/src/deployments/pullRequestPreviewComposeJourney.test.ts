@@ -117,18 +117,31 @@ describe('accepted preview Workflow data-create composition', () => {
         const encode = (value: unknown) => key.mode === 'plain' ? encodePlainArtifactStoredContent(value)
             : encodeBase64(encryptWithDataKey(value, key.dataKey));
         let content = createDeploymentEnvironmentDetailV1().content;
+        const template = createDeploymentEnvironmentHeaderV1({ id: 'template-A', owner: { kind: 'account', accountId: 'account-A' },
+            projectSourceId: 'repository-source', runtimeTargetLinkId: 'template-runtime', controllerMachineId: 'host',
+            contentArtifactId: 'template-content' });
+        const templateContent = DeploymentEnvironmentContentV1Schema.parse({ ...content, previewTemplate: { v: 1, enabled: true,
+            forkPreviews: 'off', repository: { kind: 'github', deployment: 'https://forge.example/enterprise', repository: 'owner/app' },
+            runtimeTargetLinkId: 'template-runtime', domain: null, bindingBlueprints: [], data: [] } });
+        const templateMetadata = DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, environment: template,
+            targetLinks: [createDeploymentTargetLinkHeaderV1({ id: 'template-runtime', environmentId: template.id,
+                machines: ['host'], members: [{ machineId: 'host', installationId: 'installation-host', state: 'active' }] })] });
         const environmentWrites: unknown[] = [];
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(url).pathname;
             if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode }) };
             if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 0 } };
-            expect(path).toBe('/v1/artifacts/preview-content');
-            return { status: 200, data: { id: 'preview-content', ownerAccountId: 'account-A', access: 'owner', publicAudience: 'none',
+            const id = path === '/v1/artifacts/preview-content' ? 'preview-content' : 'template-content';
+            expect(path).toBe(`/v1/artifacts/${id}`);
+            return { status: 200, data: { id, ownerAccountId: 'account-A', access: 'owner', publicAudience: 'none',
                 encryptionMode: mode, dataEncryptionKey: key.mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : key.dataEncryptionKey,
                 header: encode({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'PR 17' }),
-                body: encode({ body: JSON.stringify(content) }), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
+                body: encode({ body: JSON.stringify(id === 'preview-content' ? content : templateContent) }),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
         });
         vi.spyOn(axios, 'request').mockImplementation(async request => {
+            if (request.method === 'GET' && new URL(request.url!).pathname === '/v1/deployments/environments/template-A')
+                return { status: 200, data: templateMetadata };
             expect(request.method).toBe('POST');
             expect(new URL(request.url!).pathname).toBe('/v1/deployments/environments');
             environmentWrites.push(request.data);

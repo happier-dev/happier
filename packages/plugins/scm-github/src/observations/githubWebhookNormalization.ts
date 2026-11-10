@@ -1,16 +1,16 @@
 import {
   normalizeGithubAutomationEvent,
+  GithubPullRequestLifecycleV1Schema,
+  GithubPullRequestLifecycleActionV1Schema,
+  type GithubPullRequestLifecycleV1,
   type GithubAutomationEventFactsV1,
   type GithubAutomationEventPayloadV1,
   type GithubAutomationEventRefV1,
 } from '../githubAutomationEvents.js';
+import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 
-export type GithubActorV1 = Readonly<{
-  id: string;
-  login: string;
-  /** Only an attributable GitHub User is authoritative for Channels input. */
-  kind: 'human' | 'bot' | 'unsupported';
-}>;
+/** Only an attributable GitHub User is authoritative for Channels input. */
+export type GithubActorV1 = GithubPullRequestLifecycleV1['author'];
 
 export type GithubIssueCommentWebhookObservationV1 = Readonly<{
   occurrenceKey: string;
@@ -42,6 +42,8 @@ export type GithubNormalizedWebhookDeliveryV1 = Readonly<{
   eventType: string;
   comment: GithubIssueCommentWebhookObservationV1 | null;
   automationEvent: GithubAutomationWebhookObservationV1 | null;
+  /** All semantic projections of the delivery, including the retained legacy refs. */
+  automationEvents: readonly GithubAutomationWebhookObservationV1[];
   deploymentRun?: GithubDeploymentWebhookRunV1;
 }>;
 
@@ -165,6 +167,32 @@ function eventRepository(repository: Readonly<{ id: string; nameWithOwner: strin
   return Object.freeze({
     repositoryId: repository.id,
     nameWithOwner: repository.nameWithOwner,
+  });
+}
+
+/** Webhooks and the Events timeline carry the same provider pull-request facts. */
+export function normalizeGithubPullRequestLifecycle(
+  value: unknown,
+  action: unknown,
+): GithubPullRequestLifecycleV1 | null {
+  const parsedAction = GithubPullRequestLifecycleActionV1Schema.safeParse(action);
+  if (!parsedAction.success) return null;
+  const pullRequest = readObject(value, 'pull_request');
+  const head = readObject(pullRequest.head, 'pull_request.head');
+  const base = readObject(pullRequest.base, 'pull_request.base');
+  const identity = (value: unknown) => normalizeScmHostingRepositoryIdentity({
+    kind: 'github', deployment: 'https://github.com', repository: readRepository(value).nameWithOwner,
+  });
+  return GithubPullRequestLifecycleV1Schema.parse({
+    id: String(readPositiveInteger(pullRequest, 'id')),
+    number: readPositiveInteger(pullRequest, 'number'),
+    action: parsedAction.data === 'closed' && pullRequest.merged === true ? 'merged' : parsedAction.data,
+    headSha: readString(head, 'sha'),
+    headRef: readString(head, 'ref'),
+    baseRef: readString(base, 'ref'),
+    baseRepository: identity(base.repo),
+    headRepository: head.repo === null ? null : identity(head.repo),
+    author: readActor(pullRequest.user, 'pull_request.user'),
   });
 }
 
@@ -301,6 +329,22 @@ export function normalizeGithubWebhookDelivery(input: Readonly<{
     );
   }
   const payload = readObject(parsed, 'payload');
+  const automationEvent = normalizeAutomationEvent(payload, input.eventType, input.providerDeliveryId, input.receivedAtMs);
+  const automationEvents = automationEvent === null ? [] : [automationEvent];
+  if (input.eventType === 'pull_request') {
+    const pullRequest = normalizeGithubPullRequestLifecycle(payload.pull_request, payload.action);
+    if (pullRequest !== null) {
+      const rawPullRequest = readObject(payload.pull_request, 'pull_request');
+      const repository = readRepository(payload.repository);
+      const timestampField = pullRequest.action === 'opened' ? 'created_at'
+        : pullRequest.action === 'merged' ? 'merged_at'
+          : pullRequest.action === 'closed' ? 'closed_at' : 'updated_at';
+      automationEvents.push(createAutomationWebhookObservation({ repository, providerDeliveryId: input.providerDeliveryId,
+        occurredAtMs: readTimestamp(rawPullRequest, timestampField),
+        facts: { kind: 'pullRequestLifecycle', repository: eventRepository(repository), pullRequest },
+      }));
+    }
+  }
   let deploymentRun: GithubDeploymentWebhookRunV1 | undefined;
   if ((input.eventType === 'deployment_review' && ['requested', 'approved', 'rejected'].includes(String(payload.action)))
     || (input.eventType === 'workflow_run' && ['requested', 'in_progress', 'completed'].includes(String(payload.action)))) {
@@ -319,11 +363,7 @@ export function normalizeGithubWebhookDelivery(input: Readonly<{
     comment: input.eventType === 'issue_comment' && input.consumesIssueComments !== false
       ? normalizeIssueComment(payload)
       : null,
-    automationEvent: normalizeAutomationEvent(
-      payload,
-      input.eventType,
-      input.providerDeliveryId,
-      input.receivedAtMs,
-    ),
+    automationEvent,
+    automationEvents: Object.freeze(automationEvents),
   });
 }

@@ -12,6 +12,9 @@ import { prepareWorkflowAcceptedWorkspaceTarget } from './resolveWorkflowWorkspa
 import type { WorkflowClaimForCoordination } from './worker';
 import { AutomationRunPluginEventTriggerEvidenceV1Schema } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { normalizeGithubWebhookDelivery } from '../../../../../packages/plugins/scm-github/src/observations/githubWebhookNormalization';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { resolvePreviewWorkflowForHost } from '@/deployments/previewWorkflowForHost';
+import { ScmHostingPullRequestLifecycleV1Schema } from '@happier-dev/protocol/scm/pullRequestLifecycleV1';
 
 const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
 const previousRunId = '1d4dd16c-d69b-4115-a3b0-e3c92f47f3bd';
@@ -50,7 +53,8 @@ function previousCheckpoint(endFingerprint?: string) {
       frontier: { nextBlockOrdinal: 1, paused: false }, ...(endFingerprint ? { endFingerprint } : {}) } } });
 }
 
-function admissionHarness(prepareWorkspace: typeof prepareWorkflowAcceptedWorkspaceTarget = async () => ({ ok: true, workspaceTarget: { project } })) {
+function admissionHarness(prepareWorkspace: typeof prepareWorkflowAcceptedWorkspaceTarget = async () => ({ ok: true, workspaceTarget: { project } }),
+  resolveDeploymentPreviewWorkflow?: Parameters<typeof createProductionWorkflowRunCoordinator>[0]['resolveDeploymentPreviewWorkflow']) {
   const snapshots: unknown[] = [];
   const effects: string[] = [];
   const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId,
@@ -58,6 +62,7 @@ function admissionHarness(prepareWorkspace: typeof prepareWorkflowAcceptedWorksp
     resolveAccountEncryption: async () => ({ kind: 'available', witness }), isAcceptedAuthorizationCurrent: async () => true,
     execution: execution(), onCommittedTransition: () => {},
     prepareAcceptedWorkspaceTarget: prepareWorkspace,
+    ...(resolveDeploymentPreviewWorkflow ? { resolveDeploymentPreviewWorkflow } : {}),
     resolveMaterializationHost: async ({ runId: id, workDepth, directory }) => ({
       effects: { resolveTargetAvailability: async () => true,
         resolveSessionTarget: async (value) => typeof value === 'string'
@@ -87,6 +92,34 @@ function admissionHarness(prepareWorkspace: typeof prepareWorkflowAcceptedWorksp
 afterEach(() => vi.restoreAllMocks());
 
 describe('scoped workflow claim admission', () => {
+  it('resolves the saved preview source before materializing the stored placeholder', async () => {
+    const template = createDeploymentEnvironmentDetailV1();
+    const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/widgets' };
+    template.content.definition = { kind: 'repository', ref: 'main' };
+    template.content.previewTemplate = { v: 1, enabled: true, forkPreviews: 'off', repository,
+      runtimeTargetLinkId: template.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [], data: [] };
+    const event = ScmHostingPullRequestLifecycleV1Schema.parse({ id: '77', number: 17, action: 'opened',
+      headSha: 'a'.repeat(40), headRef: 'feature', baseRef: 'main', baseRepository: repository, headRepository: repository,
+      author: { id: '19', login: 'alice', kind: 'human' } });
+    let admittedSource: WorkflowDefinitionV1 | undefined;
+    const harness = admissionHarness(async input => {
+      admittedSource = input.definition;
+      return { ok: false, code: 'workspace_unavailable' };
+    }, ({ templateRef, runId }) => resolvePreviewWorkflowForHost({ templateRef, event, occurrenceKey: runId,
+      // Home persistence is replaced; source parsing, admission and composition stay real.
+      readEnvironment: async () => ({ ...template, targetLinks: template.targetLinks.map(row => row.targetLink) }),
+      readTargetLink: async () => { throw new Error('No data target selected'); },
+      readTargetDeclaration: async () => { throw new Error('No data target selected'); },
+    }));
+    const pending = { ...claim(definition), definitionEnvelope: JSON.stringify({ t: 'plain', v: { inlineDefinition: definition,
+      workspace: { directory: '/repo' }, executionTarget: { kind: 'detached_run' },
+      deploymentPreview: { serverId: template.environment.serverId, environmentId: template.environment.id } } }) };
+    await harness.coordinate(pending);
+    expect(admittedSource?.blocks[0]).toMatchObject({ kind: 'action', actionId: 'deployments.environments.create', input: {
+      preview: { kind: 'literal', value: { pullRequestId: event.id, headSha: event.headSha } },
+    } });
+    expect(harness.effects).toEqual([]);
+  });
   it('settles normalized wrong-branch and deleted pushes before Environment, Source, SCM or snapshot effects', async () => {
     const harness = admissionHarness();
     const triggerId = AutomationTriggerIdSchema.parse('deployment-trigger');

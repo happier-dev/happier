@@ -269,7 +269,20 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                     testIDPrefix={`${fieldId}-item-${index}`}
                                 />
                             ))
-                        ) : (
+                        ) : binding.kind === 'object' ? Object.entries(binding.fields).map(([key, reference], index) => (
+                            <View key={key}>
+                                <Text style={workflowEditorStyles.actionFieldLabel}>{key}</Text>
+                                <WorkflowValueReferenceEditor
+                                    reference={reference as WorkflowValueReference}
+                                    index={index}
+                                    draft={props.draft}
+                                    stepId={block.id}
+                                    literalOnly={literalOnly}
+                                    onChange={(next) => setBinding(row.key, { kind: 'object', fields: { ...binding.fields, [key]: next } })}
+                                    testIDPrefix={`${fieldId}-field-${key}`}
+                                />
+                            </View>
+                        )) : (
                             <WorkflowValueReferenceEditor
                                 reference={binding as WorkflowValueReference}
                                 index={0}

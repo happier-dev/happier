@@ -1428,6 +1428,12 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
    */
   workspaceScm?: Parameters<typeof createCoordinatorWorkspaceResolver>[0]['scm'];
   resolveCurrentWorkspaceRefs?: (signal?: AbortSignal) => Promise<readonly import('@happier-dev/protocol').WorkspaceRefV1[]>;
+  /** The preview owner derives this occurrence's Workflow from current private template intent. */
+  resolveDeploymentPreviewWorkflow?: (input: Readonly<{
+    templateRef: Readonly<{ serverId: string; environmentId: string }>;
+    evidence: unknown; runId: string; signal?: AbortSignal;
+  }>) => Promise<Readonly<{ kind: 'available'; definition: WorkflowDefinitionV1 }>
+    | Readonly<{ kind: 'skipped' | 'refused'; reason: string }>>;
   onCommittedTransition?: (transition: Readonly<{ run: WorkflowRunSummaryV1; result: WorkflowCoordinatorResult }>) => Promise<void> | void;
   onReviewEntered?: (entry: Readonly<{ runId: string }>) => Promise<void> | void;
   storage?: StorageClient;
@@ -1532,12 +1538,26 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
             context: storedDefinition.data, project: { machineId: params.machineId, ...storedDefinition.data.workspace } })).context;
         } catch (error) { return refuseSourceRead('definition_payload', error); }
       }
+      const evidenceContent = claim.automationEvidenceEnvelope == null ? null
+        : openAutomationStoredContent({ serialized: claim.automationEvidenceEnvelope,
+          kind: 'automation_trigger_evidence', encryption: accountEncryption });
       let source: WorkflowTriggerClaimSource | null;
       try {
-        source = await resolveWorkflowTriggerClaimSource({
-          target: target.target, credentials: params.execution.credentials, encryption: accountEncryption,
-          ...(claim.signal ? { signal: claim.signal } : {}),
-        });
+        if (storedDefinition.data.deploymentPreview) {
+          if (!params.resolveDeploymentPreviewWorkflow) return refuse('preview_source', 'source_unavailable');
+          const preview = await params.resolveDeploymentPreviewWorkflow({
+            templateRef: storedDefinition.data.deploymentPreview, evidence: evidenceContent,
+            runId: claim.runId, ...(claim.signal ? { signal: claim.signal } : {}),
+          });
+          if (preview.kind === 'skipped') return { state: 'skipped', reason: preview.reason, admission: 'refused' };
+          if (preview.kind === 'refused') return refuse('preview_source', preview.reason);
+          source = { kind: 'inline', definition: preview.definition };
+        } else {
+          source = await resolveWorkflowTriggerClaimSource({
+            target: target.target, credentials: params.execution.credentials, encryption: accountEncryption,
+            ...(claim.signal ? { signal: claim.signal } : {}),
+          });
+        }
       } catch (error) {
         return refuseSourceRead('source', error);
       }
@@ -1545,15 +1565,6 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         || !Number.isSafeInteger(claim.causeWorkDepth) || claim.causeWorkDepth < 0) {
         return refuse('source', 'source_unavailable');
       }
-      const evidenceContent = claim.automationEvidenceEnvelope === null
-        ? null
-        : claim.automationEvidenceEnvelope === undefined
-          ? null
-          : openAutomationStoredContent({
-            serialized: claim.automationEvidenceEnvelope,
-            kind: 'automation_trigger_evidence',
-            encryption: accountEncryption,
-          });
       const deploymentOccurrence = resolveDeploymentTriggerOccurrence({ cause: claim.automationCause,
         evidence: evidenceContent, triggers: storedDefinition.data.deploymentTriggers });
       if (deploymentOccurrence.kind === 'refused') return refuse('deployment_occurrence', deploymentOccurrence.code);

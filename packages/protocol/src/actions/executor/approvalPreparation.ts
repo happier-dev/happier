@@ -137,6 +137,7 @@ export async function readDeploymentPreparation(deps: ActionExecutorDeps, action
     const authored = parsed.data;
     const candidate = reviewed.data;
     const values = review.data.creationDefaults.values;
+    const { provenance: _provenance, headSha: _headSha, ...previewReference } = authored.preview ?? {};
     if (candidate.serverId !== authored.serverId || candidate.projectSourceId !== authored.projectSourceId
       || !sameStrictJsonValue(candidate.newProject ?? null, authored.newProject ?? null)
       || candidate.requestKey !== authored.requestKey || candidate.protection !== authored.protection
@@ -144,7 +145,11 @@ export async function readDeploymentPreparation(deps: ActionExecutorDeps, action
       || candidate.managedRetention !== authored.managedRetention
       || !sameStrictJsonValue(candidate.deployerPrincipals ?? null, authored.deployerPrincipals ?? null)
       || !sameStrictJsonValue(candidate.copyFrom ?? null, authored.copyFrom ?? null)
-      || !sameStrictJsonValue(candidate.firstTargetLink?.machines ?? null, authored.firstTargetLink?.machines ?? null)
+      || !sameStrictJsonValue(candidate.preview ?? null, authored.preview === undefined ? null : previewReference)
+      // Preview placement comes from this exact template admission at the host.
+      // Ordinary creation retains the person's explicit runtime selection.
+      || authored.preview === undefined
+        && !sameStrictJsonValue(candidate.firstTargetLink?.machines ?? null, authored.firstTargetLink?.machines ?? null)
       || candidate.controllerMachineId !== values.controllerMachineId || candidate.buildMachineId !== values.buildMachineId
       || review.data.creationDefaultsBasis?.projectSourceId !== authored.projectSourceId
       || authored.controllerMachineId !== undefined && values.controllerMachineId !== authored.controllerMachineId

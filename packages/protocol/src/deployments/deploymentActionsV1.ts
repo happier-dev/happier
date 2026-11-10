@@ -51,7 +51,10 @@ export { DeploymentDeploySemanticInputV1Schema, type DeploymentDeploySemanticInp
 export { DeploymentEnvironmentRefV1Schema, type DeploymentEnvironmentRefV1 } from './deploymentEnvironmentRefV1.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema, DeploymentTimestampV1Schema } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
-import { DeploymentPreviewPullRequestIdV1Schema as deploymentPreviewPullRequestIdV1Schema } from './deploymentPreviewReferenceV1.js';
+import { DeploymentPreviewPullRequestIdV1Schema as deploymentPreviewPullRequestIdV1Schema,
+  DeploymentPreviewReferenceV1Schema } from './deploymentPreviewReferenceV1.js';
+import { DeploymentPreviewProvenanceV1Schema } from './deploymentPreviewProvenanceV1.js';
+import { ScmCommitOidSchema } from '../scm/commitPublication.js';
 import { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetLinkProviderContentV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
 import { DeploymentBindingSavedSecretRevisionsV1Schema, DeploymentBindingsPatchInputV1Schema } from './deploymentBindingPatchV1.js';
 export { DeploymentBindingsPatchInputV1Schema, type DeploymentBindingsPatchInputV1 } from './deploymentBindingPatchV1.js';
@@ -173,9 +176,14 @@ const intent = { requestKey: DeploymentIdentifierV1Schema };
 export const DeploymentEnvironmentCreateIntentInputV1Schema = lazyZodSchema(() => z.extend(z.omit(DeploymentEnvironmentCreateBaseInputV1Schema, {
   contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true, firstTargetLink: true,
   controllerMachineId: true, buildMachineId: true,
-  preview: true,
+  preview: true, previewDataTargetLinks: true,
 }), {
-  name: DeploymentTextV1Schema,
+  /** Preview derives its name; the normalized omission must survive review parsing. */
+  name: z._default(z.union([DeploymentTextV1Schema, z.literal('')]), ''),
+  /** Authored PR intent; the controller reads the selected template and protects child content. */
+  preview: z.optional(z.extend(DeploymentPreviewReferenceV1Schema, {
+    provenance: DeploymentPreviewProvenanceV1Schema, headSha: ScmCommitOidSchema,
+  })),
   mode: z.optional(z.enum(['preview', 'apply'])),
   definition: z.optional(z.union([DeploymentStoredDefinitionInputV1Schema, DeploymentCatalogAppDefinitionInputV1Schema,
     z.strictObject({ from: z.literal('repository'), ref: DeploymentTextV1Schema, compose: z.optional(DeploymentRepositoryComposeV1Schema) })])),
@@ -187,6 +195,10 @@ export const DeploymentEnvironmentCreateIntentInputV1Schema = lazyZodSchema(() =
   domainBindings: DeploymentTemplateInstantiateInputV1Schema.shape.domainBindings,
   firstTargetLink: z.optional(z.strictObject({ machines: DeploymentOwnServerTargetMachinesV1Schema })),
 }).check(z.refine(input => hasOneDeploymentProjectV1(input.projectSourceId, input.newProject), { message: 'Select an existing or reviewed new Project.' }),
+  z.refine(input => input.purpose === 'preview' ? input.preview !== undefined && input.projectSourceId !== undefined
+    && input.newProject === undefined && input.copyFrom === undefined && input.definition === undefined && input.firstTargetLink === undefined
+    && input.protection === 'nonProduction' : input.preview === undefined && input.name.trim().length > 0,
+    { message: 'Preview creation selects one template and existing Source; standard creation requires a name.' }),
   z.refine(input => input.newProject === undefined || input.definition?.from !== 'repository', { message: 'A new repository-free Project needs a stored definition.' }),
   z.refine(input => input.newProject === undefined || input.copyFrom === undefined, { message: 'A new repository-free Project selects its stored definition.' }),
   z.refine(input => input.definition?.from === 'catalogApp'
@@ -194,7 +206,7 @@ export const DeploymentEnvironmentCreateIntentInputV1Schema = lazyZodSchema(() =
     { message: 'Catalog variables and generation are prepared by the template owner.' }),
   z.refine(input => input.firstTargetLink === undefined || input.definition?.from !== 'repository' || input.definition.compose !== undefined,
     { message: 'An own-server first target requires repository Compose selectors.' }),
-  z.refine(input => input.copyFrom !== undefined || input.definition !== undefined,
+  z.refine(input => input.preview !== undefined || input.copyFrom !== undefined || input.definition !== undefined,
   { message: 'Create selects an authored definition or an exact source copy.' })));
 export const DeploymentEnvironmentCreateActionInputV1Schema = lazyZodSchema(() => z.union([
   DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema,
@@ -279,10 +291,14 @@ export const DeploymentTargetLinkIntentInputV1Schema = lazyZodSchema(() => z.str
   source: z.optional(DeploymentTargetSourceV1Schema), targetKind: z.optional(DeploymentIdentifierV1Schema),
   machineId: z.optional(DeploymentIdentifierV1Schema), installationId: z.optional(DeploymentIdentifierV1Schema),
   replacesLinkId: z.optional(DeploymentIdentifierV1Schema),
+  /** Successful native teardown receipt proving the installations removed by this replacement. */
+  drainedDeploymentId: z.optional(DeploymentIdentifierV1Schema),
   expectedTargetLinkRevision: z.optional(DeploymentRevisionV1Schema),
   machines: DeploymentTargetMachinesV1Schema,
 }).check(z.refine(link => (link.replacesLinkId === undefined) === (link.expectedTargetLinkRevision === undefined),
-{ message: 'Replacing a target link requires its exact current revision.' }), z.refine(link => link.source?.kind === 'plugin'
+{ message: 'Replacing a target link requires its exact current revision.' }),
+z.refine(link => link.drainedDeploymentId === undefined || link.replacesLinkId !== undefined,
+{ message: 'A drain receipt belongs to a target-link replacement.' }), z.refine(link => link.source?.kind === 'plugin'
   ? link.targetKind !== undefined && link.machines.length === 0
     && (link.machineId === undefined) === (link.installationId === undefined)
   : link.role === 'runtime' && (link.targetKind === undefined || link.targetKind === 'ownServer')
@@ -501,8 +517,26 @@ export const DeploymentEnvironmentDeleteResultV1Schema = lazyZodSchema(() => z.u
 ]));
 export type DeploymentTargetUnlinkResultV1 = z.infer<typeof DeploymentTargetUnlinkResultV1Schema>;
 export type DeploymentEnvironmentDeleteResultV1 = z.infer<typeof DeploymentEnvironmentDeleteResultV1Schema>;
+export const DeploymentPreviewDataTargetsV1Schema = lazyZodSchema(() => z.array(z.strictObject({
+  templateDataTargetLinkId: DeploymentIdentifierV1Schema, targetLinkId: DeploymentIdentifierV1Schema,
+  targetLinkRevision: DeploymentRevisionV1Schema,
+})));
 export const DeploymentEnvironmentCreateResultV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ...result, projectSourceId: z.optional(DeploymentIdentifierV1Schema) }), DeploymentActionFailureV1Schema,
+  z.strictObject({ ...result, projectSourceId: z.optional(DeploymentIdentifierV1Schema),
+    runtimeTargetLinkId: z.optional(DeploymentIdentifierV1Schema),
+    previewDataTargets: z.optional(DeploymentPreviewDataTargetsV1Schema),
+  }), DeploymentActionFailureV1Schema,
+]));
+export const DeploymentPreviewEnrollmentV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ status: z.literal('enrolled') }),
+  z.strictObject({ status: z.literal('disabled') }),
+  z.strictObject({ status: z.literal('unavailable'), errorCode: z.string(), failureCause: z.optional(ActionFailureCauseV1Schema) }),
+]));
+export type DeploymentPreviewEnrollmentV1 = z.infer<typeof DeploymentPreviewEnrollmentV1Schema>;
+/** Enrollment follows the persisted edit; a source refusal cannot undo that edit. */
+export const DeploymentEnvironmentUpdateResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ...result, projectSourceId: z.optional(DeploymentIdentifierV1Schema),
+    previewEnrollment: z.optional(DeploymentPreviewEnrollmentV1Schema) }), DeploymentActionFailureV1Schema,
 ]));
 /** The preparing host returns its exact candidate for the Team Move sharing consumer. */
 export const DeploymentBindingsSetResultV1Schema = lazyZodSchema(() => z.union([
@@ -742,7 +776,7 @@ export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
   'deployments.logs.read': DeploymentLogsReadResultV1Schema,
   'deployments.prepare': DeploymentPrepareResultV1Schema,
   'deployments.environments.create': DeploymentEnvironmentCreateActionResultV1Schema,
-  'deployments.environments.update': DeploymentEnvironmentCreateResultV1Schema,
+  'deployments.environments.update': DeploymentEnvironmentUpdateResultV1Schema,
   'deployments.environments.controller.set': DeploymentEnvironmentCreateResultV1Schema,
   'deployments.targets.link': DeploymentTargetLinkResultV1Schema,
   'deployments.targets.unlink': DeploymentTargetUnlinkResultV1Schema,

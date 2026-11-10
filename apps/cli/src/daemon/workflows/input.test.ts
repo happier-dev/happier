@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/run-cause';
 import { AutomationConversationOccurrenceEvidenceV1Schema, deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { WorkflowValueReferenceSchema } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import { WorkflowActionFieldBindingV1Schema } from '@happier-dev/protocol/workflows/workflowLeafV1';
+import { validateWorkflowDefinition } from '@happier-dev/protocol/workflows/workflowValidationV1';
 import { parseWorkflowDocumentJsonV1, serializeWorkflowDocumentJsonV1 } from '@happier-dev/protocol/workflows/workflowDocumentV1';
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import type { WorkflowCondition } from '@happier-dev/protocol/workflows';
@@ -16,6 +18,7 @@ import {
   evaluateWorkflowCondition,
   materializeWorkflowStepInput,
   resolveWorkflowValueReference,
+  resolveWorkflowActionFieldBinding,
   WorkflowInputResolutionError,
   type WorkflowJsonValue,
   type WorkflowValueResolutionRuntime,
@@ -72,6 +75,38 @@ async function materializeWithRenderCount(params: Parameters<typeof materializeW
 }
 
 describe('workflow input materialization', () => {
+  it('resolves one native provider object from selected credentials and branch result facts', async () => {
+    const credentialPrincipal = { kind: 'account', accountId: 'owner' };
+    const binding = WorkflowActionFieldBindingV1Schema.parse({ kind: 'object', fields: {
+      credentialPrincipal: { kind: 'literal', value: credentialPrincipal },
+      providerIdentity: { kind: 'result', producer: { blockId: 'branch' }, path: ['providerIdentity'] },
+      providerEnvironment: { kind: 'result', producer: { blockId: 'branch' }, path: ['providerEnvironment'] },
+    } });
+    const native = { providerIdentity: { providerResourceId: 'branch-native' }, providerEnvironment: { kind: 'custom', id: 'branch-native' } };
+    const inputs: WorkflowValueResolutionRuntime = { inputs: {},
+      resolveResult: async producer => {
+        if (producer.blockId !== 'branch') throw new WorkflowInputResolutionError('missing_reference');
+        return native;
+      }, resolveWorkspace: async () => { throw new WorkflowInputResolutionError('invalid_reference_scope'); } };
+    await expect(resolveWorkflowActionFieldBinding(binding, inputs)).resolves.toEqual({ credentialPrincipal, ...native });
+    await expect(resolveWorkflowActionFieldBinding({ kind: 'object', fields: {
+      missing: { kind: 'result', producer: { blockId: 'missing' }, path: [] },
+    } }, inputs)).rejects.toMatchObject({ code: 'missing_reference' });
+  });
+
+  it('rejects a missing producer inside an Action object before execution', () => {
+    const checked = validateWorkflowDefinition({ version: 1, defaults: {}, inputs: [], blocks: [{
+      kind: 'action', id: 'link', actionId: 'example.preview/actions/link', input: { provider: { kind: 'object', fields: {
+        credentialPrincipal: { kind: 'literal', value: { kind: 'account', accountId: 'owner' } },
+        providerIdentity: { kind: 'result', producer: { blockId: 'missing' }, path: ['providerIdentity'] },
+      } } },
+    }] });
+    expect(checked.valid).toBe(false);
+    expect(checked.issues).toEqual(expect.arrayContaining([expect.objectContaining({
+      code: 'missing_reference', path: '/blocks/0/input/provider/fields/providerIdentity/producer/blockId', blockId: 'link',
+    })]));
+  });
+
   it.each([
     { name: 'plain step', references: [], review: false },
     { name: 'review instructions', references: [], review: true },

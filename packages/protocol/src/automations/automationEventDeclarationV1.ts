@@ -28,6 +28,7 @@ import {
 } from '../plugins/actions/v2.js';
 import { PluginUiRendererChainBindingV1Schema } from '../plugins/contributions/ui/rendererChainBinding.js';
 import { AutomationObservationOnlyIntentV1Schema } from './automationEventSetupResultV1.js';
+import { ScmHostingProviderKindSchema } from '../scm/pullRequests.js';
 
 export const AutomationQualifiedPluginContributionRefV1Schema =
   PluginContributionIdentityV1Schema;
@@ -55,6 +56,8 @@ export const PluginEventAutomationDeclarationV1Schema = lazyZodSchema(() => z.st
   eligible: z.literal(true),
   source: z.strictObject({
     sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
+    /** Neutral lifecycle role consumed by deployment preview enrollment. */
+    scmPullRequestLifecycle: z.optional(z.strictObject({ providerKind: ScmHostingProviderKindSchema })),
     supportedObservationTransports: z.array(AutomationObservationTransportKindV1Schema).check(z.minLength(1), z.superRefine((value, context) => {
         if (new Set(value).size !== value.length) {
           context.addIssue({ code: "custom", message: 'Observation transports must be unique' });

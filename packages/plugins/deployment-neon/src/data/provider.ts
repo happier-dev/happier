@@ -1,7 +1,7 @@
 import { PluginError, isPluginError, type DeploymentTargetPreparationBaseV1 } from '@happier-dev/plugin-sdk';
 import type { HttpMethod, HttpService } from '@happier-dev/plugin-sdk/http';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
-import type { ConnectionResource, ConnectionResult, Correlation, CreatedSaveIntent, SaveIntent } from './schemas.js';
+import type { ConnectionResource, ConnectionResult, Correlation, CreateBranchInput, CreatedSaveIntent, SaveIntent } from './schemas.js';
 
 export const origin = 'https://console.neon.tech';
 export const api = `${origin}/api/v2`;
@@ -297,8 +297,8 @@ function sameKnownNative(known: { providerProjectId?: string; branchId?: string 
   return (known.providerProjectId === undefined || known.providerProjectId === recovered.providerProjectId)
     && (known.branchId === undefined || known.branchId === recovered.branchId);
 }
-async function recoverBranch(input: Input & { correlation: Correlation; name: string; cursor?: string }, context: Context) {
-  const selected = selection(input);
+async function recoverBranch(input: Input & CreateBranchInput, context: Context) {
+  const selected = input.parentBranchRef ?? selection(input);
   const query = new URLSearchParams({ search: input.name });
   if (input.cursor) query.set('cursor', input.cursor);
   const body = await request(context, `${projectPath(selected.providerProjectId)}/branches?${query}`);
@@ -308,11 +308,12 @@ async function recoverBranch(input: Input & { correlation: Correlation; name: st
     && item.parent_id === selected.branchId && matches(annotations[text(item.id)], text(item.id), expected));
   const page = next(body, 'branches');
   if (input.cursor || candidates.length !== 1 || page.nextCursor) return { status: 'outcome_unknown' as const, code: 'outcome_unknown', ...page };
-  return configured(input, selected.providerProjectId, text(candidates[0]!.id), { branch: candidates[0], operations: [] }, true);
+  return { ...configured(input, selected.providerProjectId, text(candidates[0]!.id), { branch: candidates[0], operations: [] }, true),
+    correlation: input.correlation };
 }
-export async function createBranch(input: Input & CreatedSaveIntent & { name: string; correlation: Correlation; initialization: string; recover?: true; cursor?: string }, context: Context) {
+export async function createBranch(input: Input & CreateBranchInput, context: Context) {
   if (input.recover) return recoverBranch(input, context);
-  const selected = selection(input);
+  const selected = input.parentBranchRef ?? selection(input);
   const known: { providerProjectId: string; branchId?: string } = { providerProjectId: selected.providerProjectId };
   let captured: Awaited<ReturnType<typeof captureCreated>> = {};
   try {
@@ -321,8 +322,8 @@ export async function createBranch(input: Input & CreatedSaveIntent & { name: st
       endpoints: [{ type: 'read_write' }], annotation_value: annotation(input, input.correlation) });
     const branchId = mutationResponse(() => branchIdentity(record(body.branch), selected.providerProjectId));
     known.branchId = branchId;
-    captured = await captureCreated(body, selected.providerProjectId, branchId, input, context);
-    return { ...mutationResponse(() => configured(input, selected.providerProjectId, branchId, body)), ...captured };
+    if ('id' in input) captured = await captureCreated(body, selected.providerProjectId, branchId, input, context);
+    return { ...mutationResponse(() => configured(input, selected.providerProjectId, branchId, body)), correlation: input.correlation, ...captured };
   } catch (error) {
     if (!isPluginError(error) || error.code !== 'outcome_unknown') throw error;
     if (context.signal.aborted) return { status: 'outcome_unknown' as const, ...known, ...captured, code: unknownCode(error) };

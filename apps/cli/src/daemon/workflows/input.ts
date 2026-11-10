@@ -8,6 +8,7 @@ import { AutomationConversationOccurrenceEvidenceV1Schema } from '@happier-dev/p
 import { MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { readWorkflowStepInputIndexV1 } from '@happier-dev/protocol/workflows/workflowComposerDocumentV1';
 import type { DiscussionPromptAuthorV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import type { WorkflowActionFieldBindingV1, WorkflowActionValueReferenceV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import { compactWorkflowPromptContext, projectWorkflowPromptContext, renderWorkflowPromptContext } from './workflowPromptContext';
 
 export type WorkflowJsonValue = Extract<WorkflowValueReference, { kind: 'literal' }>['value'];
@@ -170,6 +171,20 @@ export function selectWorkflowResultPath(
   const selected = readWorkflowValuePathV1(value, path);
   if (selected === undefined) throw new WorkflowInputResolutionError(missingCode);
   return selected;
+}
+
+/** Resolve each authored field through the value owner, preserving its object or list shape. */
+export async function resolveWorkflowActionFieldBinding(
+  binding: WorkflowActionFieldBindingV1,
+  runtime: WorkflowValueResolutionRuntime,
+  originSessionId?: string,
+): Promise<WorkflowJsonValue> {
+  const resolve = async (reference: WorkflowActionValueReferenceV1): Promise<WorkflowJsonValue> =>
+    reference.kind === 'origin_session_id' ? originSessionId ?? null : await resolveWorkflowValueReference(reference, runtime);
+  if (binding.kind === 'list') return await Promise.all(binding.items.map(resolve));
+  if (binding.kind === 'object') return Object.fromEntries(await Promise.all(Object.entries(binding.fields)
+    .map(async ([field, reference]) => [field, await resolve(reference)] as const)));
+  return await resolve(binding);
 }
 
 export async function resolveWorkflowValueReference(

@@ -115,7 +115,8 @@ function usesWorkflowContext(definition: WorkflowDefinitionV1, origin: 'session'
     if (block.kind === 'step' && block.input.some(isContext)) return true;
     if (block.kind === 'action' || block.kind === 'workflow') {
       for (const binding of Object.values(block.input)) {
-        if ((binding.kind === 'list' ? binding.items : [binding]).some((reference) => reference.kind !== 'origin_session_id' && isContext(reference))) return true;
+        if ((binding.kind === 'list' ? binding.items : binding.kind === 'object' ? Object.values(binding.fields) : [binding])
+          .some((reference) => reference.kind !== 'origin_session_id' && isContext(reference))) return true;
       }
     } else if (block.kind === 'parallel') pending.push(...block.branches.flatMap((branch) => branch.blocks));
     else if (block.kind === 'if') {
@@ -362,11 +363,9 @@ export async function readWorkflowAcceptedAgentStartLeavesV1(snapshot: Pick<Work
     for (const item of items) {
       const actionInput = { ...leaf.actionInput };
       for (const [field, binding] of Object.entries(authored.input)) {
-        if (!hasUnresolvedValue(actionInput[field]) || !(binding.kind === 'list'
-          ? binding.items.some((reference) => reference.kind === 'item') : binding.kind === 'item')) continue;
-        actionInput[field] = binding.kind === 'list'
-          ? binding.items.map((reference) => boundValue(reference, context, leaf.blockId, 'run', item))
-          : boundValue(binding, context, leaf.blockId, 'run', item);
+        if (!hasUnresolvedValue(actionInput[field]) || !(binding.kind === 'list' ? binding.items
+          : binding.kind === 'object' ? Object.values(binding.fields) : [binding]).some((reference) => reference.kind === 'item')) continue;
+        actionInput[field] = bindWorkflowActionFieldV1(binding, context, leaf.blockId, 'run', item);
       }
       result.push(...projectActionStart(snapshot, { ...leaf, actionInput }).leaves);
     }
@@ -394,11 +393,18 @@ function boundValue(reference: WorkflowActionValueReferenceV1, context: Workflow
 }
 
 /** Execution and read projections bind authored Action operands through the same value owner. */
+function bindWorkflowActionFieldV1(binding: WorkflowActionFieldBindingV1,
+  context: WorkflowBindingContext, blockId: string, purpose: 'run' | 'definition', item?: WorkflowBoundItem) {
+  if (binding.kind === 'object') return Object.fromEntries(Object.entries(binding.fields)
+    .map(([field, reference]) => [field, boundValue(reference, context, blockId, purpose, item)]));
+  return binding.kind === 'list' ? binding.items.map(reference => boundValue(reference, context, blockId, purpose, item))
+    : boundValue(binding, context, blockId, purpose, item);
+}
+
 function bindWorkflowActionInputV1(bindings: Readonly<Record<string, WorkflowActionFieldBindingV1>>,
   context: WorkflowBindingContext, blockId: string, purpose: 'run' | 'definition', item?: WorkflowBoundItem) {
   return Object.fromEntries(Object.entries(bindings).map(([field, binding]) => [field,
-    binding.kind === 'list' ? binding.items.map(reference => boundValue(reference, context, blockId, purpose, item))
-      : boundValue(binding, context, blockId, purpose, item)]));
+    bindWorkflowActionFieldV1(binding, context, blockId, purpose, item)]));
 }
 
 /** Read projections share execution's enumeration of already-bound loop items. */
@@ -947,7 +953,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
         sidecar.actionContract = structuredClone(contract);
         const bindingContext = sourceKey === '$root' ? input.context : { ...input.context, inputs: {} };
         const hasDeferredBinding = Object.values(leaf.input).some((binding) =>
-          (binding.kind === 'list' ? binding.items : [binding]).some((reference) =>
+          (binding.kind === 'list' ? binding.items : binding.kind === 'object' ? Object.values(binding.fields) : [binding]).some((reference) =>
             reference.kind === 'origin_session_id'
               ? purpose === 'definition' && !bindingContext.origin?.originSessionId
               : reference.kind !== 'literal'

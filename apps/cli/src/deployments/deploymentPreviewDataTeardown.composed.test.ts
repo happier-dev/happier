@@ -74,6 +74,16 @@ describe('ordinary preview data teardown composition', () => {
                 encodePlainArtifactStoredContent({ body: JSON.stringify(content) }));
             seed(environment.contentArtifactId, 'deployment-environment.v1', baseline.content);
             for (const row of baseline.targetLinks) seed(row.targetLink.contentArtifactId, 'deployment-target-link.v1', row.content);
+            const template = createDeploymentEnvironmentHeaderV1({ id: 'template-A', serverId: 'home',
+                owner: { kind: 'account', accountId }, projectSourceId: 'repository-source', controllerMachineId: 'host',
+                runtimeTargetLinkId: 'template-runtime', contentArtifactId: 'template-content' });
+            seed(template.contentArtifactId, 'deployment-environment.v1', { ...baseline.content, previewTemplate: {
+                v: 1, enabled: true, forkPreviews: 'off',
+                repository: { kind: 'github', deployment: 'https://forge.example/enterprise', repository: 'owner/app' },
+                runtimeTargetLinkId: 'template-runtime', domain: null, bindingBlueprints: [], data: [],
+            } });
+            const templateRuntime = createDeploymentTargetLinkHeaderV1({ id: 'template-runtime', environmentId: template.id,
+                machines: ['host'], members: [{ machineId: 'host', installationId: 'host-installation', state: 'active' }] });
             const descriptor = supabase.manifest.contributes.connectedAccountDescriptors?.[0];
             if (!descriptor) throw new Error('Supabase connected Account declaration required');
             const service = { pluginId: supabase.manifest.id, localId: descriptor.id };
@@ -136,8 +146,9 @@ describe('ordinary preview data teardown composition', () => {
                 environmentWrites.push(request.body);
                 return { ok: true, environmentId: environment.id, revision: environment.revision };
             });
-            app.get('/v1/deployments/environments/:environmentId', async () => ({ ok: true, environment,
-                targetLinks: [...baseline.targetLinks.map(row => row.targetLink), link] }));
+            app.get<{ Params: { environmentId: string } }>('/v1/deployments/environments/:environmentId', async request =>
+                request.params.environmentId === template.id ? { ok: true, environment: template, targetLinks: [templateRuntime] }
+                    : { ok: true, environment, targetLinks: [...baseline.targetLinks.map(row => row.targetLink), link] });
             app.get('/v1/deployments/environments/:environmentId/domains', async () => ({ ok: true,
                 environmentId: environment.id, revision: environment.revision, domains: [], nextCursor: null }));
             app.get('/v1/deployments/receipts/:deploymentId', async () => ({ ok: true, deployment: receipt }));

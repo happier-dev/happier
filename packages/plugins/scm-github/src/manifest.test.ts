@@ -30,6 +30,14 @@ import { GITHUB_RELEASE_ACTION_IDS_V1, GITHUB_RELEASE_MOUNTED_ACTION_ID_V1 } fro
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE } from './observations/githubProviderContracts.js';
 import { GITHUB_NATIVE_READ_ACTIONS } from './triage/readActions.js';
 import { GITHUB_FILE_VIEWED_ACTION_IDS_V1 } from './triage/fileViewedContracts.js';
+import { GITHUB_AUTOMATION_EVENT_LOCAL_IDS } from './githubAutomationEvents.js';
+
+it('declares the neutral pull request lifecycle source role for preview enrollment', () => {
+  const result = ingestPluginManifestV2(PLUGIN_MANIFEST);
+  if (!result.ok) throw new Error('Expected the GitHub manifest to be admitted');
+  const event = result.manifest.contributes.events?.find(event => event.id === GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle);
+  expect(event?.automation?.source).toMatchObject({ scmPullRequestLifecycle: { providerKind: 'github' } });
+});
 
 // Records the selection basis; it does not make the external source or terms immutable.
 const GITHUB_BRAND_ASSET_PROVENANCE = {

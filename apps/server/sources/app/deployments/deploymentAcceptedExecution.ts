@@ -7,7 +7,7 @@ import type { Prisma } from '@prisma/client';
 import { deploymentFailure } from './deploymentAdmission';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
 import { readTemplateDeploymentEnvironmentIdInTx } from './deploymentPreparationAuthorization';
-import { isDeploymentDomainAddActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentDomainAddActionIdV1, isDeploymentMembershipActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 type AcceptedIdentity = Omit<DeploymentAcceptedExecutionV1, 'v'>;
@@ -39,6 +39,7 @@ export function readDeploymentExecutionEffectFromRequest(request: FastifyRequest
     const reviewed = request.externalActionReviewedChildAdmission;
     return actionId === binding.actionId
         || actionId === `deployments.${deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission)}`
+        || isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission) && isDeploymentDomainAddActionIdV1(actionId)
         || binding.actionId === 'deployments.environments.create' && reviewed?.actionId === actionId
             && (actionId === 'deployments.bindings.set' || actionId === 'deployments.domains.add')
         || reviewed !== undefined && isDeploymentDomainAddActionIdV1(reviewed.actionId) && actionId === reviewed.actionId
@@ -97,18 +98,18 @@ export function readDeploymentAcceptedExecution(row: ReceiptCapture): Deployment
 }
 
 /** Captured receipt identity authorizes continuation, independently of the requester's current credential or membership. */
-export async function hasAcceptedDeploymentReceiptInTx(tx: Tx, binding: AcceptedReceiptBinding,
+export async function readAcceptedDeploymentReceiptInTx(tx: Tx, binding: AcceptedReceiptBinding,
     continuation?: DeploymentReceiptContinuation, constraints: Prisma.DeploymentWhereInput = {},
-): Promise<boolean> {
+) {
     if (binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId
         || !binding.requestEnvelopeDigest || !binding.installationId
         || continuation && (continuation.installationId !== binding.installationId
-            || binding.environmentId !== undefined && binding.environmentId !== continuation.environmentId)) return false;
+            || binding.environmentId !== undefined && binding.environmentId !== continuation.environmentId)) return null;
     const operation = deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission);
     const observing = binding.actionId === 'deployments.receipts.observe';
-    if (!operation && !observing || observing && !continuation) return false;
+    if (!operation && !observing || observing && !continuation) return null;
     const originalRequest = operation ? { operation, acceptedRequestEnvelopeDigest: binding.requestEnvelopeDigest } : {};
-    if (binding.workflowActionOrigin && binding.workflowActionOrigin.requestId !== binding.requestId) return false;
+    if (binding.workflowActionOrigin && binding.workflowActionOrigin.requestId !== binding.requestId) return null;
     const workflowRun = binding.workflowActionOrigin ? {
         id: binding.workflowActionOrigin.runId, accountId: binding.accountId,
         state: { in: ['claimed', 'running', 'paused'] }, workflowCustodyState: 'pending',
@@ -116,7 +117,7 @@ export async function hasAcceptedDeploymentReceiptInTx(tx: Tx, binding: Accepted
     } satisfies Prisma.AutomationRunWhereInput : undefined;
     // An observer may spend captured installation custody on another requester's
     // receipt. Its Workflow belongs to the observer, not requestedByAccount.
-    if (observing && workflowRun && !await tx.automationRun.findFirst({ where: workflowRun, select: { id: true } })) return false;
+    if (observing && workflowRun && !await tx.automationRun.findFirst({ where: workflowRun, select: { id: true } })) return null;
     return await tx.deployment.findFirst({ where: { AND: [constraints, {
         ...(continuation ? { id: continuation.deploymentId, environmentId: continuation.environmentId,
             actionOperationId: continuation.actionOperationId } : binding.environmentId ? { environmentId: binding.environmentId } : {}),
@@ -132,7 +133,14 @@ export async function hasAcceptedDeploymentReceiptInTx(tx: Tx, binding: Accepted
         acceptedControllerMachineId: binding.machineId, acceptedControllerInstallationId: binding.installationId,
         // Keep the active-job lookup in this same query for Workflow roots.
         ...(workflowRun && !observing ? { requestedByAccount: { automationRuns: { some: workflowRun } } } : {}),
-    }] }, select: { id: true } }) !== null;
+    }] }, select: { id: true, environmentId: true, targetLinkId: true, operation: true, teardownProof: true } });
+}
+
+/** Boolean callers consume the same captured-receipt authority as typed continuations. */
+export async function hasAcceptedDeploymentReceiptInTx(tx: Tx, binding: AcceptedReceiptBinding,
+    continuation?: DeploymentReceiptContinuation, constraints: Prisma.DeploymentWhereInput = {},
+): Promise<boolean> {
+    return await readAcceptedDeploymentReceiptInTx(tx, binding, continuation, constraints) !== null;
 }
 
 export { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentActionsV1';

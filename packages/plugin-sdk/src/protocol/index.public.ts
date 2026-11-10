@@ -69,6 +69,8 @@ export { ProtocolComposerAttachmentAuthorValueV1Schema } from './composerAttachm
  */
 export type { ProtocolCollectionOpaqueCursorV1 } from './collectionCursor.js';
 export { ProtocolCollectionOpaqueCursorV1Schema } from './collectionCursor.js';
+/** Canonical native parent selection used by managed-data branch Actions. */
+export { DeploymentDataParentBranchRefV1ProtocolSchema } from '../deploymentTargets.js';
 /** Canonical Launch Profile V2 identity admission for feature Action references. */
 export { ProtocolLaunchProfileIdV2Schema } from './launchProfileId.js';
 export { ProtocolLaunchProfilePlacementPreferenceV1Schema, ProtocolLaunchProfileCheckoutPreferenceV1Schema, resolveLaunchProfilePlacementDirectoryIntentV1, type LaunchProfilePlacementPreferenceV1, type LaunchProfileCheckoutPreferenceV1, type SessionDirectoryIntentV1 } from './launchProfilePreferences.js';
@@ -92,6 +94,7 @@ export type { FileDownloadDestinationV1, FileDownloadResultV1 } from './fileDown
 export { FileDownloadDestinationV1ProtocolSchema, FileDownloadResultV1ProtocolSchema } from './fileDownload.js';
 /** SCM owns the types on `/scm`; these are its composable schema projections. */
 export { ScmHostingRepositoryIdentityV1ProtocolSchema } from './hostingRepositoryIdentity.js';
+export { ScmHostingPullRequestLifecycleV1ProtocolSchema, ScmHostingPullRequestLifecycleActionV1ProtocolSchema } from './pullRequestLifecycle.js';
 export { ScmPullRequestSummaryProtocolSchema } from './scmPullRequest.js';
 export { PluginUiResourceIntentV1Schema, type PluginUiResourceIntentV1 } from './resourceIntent.js';
 export { ProjectExecutionOperationRefV1ProtocolSchema } from './projectExecution.js';

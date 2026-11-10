@@ -1,6 +1,7 @@
 import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import type { DeploymentTargetPreparationBaseV1, JsonValue } from '@happier-dev/plugin-sdk';
-import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion,
+  DeploymentDataParentBranchRefV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginJsonSchema, ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 
 const string = defineProtocolString({ minLength: 1 });
@@ -21,7 +22,8 @@ export const operands = {
     desiredInstanceSize: string.optional() }, closed),
   'projects-link': defineProtocolObject({ projectRef: string }, closed),
   'branches-list': defineProtocolObject({}, closed),
-  'branches-create': defineProtocolObject({ name: string, gitBranch: string.optional(), withData: defineProtocolLiteral(false) }, closed),
+  'branches-create': defineProtocolObject({ name: string, gitBranch: string.optional(), withData: defineProtocolLiteral(false),
+    parentBranchRef: DeploymentDataParentBranchRefV1ProtocolSchema.optional() }, closed),
   'branches-delete': defineProtocolObject({}, closed),
   'connections-save': defineProtocolObject({ id: defineProtocolLiteral('database'), purpose: defineProtocolLiteral('data.connection'), audience: audienceSchema,
     password: passwordSchema.optional(), database: string.optional(),

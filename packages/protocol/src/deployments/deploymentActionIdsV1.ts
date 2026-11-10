@@ -124,15 +124,21 @@ export function isDeploymentEnvironmentMetadataReadActionIdV1(value: string): va
   return isDeploymentDomainMetadataReadActionIdV1(value)
     || value === 'deployments.receipts.get' || value === 'deployments.receipts.list' || value === 'deployments.observation.get';
 }
+/** Existing rollout and teardown roots may reconcile their admitted runtime membership. */
+export function isDeploymentMembershipActionIdV1(value: string, admission?: DeploymentPreparationAdmissionV1): value is
+  'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown'
+  | 'deployments.templates.instantiate' | 'deployments.environments.create' {
+  return deploymentOperationForRootActionV1(value, admission) !== undefined;
+}
+
 /** Map native child effects without changing the root's receipt operation. */
 export function deploymentChildEffectActionIdForRootV1(value: string, admission?: DeploymentPreparationAdmissionV1,
   requestedEffectActionId?: string):
   DeploymentDomainChildActionIdV1 | 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | undefined {
   if (isDeploymentDomainChildActionIdV1(value)) return value;
+  if (isDeploymentMembershipActionIdV1(value, admission)
+    && requestedEffectActionId === 'deployments.domains.add') return requestedEffectActionId;
   if (value === 'deployments.teardown' && requestedEffectActionId === 'deployments.domains.remove') return requestedEffectActionId;
-  if (value === 'deployments.templates.instantiate' && admission?.operation === 'template'
-    && admission.mode === 'apply' && admission.deploy !== undefined && requestedEffectActionId === 'deployments.domains.add')
-    return requestedEffectActionId;
   if (value === 'deployments.environments.create' && admission?.operation === 'create'
     && admission.mode === 'apply' && admission.catalogApp) return requestedEffectActionId === 'deployments.deploy'
       ? 'deployments.deploy' : 'deployments.domains.add';

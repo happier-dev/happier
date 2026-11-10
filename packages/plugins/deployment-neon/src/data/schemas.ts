@@ -1,7 +1,8 @@
 import { DeploymentTargetPreparationBaseV1ProtocolSchema, type JsonValue, type DeploymentTargetPreparationBaseV1 } from '@happier-dev/plugin-sdk';
 import { defineProtocolArray as array, defineProtocolLiteral as literal, defineProtocolNumber as number,
   defineProtocolObject as object, defineProtocolString as string, defineProtocolUnion as union,
-  ScmHostingRepositoryIdentityV1ProtocolSchema, type ProtocolComposableSchema, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+  ScmHostingRepositoryIdentityV1ProtocolSchema, DeploymentDataParentBranchRefV1ProtocolSchema,
+  type ProtocolComposableSchema, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 
 const closed = { policy: 'closed' } as const;
 export const identifier = string({ minLength: 1 });
@@ -47,11 +48,14 @@ export const branchListInput = object({ cursor: identifier.optional(), search: i
 export const branchListResult = object({ branches: array(branch), operations: array(operation), nextCursor: identifier.optional() }, closed);
 export const provisionInput = object({ ...createdSave, name: identifier, regionId: identifier, requestKey: identifier,
   recover: literal(true).optional(), cursor: identifier.optional() }, closed);
-export const createBranchInput = object({ ...createdSave, name: identifier, correlation: correlationSchema,
-  initialization: union([literal('parent-schema'), literal('parent-data')]), recover: literal(true).optional(), cursor: identifier.optional() }, closed);
+const createBranch = { name: identifier, correlation: correlationSchema,
+  initialization: union([literal('parent-schema'), literal('parent-data')]), recover: literal(true).optional(), cursor: identifier.optional(),
+  parentBranchRef: DeploymentDataParentBranchRefV1ProtocolSchema.optional() };
+export const createBranchInput = union([object(createBranch, closed), object({ ...createBranch, ...createdSave }, closed)]);
+export type CreateBranchInput = ReturnType<typeof createBranchInput.parse>;
 export const deleteBranchInput = object({ branchId: identifier, correlation: correlationSchema }, closed);
 export const mutationResult = object({ status: union([literal('provisioned'), literal('configured'), literal('deleted'), literal('outcome_unknown')]),
-  providerProjectId: identifier.optional(), branchId: identifier.optional(), endpointId: identifier.optional(),
+  providerProjectId: identifier.optional(), branchId: identifier.optional(), endpointId: identifier.optional(), correlation: correlationSchema.optional(),
   providerIdentity: providerIdentity.optional(), providerEnvironment: object({ kind: literal('custom'), id: identifier }, closed).optional(),
   ready: flag.optional(), operationIds: array(identifier).optional(), recovered: flag.optional(),
   engine: literal('postgres').optional(), engineVersion: number({ integer: true }).optional(),
@@ -63,16 +67,22 @@ export const mutationResult = object({ status: union([literal('provisioned'), li
 /** Canonical custody fields retain their exact JSON Schema; this leaf adds only product operands. */
 export function inputSchema(product: ProtocolComposableSchema<unknown>, selected = false): PluginJsonSchema {
   const base = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema;
-  return { type: 'object', properties: { ...base.properties, ...product.jsonSchema.properties },
-    required: [...base.required ?? [], ...product.jsonSchema.required ?? [],
-      ...(selected ? ['providerIdentity', 'targetLinkId', 'expectedTargetLinkRevision'] : [])], additionalProperties: false };
+  const variants = (product.jsonSchema.anyOf ?? [product.jsonSchema]).map(member => ({
+    type: 'object' as const, properties: { ...base.properties, ...member.properties },
+    required: [...base.required ?? [], ...member.required ?? [],
+      ...(selected ? ['providerIdentity', 'targetLinkId', 'expectedTargetLinkRevision'] : [])], additionalProperties: false as const }));
+  if (variants.length === 1) return variants[0]!;
+  return { type: 'object', properties: Object.fromEntries(variants.flatMap(member => Object.entries(member.properties))),
+    required: variants[0]!.required.filter(key => variants.every(member => member.required.includes(key))),
+    additionalProperties: false, anyOf: variants };
 }
 export function readInput<T>(schema: ProtocolComposableSchema<T>, input: JsonValue): T & DeploymentTargetPreparationBaseV1 {
   // The Action owner validated the declared canonical custody schema at admission.
   const source = input as Readonly<Record<string, JsonValue>>;
   const pick = (keys: readonly string[]) => Object.fromEntries(keys.filter(key => source[key] !== undefined).map(key => [key, source[key]]));
   return { ...source as unknown as DeploymentTargetPreparationBaseV1,
-    ...schema.parse(pick(Object.keys(schema.jsonSchema.properties ?? {}))) };
+    ...schema.parse(pick([...new Set((schema.jsonSchema.anyOf ?? [schema.jsonSchema])
+      .flatMap(member => Object.keys(member.properties ?? {})))])) };
 }
 
 export const targetSchema = object({}, closed);

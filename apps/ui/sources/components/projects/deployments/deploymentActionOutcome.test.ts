@@ -1,8 +1,28 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
+import { standardCleanup } from '@/dev/testkit';
 
 import { HappyError } from '@/utils/errors/errors';
 
-import { runDeploymentAction } from './deploymentActionOutcome';
+import { runDeploymentAction, useDeploymentChangePress } from './deploymentActionOutcome';
+
+afterEach(standardCleanup);
+
+it('refreshes a successful save while preserving unavailable preview enrollment as a followup', async () => {
+  const refreshed = vi.fn();
+  const followup = { status: 'unavailable' as const, errorCode: 'credential_unavailable' };
+  const hook = await renderHook(() => useDeploymentChangePress(null, refreshed));
+  try {
+    let saved: boolean | undefined;
+    await act(async () => { saved = await hook.getCurrent().press(async () => ({ ok: true, previewEnrollment: followup })); });
+    expect(saved).toBe(true);
+    expect(refreshed).toHaveBeenCalledTimes(1);
+    expect(hook.getCurrent().outcome).toBeNull();
+    expect(hook.getCurrent().followup).toEqual(followup);
+    await act(async () => { await hook.getCurrent().press(async () => ({ ok: true, previewEnrollment: { status: 'enrolled' } })); });
+    expect(hook.getCurrent().followup).toBeNull();
+  } finally { await hook.unmount(); }
+});
 
 describe('deployment press outcome', () => {
   it('keeps Domain recovery facts for returned and thrown failures outside template creation', async () => {

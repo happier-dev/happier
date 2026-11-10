@@ -86,6 +86,7 @@ import { GithubDeploymentMonitorCursorV1Schema, type GithubDeploymentMonitorCurs
 import { readGithubDeploymentReviewCandidateV1, projectGithubDeploymentReviewCandidateV1, type GithubDeploymentReviewCandidateV1 } from './githubDeploymentMonitor.js';
 import { GithubCiReadError } from '../actions/reads.js';
 import type { GithubDeploymentWebhookWakeV1 } from '../webhookAction.js';
+import { normalizeGithubPullRequestLifecycle } from './githubWebhookNormalization.js';
 
 const REPOSITORY_EVENTS_ENDPOINT_KIND = 'repositoryEvents' as const;
 const storedRepositoryEventsContinuitySchema = createProtocolStoredReadSchema(defineProtocolObject({
@@ -429,6 +430,7 @@ function parseRepositoryEventPayload(input: Readonly<{
   occurredAtMs: number;
   raw: JsonRecord;
   repository: GithubRepositorySourceConfigV1;
+  eventLocalId?: GithubAutomationEventLocalIdV1;
 }>): ReturnType<typeof normalizeGithubAutomationEvent> | null {
   const rawPayload = isRecord(input.raw.payload) ? input.raw.payload : null;
   if (rawPayload === null) {
@@ -445,6 +447,14 @@ function parseRepositoryEventPayload(input: Readonly<{
     repositoryId: input.repository.repositoryId,
     nameWithOwner: input.repository.nameWithOwner,
   });
+  if (input.raw.type === 'PullRequestEvent' && input.eventLocalId === GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle) {
+    try {
+      const pullRequest = normalizeGithubPullRequestLifecycle(rawPayload.pull_request, rawPayload.action);
+      return pullRequest === null ? null : normalizeGithubAutomationEvent({ kind: 'pullRequestLifecycle', repository, pullRequest });
+    } catch {
+      throw new GithubRepositoryEventsHistoryGapError('GitHub pull request lifecycle Event has invalid provider facts');
+    }
+  }
   if (input.raw.type === 'PushEvent') {
     return normalizeGithubAutomationEvent(Object.freeze({
       kind: 'push' as const,
@@ -511,6 +521,16 @@ export function normalizeGithubRepositoryEventForAutomation(
   repository: GithubRepositorySourceConfigV1,
   eventLocalId?: GithubAutomationEventLocalIdV1,
 ): GithubRepositoryTimelineEntryV1<GithubAutomationRepositoryEventObservationV1> {
+  const entry = normalizeGithubRepositoryEventTimeline(value, repository, eventLocalId === undefined ? undefined : [eventLocalId]);
+  return Object.freeze({ ...entry, observation: entry.observation?.[0] ?? null });
+}
+
+/** One provider occurrence can have several semantic subscribers without another HTTP read. */
+function normalizeGithubRepositoryEventTimeline(
+  value: unknown,
+  repository: GithubRepositorySourceConfigV1,
+  eventLocalIds?: readonly GithubAutomationEventLocalIdV1[],
+): GithubRepositoryTimelineEntryV1<readonly GithubAutomationRepositoryEventObservationV1[]> {
   if (!isRecord(value)) {
     throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events entry is invalid');
   }
@@ -533,18 +553,21 @@ export function normalizeGithubRepositoryEventForAutomation(
   ) {
     throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events entry changed its immutable repository');
   }
-  const normalized = parseRepositoryEventPayload({ eventId, occurredAtMs, raw: value, repository });
+  const legacy = eventLocalIds?.every(id => id === GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle) ? null
+    : parseRepositoryEventPayload({ eventId, occurredAtMs, raw: value, repository });
+  const lifecycle = value.type === 'PullRequestEvent' && eventLocalIds?.includes(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle)
+    ? parseRepositoryEventPayload({ eventId, occurredAtMs, raw: value, repository, eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle }) : null;
+  const observations = [legacy, lifecycle].flatMap(normalized => normalized === null
+    || (eventLocalIds !== undefined && !eventLocalIds.includes(normalized.eventRef.localId)) ? [] : [Object.freeze({
+      eventRef: normalized.eventRef,
+      occurrenceId: createOccurrenceId(repository.repositoryId, eventId),
+      occurredAtMs,
+      payload: normalized.payload,
+    })]);
   return Object.freeze({
     eventId,
     createdAtMs: occurredAtMs,
-    observation: normalized === null || (eventLocalId !== undefined && normalized.eventRef.localId !== eventLocalId)
-      ? null
-      : Object.freeze({
-        eventRef: normalized.eventRef,
-        occurrenceId: createOccurrenceId(repository.repositoryId, eventId),
-        occurredAtMs,
-        payload: normalized.payload,
-      }),
+    observation: observations.length === 0 ? null : Object.freeze(observations),
   });
 }
 
@@ -552,7 +575,8 @@ async function pollRepositoryEvents(input: Readonly<{
   context: PluginInvocationContext;
   source: GithubAutomationObservedSourceV1;
   cursor: GithubRepositoryEventsCursorV1 | null;
-}>): Promise<GithubRepositoryEventsPollResultV1<GithubAutomationRepositoryEventObservationV1>> {
+  eventLocalIds?: readonly GithubAutomationEventLocalIdV1[];
+}>): Promise<GithubRepositoryEventsPollResultV1<readonly GithubAutomationRepositoryEventObservationV1[]>> {
   const client = await createGithubApiClient(input.context, input.source.credentialRef);
   const initialUrl = createRepositoryEventsUrl(input.source.repository);
   return await pollGithubRepositoryEvents({
@@ -584,9 +608,10 @@ async function pollRepositoryEvents(input: Readonly<{
         kind: 'page' as const,
         etag: readTriageResponseHeaderV1(response.headers, 'etag'),
         nextUrl: parseNextPageUrl(response.headers, input.source.repository),
-        events: Object.freeze(payload.map((event) => normalizeGithubRepositoryEventForAutomation(
+        events: Object.freeze(payload.map((event) => normalizeGithubRepositoryEventTimeline(
           event,
           input.source.repository,
+          input.eventLocalIds ?? [input.source.definition.eventRef.localId],
         ))),
         pollIntervalMs: readGithubPollIntervalMs(response.headers),
       });
@@ -1201,7 +1226,7 @@ type GithubGroupCheckpointReadV1 = Readonly<{
   checkpoint: Promise<StoredCheckpointRowV1 | null>;
 }>;
 type GithubGroupProviderCandidateV1 =
-  | Readonly<{ kind: 'repository'; polled: GithubRepositoryEventsPollResultV1<GithubAutomationRepositoryEventObservationV1> }>
+  | Readonly<{ kind: 'repository'; polled: GithubRepositoryEventsPollResultV1<readonly GithubAutomationRepositoryEventObservationV1[]> }>
   | Readonly<{ kind: 'checks'; surface: Awaited<ReturnType<typeof readGithubPullRequestChecks>> }>
   | Readonly<{ kind: 'deployment'; candidate: GithubDeploymentReviewCandidateV1 }>;
 
@@ -1249,7 +1274,9 @@ async function readGroupProviderCandidate(input: Readonly<{
   const cursors = eligible.map(member => member.row ? loadCheckpoint({ source: member.source, row: member.row }).cursor : null);
   const cursor = cursors[0] ?? null;
   const agreed = cursor?.etag !== null && cursor?.etag !== undefined && cursors.every(value => value?.etag === cursor.etag);
-  return { kind: 'repository', polled: await pollRepositoryEvents({ context: input.context, source, cursor: agreed ? cursor : null }) };
+  return { kind: 'repository', polled: await pollRepositoryEvents({ context: input.context, source, cursor: agreed ? cursor : null,
+    eventLocalIds: [...new Set(eligible.map(member => member.source.definition.eventRef.localId))],
+  }) };
 }
 
 async function runObservedSource(input: Readonly<{
@@ -1518,6 +1545,7 @@ async function runObservedSource(input: Readonly<{
     }
 
     const observations: PluginEventObservationV1[] = classified.observations
+      .flat()
       .filter(observation => observation.eventRef.localId === input.source.definition.eventRef.localId)
       .map(observation => ({
         eventRef: observation.eventRef, sourceInstanceId: input.source.definition.sourceInstanceId,
@@ -1530,7 +1558,7 @@ async function runObservedSource(input: Readonly<{
       context: input.context, definitions: [input.source.definition], observations, complete: true, isCurrent: input.isDefinitionCurrent,
       save: async () => { await collection.put(createCheckpointRow({
         source: input.source, cursor: classified.checkpoint,
-        lastContiguousOccurrenceId: classified.observations.at(-1)?.occurrenceId ?? retained.row.value.payload.lastContiguousOccurrenceId,
+        lastContiguousOccurrenceId: classified.observations.at(-1)?.at(-1)?.occurrenceId ?? retained.row.value.payload.lastContiguousOccurrenceId,
         baseline: retained.row.value.payload.baseline,
       }), { expectedRevision: retained.row.revision, signal: input.context.signal }); },
     });

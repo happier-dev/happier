@@ -222,8 +222,9 @@ async function admitAutomationWebhookEvent(params: Readonly<{
   input: PluginWebhookActionInput;
   normalized: NonNullable<ReturnType<typeof normalizeGithubWebhookDelivery>['automationEvent']>;
   context: PluginInvocationContext;
+  currentSources: GithubAutomationWebhookSourceScanV1;
 }>): Promise<PluginWebhookActionResult> {
-  const currentSources = await readCurrentAutomationSources(params.context);
+  const currentSources = params.currentSources;
   const providerDefinitions = currentSources.definitions.filter((definition) => (
     isGithubAutomationDefinitionForSource(definition, params.normalized.sourceInstanceId)
   ));
@@ -357,15 +358,18 @@ async function handleGithubWebhookActionV1(
       return PluginWebhookActionResultSchema.parse({ kind: 'retry', code: 'github.deployment-unavailable' });
     }
   }
-  if (normalized.automationEvent === null) {
+  if (normalized.automationEvents.length === 0) {
     return PluginWebhookActionResultSchema.parse({ kind: 'settled', disposition: 'ignored' });
   }
   try {
-    return await admitAutomationWebhookEvent({
-      input,
-      normalized: normalized.automationEvent,
-      context,
-    });
+    const currentSources = await readCurrentAutomationSources(context);
+    let disposition: 'ignored' | 'accepted' = 'ignored';
+    for (const event of normalized.automationEvents) {
+      const result = await admitAutomationWebhookEvent({ input, normalized: event, context, currentSources });
+      if (result.kind !== 'settled') return result;
+      if (result.disposition === 'accepted') disposition = 'accepted';
+    }
+    return PluginWebhookActionResultSchema.parse({ kind: 'settled', disposition });
   } catch (error) {
     if (context.signal.aborted) throw error;
     return PluginWebhookActionResultSchema.parse({

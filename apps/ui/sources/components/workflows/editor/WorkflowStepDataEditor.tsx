@@ -198,17 +198,22 @@ export function WorkflowBindingRow(props: Readonly<{
         }
         value = (
             <View testID={`${props.testID}-value`} style={workflowEditorStyles.metaRow}>
-                {(binding.kind === 'list' ? binding.items : [binding]).map((reference, index) =>
-                    reference.kind === 'origin_session_id'
-                        ? <Text key={index} style={workflowEditorStyles.actionFieldText} selectable>{t('workflows.page.inspector.originSession')}</Text>
-                        : reference.kind === 'literal'
-                            ? isBlankWorkflowLiteral(reference.value)
-                                // A blank value is no value: it reads as unset, never as an empty row (DESIGN-7 N24).
-                                ? <Text key={index} style={workflowEditorStyles.metaText}>{t('workflows.page.blocks.notSet')}</Text>
-                                : <Text key={index} style={workflowEditorStyles.actionFieldText} selectable>
-                                    {props.formatLiteral?.(reference.value) ?? formatWorkflowBindingLiteral(props.draft, reference, props.fieldName)}
-                                </Text>
-                            : <WorkflowValueReferenceToken key={index} draft={props.draft} reference={reference} label={props.referenceLabels?.[index]} />)}
+                {(binding.kind === 'object' ? Object.entries(binding.fields)
+                    : (binding.kind === 'list' ? binding.items : [binding]).map(reference => [null, reference] as const)).map(([field, reference], index) => (
+                    <React.Fragment key={field ?? index}>
+                        {field === null ? null : <Text style={workflowEditorStyles.actionFieldLabel}>{field}</Text>}
+                        {reference.kind === 'origin_session_id'
+                            ? <Text style={workflowEditorStyles.actionFieldText} selectable>{t('workflows.page.inspector.originSession')}</Text>
+                            : reference.kind === 'literal'
+                                ? isBlankWorkflowLiteral(reference.value)
+                                    // A blank value is no value: it reads as unset, never as an empty row (DESIGN-7 N24).
+                                    ? <Text style={workflowEditorStyles.metaText}>{t('workflows.page.blocks.notSet')}</Text>
+                                    : <Text style={workflowEditorStyles.actionFieldText} selectable>
+                                        {props.formatLiteral?.(reference.value) ?? formatWorkflowBindingLiteral(props.draft, reference, props.fieldName)}
+                                    </Text>
+                                : <WorkflowValueReferenceToken draft={props.draft} reference={reference} label={props.referenceLabels?.[index]} />}
+                    </React.Fragment>
+                ))}
             </View>
         );
     }

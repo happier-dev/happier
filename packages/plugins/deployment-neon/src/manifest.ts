@@ -44,7 +44,10 @@ export const plugin = definePlugin({
     targetSchema: targetSchema.jsonSchema, linkSchema: targetSchema.jsonSchema,
     dataV1: { projects: { list: 'projects-list-resource', listAction: 'projects-list-read', provisionOptions: 'provision-options-resource',
       provisionOptionsAction: 'provision-options-read', provision: 'projects-provision', link: 'projects-link' },
-      branches: { list: 'branches-list-resource', listAction: 'branches-list-read', create: 'branches-create', delete: 'branches-delete' },
+      branches: { list: 'branches-list-resource', listAction: 'branches-list-read', create: 'branches-create', delete: 'branches-delete',
+        previewInput: { name: { kind: 'input', name: 'preview', path: ['name'] },
+          initialization: { kind: 'literal', value: 'parent-schema' },
+          correlation: { kind: 'input', name: 'preview', path: ['correlation'] } } },
       connectionSecret: { save: 'connections-save' } },
   } },
 });

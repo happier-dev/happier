@@ -69,6 +69,32 @@ const issueCommentInput = {
 };
 
 describe('GitHub webhook Action', () => {
+  it('fans one opened delivery out to existing and lifecycle subscribers with one source read', async () => {
+    const admissions: unknown[] = [];
+    const lifecycleRef = { pluginId: 'happier.scm.forge.github', localId: 'automation/pull-request-lifecycle-v1' };
+    const openedRef = { pluginId: 'happier.scm.forge.github', localId: 'automation/pull-request-opened-v1' };
+    const execute = vi.fn(async (actionId: string, value: unknown) => {
+      if (actionId === 'automation.event.sources.list') return { kind: 'page', revision: '7', nextCursor: null,
+        definitions: [{ ...sourceDefinition('automation-1', 'github:repository:77'), eventRef: openedRef },
+          { ...sourceDefinition('automation-2', 'github:repository:77'), eventRef: lifecycleRef }] };
+      if (actionId === 'automation.event.admit') { admissions.push(value); return { results: [{ kind: 'admitted', runId: 'run-1', checkpointSafe: true }] }; }
+      if (actionId === 'automation.event.source.status.report') return {};
+      throw new Error(`unexpected Action ${actionId}`);
+    });
+    const body = Buffer.from(JSON.stringify({ action: 'opened', repository: { id: 77, full_name: 'acme/widgets' },
+      pull_request: { id: 455, number: 33, title: 'Preview', created_at: '2026-08-10T12:04:05Z',
+        user: { id: 99, login: 'octocat', type: 'User' },
+        head: { sha: 'a'.repeat(40), ref: 'preview', repo: { id: 77, full_name: 'acme/widgets' } },
+        base: { ref: 'main', repo: { id: 77, full_name: 'acme/widgets' } } } }));
+    const result = await createGithubWebhookActionHandlerV1()({ ...input,
+      request: { ...input.request, headers: [{ name: 'x-github-event', value: 'pull_request' }], rawBodyBytes: body.byteLength, rawBodyBase64: body.toString('base64') },
+      verified: { verifier: 'github_hmac_sha256_v1', eventType: 'pull_request' },
+    }, contextWithActions(execute));
+    expect(result).toEqual({ kind: 'settled', disposition: 'accepted' });
+    expect(admissions).toEqual([expect.objectContaining({ eventRef: openedRef }), expect.objectContaining({ eventRef: lifecycleRef,
+      payload: expect.objectContaining({ pullRequest: expect.objectContaining({ headSha: 'a'.repeat(40), action: 'opened' }) }) })]);
+    expect(execute.mock.calls.filter(([actionId]) => actionId === 'automation.event.sources.list')).toHaveLength(1);
+  });
   it('declares the account-endpoint routed verifier and registers its same-plugin handler', async () => {
     expect(PLUGIN_MANIFEST.contributes.webhooks).toEqual([expect.objectContaining({
       id: 'github-events',

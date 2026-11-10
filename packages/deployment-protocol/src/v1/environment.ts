@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { DeploymentEnvironmentCapabilitiesV1Schema, DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentOwnerV1Schema, DeploymentIngressV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryComposeV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentReleasePolicyV1Schema, DeploymentServiceExportsV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryComposeV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentReleasePolicyV1Schema, DeploymentServiceExportsV1Schema, parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import { hasCompleteDeploymentPreviewRelationV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -10,6 +10,10 @@ import { DeploymentEnvironmentTemplateProvenanceV1Schema } from './template.js';
 import { DeploymentPreviewProvenanceV1Schema, DeploymentPreviewTemplateV1Schema } from './previews.js';
 import { DeploymentEnvironmentBackupV1Schema } from './backup.js';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { WorkflowRunIdV1Schema } from '@happier-dev/protocol/workflows/workflowIdsV1';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/protocol';
+import type { MachineSecretGrantV1 } from '../secrets/machineSecretGrantV1.js';
 
 export { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, DeploymentSecretBindingSourceV1Schema, DeploymentVariableBindingSourceV1Schema, DeploymentNonSecretVariableBindingSourceV1Schema, EnvironmentVariableBindingV1Schema, StoredAppPresetInputV1Schema, DeploymentTemplateRefV1Schema, StoredAppPresetBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 export type { EnvironmentVariableBindingV1, StoredAppPresetInputV1 } from '@happier-dev/protocol';
@@ -83,9 +87,77 @@ export const DeploymentEnvironmentContentV1Schema = z.strictObject({
     template: z.optional(DeploymentEnvironmentTemplateProvenanceV1Schema),
     previewTemplate: z.optional(DeploymentPreviewTemplateV1Schema),
     previewProvenance: z.optional(DeploymentPreviewProvenanceV1Schema),
+    /** Existing Workflow custody locates the authenticated branch-create captures on PR close. */
+    previewCreationRunId: z.optional(WorkflowRunIdV1Schema),
 }).check(z.refine(content => new Set(content.bindings.map(environmentSecretBindingIdentityV1)).size === content.bindings.length,
 { message: 'Binding purpose identities must be unique.' }));
 export type DeploymentEnvironmentContentV1 = z.infer<typeof DeploymentEnvironmentContentV1Schema>;
+
+/** Other purpose rows belong to their addressed operational owner. */
+export function isEnvironmentSecretBindingManagedByBindingsWriterV1(binding: EnvironmentSecretBindingV1):
+    binding is Extract<EnvironmentSecretBindingV1, { purpose: 'variable' | 'registry' }> {
+    return binding.purpose === 'variable' || binding.purpose === 'registry';
+}
+
+/** A combined definition update carries existing operational custody without authoring it. */
+export function readRetainedOperationalEnvironmentBindingGrantsV1(input: Readonly<{
+    previousBindings: readonly EnvironmentSecretBindingV1[];
+    bindings: readonly EnvironmentSecretBindingV1[];
+    existingGrants: readonly MachineSecretGrantV1[];
+}>): readonly MachineSecretGrantV1[] | null {
+    const operational = (bindings: readonly EnvironmentSecretBindingV1[]) => bindings
+        .filter(binding => !isEnvironmentSecretBindingManagedByBindingsWriterV1(binding))
+        .sort((left, right) => environmentSecretBindingIdentityV1(left).localeCompare(environmentSecretBindingIdentityV1(right)));
+    const previous = operational(input.previousBindings);
+    if (!sameStrictJsonValue(previous, operational(input.bindings))) return null;
+    const resources = new Map<string, number>();
+    for (const binding of previous) {
+        if (binding.source.kind !== 'secret') continue;
+        const source = parseSavedSecretRefV1(binding.source.ref);
+        if (source.kind === 'shared_resource') resources.set(source.resourceId, binding.source.resourceRevision);
+    }
+    return input.existingGrants.filter(grant => grant.kind === 'secret'
+        && resources.get(grant.resourceId) === grant.resourceRevision);
+}
+
+/** A reviewed definition may retire a local database; its metadata cannot keep naming the removed service.
+ * This changes desired configuration only. Physical volumes and retained backup snapshots keep their existing owners. */
+export async function reconcileDeploymentRemovedDataServicesV1(content: DeploymentEnvironmentContentV1,
+    definition: Extract<DeploymentEnvironmentDefinitionV1, { kind: 'stored' }>): Promise<DeploymentEnvironmentContentV1> {
+    const updated = { ...content, definition };
+    const template = content.template;
+    if (!template?.data?.length || content.definition.kind !== 'stored') return updated;
+    const source = await parseDeploymentComposeSourceV1(definition.document);
+    const previousSource = await parseDeploymentComposeSourceV1(content.definition.document);
+    const services = source.services;
+    const previousServices = previousSource.services;
+    if (!services || typeof services !== 'object' || Array.isArray(services)
+        || !previousServices || typeof previousServices !== 'object' || Array.isArray(previousServices))
+        throw Object.assign(new Error('Compose services are required'), { code: 'invalid_request' });
+    const removed = new Set(template.data.filter(data => Object.hasOwn(previousServices, data.service)
+        && !Object.hasOwn(services, data.service)).map(data => data.service));
+    if (!removed.size) return updated;
+    const { data: _data, health: _health, exports: _exports, ...provenance } = template;
+    const data = template.data.filter(entry => !removed.has(entry.service));
+    const health = template.health?.filter(entry => !removed.has(entry.service));
+    const exports = template.exports && Object.fromEntries(Object.entries(template.exports).filter(([, entry]) => !removed.has(entry.service)));
+    updated.template = { ...provenance, services: template.services.filter(service => !removed.has(service)),
+        ...(data.length ? { data } : {}), ...(health?.length ? { health } : {}),
+        ...(exports && Object.keys(exports).length ? { exports } : {}) };
+    if (content.ownServer?.serviceExports) {
+        const { serviceExports, ...policy } = content.ownServer;
+        const retained = serviceExports.filter(entry => !removed.has(entry.service));
+        updated.ownServer = { ...policy, ...(retained.length ? { serviceExports: retained } : {}) };
+    }
+    if (content.backup && 'configRevision' in content.backup) {
+        const sources = content.backup.sources.filter(entry => !removed.has(entry.service));
+        if (sources.length !== content.backup.sources.length) {
+            if (sources.length) updated.backup = { ...content.backup, sources, configRevision: content.backup.configRevision + 1 };
+            else delete updated.backup;
+        }
+    }
+    return updated;
+}
 /** A binding writer may replace only bindings, never another owner's content leaves. */
 export function isDeploymentEnvironmentBindingsOnlyUpdateV1(
     previous: DeploymentEnvironmentContentV1, candidate: DeploymentEnvironmentContentV1,

@@ -21,7 +21,7 @@ export function projectWorkflowActionRowPresentation(
     previous?: WorkflowActionRowPresentation,
 ): WorkflowActionRowPresentation {
     const referenceLabels = Object.fromEntries(Object.entries(block.input).map(([field, binding]) => [field,
-        (binding.kind === 'list' ? binding.items : [binding]).map(reference =>
+        (binding.kind === 'list' ? binding.items : binding.kind === 'object' ? Object.values(binding.fields) : [binding]).map(reference =>
             reference.kind === 'origin_session_id' ? '' : formatWorkflowValueReference(draft, reference, field)),
     ]));
     const fieldIssues = collectWorkflowFieldIssueTexts(revealIssues ? workflowIssuesForBlock(validation, block.id, draft) : [], draft);

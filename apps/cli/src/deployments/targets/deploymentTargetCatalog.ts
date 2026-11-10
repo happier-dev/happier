@@ -43,6 +43,11 @@ function normalizeTarget(entry: ResolvedDeploymentTargetContribution): Deploymen
             roles[group] = nested;
         }
     }
+    if (entry.definition.role === 'data' && entry.definition.dataV1?.branches?.previewInput !== undefined) {
+        const branches = roles.branches ?? {};
+        Object.assign(branches, { previewInput: entry.definition.dataV1.branches.previewInput });
+        roles.branches = branches;
+    }
     const normalizedRoles = entry.definition.role === 'runtime' ? { actions: roles }
         : entry.definition.dataV1 === undefined ? {} : { dataV1: roles };
     return DeploymentTargetV1Schema.parse({ ...entry.definition, v: 1,

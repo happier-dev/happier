@@ -128,13 +128,24 @@ describe('preview Environment relation admission', () => {
             requestKey: crypto.randomUUID(), targetId: 'own-server', role: 'runtime',
             machines: [{ machineId: machine.id, installationId }], ...linkContent }));
         if (!otherLink.ok) throw new Error(otherLink.error);
+        const sourceDataContent = await artifactFor('deployment-target-link.v1', {});
+        const dataLink = await inTx(tx => linkDeploymentTargetInTx(tx, owner.id, { serverId,
+            environmentId: parent.environmentId, expectedRevision: link.revision, requestKey: crypto.randomUUID(),
+            targetId: 'database', role: 'data', source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.supabase', localId: 'database' } },
+            targetKind: 'postgres', machines: [], ...sourceDataContent }));
+        if (!dataLink.ok) throw new Error(dataLink.error);
+        const childDataContent = await artifactFor('deployment-target-link.v1', {});
+        const childRuntimeContent = await artifactFor('deployment-target-link.v1', {});
         const childContent = await artifactFor('deployment-environment.v1', { ...content, previewProvenance: {
             v: 1, templateEnvironmentId: parent.environmentId, runtimeTargetLinkId: link.targetLinkId, repository,
             pullRequestId: 'opaque-pr-17', pullRequestNumber: 17, author: { id: 'author', login: 'contributor' }, headRepository: repository,
         } });
         const input = { ...placement, ...childContent, purpose: 'preview' as const, requestKey: crypto.randomUUID(),
-            preview: { templateEnvironmentId: parent.environmentId, expectedTemplateRevision: link.revision,
-                pullRequestId: 'opaque-pr-17', runtimeTargetLinkId: link.targetLinkId } };
+            preview: { templateEnvironmentId: parent.environmentId, expectedTemplateRevision: dataLink.revision,
+                pullRequestId: 'opaque-pr-17', runtimeTargetLinkId: link.targetLinkId },
+            firstTargetLink: { ...childRuntimeContent, machines: [{ machineId: machine.id, installationId }] },
+            previewDataTargetLinks: [{ templateDataTargetLinkId: dataLink.targetLinkId,
+                expectedTemplateTargetLinkRevision: dataLink.targetLinkRevision, ...childDataContent }] };
         // AM-10 admits the prepared storage relationship. Artifact preparation,
         // explicit Duplicate choices and SCM/fork execution keep their own owners.
         const admissionAutomationId = crypto.randomUUID();
@@ -159,10 +170,31 @@ describe('preview Environment relation admission', () => {
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const postCreate = (payload: unknown) => app.inject({ method: 'POST', url: '/v1/deployments/environments',
                 headers: { 'x-test-user-id': owner.id, 'content-type': 'application/json' }, payload: JSON.stringify(payload) });
+            for (const candidate of [
+                { ...input.previewDataTargetLinks[0], templateDataTargetLinkId: link.targetLinkId },
+                { ...input.previewDataTargetLinks[0], expectedTemplateTargetLinkRevision: dataLink.targetLinkRevision + 1 },
+                { ...input.previewDataTargetLinks[0], ...sourceDataContent },
+            ]) {
+                const refused = await postCreate({ ...input, requestKey: crypto.randomUUID(), previewDataTargetLinks: [candidate] });
+                expect(refused.statusCode, refused.body).toBe(409);
+                expect(await db.deploymentEnvironment.count({ where: { previewTemplateEnvironmentId: parent.environmentId } })).toBe(0);
+            }
             const response = await postCreate(input);
             expect(response.statusCode, response.body).toBe(200);
             const created = DeploymentEnvironmentCreateResultV1Schema.parse(response.json());
             if (!created.ok) throw new Error(created.error);
+            expect(created).toMatchObject({ revision: 3, runtimeTargetLinkId: expect.any(String),
+                previewDataTargets: [{ templateDataTargetLinkId: dataLink.targetLinkId,
+                targetLinkId: expect.any(String), targetLinkRevision: 1 }] });
+            const childLinks = await db.deploymentTargetLink.findMany({ where: { environmentId: created.environmentId } });
+            expect(childLinks).toHaveLength(2);
+            const childData = childLinks.find(row => row.role === 'data');
+            expect(childData).toMatchObject({ role: 'data', pluginId: 'happier.deploy.supabase', contributionLocalId: 'database',
+                targetKind: 'postgres', ...childDataContent });
+            expect(childData!.id).not.toBe(dataLink.targetLinkId);
+            expect(childLinks.find(row => row.role === 'runtime')).toMatchObject({ id: created.runtimeTargetLinkId,
+                hostTargetId: 'own-server', ...childRuntimeContent });
+            expect(created.runtimeTargetLinkId).not.toBe(link.targetLinkId);
             const replay = await postCreate(input);
             expect(replay.statusCode, replay.body).toBe(200);
             expect(DeploymentEnvironmentCreateResultV1Schema.parse(replay.json())).toEqual(created);
@@ -194,7 +226,7 @@ describe('preview Environment relation admission', () => {
             }
             const before = await db.deploymentEnvironment.count({ where: { projectSourceId: source.source.id } });
             const stale = await postCreate({ ...input, requestKey: crypto.randomUUID(),
-                preview: { ...input.preview, expectedTemplateRevision: link.revision + 1 } });
+                preview: { ...input.preview, expectedTemplateRevision: dataLink.revision + 1 } });
             expect(stale.statusCode, stale.body).toBe(409);
             expect(stale.json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
             const otherSource = await inTx(tx => createProjectSourceInTx(tx, owner.id, {

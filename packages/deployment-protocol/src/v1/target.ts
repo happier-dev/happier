@@ -73,10 +73,12 @@ export const DeploymentTargetV1Schema: z.ZodMiniType<DeploymentTargetV1> = z.dis
     if (target.role === 'data') {
         if (target.source.kind !== 'plugin') return true;
         const pluginId = target.source.contribution.pluginId;
-        return Object.values(target.dataV1 ?? {}).every(group => !group || Object.values(group).every(ref => !ref
+        const { branches, ...groups } = target.dataV1 ?? {};
+        const { previewInput: _previewInput, ...branchReferences } = branches ?? {};
+        return [...Object.values(groups).flatMap(group => Object.values(group ?? {})), ...Object.values(branchReferences)].every(ref => !ref
             || ref.kind === 'plugin' && ('actionId' in ref
                 ? parseQualifiedPluginActionId(ref.actionId)?.pluginId === pluginId
-                : parseQualifiedPluginContributionKey(ref.resourceId)?.pluginId === pluginId)));
+                : parseQualifiedPluginContributionKey(ref.resourceId)?.pluginId === pluginId));
     }
     const upload = target.actions.uploadDeploy;
     if (!upload) return true;

@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
+import { WorkflowActionFieldBindingV1Schema } from '../../workflows/workflowLeafV1.js';
+import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
 import { normalizePluginJsonSchema, pluginJsonValuesEqual } from '../actions/protocolComposableSchema.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginActionIconV2Schema, type PluginActionContributionV2 } from '../actions/v2.js';
@@ -42,6 +43,7 @@ export const DeploymentDataParentBranchRefV1Schema = lazyZodSchema(() => z.stric
     providerProjectId: z.string(), branchId: z.string(),
 }));
 export type DeploymentDataParentBranchRefV1 = z.infer<typeof DeploymentDataParentBranchRefV1Schema>;
+export const DeploymentDataParentBranchRefV1ProtocolSchema = projectZodProtocolSchema(DeploymentDataParentBranchRefV1Schema);
 
 /** Optional managed-data capabilities share one grammar across declaration and normalized refs. */
 export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType, TResource extends z.ZodMiniType>(action: TAction, resource: TResource) {
@@ -50,7 +52,9 @@ export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType
             provisionOptions: z.optional(resource), provisionOptionsAction: z.optional(action),
             provision: z.optional(action), link: z.optional(action) })),
         branches: z.optional(z.strictObject({ list: z.optional(resource), listAction: z.optional(action),
-            create: z.optional(action), delete: z.optional(action) })),
+            create: z.optional(action), delete: z.optional(action),
+            /** Plugin-owned preview operands, evaluated against the occurrence's neutral preview input. */
+            previewInput: z.optional(z.record(z.string().check(z.minLength(1)), WorkflowActionFieldBindingV1Schema)) })),
         query: z.optional(z.strictObject({ readOnly: z.optional(action) })),
         connectionSecret: z.optional(z.strictObject({ save: z.optional(action) })),
     });
@@ -89,7 +93,7 @@ export function readDeploymentTargetReferenceRolesV1(descriptor: DeploymentTarge
     if (descriptor.role === 'data') return Object.entries(descriptor.dataV1 ?? {}).flatMap(([group, value]) => {
         if (!value) return [];
         return Object.entries(value).flatMap(([leaf, reference]) => {
-            if (reference === undefined) return [];
+            if (typeof reference !== 'string') return [];
             // A Resource's backing Action spends the same role through the ordinary executor.
             const operation = leaf.endsWith('Action') ? leaf.slice(0, -6) : leaf;
             return [{

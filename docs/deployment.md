@@ -922,9 +922,13 @@ The Iroh export contract is development-only. Activation requires one effective
 TCP publication for the exported container port, bound to a literal loopback
 address with an actual host port. Host networking cannot establish that mapping.
 `resolvePrivateServiceExportAdmissionForHost` selects the active member,
-installation and current managed-service occurrence and derives the signed
+installation and current managed-service occurrence and derives the exact
 `TcpTunnelServiceExportBindingV1`, including its generation and loopback destination.
-Home admits the requester's access to both Machines when issuing the TCP grant;
+Home receives only the exact allowed port and a SHA-256 commitment to that binding
+with A's random 256-bit nonce; Compose service names, export keys and the nonce
+travel to B only in the encrypted Iroh tunnel open. Machine service rows and
+metadata also remain encrypted from Home for E2EE Accounts. Home admits the
+requester's access to both Machines when issuing the TCP grant;
 the destination daemon runs that same occurrence selector against the declarations
 retained on its applied Environment service and compares the resulting binding at
 tunnel open. B does not fetch a newer saved Environment or use requester credentials.
@@ -1387,7 +1391,8 @@ This storage relation does not establish current-head/fork approval. The Workflo
 claimant reads current `previewTemplate.data` for each PR occurrence. It creates
 `pr-<number>` through the ordinary Environment writer, using fresh child runtime
 and data links, then executes the selected data target's declared branch-create
-Action. Neon declares schema-only initialization; Supabase declares `withData: false`.
+Action with the saved parent reference. Neon declares schema-only initialization;
+Supabase declares `withData: false`.
 The existing link writer publishes the returned child branch identity.
 Existing PR children are reused on synchronization. Production bindings, backup
 settings and ingress are not copied into the child.
@@ -2484,11 +2489,12 @@ source capture. `copy.source` names its Environment and Link, while
 executor must also serve the destination's existing native generation. Copy
 uses the original capture receipt's operation for `copySourceRead`, including
 a failed historical capture, rather than substituting the latest source deploy.
-The destination database must be absent: the existing restore safety rule
-refuses an occupied database because the source purpose cannot write a
-destination safety backup into the source repository. Copy creates and verifies
-staging through the ordinary restore lifecycle; it does not change either
-Environment's serving deployment pointer or the source database.
+An existing destination database, including schema-only data, requires its own
+configured backup. Copy's safety run uses that destination's ordinary bindings
+and repository; the source purpose never writes a safety backup into the source
+repository. A missing destination database needs no safety write. Copy creates
+and verifies staging through the ordinary restore lifecycle; it does not change
+either Environment's serving deployment pointer or the source database.
 
 Private export references can select `component: 'host'` or `'port'`; omitting
 it retains the complete endpoint. These are projections of the same admitted
@@ -2496,6 +2502,19 @@ export and forward, including its actual Iroh route. Database credentials do
 not enter the export: the app binds the database administrator's Saved Secret
 through ordinary Environment bindings and assembles its connection URL in the
 reviewed Compose definition.
+
+The development Database page's Move remedy selects an already provisioned,
+dedicated PostgreSQL Environment with backups configured on the source executor. It runs a fresh backup
+and the public restore prepare/confirm journey before offering app changes.
+The destination supplies a private export, its template's public username and
+database name, and its administrator Saved Secret. The review replaces the
+app's connection URL with host and port reference variables and the ordinary
+bound password variable, removes the old local database service and its
+dependencies, and saves definition and bindings in one Environment revision.
+A connection variable that cannot be rewritten is refused with its variable
+name. A failed preparation or stale revision applies neither half. Saving this
+review changes desired configuration; the person then runs the ordinary Deploy
+to apply it. The original service remains running until that Deploy.
 
 The Project deployment read controller opens Environment collection content and
 visible history receipt content through the existing Account Artifact reader.

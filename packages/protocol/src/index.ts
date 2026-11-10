@@ -27,6 +27,7 @@ export * from './deployments/deploymentBindingPatchV1.js';
 export { CanonicalHttpOriginSchema } from './http/canonicalHttpOrigin.js';
 export * from './artifacts/artifactMutationHttpV1.js';
 export { ScmCommitOidSchema } from './scm/commitPublication.js';
+export * from './scm/pullRequestLifecycleV1.js';
 export * from './account/publicProfile.js';
 export * from './account/publicProfilePublication.js';
 export * from './account/publicProfileEmbeds.js';
@@ -1372,7 +1373,7 @@ export { HealthCheckKindContributionV1Schema, type HealthCheckKindContributionV1
 export { projectPluginStoreKindDeclarationV1, PluginStoreKindContributionV1Schema, PluginStoreItemReferenceV1Schema, PluginStoreItemReferenceV1ProtocolSchema,
   PluginStoreItemV1Schema, PluginStoreItemV1ProtocolSchema, type PluginStoreKindContributionV1,
   type PluginStoreItemReferenceV1, type PluginStoreItemV1 } from './plugins/contributions/storeKinds.js';
-export { DeploymentDataParentBranchRefV1Schema, type DeploymentDataParentBranchRefV1, type DeploymentTargetContributionV1 } from './plugins/contributions/deploymentTargets.js';
+export { DeploymentDataParentBranchRefV1Schema, DeploymentDataParentBranchRefV1ProtocolSchema, type DeploymentDataParentBranchRefV1, type DeploymentTargetContributionV1 } from './plugins/contributions/deploymentTargets.js';
 export {
   PluginInputTypeContributionV1Schema,
   type PluginInputTypeContributionV1,

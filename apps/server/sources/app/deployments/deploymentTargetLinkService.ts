@@ -10,6 +10,7 @@ import { admitDeploymentStoredContentInTx, deploymentContentReference } from './
 import { deploymentIntentDigest, loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, type AdmittedDeploymentEnvironment } from './deploymentEnvironmentService';
 import { publishDeploymentChangesInTx } from './deploymentPublication';
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
+import { hasDeploymentMemberDrainInTx } from './deploymentMembershipService';
 
 export function projectDeploymentTargetHeader(row: Prisma.DeploymentTargetLinkGetPayload<{ include: { machines: true } }>) {
     return DeploymentTargetLinkHeaderV1Schema.parse({
@@ -66,9 +67,11 @@ export async function linkDeploymentTargetInTx(tx: Tx, actorAccountId: string, i
 /** Trusted write continuation: the public writer (or coupled create) already admitted Source and requester placement. */
 export async function linkDeploymentTargetForAdmittedEnvironmentInTx(tx: Tx, actorAccountId: string, input: DeploymentTargetLinkInputV1,
     loaded: AdmittedDeploymentEnvironment,
+    preparation?: Readonly<{ contentAdmitted: true }>,
 ) {
     const plugin = input.source?.kind === 'plugin' ? input.source : null;
-    const contentFailure = await admitDeploymentStoredContentInTx(tx, actorAccountId, loaded.admission.owner, input, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1);
+    const contentFailure = preparation?.contentAdmitted ? null
+        : await admitDeploymentStoredContentInTx(tx, actorAccountId, loaded.admission.owner, input, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1);
     if (contentFailure) return contentFailure;
     const now = await readTransactionDatabaseTime(tx);
     const repeatKey = `deployments.targets.link:${actorAccountId}:${input.environmentId}:${input.requestKey}`;
@@ -85,21 +88,40 @@ export async function linkDeploymentTargetForAdmittedEnvironmentInTx(tx: Tx, act
     const previous = input.replacesLinkId ? await tx.deploymentTargetLink.findFirst({ where: {
         id: input.replacesLinkId, environmentId: input.environmentId, deletedAt: null, detachedAt: null,
     }, include: { machines: { orderBy: { position: 'asc' } } } }) : null;
+    const replacesPreviewData = input.replacesLinkId !== undefined && input.role === 'data';
     if (input.replacesLinkId) {
-        if (input.role !== 'runtime' || !previous || previous.revision !== input.expectedTargetLinkRevision
-            || previous.role !== 'runtime' || loaded.row.runtimeTargetLinkId !== previous.id) return deploymentFailure('deployment_conflict');
+        if (!previous || previous.revision !== input.expectedTargetLinkRevision || previous.role !== input.role)
+            return deploymentFailure('deployment_conflict');
+        if (replacesPreviewData) {
+            // The branch result replaces its child bootstrap scope without changing the
+            // link identity already captured by the creating Workflow for teardown.
+            if (loaded.row.purpose !== 'preview' || !loaded.row.previewTemplateEnvironmentId || !plugin
+                || previous.sourceKind !== 'plugin' || previous.pluginId !== plugin.contribution.pluginId
+                || previous.contributionLocalId !== plugin.contribution.localId || previous.targetKind !== input.targetKind
+                || (previous.machineId ?? undefined) !== input.machineId
+                || (previous.installationId ?? undefined) !== input.installationId) return deploymentFailure('deployment_conflict');
+        } else if (input.role !== 'runtime' || loaded.row.runtimeTargetLinkId !== previous.id) return deploymentFailure('deployment_conflict');
         // Dropping a relation is not evidence that its serving workload drained.
         // Keep every old installation discoverable until its native owner proves removal.
-        if (!plugin && previous.sourceKind === 'host' && (previous.hostTargetId !== input.targetId
-            || previous.machines.some(member => !input.machines.some(next => next.machineId === member.machineId
-                && next.installationId === member.installationId)))) return deploymentFailure('deployment_conflict');
+        if (!plugin && previous.sourceKind === 'host') {
+            const removed = previous.machines.filter(member => !input.machines.some(next => next.machineId === member.machineId
+                && next.installationId === member.installationId));
+            if (previous.hostTargetId !== input.targetId || removed.length > 0 && !await hasDeploymentMemberDrainInTx(tx, {
+                environmentId: input.environmentId, targetLinkId: previous.id, targetLinkRevision: previous.revision,
+                deploymentId: input.drainedDeploymentId, members: removed,
+            })) return deploymentFailure('deployment_conflict');
+        }
         const busy = await tx.deployment.findFirst({ where: { environmentId: input.environmentId,
             state: { in: deploymentInProgressStates() } }, select: { id: true } });
         if (busy) return { ok: false as const, error: 'deployment_in_progress' as const, deploymentId: busy.id,
             href: `/deployments/environments/${encodeURIComponent(input.environmentId)}/deployments/${encodeURIComponent(busy.id)}` };
     } else if (input.role === 'runtime' && loaded.row.runtimeTargetLinkId) return deploymentFailure('deployment_conflict');
     const retainsOwnServer = !plugin && previous?.sourceKind === 'host';
-    const link = await tx.deploymentTargetLink.create({ data: {
+    const link = replacesPreviewData && previous
+        ? await tx.deploymentTargetLink.update({ where: { id: previous.id }, data: {
+            ...deploymentContentReference(input), revision: { increment: 1 },
+        } })
+        : await tx.deploymentTargetLink.create({ data: {
         environmentId: input.environmentId, role: input.role,
         ...(plugin ? { sourceKind: 'plugin', pluginId: plugin.contribution.pluginId, contributionLocalId: plugin.contribution.localId,
             machineId: input.machineId, installationId: input.installationId }

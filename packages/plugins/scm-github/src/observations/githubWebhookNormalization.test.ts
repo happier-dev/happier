@@ -18,8 +18,47 @@ const issueCommentPayload = {
   },
 };
 const defaultReceivedAtMs = Date.parse('2026-08-10T12:10:00Z');
+const pullRequestSourceFacts = {
+  user: { id: 99, login: 'octocat', type: 'User' },
+  head: { sha: 'a'.repeat(40), ref: 'preview', repo: { id: 77, full_name: 'acme/widgets' } },
+  base: { ref: 'main', repo: { id: 77, full_name: 'acme/widgets' } },
+};
 
 describe('GitHub webhook normalization', () => {
+  it.each(['opened', 'reopened', 'synchronize', 'closed', 'merged'] as const)(
+    'projects %s with exact head and neutral repository identities without using the sender as author', action => {
+      const delivery = normalizeGithubWebhookDelivery({ eventType: 'pull_request', providerDeliveryId: `pr-${action}`, receivedAtMs: defaultReceivedAtMs,
+        rawBody: new TextEncoder().encode(JSON.stringify({ action: action === 'merged' ? 'closed' : action,
+          repository: { id: 77, full_name: 'acme/widgets' },
+          sender: { id: 999, login: 'other-person', type: 'User' },
+          pull_request: { id: 455, number: 33, title: 'Preview', merged: action === 'merged',
+            created_at: '2026-08-10T12:04:05Z', updated_at: '2026-08-10T12:05:06Z',
+            closed_at: '2026-08-10T12:05:06Z', merged_at: '2026-08-10T12:05:06Z', merge_commit_sha: 'c'.repeat(40),
+            user: { id: 99, login: 'octocat', type: 'User' },
+            head: { sha: 'a'.repeat(40), ref: 'preview', repo: { id: 78, full_name: 'Octocat/Widgets' } },
+            base: { ref: 'main', repo: { id: 77, full_name: 'Acme/Widgets' } },
+          } })) });
+      expect(delivery.automationEvents).toContainEqual(expect.objectContaining({
+        eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/pull-request-lifecycle-v1' },
+        payload: { repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' }, pullRequest: {
+          id: '455', number: 33, action, headSha: 'a'.repeat(40), headRef: 'preview', baseRef: 'main',
+          baseRepository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/widgets' },
+          headRepository: { kind: 'github', deployment: 'https://github.com', repository: 'octocat/widgets' },
+          author: { id: '99', login: 'octocat', kind: 'human' },
+        } },
+      }));
+    },
+  );
+  it('retains a closed pull request with a deleted source repository and rejects a shortened head SHA', () => {
+    const delivery = (sha: string) => normalizeGithubWebhookDelivery({ eventType: 'pull_request', providerDeliveryId: 'deleted-head', receivedAtMs: defaultReceivedAtMs,
+      rawBody: new TextEncoder().encode(JSON.stringify({ action: 'closed', repository: { id: 77, full_name: 'acme/widgets' },
+        pull_request: { ...pullRequestSourceFacts, id: 455, number: 33, merged: false, closed_at: '2026-08-10T12:05:06Z',
+          head: { ...pullRequestSourceFacts.head, repo: null, sha } } })) });
+    expect(delivery('a'.repeat(40)).automationEvents).toEqual([expect.objectContaining({ payload: expect.objectContaining({
+      pullRequest: expect.objectContaining({ action: 'closed', headRepository: null, headSha: 'a'.repeat(40) }),
+    }) })]);
+    expect(() => delivery('a'.repeat(7))).toThrow();
+  });
   it.each(['requested', 'approved', 'rejected'])('projects deployment_review/%s only to its exact delivered run', action => {
     const delivery = normalizeGithubWebhookDelivery({ eventType: 'deployment_review', providerDeliveryId: 'review-1', receivedAtMs: defaultReceivedAtMs,
       rawBody: new TextEncoder().encode(JSON.stringify({ action, repository: { id: 77, full_name: 'acme/widgets' }, workflow_run: { id: 81 } })) });
@@ -102,6 +141,7 @@ describe('GitHub webhook normalization', () => {
       providerDeliveryId: 'delivery-push',
       eventType: 'push',
       comment: null,
+      automationEvents: [normalized.automationEvent],
       automationEvent: {
         eventRef: {
           pluginId: 'happier.scm.forge.github',
@@ -172,6 +212,7 @@ describe('GitHub webhook normalization', () => {
         action: 'opened',
         repository: { id: 77, full_name: 'acme/widgets' },
         pull_request: {
+          ...pullRequestSourceFacts,
           id: 455,
           number: 33,
           title: 'Add semantic GitHub Events',
@@ -188,6 +229,7 @@ describe('GitHub webhook normalization', () => {
         action: 'closed',
         repository: { id: 77, full_name: 'acme/widgets' },
         pull_request: {
+          ...pullRequestSourceFacts,
           id: 456,
           number: 34,
           merged: true,
@@ -244,10 +286,12 @@ describe('GitHub webhook normalization', () => {
         action: 'closed',
         repository: { id: 77, full_name: 'acme/widgets' },
         pull_request: {
+          ...pullRequestSourceFacts,
           id: 457,
           number: 35,
           merged: false,
           merged_at: null,
+          closed_at: '2026-08-10T12:05:06Z',
           merge_commit_sha: null,
         },
       })),
@@ -316,6 +360,7 @@ describe('GitHub webhook normalization', () => {
       eventType: 'issue_comment',
       comment: null,
       automationEvent: null,
+      automationEvents: [],
     });
   });
 

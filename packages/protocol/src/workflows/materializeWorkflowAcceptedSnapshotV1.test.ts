@@ -13,7 +13,8 @@ import { compilePluginJsonSchema } from '../plugins/actions/jsonSchemaValidation
 import { LaunchProfileV2Schema } from '../profiles/v2/schema.js';
 import { REVIEW_AND_CONVERGE_WORKFLOW_V1 } from './builtins/reviewAndConverge.js';
 import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from './builtins/planWithAPanel.js';
-import { materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from './materializeWorkflowAcceptedSnapshotV1.js';
+import { bindWorkflowLeafInputsV1, materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from './materializeWorkflowAcceptedSnapshotV1.js';
+import { WorkflowDefinitionV1Schema } from './workflowV1.js';
 import { WorkflowAcceptedSnapshotV1Schema } from './workflowDefinitionV1.js';
 import { validateWorkflowDefinition } from './workflowValidationV1.js';
 import { ConnectedServiceBindingsV2Schema } from '../connect/connectedServiceBindings.js';
@@ -27,6 +28,20 @@ const context = {
 };
 const definition = { version: 1, defaults: { agentTarget }, blocks: [{ kind: 'step', id: 'work', document: { text: 'Work', references: [], attachments: [] } }] };
 const available = async () => true;
+it('binds object fields at admission and keeps native result fields deferred', () => {
+  const parsed = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, inputs: [{ name: 'principal', valueType: 'json', required: true }],
+    blocks: [{ kind: 'action', id: 'link', actionId: 'example.preview/actions/link', input: { provider: { kind: 'object', fields: {
+      credentialPrincipal: { kind: 'input', name: 'principal' },
+      providerIdentity: { kind: 'result', producer: { blockId: 'branch' }, path: ['providerIdentity'] },
+      providerEnvironment: { kind: 'literal', value: { kind: 'custom', id: 'preview' } },
+    } } } }] });
+  const leaf = parsed.blocks[0]!;
+  if (leaf.kind !== 'action') throw new Error('Expected Action leaf');
+  expect(bindWorkflowLeafInputsV1(parsed, leaf, { inputs: { principal: { kind: 'account', accountId: 'owner' } } }, 'run')).toEqual([
+    { provider: { credentialPrincipal: { kind: 'account', accountId: 'owner' }, providerIdentity: { kind: 'unresolved' },
+      providerEnvironment: { kind: 'custom', id: 'preview' } } },
+  ]);
+});
 // The authenticated Session lookup is a network boundary; selection and authority stay real.
 const originSessionTarget = { address: { serverId: 'home', sessionId: 'origin' }, machineId: 'machine' };
 const resolveOriginSessionTarget: NonNullable<MaterializeWorkflowAcceptedSnapshotV1Input['effects']['resolveSessionTarget']> = async value =>

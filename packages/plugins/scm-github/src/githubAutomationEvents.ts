@@ -1,4 +1,5 @@
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import { ScmHostingPullRequestLifecycleActionV1ProtocolSchema, ScmHostingPullRequestLifecycleV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import { GITHUB_PLUGIN_ID } from './observations/githubProviderContracts.js';
 import type { GithubChecksConditionSnapshotV1 } from './triage/checksCondition.js';
@@ -8,6 +9,7 @@ export const GITHUB_AUTOMATION_EVENT_LOCAL_IDS = Object.freeze({
   issueOpened: 'automation/issue-opened-v1',
   pullRequestMerged: 'automation/pull-request-merged-v1',
   pullRequestOpened: 'automation/pull-request-opened-v1',
+  pullRequestLifecycle: 'automation/pull-request-lifecycle-v1',
   push: 'automation/repository-pushed-v1',
   checksCompleted: 'automation/pull-request-checks-completed-v1',
   checksFailed: 'automation/pull-request-checks-failed-v1',
@@ -28,7 +30,13 @@ export type GithubAutomationEventRepositoryV1 = Readonly<{
   nameWithOwner: string;
 }>;
 
+/** Provider facts only: admission and fork policy belong to the consuming Workflow. */
+export const GithubPullRequestLifecycleActionV1Schema = ScmHostingPullRequestLifecycleActionV1ProtocolSchema;
+export const GithubPullRequestLifecycleV1Schema = ScmHostingPullRequestLifecycleV1ProtocolSchema;
+export type GithubPullRequestLifecycleV1 = ReturnType<typeof GithubPullRequestLifecycleV1Schema.parse>;
+
 export type GithubAutomationEventPayloadV1 =
+  | Readonly<{ repository: GithubAutomationEventRepositoryV1; pullRequest: GithubPullRequestLifecycleV1 }>
   | Readonly<{ repository: GithubAutomationEventRepositoryV1; deploymentReview: ReturnType<typeof GithubDeploymentReviewEventV1Schema.parse> }>
   | Readonly<{ repository: GithubAutomationEventRepositoryV1; checks: GithubChecksConditionSnapshotV1 }>
   | Readonly<{
@@ -51,6 +59,7 @@ export type GithubAutomationEventPayloadV1 =
     }>;
 
 export type GithubAutomationEventFactsV1 =
+  | Readonly<{ kind: 'pullRequestLifecycle'; repository: GithubAutomationEventRepositoryV1; pullRequest: GithubPullRequestLifecycleV1 }>
   | Readonly<{ kind: 'deploymentReview'; repository: GithubAutomationEventRepositoryV1; deploymentReview: ReturnType<typeof GithubDeploymentReviewEventV1Schema.parse> }>
   | Readonly<{ kind: 'checksCompleted' | 'checksFailed' | 'checksPassed'; repository: GithubAutomationEventRepositoryV1; checks: GithubChecksConditionSnapshotV1 }>
   | Readonly<{
@@ -148,6 +157,10 @@ export const GITHUB_CHECKS_SNAPSHOT_SCHEMA = {
 } satisfies PluginJsonSchema;
 
 export const GITHUB_AUTOMATION_EVENT_CATALOG = Object.freeze([
+  Object.freeze({ kind: 'pullRequestLifecycle' as const, localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle,
+    title: 'GitHub pull request lifecycle changed', description: 'A pull request opened, reopened, synchronized, closed or merged. Synchronize requires webhook delivery.',
+    payloadSchema: payloadSchema({ pullRequest: GithubPullRequestLifecycleV1Schema.jsonSchema }, ['pullRequest']),
+  }),
   Object.freeze({ kind: 'deploymentReview' as const, localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.deploymentReview,
     title: 'GitHub deployment review changed', description: 'A monitored deployment environment needs review or has resolved.',
     payloadSchema: payloadSchema({ deploymentReview: GithubDeploymentReviewEventV1Schema.jsonSchema }, ['deploymentReview']),
@@ -232,6 +245,7 @@ export function normalizeGithubAutomationEvent(input: GithubAutomationEventFacts
     case 'issueOpened':
       return Object.freeze({ eventRef, payload: Object.freeze({ repository: input.repository, issue: input.issue }) });
     case 'pullRequestOpened':
+    case 'pullRequestLifecycle':
       return Object.freeze({
         eventRef,
         payload: Object.freeze({ repository: input.repository, pullRequest: input.pullRequest }),

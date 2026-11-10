@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import * as privacyKit from 'privacy-kit';
 import nacl from 'tweetnacl';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, computeDeploymentTransitionRequestDigestV1,
     signMachineInstallationProof, DeploymentTargetLinkResultV1Schema, DeploymentTargetLinksListResultV1Schema,
+    DeploymentDomainMutationResultV1Schema, deploymentDomainObservationProofPayloadV1,
+    nativeCaddyDomainRouteIdsV1, nativeCaddyRemovalSigningBytes,
+    DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1, type DeploymentChildRpcV1,
     DeploymentReceiptResultV1Schema, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent,
     type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
 import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -19,10 +21,13 @@ import { readDeploymentTargetInTx } from './deploymentTargetLinkService';
 import { readDeploymentMachineReferencesInTx } from './deploymentReadService';
 import { auth } from '@/app/auth/auth';
 import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResolvedTargetV1,
-    signExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+    signExternalActionMachineRequestV1, signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
     EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { transitionDeploymentInTx } from './deploymentService';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
 
 describe('current runtime membership replacement', () => {
     const serverId = `srv_${'e'.repeat(32)}`;
@@ -31,6 +36,57 @@ describe('current runtime membership replacement', () => {
         initEncrypt: true, initAuth: true,
         env: { HAPPIER_SERVER_IDENTITY_ID: serverId, AUTH_REQUIRED_LOGIN_PROVIDERS: '' } }); }, 180_000);
     afterAll(async () => { await harness?.close(); });
+
+    it('replaces preview child DATA provider content in place while preserving the captured teardown link identity', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, {
+            serverId, requestKey: crypto.randomUUID(), name: 'Preview DATA publication' }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+            metadata: encodePlainMachineStoredContent({ host: 'Preview', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), installationId: crypto.randomUUID() } });
+        const artifact = async (kind: string) => {
+            const created = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Preview DATA' })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!created.ok) throw new Error(created.error);
+            return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        const placement = { projectSourceId: source.source.id, createdByAccountId: owner.id,
+            protection: 'nonProduction', deployerMode: 'managers', controllerMachineId: machine.id,
+            ...await artifact('deployment-environment.v1') };
+        const parent = await db.deploymentEnvironment.create({ data: { ...placement, purpose: 'standard' } });
+        const runtime = await db.deploymentTargetLink.create({ data: { environmentId: parent.id, createdByAccountId: owner.id,
+            role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer', state: 'configured',
+            ...await artifact('deployment-target-link.v1') } });
+        const child = await db.deploymentEnvironment.create({ data: { ...placement, purpose: 'preview',
+            previewTemplateEnvironmentId: parent.id, previewRepositoryId: source.source.id,
+            previewPullRequestId: '17', previewTargetLinkId: runtime.id } });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const send = (payload: Record<string, unknown>) => app.inject({ method: 'POST',
+                url: `/v1/deployments/environments/${child.id}/targets`, headers: { 'x-test-user-id': owner.id }, payload });
+            const base = { serverId, environmentId: child.id, expectedRevision: child.revision, requestKey: crypto.randomUUID(),
+                targetId: 'database', role: 'data', source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.supabase', localId: 'database' } },
+                targetKind: 'postgres', machines: [], ...await artifact('deployment-target-link.v1') };
+            const first = await send(base);
+            expect(first.statusCode, first.body).toBe(200);
+            const initial = first.json();
+            const nativeContent = await artifact('deployment-target-link.v1');
+            const replacement = { ...base, ...nativeContent, requestKey: crypto.randomUUID(), expectedRevision: initial.revision,
+                replacesLinkId: initial.targetLinkId, expectedTargetLinkRevision: initial.targetLinkRevision };
+            const foreign = await send({ ...replacement, targetKind: 'other' });
+            expect(foreign.statusCode, foreign.body).toBe(409);
+            const changed = await send(replacement);
+            expect(changed.statusCode, changed.body).toBe(200);
+            expect(changed.json()).toMatchObject({ ok: true, targetLinkId: initial.targetLinkId,
+                revision: initial.revision + 1, targetLinkRevision: initial.targetLinkRevision + 1 });
+            expect((await send(replacement)).json()).toEqual(changed.json());
+            expect(await db.deploymentTargetLink.findMany({ where: { environmentId: child.id } })).toMatchObject([
+                { id: initial.targetLinkId, revision: initial.targetLinkRevision + 1, ...nativeContent }]);
+        });
+    });
 
     it('stores plugin runtime and multiple data links with exact scalar custody and retains runtime predecessors', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -229,10 +285,14 @@ describe('current runtime membership replacement', () => {
     });
 
     it.each([
-        { count: 1, state: 'succeeded' as const, baseline: false }, { count: 2, state: 'succeeded' as const, baseline: false },
+        { count: 1, state: 'succeeded' as const, baseline: false, domain: undefined },
+        { count: 2, state: 'succeeded' as const, baseline: false, domain: undefined },
+        { count: 2, state: 'succeeded' as const, baseline: false, domain: 'up' },
+        { count: 2, state: 'succeeded' as const, baseline: false, domain: 'down' },
+        { count: 2, state: 'succeeded' as const, baseline: false, domain: 'pending' },
         { count: 1, state: 'failed' as const, baseline: false }, { count: 1, state: 'outcome_unknown' as const, baseline: false },
         { count: 2, state: 'failed' as const, baseline: true },
-    ])('requires ingress admission and successful release settlement ($count members, $state, baseline=$baseline)', async ({ count, state, baseline }) => {
+    ])('requires ingress admission and successful release settlement ($count members, $state, baseline=$baseline, domain=$domain)', async ({ count, state, baseline, domain }) => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const team = count === 2 && !baseline ? await db.team.create({ data: { name: 'Shared native rollout' } }) : null;
         if (team) await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
@@ -363,6 +423,102 @@ describe('current runtime membership replacement', () => {
                 expectedRevision: receipt.revision, requestBodyDigest: computeDeploymentTransitionRequestDigestV1(body) },
         }, privateKey: keys.secretKey });
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            if (domain) {
+                const domainId = crypto.randomUUID();
+                const created = await app.inject({ method: 'POST',
+                    url: `/v1/deployments/environments/${environment.id}/domains`, headers: { 'x-test-user-id': owner.id },
+                    payload: { serverId, environmentId: environment.id, domainId,
+                        expectedRevision: (await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).revision,
+                        targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: crypto.randomUUID(),
+                        actionOperationId, requestId: crypto.randomUUID(), ...await artifact('deployment-domain.v1', {}),
+                        placements: members.map(member => ({ machineId: member.id, installationId: member.installationId!,
+                            nativeServer: 'private', dockerEngineId: 'membership-engine', listener: 'privateOrigin' })) } });
+                expect(created.statusCode, created.body).toBe(200);
+                let added = DeploymentDomainMutationResultV1Schema.parse(created.json());
+                if (!added.ok) throw new Error(added.error);
+                if (domain === 'up') {
+                    const observations = added.domain.placements!.map(capture => {
+                        const observation = { capture, state: 'active' as const, dnsHealth: { status: 'up' as const,
+                            evidence: { v: 1 as const, items: [{ source: { kind: 'alert' as const, label: 'dns' },
+                                author: { kind: 'process' as const }, text: 'Existing healthy route' }] } } };
+                        return { ...observation, proof: signMachineInstallationProof({ privateKey: keys.secretKey,
+                            payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: added.domain.revision, observation }) }) };
+                    });
+                    const active = await app.inject({ method: 'POST', headers: { 'x-test-user-id': owner.id },
+                        url: `/v1/deployments/environments/${environment.id}/domains/${domainId}/transitions`,
+                        payload: { serverId, environmentId: environment.id, domainId, expectedDomainRevision: added.domain.revision, observations } });
+                    expect(active.statusCode, active.body).toBe(200);
+                    added = DeploymentDomainMutationResultV1Schema.parse(active.json());
+                    if (!added.ok) throw new Error(added.error);
+                    const prepared = { serverId, environmentId: environment.id, domainId,
+                        expectedRevision: added.revision, expectedDomainRevision: added.domain.revision,
+                        targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: crypto.randomUUID(),
+                        contentArtifactId: added.domain.contentArtifactId, contentHeaderVersion: added.domain.contentHeaderVersion,
+                        contentBodyVersion: added.domain.contentBodyVersion, membershipDeploymentId: receipt.id,
+                        membershipMachines: members.map(member => ({ machineId: member.id, installationId: member.installationId! })) };
+                    const verifyChild = (params: DeploymentChildRpcV1) => {
+                        const method = `${params.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`, requestId = crypto.randomUUID();
+                        const deploymentChildRouting = projectDeploymentChildRoutingV1(params);
+                        const execution = { v: 1 as const, authorization, effectActionId: 'deployments.domains.add', target,
+                            installationId: first.installationId!, deploymentChildRouting,
+                            machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                                effectActionId: 'deployments.domains.add', target, installationId: first.installationId!, method,
+                                requestId, params, deploymentChildRouting, privateKey: keys.secretKey }) };
+                        return verifyExternalActionMachineRpcExecution(execution,
+                            { method, requestId, params, originalActionEnvelope: envelope });
+                    };
+                    const discovery = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domainDiscover', actionId: 'deployments.domains.add',
+                        input: prepared, machineId: members[1]!.id, installationId: members[1]!.installationId! });
+                    expect(await verifyChild(discovery)).toMatchObject({ deploymentChildAdmission: { routing: { kind: 'domainDiscover' } } });
+                    expect(await verifyChild(DeploymentChildRpcV1Schema.parse({ ...discovery,
+                        input: { ...prepared, membershipDeploymentId: 'wrong-receipt' } }))).toBeNull();
+                    expect(await verifyChild({ ...discovery, installationId: 'wrong-installation' })).toBeNull();
+                    await withAuthenticatedTestApp(registerDeploymentRoutes, async real => {
+                        const path = `/v1/deployments/environments/${environment.id}/domains`;
+                        const reconcile = (change: Partial<typeof prepared> = {}) => {
+                            const payload = { ...prepared, ...change, requestId: envelope.requestId, actionOperationId,
+                                placements: members.map(member => ({ machineId: member.id, installationId: member.installationId!,
+                                    nativeServer: 'private', listener: 'privateOrigin', dockerEngineId: 'membership-engine' })) };
+                            return real.inject({ method: 'POST', url: path, payload, headers: {
+                                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.domains.add',
+                                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                                    effectActionId: 'deployments.domains.add', target, installationId: first.installationId!,
+                                    requestId: envelope.requestId, method: 'POST', path, body: payload, privateKey: keys.secretKey }),
+                            } });
+                        };
+                        for (const change of [{ membershipDeploymentId: 'foreign-receipt' },
+                            { membershipMachines: [{ machineId: first.id, installationId: 'wrong-installation' }] }]) {
+                            const denied = await reconcile(change);
+                            expect(denied.statusCode, denied.body).toBe(403);
+                        }
+                        const reconciled = await reconcile();
+                        expect(reconciled.statusCode, reconciled.body).toBe(200);
+                        added = DeploymentDomainMutationResultV1Schema.parse(reconciled.json());
+                    }, { authentication: 'real' });
+                    if (!added.ok) throw new Error(added.error);
+                    expect(added.domain.placements!.every(capture => capture.placement.requestId === envelope.requestId)).toBe(true);
+                    const capture = added.domain.placements!.find(capture => capture.placement.machineId === members[1]!.id)!;
+                    const native = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domain', actionId: 'deployments.domains.add',
+                        input: { serverId, environmentId: environment.id, domainId }, expectedDomainRevision: added.domain.revision,
+                        actionOperationId, capture, machineId: capture.placement.machineId, installationId: capture.placement.installationId });
+                    expect(await verifyChild(native)).toMatchObject({ deploymentChildAdmission: { routing: { kind: 'domain' } } });
+                }
+                if (domain !== 'pending') {
+                    const observations = added.domain.placements!.map(capture => {
+                        const observation = { capture, state: 'active' as const,
+                            dnsHealth: { status: domain === 'up' ? 'up' as const : 'down' as const, evidence: { v: 1 as const,
+                                items: [{ source: { kind: 'alert' as const, label: 'dns' }, author: { kind: 'process' as const }, text: 'Membership DNS observation' }] } } };
+                        return { ...observation, proof: signMachineInstallationProof({ privateKey: keys.secretKey,
+                            payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: added.domain.revision, observation }) }) };
+                    });
+                    const observed = await app.inject({ method: 'POST', headers: { 'x-test-user-id': owner.id },
+                        url: `/v1/deployments/environments/${environment.id}/domains/${domainId}/transitions`,
+                        payload: { serverId, environmentId: environment.id, domainId, expectedDomainRevision: added.domain.revision, observations } });
+                    expect(observed.statusCode, observed.body).toBe(200);
+                }
+            }
             if (count === 2 && !baseline) {
                 const { expectedTargetLinkRevision, ...stageBasis } = body;
                 for (const signer of [members[1]!, builder]) {
@@ -385,9 +541,7 @@ describe('current runtime membership replacement', () => {
                     if (team) {
                         await db.machineTeamGrant.deleteMany({ where: { machineId: signer.id, teamId: team.id } });
                         const withdrawn = await signed({ kind: 'stage', state: 'running' });
-                        expect(withdrawn.statusCode, withdrawn.body).toBe(503);
-                        expect(withdrawn.json()).toMatchObject({ error: 'machine_unavailable',
-                            role: signer.id === builder.id ? 'build' : 'target' });
+                        expect(withdrawn.statusCode, 'captured work continues after grant withdrawal').toBe(200);
                         await db.machineTeamGrant.create({ data: { machineId: signer.id, teamId: team.id,
                             accessLevel: 'view', createdByAccountId: signer.accountId } });
                     }
@@ -418,16 +572,116 @@ describe('current runtime membership replacement', () => {
             const settled = await app.inject({ method: 'POST',
                 url: `/v1/deployments/environments/${environment.id}/deployments/${receipt.id}/transitions`,
                 headers: { 'x-test-user-id': owner.id }, payload: { ...body, proof } });
-            const successful = state === 'succeeded';
-            expect(settled.statusCode, settled.body).toBe(successful || baseline ? 200 : 400);
+            const successful = state === 'succeeded' && (!domain || domain === 'up');
+            expect(settled.statusCode, settled.body).toBe(domain === 'down' || domain === 'pending' ? 409 : successful || baseline ? 200 : 400);
             expect((await db.deploymentTargetLinkMachine.findMany({ where: { targetLinkId: link.id } })).map(member => member.state))
-                .toEqual(Array.from({ length: count }, () => baseline || successful && count === 1 ? 'active' : 'joining'));
+                .toEqual(Array.from({ length: count }, () => baseline || successful ? 'active' : 'joining'));
             expect((await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: link.id } })).activeDeploymentId)
                 .toBe(uniformId ?? (successful ? receipt.id : null));
             if (!successful && !baseline) expect((await db.deployment.findUniqueOrThrow({ where: { id: receipt.id } })).state).toBe('running');
             if (baseline && originalArtifact) {
                 expect((await db.deployment.findUniqueOrThrow({ where: { id: receipt.id } })).state).toBe('failed');
                 expect(await db.artifact.findUniqueOrThrow({ where: { id: originalArtifact.id } })).toEqual(originalArtifact);
+            }
+            if (domain === 'up') {
+                const currentLink = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: link.id } });
+                const operation = crypto.randomUUID();
+                const teardownInput = { serverId, environmentId: environment.id, targetLinkId: link.id,
+                    expectedRevision: (await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).revision,
+                    expectedTargetLinkRevision: currentLink.revision, requestKey: crypto.randomUUID(), reason: 'manual' as const,
+                    machines: [members[1]!.id], ...await artifact('deployment-receipt.v1', {}) };
+                const teardownEnvelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: teardownInput };
+                const teardownAuthorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                    accountId: owner.id, authentication: { kind: 'account', tokenEpoch: owner.tokenEpoch },
+                    actionId: 'deployments.teardown', machineId: first.id, target, requestId: teardownEnvelope.requestId,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(teardownEnvelope) }, { input: teardownInput });
+                await withAuthenticatedTestApp(registerDeploymentRoutes, async real => {
+                    const invoke = (path: string, effectActionId: 'deployments.teardown' | 'deployments.domains.add', payload: unknown) =>
+                        real.inject({ method: 'POST', url: path, payload, headers: {
+                            [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: teardownAuthorization.token,
+                            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                            [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                                authorizationToken: teardownAuthorization.token, effectActionId, target,
+                                installationId: first.installationId!, requestId: teardownEnvelope.requestId,
+                                method: 'POST', path, body: payload, privateKey: keys.secretKey }),
+                        } });
+                    const accepted = await invoke(`/v1/deployments/environments/${environment.id}/teardown`,
+                        'deployments.teardown', { ...teardownInput, actionOperationId: operation });
+                    expect(accepted.statusCode, accepted.body).toBe(200);
+                    const reserved = DeploymentReceiptResultV1Schema.parse(accepted.json());
+                    if (!reserved.ok || !('deploymentId' in reserved)) throw new Error('Expected selective teardown receipt');
+                    const selected = { machineId: members[1]!.id, installationId: members[1]!.installationId! };
+                    expect((await db.deployment.findUniqueOrThrow({ where: { id: reserved.deploymentId } })).teardownProof)
+                        .toEqual({ admittedMachines: [selected] });
+                    const domainRow = await db.deploymentDomain.findFirstOrThrow({ where: { environmentId: environment.id } });
+                    expect(domainRow.state).toBe('active');
+                    const transition = async (input: Omit<DeploymentTransitionInputV1, 'proof'>) => app.inject({ method: 'POST',
+                        url: `/v1/deployments/environments/${environment.id}/deployments/${reserved.deploymentId}/transitions`,
+                        headers: { 'x-test-user-id': owner.id }, payload: { ...input,
+                            proof: signMachineInstallationProof({ privateKey: keys.secretKey, payload: { version: 1,
+                                accountId: owner.id, machineId: first.id, installationId: first.installationId!, deploymentTransition: {
+                                    serverId, environmentId: environment.id, deploymentId: reserved.deploymentId,
+                                    actionOperationId: operation, expectedRevision: input.expectedRevision,
+                                    requestBodyDigest: computeDeploymentTransitionRequestDigestV1(input) } } }) } });
+                    const stage = { serverId, environmentId: environment.id, deploymentId: reserved.deploymentId,
+                        actionOperationId: operation, expectedRevision: reserved.deploymentRevision, machineId: first.id,
+                        installationId: first.installationId!, kind: 'stage' as const, state: 'running' as const };
+                    const running = await transition(stage);
+                    expect(running.statusCode, running.body).toBe(200);
+                    const runningReceipt = DeploymentReceiptResultV1Schema.parse(running.json());
+                    if (!runningReceipt.ok || !('deploymentRevision' in runningReceipt)) throw new Error('Expected running teardown');
+                    const teardownProof: NonNullable<DeploymentTransitionInputV1['teardownProof']> = { targetLinkRevision: currentLink.revision, machines: [selected], workloadAbsent: true,
+                        retainedProviderResource: false,
+                        steps: ['admit', 'settleDeploy', 'removeTarget', 'removeDomain', 'removeRelease', 'withdrawBindings', 'verify'] };
+                    const settle = { ...stage, expectedRevision: runningReceipt.deploymentRevision, kind: 'settle' as const,
+                        state: 'succeeded' as const, teardownProof };
+                    const premature = await transition(settle);
+                    expect(premature.statusCode, premature.body).toBe(409);
+                    expect((await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: link.id } })).activeDeploymentId).toBe(receipt.id);
+                    const domainInput = { serverId, environmentId: environment.id, domainId: domainRow.id,
+                        targetLinkId: link.id, expectedTargetLinkRevision: currentLink.revision,
+                        expectedRevision: (await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).revision,
+                        expectedDomainRevision: domainRow.revision, contentArtifactId: domainRow.contentArtifactId,
+                        contentHeaderVersion: domainRow.contentHeaderVersion, contentBodyVersion: domainRow.contentBodyVersion,
+                        membershipDeploymentId: reserved.deploymentId,
+                        membershipMachines: [{ machineId: first.id, installationId: first.installationId! }],
+                        requestKey: crypto.randomUUID(), requestId: teardownEnvelope.requestId, actionOperationId: operation,
+                        placements: [{ machineId: first.id, installationId: first.installationId!, nativeServer: 'private' as const,
+                            listener: 'privateOrigin' as const, dockerEngineId: 'membership-engine' }] };
+                    const domainPath = `/v1/deployments/environments/${environment.id}/domains`;
+                    const wrongScope = await invoke(domainPath, 'deployments.domains.add', { ...domainInput, membershipMachines: [selected] });
+                    expect(wrongScope.statusCode, wrongScope.body).toBe(403);
+                    const reconciled = await invoke(domainPath, 'deployments.domains.add', domainInput);
+                    expect(reconciled.statusCode, reconciled.body).toBe(200);
+                    const changed = DeploymentDomainMutationResultV1Schema.parse(reconciled.json());
+                    if (!changed.ok) throw new Error(changed.error);
+                    expect(changed.domain.placements!.some(capture => !capture.desired && capture.placement.machineId === selected.machineId)).toBe(true);
+                    const observations = changed.domain.placements!.map(capture => {
+                        const ids = nativeCaddyDomainRouteIdsV1(domainRow.id, capture.listener);
+                        const observation = capture.desired ? { capture, state: 'active' as const, dnsHealth: { status: 'up' as const,
+                            evidence: { v: 1 as const, items: [{ source: { kind: 'alert' as const, label: 'dns' },
+                                author: { kind: 'process' as const }, text: 'Remaining route healthy' }] } } }
+                            : { capture, state: 'removed' as const, removal: { kind: 'removed' as const,
+                                placement: capture.placement, routeIds: ids.removalIds, proof: { version: 1 as const, algorithm: 'ed25519' as const,
+                                    signature: encodeBase64(nacl.sign.detached(nativeCaddyRemovalSigningBytes(capture.placement,
+                                        ids.removalIds), keys.secretKey), 'base64url') } } };
+                        return { ...observation, proof: signMachineInstallationProof({ privateKey: keys.secretKey,
+                            payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: changed.domain.revision, observation }) }) };
+                    });
+                    const observed = await app.inject({ method: 'POST', headers: { 'x-test-user-id': owner.id },
+                        url: `${domainPath}/${domainRow.id}/transitions`, payload: { serverId, environmentId: environment.id,
+                            domainId: domainRow.id, expectedDomainRevision: changed.domain.revision, observations } });
+                    expect(observed.statusCode, observed.body).toBe(200);
+                    const persisted = await db.deploymentDomain.findUniqueOrThrow({ where: { id: domainRow.id } });
+                    expect(persisted).toMatchObject({ state: 'active', capturedPlacements: [{ desired: true,
+                        placement: { machineId: first.id, installationId: first.installationId! } }] });
+                    expect(Array.isArray(persisted.capturedPlacements) && persisted.capturedPlacements.length).toBe(1);
+                    const completed = await transition(settle);
+                    expect(completed.statusCode, completed.body).toBe(200);
+                    expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: link.id } }))
+                        .toMatchObject({ activeDeploymentId: receipt.id, revision: currentLink.revision });
+                }, { authentication: 'real' });
             }
         });
     });
@@ -516,6 +770,47 @@ describe('current runtime membership replacement', () => {
             expect(await db.deployment.findUniqueOrThrow({ where: { id: rollback.json().deploymentId } })).toMatchObject({
                 rollbackOfDeploymentId: uniform.id, targetLinkId: selected.targetLinkId, predecessorDeploymentId: uniform.id,
             });
+            await db.deployment.update({ where: { id: rollback.json().deploymentId }, data: { state: 'failed' } });
+            const proof = { targetLinkRevision: selected.targetLinkRevision, machines: [memberInputs[1]!],
+                workloadAbsent: true, retainedProviderResource: false,
+                steps: ['admit', 'settleDeploy', 'removeTarget', 'removeDomain', 'removeRelease', 'withdrawBindings', 'verify'] };
+            const drained = await db.deployment.create({ data: { environmentId: environment.id, targetLinkId: selected.targetLinkId,
+                requestedByAccountId: owner.id, operation: 'teardown', state: 'succeeded', requestKey: crypto.randomUUID(),
+                actionOperationId: crypto.randomUUID(), ...await artifact('deployment-receipt.v1'), teardownProof: proof } });
+            const drainInput = { ...input, expectedRevision: (await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).revision, requestKey: crypto.randomUUID(),
+                replacesLinkId: selected.targetLinkId, expectedTargetLinkRevision: selected.targetLinkRevision,
+                machines: [memberInputs[0]!, memberInputs[2]!], drainedDeploymentId: drained.id };
+            for (const invalid of [
+                { ...proof, targetLinkRevision: selected.targetLinkRevision + 1 },
+                { ...proof, machines: [{ ...memberInputs[1]!, installationId: 'replaced-installation' }] },
+                { ...proof, machines: [memberInputs[0]!] },
+            ]) {
+                await db.deployment.update({ where: { id: drained.id }, data: { teardownProof: invalid } });
+                const rejected = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': owner.id }, payload: drainInput });
+                expect(rejected.statusCode, rejected.body).toBe(409);
+                expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).runtimeTargetLinkId).toBe(selected.targetLinkId);
+            }
+            await db.deployment.update({ where: { id: drained.id }, data: { teardownProof: proof } });
+            await db.deployment.create({ data: { environmentId: environment.id, targetLinkId: selected.targetLinkId,
+                requestedByAccountId: owner.id, operation: 'deploy', state: 'failed', requestKey: crypto.randomUUID(),
+                actionOperationId: crypto.randomUUID(), requestedAt: new Date(drained.requestedAt.getTime() + 1000),
+                ...await artifact('deployment-receipt.v1', { onFailure: 'keepPartial' }) } });
+            const staleDrain = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': owner.id }, payload: drainInput });
+            expect(staleDrain.statusCode, staleDrain.body).toBe(409);
+            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).runtimeTargetLinkId).toBe(selected.targetLinkId);
+            const redrained = await db.deployment.create({ data: { environmentId: environment.id, targetLinkId: selected.targetLinkId,
+                requestedByAccountId: owner.id, operation: 'teardown', state: 'succeeded', requestKey: crypto.randomUUID(),
+                actionOperationId: crypto.randomUUID(), requestedAt: new Date(drained.requestedAt.getTime() + 2000),
+                ...await artifact('deployment-receipt.v1'), teardownProof: proof } });
+            const removed = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': owner.id },
+                payload: { ...drainInput, drainedDeploymentId: redrained.id } });
+            expect(removed.statusCode, removed.body).toBe(200);
+            expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, removed.json().targetLinkId))).toMatchObject({
+                predecessorTargetLinkId: selected.targetLinkId, machines: drainInput.machines.map(member => member.machineId),
+                activeDeploymentId: uniform.id,
+            });
+            expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, selected.targetLinkId)))
+                .toMatchObject({ machines: memberInputs.map(member => member.machineId) });
         });
     });
 });

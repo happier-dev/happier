@@ -3,6 +3,7 @@ import { readDeploymentTemplateInstantiationPartialV1 as readDeploymentPartialRe
 export { readDeploymentPartialResult };
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
+import type { DeploymentPreviewEnrollmentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { HappyError } from '@/utils/errors/errors';
 
 import { readActionApprovalRequestCreatedError } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -147,7 +148,7 @@ export function useDeploymentPress(
   return { running, outcome, reviewPending, press };
 }
 
-type SettledChange = Readonly<{ ok: true }> | Extract<ReceiptResult, { ok: false }>;
+type SettledChange = Readonly<{ ok: true; previewEnrollment?: DeploymentPreviewEnrollmentV1 }> | Extract<ReceiptResult, { ok: false }>;
 
 /**
  * One Environment change that settles in place (a Domain, the controller, who may deploy): no receipt to open. A held
@@ -159,6 +160,7 @@ export function useDeploymentChangePress(
 ) {
   const [running, setRunning] = React.useState(false);
   const [outcome, setOutcome] = React.useState<DeploymentActionOutcome | null>(null);
+  const [followup, setFollowup] = React.useState<Extract<DeploymentPreviewEnrollmentV1, { status: 'unavailable' }> | null>(null);
   const busy = React.useRef(false);
   const lastPress = React.useRef<(() => Promise<SettledChange>) | null>(null);
   const press = React.useCallback(async (run: () => Promise<SettledChange>) => {
@@ -167,10 +169,12 @@ export function useDeploymentChangePress(
     busy.current = true;
     setRunning(true);
     setOutcome(null);
+    setFollowup(null);
     let next: DeploymentActionOutcome | null = null;
     try {
       const result = await run();
       if (!result.ok) next = readDeploymentActionResult(result);
+      else if (result.previewEnrollment?.status === 'unavailable') setFollowup(result.previewEnrollment);
     } catch (error) {
       next = readDeploymentActionError(error);
       if (next.kind === 'approval') review?.request(next.artifactId);
@@ -186,5 +190,5 @@ export function useDeploymentChangePress(
   const retry = React.useCallback(async () => {
     if (lastPress.current) await press(lastPress.current);
   }, [press]);
-  return { running, outcome, press, retry };
+  return { running, outcome, followup, press, retry };
 }

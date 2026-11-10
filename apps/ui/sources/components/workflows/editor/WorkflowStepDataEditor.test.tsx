@@ -288,6 +288,18 @@ describe('WorkflowStepDataEditor field selects', () => {
 });
 
 describe('WorkflowBindingRow help (DESIGN-13)', () => {
+    it('presents object field names beside their bound values', async () => {
+        const draft = createWorkflowEditorDraft({ draftId: 'object-fields' });
+        const screen = await renderScreen(<WorkflowBindingRow label="Provider" binding={{ kind: 'object', fields: {
+            credentialPrincipal: { kind: 'literal', value: 'selected account' },
+            providerEnvironment: { kind: 'literal', value: 'preview branch' },
+        } }} draft={draft} editable={false} testID="object-row" />);
+        expect(screen.getTextContent()).toContain('credentialPrincipal');
+        expect(screen.getTextContent()).toContain('selected account');
+        expect(screen.getTextContent()).toContain('providerEnvironment');
+        expect(screen.getTextContent()).toContain('preview branch');
+    });
+
     it('keeps a field\'s binding note out of a resting card and shows it while the step is edited', async () => {
         const draft = createWorkflowEditorDraft({ draftId: 'note' });
         const row = (editing: boolean) => (

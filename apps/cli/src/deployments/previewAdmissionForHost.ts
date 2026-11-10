@@ -4,9 +4,10 @@ import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity
 /** Private PR provenance is admitted on the controller, including E2EE Accounts.
  * The server remains the owner of the non-content template/Source relationship. */
 export async function admitPreviewEnvironmentForHost(input: Readonly<{
-    content: DeploymentEnvironmentContentV1;
+    content: Pick<DeploymentEnvironmentContentV1, 'previewProvenance'>;
     templateEnvironmentId: string;
     expectedTemplateRevision?: number;
+    projectSourceId?: string;
 }>, host: Readonly<{
     readTemplate(environmentId: string): Promise<Readonly<{
         environment: DeploymentEnvironmentHeaderV1; content: DeploymentEnvironmentContentV1;
@@ -19,14 +20,19 @@ export async function admitPreviewEnvironmentForHost(input: Readonly<{
     const repository = normalizeScmHostingRepositoryIdentity(provenance.repository);
     const headRepository = normalizeScmHostingRepositoryIdentity(provenance.headRepository);
     if (!repository || !headRepository) return refuse('deployment_content_unavailable');
-    if (sameScmHostingRepositoryIdentity(repository, headRepository)) return;
     const template = await host.readTemplate(input.templateEnvironmentId);
     if (template.environment.id !== input.templateEnvironmentId
         || input.expectedTemplateRevision !== undefined && template.environment.revision !== input.expectedTemplateRevision)
         return refuse('deployment_conflict');
     const policy = template.content.previewTemplate;
     if (template.environment.purpose !== 'standard' || template.environment.deletedAtMs !== undefined
-        || !policy?.enabled || policy.forkPreviews === 'off') return refuse('deployment_access_denied');
+        || !policy?.enabled) return refuse('deployment_access_denied');
+    if (input.projectSourceId !== undefined && input.projectSourceId !== template.environment.projectSourceId
+        || !sameScmHostingRepositoryIdentity(policy.repository, repository)) return refuse('source_mismatch');
+    if (template.environment.runtimeTargetLinkId !== provenance.runtimeTargetLinkId
+        || policy.runtimeTargetLinkId !== provenance.runtimeTargetLinkId) return refuse('target_mismatch');
+    if (sameScmHostingRepositoryIdentity(repository, headRepository)) return;
+    if (policy.forkPreviews === 'off') return refuse('deployment_access_denied');
     // No current producer binds an exact fork head to the preview Deploy Action's
     // approval. Standing Workflow consent cannot substitute for that decision.
     // Refuse before child/binding/data/provider acquisition until it is supplied.

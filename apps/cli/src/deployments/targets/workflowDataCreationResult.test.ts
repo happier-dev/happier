@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import * as neon from '../../../../../packages/plugins/deployment-neon/src/index';
 import { mutationResult } from '../../../../../packages/plugins/deployment-neon/src/data/schemas';
 import * as supabase from '../../../../../packages/plugins/deployment-supabase/src/index';
@@ -39,6 +40,54 @@ describe('Workflow data creation result projection', () => {
             providerIdentity: output.providerIdentity, providerEnvironment: output.providerEnvironment,
             operands: { branchId: 'branch-A' },
         });
+    });
+
+    it.each(['reviewed-save', 'branch-only', 'recovered'] as const)('captures the actual Neon %s creation operands for exact paired teardown', async mode => {
+        const correlation = { repository: { kind: 'gitlab', deployment: 'https://gitlab.example', repository: 'group/repo' }, pullRequestId: '17' };
+        const annotation = { 'happier.environment': 'environment-A', 'happier.scm.kind': 'gitlab',
+            'happier.scm.deployment': 'https://gitlab.example', 'happier.scm.repository': 'group/repo', 'happier.pullRequest': '17' };
+        // Neon v2 Branch and AnnotationData boundary vectors; the real Action
+        // produces the result and the real paired Action validates teardown.
+        const branch = { id: 'branch-preview', project_id: 'project-A', parent_id: 'branch-main', name: 'Preview 17',
+            current_state: 'ready', default: false, protected: false };
+        const requests: { method: string; pathname: string; body?: unknown }[] = [];
+        const kit = await createPluginTestkit({ manifest: neon.manifest, module: neon, services: {
+            http: createPluginHttpFixture({ async request(request) {
+                const pathname = new URL(request.url).pathname;
+                requests.push({ method: request.method, pathname,
+                    ...(request.body ? { body: JSON.parse(new TextDecoder().decode(request.body)) } : {}) });
+                if (mode === 'recovered' && request.method === 'POST') throw new Error('constructed lost response');
+                const nativeAnnotation = { object: { type: 'branch', id: branch.id }, value: annotation };
+                const result = request.method === 'DELETE' ? { operations: [] }
+                    : pathname.endsWith('/branches') && request.method === 'GET'
+                        ? { branches: [branch], annotations: { [branch.id]: nativeAnnotation } }
+                        : { branch, annotation: nativeAnnotation };
+                return { status: request.method === 'POST' ? 201 : 200, headers: {},
+                    body: new TextEncoder().encode(JSON.stringify(result)) };
+            } }),
+        } });
+        const credentialRef = { service: { pluginId: neon.manifest.id, localId: 'neon' }, accountId: 'connected-A' };
+        const input = DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ v: 1, serverId: 'home',
+            environmentId: 'environment-A', expectedRevision: 1, targetLinkId: 'data-link', expectedTargetLinkRevision: 1,
+            credentialRef, credentialPrincipal: { kind: 'account', accountId: 'account-A',
+                purpose: { consumer: { pluginId: neon.manifest.id, localId: 'projects-link' }, purpose: 'deploy-manage' },
+                target: { kind: 'account', account: credentialRef } },
+            providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'project-A', providerEnvironment: 'branch-main' },
+            providerEnvironment: { kind: 'custom', id: 'branch-main' } });
+        try {
+            const output = await kit.invokeAction('branches-create', { ...input, name: branch.name, correlation, initialization: 'parent-schema',
+                ...(mode === 'reviewed-save' ? { id: 'database', purpose: 'data.connection', database: 'app', role: 'owner', audience: { accountGrants: ['account-A'] },
+                    labels: { DATABASE_URL: 'Application database', DIRECT_URL: 'Migration database' }, rolePasswordLabel: 'Generated password' } : {}) });
+            const captured = WorkflowDataCreationResultSchema.parse(prepare(neon.manifest.id)(output));
+            expect(captured.operands).toEqual({ branchId: branch.id, correlation });
+            expect(await kit.invokeAction(captured.deleteAction.localId, { ...input,
+                providerIdentity: captured.providerIdentity, providerEnvironment: captured.providerEnvironment, ...captured.operands }))
+                .toMatchObject({ status: 'deleted', branchId: branch.id, ready: true });
+            expect(requests[0]?.body).toEqual({ branch: { name: branch.name, parent_id: 'branch-main', init_source: 'parent-schema' },
+                endpoints: [{ type: 'read_write' }], annotation_value: annotation });
+            expect(requests.filter(request => request.method === 'DELETE').map(request => request.pathname))
+                .toEqual(['/api/v2/projects/project-A/branches/branch-preview']);
+        } finally { await kit.dispose(); }
     });
 
     it('retains the Supabase child project ref rather than its unrelated branch UUID', async () => {
@@ -107,6 +156,7 @@ describe('Workflow data creation result projection', () => {
     it('does not invent ownership from an unknown outcome or retain unrelated Action results', () => {
         const capture = prepare(neon.manifest.id);
         const unknown = mutationResult.parse({ status: 'outcome_unknown', providerProjectId: 'project-A', branchId: 'branch-A',
+            correlation: { repository: { kind: 'gitlab', deployment: 'https://gitlab.example', repository: 'group/repo' }, pullRequestId: '17' },
             providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'project-A', providerEnvironment: 'branch-A' },
             providerEnvironment: { kind: 'custom', id: 'branch-A' } });
         expect(capture(unknown)).toBeUndefined();

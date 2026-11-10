@@ -1,5 +1,17 @@
 # Compatibility and version skew
 
+## Machine service export commitment (unreleased 0.3)
+
+The closed development TCP grant's `scope.serviceExport` now carries only
+`{ commitment }`; the binding and random nonce move to the encrypted inner
+`open.serviceExport: { binding, nonce }`. Home, A and B load the matching source
+together. Older development readers reject the new shape; no cleartext fallback
+is retained. This replaces an unpublished development field in place, without
+changing the V2 carrier epoch or adding stored data. The inspected `../0.2`
+frontier at `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no peer-mediation
+contracts under `packages/protocol/src/machines/peer/mediation`.
+
+
 ## Database copy and reference components (unreleased 0.3)
 
 The public restore input's optional `copy` identifies a source Environment/Link
@@ -2216,13 +2228,23 @@ adapter or reverse-development-binary promise is added.
 Workflow start adds the closed source arm `{ kind: 'repo_file', path }`;
 accepted snapshots and Run detail retain `{ kind: 'repo_file', path, commit }`,
 and Discussion capture preserves that provenance. It uses the existing
-`happier.workflow` version 1 document codec. The commit is the repository HEAD
-observed while reading working-tree content, rather than an assertion that the
-file matches that commit. Existing source arms remain readable. Matching
+`happier.workflow` version 1 document codec. New starts read the document from
+the observed immutable HEAD commit, excluding local file edits. Previously
+accepted Runs retain their frozen snapshots. Existing source arms remain readable. Matching
 Protocol, host and generated SDK readers update together under the unpublished
 0.3 direct cut; there is no migration, new wire epoch or reverse-development
 reader adapter. The scoped clean predecessor at
 `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no Workflow start/source contract.
+
+The existing SCM file-read selector also accepts the closed `{ commit }` arm,
+using the full SHA-1/SHA-256 commit schema and a literal repository-relative path.
+Its request and nested selector objects remain closed; unknown fields reject.
+Matching Protocol, Git plugin and host readers reload together under the
+unpublished 0.3 direct cut, within the existing wire epoch. Older development
+readers refuse the new selector. Existing blob and before-side selectors remain
+readable; the scoped-clean predecessor at the commit above has no SCM file-read
+schema. No persisted format, fallback, capability gate or reverse-development
+adapter is added.
 
 The closed Workflow failure vocabulary retains the trigger owner's existing
 `present_user_required` refusal when an agent requests private legacy-conversion

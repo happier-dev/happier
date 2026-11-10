@@ -27,6 +27,7 @@ describe('workflow leaf seam', () => {
     for (const input of [
       {},
       { message: { kind: 'literal', value: 42 } },
+      { message: { kind: 'object', fields: { text: { kind: 'literal', value: 'Done' } } } },
       { message: { kind: 'literal', value: '' } },
       { message: { kind: 'literal', value: ' \t\n ' } },
     ]) {

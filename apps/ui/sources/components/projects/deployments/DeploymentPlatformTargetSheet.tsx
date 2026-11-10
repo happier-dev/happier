@@ -6,6 +6,7 @@ import {
   type EffectiveActionInputField,
 } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 import {
@@ -47,7 +48,6 @@ import {
   buildPlatformTargetLinkInput,
   readDeploymentPlatformTargets,
   readPlatformInspectOutcome,
-  type DeploymentPlatformTarget,
   type PlatformInspectOutcome,
   applyPlatformFieldPatch,
   disclosePlatformFields,
@@ -66,6 +66,7 @@ export type DeploymentPlatformTargetSheetInput = Readonly<{
     id: string;
     revision: number;
     projectSourceId: string;
+    controllerMachineId?: string;
   }>;
   ownerAccountId: string;
   lifetime: ServerAccountScopeLifetime;
@@ -78,14 +79,14 @@ export type DeploymentPlatformTargetSheetInput = Readonly<{
   onOpenRecoveryDestination?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
 }>;
 
-type PlatformTargetsState =
+type TargetDeclarationsState =
   | Readonly<{ status: 'loading' }>
-  | Readonly<{ status: 'ready'; targets: readonly DeploymentPlatformTarget[] }>
+  | Readonly<{ status: 'ready'; declarations: readonly Readonly<{ manifest: PluginPortableReleaseManifestV1 }>[] }>
   | Readonly<{ status: 'failed'; code: string }>;
 
 /** The plugins' own deployment targets, loaded only while a draft or this sheet asks for them. */
-export function useDeploymentPlatformTargets(lifetime: ServerAccountScopeLifetime | null) {
-  const [state, setState] = React.useState<PlatformTargetsState>({
+export function useDeploymentTargetDeclarations(lifetime: ServerAccountScopeLifetime | null) {
+  const [state, setState] = React.useState<TargetDeclarationsState>({
     status: 'loading',
   });
   const [attempt, setAttempt] = React.useState(0);
@@ -104,7 +105,7 @@ export function useDeploymentPlatformTargets(lifetime: ServerAccountScopeLifetim
       .then((result) => {
         if (!live) return;
         if (result.kind === 'available') {
-          setState({ status: 'ready', targets: readDeploymentPlatformTargets(result.declarations) });
+          setState({ status: 'ready', declarations: result.declarations });
           return;
         }
         // Availability that has not arrived for this Account yet (not loaded, still the previous Account's, or a
@@ -137,6 +138,14 @@ export function useDeploymentPlatformTargets(lifetime: ServerAccountScopeLifetim
     state,
     retry: React.useCallback(() => setAttempt((value) => value + 1), []),
   };
+}
+
+/** Runtime and data pickers consume the same Account deployment-target declaration acquisition. */
+export function useDeploymentPlatformTargets(lifetime: ServerAccountScopeLifetime | null) {
+  const { state, retry } = useDeploymentTargetDeclarations(lifetime);
+  const projected = React.useMemo(() => state.status === 'ready'
+    ? { status: 'ready' as const, targets: readDeploymentPlatformTargets(state.declarations) } : state, [state]);
+  return { state: projected, retry };
 }
 
 type PlatformTargetSource = Readonly<{ contribution: Readonly<{ pluginId: string; localId: string }> }>;
@@ -347,6 +356,7 @@ function DeploymentPlatformTargetSheet(
     const result = await actions.inspectPlatformTarget(
       target.inspectActionId,
       draft,
+      props.environment.controllerMachineId ? { externalActionTarget: { kind: 'machine', machineId: props.environment.controllerMachineId } } : undefined,
     );
     setBusy(null);
     setOutcome(readPlatformInspectOutcome(result));

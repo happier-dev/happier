@@ -230,8 +230,10 @@ export async function run<K extends Operation>(operation: K, value: JsonValue, c
     }
     case 'branches-list': return { branches: await branches(input, context) };
     case 'branches-create': {
-      const selected = resource(input);
       const operand = input as Scope & Operands<'branches-create'>;
+      // Supabase creates from a project ref; the branch UUID is selection
+      // metadata and is not a CreateBranchBody operand in Management API v1.
+      const selected = { projectRef: operand.parentBranchRef?.providerProjectId ?? resource(input).projectRef };
       let response: unknown;
       try {
         response = await request(context, `/v1/projects/${encode(selected.projectRef)}/branches`, 'POST', {

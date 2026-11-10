@@ -16,6 +16,7 @@ import { MachinePrivateNetworkObservationV1Schema } from '../plugins/contributio
 import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
 import { ActionOperationAddressV1Schema } from '../actions/operations/addressV1.js';
 import { HealthCheckResultV1Schema } from './healthCheckV1.js';
+import { DeploymentOwnServerTargetMachinesV1Schema } from './deploymentEnvironmentCreateV1.js';
 export { deploymentDomainFailureFactsV1, DeploymentDomainNativeRequiredFactV1Schema,
     DeploymentDomainCaddyFailureV1Schema, type DeploymentDomainCaddyFailureV1,
     deploymentDomainCaddyRequiredFactsV1, type DeploymentDomainCaddyRequiredFactV1,
@@ -136,6 +137,9 @@ const domain = { ...environment, domainId: id };
 const mutation = { ...domain, expectedRevision: revision, requestKey: id };
 const addMetadata = () => ({
     ...mutation, expectedDomainRevision: z.optional(revision), targetLinkId: id, expectedTargetLinkRevision: revision,
+    /** Existing admitted rollout/teardown whose membership is being reconciled. */
+    membershipDeploymentId: z.optional(id),
+    membershipMachines: z.optional(DeploymentOwnServerTargetMachinesV1Schema),
     placements: z.optional(z.array(z.strictObject({ machineId: id, installationId: id, nativeServer: id, dockerEngineId: id,
         listener: z.enum(['privateOrigin', 'public']) })).check(z.minLength(1),
         z.refine(items => new Set(items.map(item => `${item.machineId}:${item.installationId}:${item.nativeServer}`)).size === items.length,
@@ -143,12 +147,15 @@ const addMetadata = () => ({
 });
 export const DeploymentDomainAddPreparedInputV1Schema = lazyZodSchema(() => z.strictObject({
     ...addMetadata(), ...DeploymentArtifactContentReferenceV1Schema.shape,
-}));
+}).check(z.refine(input => (input.membershipDeploymentId === undefined) === (input.membershipMachines === undefined),
+    { message: 'Membership reconciliation requires its accepted receipt and desired installations.' })));
 export const DeploymentDomainAddInputV1Schema = lazyZodSchema(() => z.union([
     DeploymentDomainAddPreparedInputV1Schema,
-    z.strictObject({ ...addMetadata(), content: DeploymentDomainContentV1Schema }),
+    z.strictObject({ ...addMetadata(), content: DeploymentDomainContentV1Schema }).check(
+        z.refine(input => (input.membershipDeploymentId === undefined) === (input.membershipMachines === undefined),
+            { message: 'Membership reconciliation requires its accepted receipt and desired installations.' })),
 ]));
-export const DeploymentDomainAddAdmissionInputV1Schema = lazyZodSchema(() => z.extend(DeploymentDomainAddPreparedInputV1Schema, {
+export const DeploymentDomainAddAdmissionInputV1Schema = lazyZodSchema(() => z.safeExtend(DeploymentDomainAddPreparedInputV1Schema, {
     actionOperationId: id, requestId: id, placements: z.nonoptional(DeploymentDomainAddPreparedInputV1Schema.shape.placements),
     authoredInputDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
 }));

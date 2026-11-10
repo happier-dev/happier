@@ -210,11 +210,58 @@ describe('Deployment Action front door', () => {
     await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: true });
     expect(preparations).toBe(1);
     expect(writes).toEqual([preparedInput]);
-    reviewedInput = { ...preparedInput, projectSourceId: 'foreign-project' };
-    await expect(executor.prepare('deployments.environments.create', input, { surface: 'ui', authority: 'present_user',
-      actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner' })).resolves.toMatchObject({
-        kind: 'settled', result: { ok: false, errorCode: 'approval_stale' },
-      });
+    for (const changed of [{ ...preparedInput, projectSourceId: 'foreign-project' },
+      { ...preparedInput, firstTargetLink: { ...preparedInput.firstTargetLink!,
+        machines: [{ machineId: 'foreign-runtime', installationId: 'foreign-installation' }] } }]) {
+      reviewedInput = changed;
+      await expect(executor.prepare('deployments.environments.create', input, { surface: 'ui', authority: 'present_user',
+        actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner' })).resolves.toMatchObject({
+          kind: 'settled', result: { ok: false, errorCode: 'approval_stale' },
+        });
+    }
+    expect(writes).toEqual([preparedInput]);
+  });
+
+  it('retains template-derived preview runtime placement only for the exact admitted preview reference', async () => {
+    const reference = { templateEnvironmentId: 'template', expectedTemplateRevision: 7,
+      pullRequestId: 'pr-17', runtimeTargetLinkId: 'template-runtime' };
+    const repository = { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' };
+    const input = { serverId: 'home', projectSourceId: 'source', requestKey: 'preview-create',
+      purpose: 'preview', protection: 'nonProduction', deployerMode: 'managers', preview: { ...reference,
+        headSha: 'a'.repeat(40), provenance: { v: 1, templateEnvironmentId: reference.templateEnvironmentId,
+          runtimeTargetLinkId: reference.runtimeTargetLinkId, repository, headRepository: repository,
+          pullRequestId: reference.pullRequestId, pullRequestNumber: 17, author: { id: 'author', login: 'contributor' } } } };
+    const preparedInput = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: input.serverId,
+      projectSourceId: input.projectSourceId, requestKey: input.requestKey, purpose: input.purpose,
+      protection: input.protection, deployerMode: input.deployerMode, preview: reference,
+      controllerMachineId: 'template-controller', buildMachineId: 'template-builder',
+      contentArtifactId: 'child-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+      firstTargetLink: { machines: [{ machineId: 'template-host', installationId: 'template-installation' }],
+        contentArtifactId: 'child-runtime-content', contentHeaderVersion: 1, contentBodyVersion: 1 } });
+    const review = { creationDefaults: { values: { controllerMachineId: 'template-controller',
+      buildMachineId: 'template-builder', retainPreviousDeployments: 0 },
+      sources: { controllerMachineId: 'explicit', buildMachineId: 'explicit', retainPreviousDeployments: 'project' } },
+      creationDefaultsBasis: { projectSourceId: 'source', sourceRevision: 1, projectDefaultsRevision: 2, content: null } };
+    let reviewedInput = preparedInput;
+    const writes: unknown[] = [];
+    const executor = createActionExecutor({
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('New preview has no existing record'); }),
+      // Installed-host preparation is the process boundary. CLI composed tests run
+      // the real template reader, admission, defaults and Artifact materializer.
+      prepareDeploymentEnvironmentCreate: async () => ({ input: reviewedInput, preview: review }),
+      deploymentAction: async (_actionId, admitted) => { writes.push(admitted); return { ok: true, environmentId: 'child', revision: 2 }; },
+    });
+    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'home', runtimeAccountId: 'owner' } as const;
+    const prepared = await executor.prepare('deployments.environments.create', input, context);
+    expect(prepared.kind, JSON.stringify(prepared)).toBe('ready');
+    if (prepared.kind !== 'ready') throw new Error('Expected admitted preview creation');
+    await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: true });
+    expect(writes).toEqual([preparedInput]);
+    reviewedInput = { ...preparedInput, preview: { ...reference, expectedTemplateRevision: 8 } };
+    await expect(executor.prepare('deployments.environments.create', input, context)).resolves.toMatchObject({
+      kind: 'settled', result: { ok: false, errorCode: 'approval_stale' },
+    });
     expect(writes).toEqual([preparedInput]);
   });
 

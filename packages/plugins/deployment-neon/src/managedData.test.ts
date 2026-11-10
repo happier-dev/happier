@@ -196,8 +196,58 @@ describe('activated Neon managed data target', () => {
     } finally { await h.kit.dispose(); }
   });
 
-  it('refuses teardown of foreign or default branches before DELETE', async () => {
-    const h = await host(() => ({ branch: { ...branch, default: true }, annotation: { object: { type: 'branch', id: branch.id }, value: annotation } }));
+  it('creates a schema-only preview without requesting connection custody', async () => {
+    const h = await host(() => ({ branch, operations: [], roles: [{ name: 'owner', password: 'one-time-private' }],
+      connection_uris: [{ connection_uri: 'postgresql://owner:one-time-private@example/neondb' }] }));
+    try {
+      const result = await h.kit.invokeAction('branches-create', { ...linked, name: branch.name, correlation, initialization: 'parent-schema' });
+      expect(result).toMatchObject({ status: 'provisioned', branchId: branch.id, correlation });
+      expect(h.saved).toEqual([]);
+      expect(h.requests.map(request => request.method)).toEqual(['POST']);
+      expect(JSON.stringify(result)).not.toMatch(/one-time-private|postgresql|connectionSave|rolePassword/u);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('creates from the saved native parent instead of the current linked branch', async () => {
+    const parentBranchRef = { providerProjectId: 'saved-project', branchId: 'saved-parent' };
+    const h = await host(() => ({ branch: { ...branch, project_id: parentBranchRef.providerProjectId, parent_id: parentBranchRef.branchId }, operations: [] }));
+    try {
+      const result = await h.kit.invokeAction('branches-create', { ...linked, name: branch.name, correlation, initialization: 'parent-schema', parentBranchRef });
+      expect(result).toMatchObject({ status: 'provisioned', providerIdentity: { providerResourceId: 'saved-project', providerEnvironment: branch.id } });
+      const request = h.requests.find(value => value.method === 'POST')!;
+      expect(request.url).toBe('https://console.neon.tech/api/v2/projects/saved-project/branches');
+      expect(JSON.parse(new TextDecoder().decode(request.body))).toMatchObject({ branch: { parent_id: 'saved-parent' } });
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('recovers only the branch correlated to the saved native parent', async () => {
+    const parentBranchRef = { providerProjectId: 'saved-project', branchId: 'saved-parent' };
+    const savedBranch = { ...branch, project_id: parentBranchRef.providerProjectId, parent_id: parentBranchRef.branchId };
+    const h = await host(() => ({ branches: [savedBranch, { ...savedBranch, id: 'wrong-parent-child', parent_id: 'br-main' }],
+      annotations: Object.fromEntries([branch.id, 'wrong-parent-child'].map(id => [id, { object: { type: 'branch', id }, value: annotation }])), pagination: {} }));
+    try {
+      expect(await h.kit.invokeAction('branches-create', { ...linked, name: branch.name, correlation, initialization: 'parent-schema', parentBranchRef, recover: true }))
+        .toMatchObject({ status: 'provisioned', branchId: branch.id, recovered: true });
+      expect(h.requests[0]?.url).toContain('/projects/saved-project/branches?');
+    } finally { await h.kit.dispose(); }
+  });
+
+  it.each([{ database: 'neondb' }, { id: 'database', purpose: 'data.connection' }, { ...createdSaveIntent }])(
+    'refuses incomplete creation custody before contacting Neon (%j)', async partial => {
+      const h = await host(() => ({ branch }));
+      try {
+        await expect(h.kit.invokeAction('branches-create', { ...linked, ...partial, name: branch.name, correlation, initialization: 'parent-schema' }))
+          .rejects.toBeDefined();
+        expect(h.requests).toEqual([]);
+        expect(h.saved).toEqual([]);
+      } finally { await h.kit.dispose(); }
+    });
+
+  it.each(['default', 'protected', 'foreign branch', 'foreign correlation'] as const)('refuses teardown of %s before DELETE', async kind => {
+    const h = await host(() => ({ branch: { ...branch, ...(kind === 'foreign branch' ? { id: 'branch-foreign' }
+      : kind === 'default' || kind === 'protected' ? { [kind]: true } : {}) },
+      annotation: { object: { type: 'branch', id: branch.id }, value: { ...annotation,
+        ...(kind === 'foreign correlation' ? { 'happier.pullRequest': '18' } : {}) } } }));
     try {
       await expect(h.kit.invokeAction('branches-delete', { ...previewLink, branchId: branch.id, correlation })).rejects.toMatchObject({ code: 'deployment_conflict' });
       expect(h.requests.every(item => item.method === 'GET')).toBe(true);

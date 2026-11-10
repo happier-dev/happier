@@ -1,11 +1,17 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
+import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import { DeploymentNewProjectV1Schema, hasOneDeploymentProjectV1, DeploymentTargetManagedRetentionV1Schema } from './storedAppInputV1.js';
 import { DeploymentEnvironmentDeployerPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
 import { DeploymentPreviewReferenceV1Schema } from './deploymentPreviewReferenceV1.js';
 import { DeploymentEnvironmentCopySourceV1Schema, DeploymentEnvironmentCopyFromV1Schema, DeploymentEnvironmentCopyPlanV1Schema } from './deploymentEnvironmentCopyV1.js';
+
+/** Prepared child-owned content for one exact template DATA link; no private provider operands reach storage. */
+export const DeploymentPreviewDataTargetLinkCreateV1Schema = lazyZodSchema(() => z.strictObject({
+  templateDataTargetLinkId: DeploymentIdentifierV1Schema, expectedTemplateTargetLinkRevision: DeploymentRevisionV1Schema,
+  ...DeploymentArtifactContentReferenceV1Schema.shape,
+}));
 
 /** P40 authored and prepared creation share these leaves without loading an Action catalog. */
 export const DeploymentEnvironmentCreateBaseInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -20,6 +26,10 @@ export const DeploymentEnvironmentCreateBaseInputV1Schema = lazyZodSchema(() => 
   managedRetention: z.optional(DeploymentTargetManagedRetentionV1Schema),
   /** Prepared storage relation only; copying and SCM admission remain host-owned. */
   preview: z.optional(DeploymentPreviewReferenceV1Schema),
+  previewDataTargetLinks: z.optional(z.array(DeploymentPreviewDataTargetLinkCreateV1Schema).check(z.refine(links =>
+    new Set(links.map(link => link.templateDataTargetLinkId)).size === links.length
+      && new Set(links.map(link => link.contentArtifactId)).size === links.length,
+  { message: 'Preview DATA clones name each template link and child content once.' }))),
   /** The first own-server runtime link shares this create intent and approval. */
   firstTargetLink: z.optional(z.strictObject({
     ...DeploymentArtifactContentReferenceV1Schema.shape,
@@ -35,7 +45,8 @@ export const DeploymentEnvironmentCreateStorageInputV1Schema = lazyZodSchema(() 
   z.refine(input => hasOneDeploymentProjectV1(input.projectSourceId, input.newProject), { message: 'Select an existing or reviewed new Project.' }),
   z.refine(input => (input.copyFrom === undefined) === (input.copyIntentCommitment === undefined),
     { message: 'Stored copies retain their reviewed retry identity.' }),
-  z.refine(input => input.purpose === 'preview' ? input.preview !== undefined : input.preview === undefined,
+  z.refine(input => input.purpose === 'preview' ? input.preview !== undefined
+    : input.preview === undefined && input.previewDataTargetLinks === undefined,
   { message: 'Only preview children carry a prepared template relationship.' })));
 export type DeploymentEnvironmentCreateStorageInputV1 = z.infer<typeof DeploymentEnvironmentCreateStorageInputV1Schema>;
 export const DeploymentEnvironmentCreateInputV1Schema = lazyZodSchema(() => z.extend(DeploymentEnvironmentCreateBaseInputV1Schema, {
@@ -43,7 +54,8 @@ export const DeploymentEnvironmentCreateInputV1Schema = lazyZodSchema(() => z.ex
   copyIntentCommitment: z.optional(deploymentEnvironmentCopyIntentCommitmentV1Schema),
 }).check(
   z.refine(input => hasOneDeploymentProjectV1(input.projectSourceId, input.newProject), { message: 'Select an existing or reviewed new Project.' }),
-  z.refine(input => input.purpose === 'preview' ? input.preview !== undefined : input.preview === undefined,
+  z.refine(input => input.purpose === 'preview' ? input.preview !== undefined
+    : input.preview === undefined && input.previewDataTargetLinks === undefined,
     { message: 'Only preview children carry a prepared template relationship.' }),
   z.refine(input => (input.copyFrom === undefined) === (input.copyPlan === undefined)
     && (input.copyFrom === undefined) === (input.copyIntentCommitment === undefined),

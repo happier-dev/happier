@@ -1929,7 +1929,7 @@ function createGithubPlugin(): GithubPlugin {
           credentialRef: QualifiedConnectedAccountRefJsonSchema,
           repository: GITHUB_REPOSITORY_INPUT_SCHEMA,
         },
-        required: ['credentialRef', 'repository'],
+        required: ['repository'],
       },
       inputHints: GITHUB_REPOSITORY_SETUP_INPUT_HINTS,
       resultSchema: GITHUB_AUTOMATION_REPOSITORY_SETUP_RESULT_SCHEMA,
@@ -2077,6 +2077,7 @@ function createGithubPlugin(): GithubPlugin {
           eligible: true,
           source: {
             sourceContractVersion: GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
+            ...(event.kind === 'pullRequestLifecycle' ? { scmPullRequestLifecycle: { providerKind: 'github' } } : {}),
             supportedObservationTransports: isGithubChecksEvent(event.localId) ? ['checkpointedPull'] : ['checkpointedPull', 'durablePush'],
             ...(isGithubChecksEvent(event.localId) ? {} : { webhookContributionRef: {
               pluginId: GITHUB_PLUGIN_ID,

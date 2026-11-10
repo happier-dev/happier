@@ -769,11 +769,12 @@ function validateNonAgentLeaf(
   if (leaf.kind === 'wait') return;
   validateLeafInputContract(state, leaf, path);
   for (const [field, binding] of Object.entries(leaf.input)) {
-    const references = binding.kind === 'list' ? binding.items : [binding];
-    references.forEach((reference, index) => {
+    const references = binding.kind === 'object' ? Object.entries(binding.fields)
+      : binding.kind === 'list' ? binding.items.map((reference, index) => [index, reference] as const) : [[null, binding] as const];
+    references.forEach(([key, reference]) => {
       if (reference.kind !== 'origin_session_id') {
         validateValueReference(state, reference,
-          joinPath(path, 'input', field, ...(binding.kind === 'list' ? ['items', index] : [])), leaf.id,
+          joinPath(path, 'input', field, ...(key === null ? [] : [binding.kind === 'object' ? 'fields' : 'items', key])), leaf.id,
           { allowSessionContext: leaf.kind === 'action' });
       }
     });
@@ -797,6 +798,8 @@ function validateLeafInputContract(
     if (binding.kind === 'literal') values[field] = binding.value;
     else if (binding.kind === 'list' && binding.items.every((item) => item.kind === 'literal')) {
       values[field] = binding.items.map((item) => item.kind === 'literal' ? item.value : undefined);
+    } else if (binding.kind === 'object' && Object.values(binding.fields).every((item) => item.kind === 'literal')) {
+      values[field] = Object.fromEntries(Object.entries(binding.fields).map(([key, item]) => [key, item.kind === 'literal' ? item.value : undefined]));
     } else deferredFields.add(field);
   }
   if (leaf.kind === 'action') {

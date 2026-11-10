@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentDeployerPrincipalsV1Schema,
+import { isDeploymentEnvironmentUpdateNativeAdmissionV1,
+    type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentDeployerPrincipalsV1Schema, DeploymentPreviewDataTargetsV1Schema,
     type DeploymentEnvironmentDeployerPrincipalV1, type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, machineSecretGrantSubjectKey, resolveDeploymentStoredDefinitionRevisionV1,
-    isDeploymentEnvironmentBindingsOnlyUpdateV1,
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
+    machineSecretGrantSubjectKey, resolveDeploymentStoredDefinitionRevisionV1,
+    isDeploymentEnvironmentBindingsOnlyUpdateV1, reconcileDeploymentRemovedDataServicesV1,
+    isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1,
     captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1,
     normalizeDeploymentBindingSavedSecretRevisionsV1, readDeploymentBindingSavedSecretRevisionsV1,
     type DeploymentBindingsSetStorageInputV1, type DeploymentEnvironmentTemplateSetInputV1, type DeploymentEnvironmentBackupSetInputV1,
@@ -22,9 +26,9 @@ import type { Tx } from '@/storage/inTx';
 import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachineInTx, admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvironment,
     admitDeploymentDefinitionMachinesInTx, readDeploymentDefinitionMachinesInTx,
     type DeploymentAuthentication, type DeploymentSourceAdmission, type DeploymentFailure } from './deploymentAdmission';
-import { deploymentContentReference, readPlainDeploymentEnvironmentContentInTx } from './deploymentStoredContent';
+import { deploymentContentReference, readPlainDeploymentEnvironmentContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { publishDeploymentChangesInTx } from './deploymentPublication';
-import { syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
+import { syncEnvironmentSecretGrantsInTx, readEnvironmentMachineSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProjectSourceInTx,
     resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -177,7 +181,11 @@ function environmentCreationIntentDigest(input: DeploymentEnvironmentCreateStora
 
 function parseEnvironmentCreationRepeatValue(value: string) {
     const [digest, environmentId] = value.split(':');
-    return digest && environmentId ? { digest, environmentId } : null;
+    if (!digest || !environmentId) return null;
+    const suffix = value.slice(digest.length + environmentId.length + 2);
+    if (!suffix) return { digest, environmentId };
+    try { return { digest, environmentId, previewDataTargets: DeploymentPreviewDataTargetsV1Schema.parse(JSON.parse(suffix)) }; }
+    catch { return null; }
 }
 
 /** Resolve the existing acknowledged create intent; current Environment admission remains the caller's responsibility. */
@@ -229,7 +237,9 @@ async function createDeploymentEnvironmentForSourceInTx(tx: Tx, actorAccountId: 
         const { environmentId } = original;
         const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, environmentId, authentication);
         return loaded.ok && !loaded.row.deletedAt ? { ok: true as const, environmentId,
-            projectSourceId: loaded.row.projectSourceId, revision: loaded.row.revision }
+            projectSourceId: loaded.row.projectSourceId, revision: loaded.row.revision,
+            ...(loaded.row.runtimeTargetLinkId ? { runtimeTargetLinkId: loaded.row.runtimeTargetLinkId } : {}),
+            ...(original.previewDataTargets ? { previewDataTargets: original.previewDataTargets } : {}) }
             : deploymentFailure('deployment_conflict');
     }
     // An acknowledged intent keeps its result after the source advances. New copies capture an exact, independently writable revision.
@@ -237,16 +247,36 @@ async function createDeploymentEnvironmentForSourceInTx(tx: Tx, actorAccountId: 
         || copied.row.contentArtifactId === input.contentArtifactId)) return deploymentFailure('deployment_conflict');
     const preview = await admitPreviewEnvironmentRelationInTx(tx, actorAccountId, input, authentication);
     if (!preview.ok) return preview;
+    const dataRequests = input.previewDataTargetLinks ?? [];
+    const sourceDataById = new Map<string, NonNullable<Awaited<ReturnType<Tx['deploymentTargetLink']['findUnique']>>>>();
+    for (const ids of portableQueryChunks({ values: dataRequests.map(item => item.templateDataTargetLinkId),
+        bindingsPerValue: 1, fixedBindings: 1 })) {
+        const links = await tx.deploymentTargetLink.findMany({ where: { id: { in: [...ids] },
+            environmentId: input.preview!.templateEnvironmentId, role: 'data', sourceKind: 'plugin', deletedAt: null, detachedAt: null } });
+        for (const link of links) sourceDataById.set(link.id, link);
+    }
+    for (const item of dataRequests) {
+        const link = sourceDataById.get(item.templateDataTargetLinkId);
+        if (!link || link.revision !== item.expectedTemplateTargetLinkRevision || link.contentArtifactId === item.contentArtifactId)
+            return deploymentFailure('deployment_conflict');
+    }
     const machineFailure = await admitDeploymentDefinitionMachinesInTx(tx, actorAccountId, source.admission.owner,
         [{ machineId: input.controllerMachineId, role: 'controller' },
             ...(input.buildMachineId ? [{ machineId: input.buildMachineId, role: 'build' as const }] : []),
-            ...(input.firstTargetLink?.machines ?? [])]);
+            ...(input.firstTargetLink?.machines ?? []),
+            ...[...sourceDataById.values()].flatMap(link => link.machineId
+                ? [{ machineId: link.machineId, installationId: link.installationId ?? undefined }] : [])]);
     if (machineFailure) return machineFailure;
     const content = await readPlainDeploymentEnvironmentContentInTx(tx, actorAccountId, source.admission.owner, input);
     if (!content.ok) return content;
     // New Environments, including copies and previews, do not inherit another Environment's recovery ownership.
     if (content.content?.backup !== undefined) return deploymentFailure('deployment_conflict');
     if (content.content?.ingress !== undefined) return deploymentFailure('deployment_conflict');
+    const linkContentFailures = await admitDeploymentStoredContentsInTx(tx, actorAccountId, source.admission.owner,
+        [...(input.firstTargetLink ? [input.firstTargetLink] : []), ...dataRequests].map(reference => ({
+            reference, expectedStoredKind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 })));
+    const linkContentFailure = linkContentFailures.find(item => item !== null);
+    if (linkContentFailure) return linkContentFailure;
     const row = await tx.deploymentEnvironment.create({ data: {
         projectSourceId: input.projectSourceId, createdByAccountId: actorAccountId,
         protection: input.protection, purpose: input.purpose, deployerMode: input.deployerMode,
@@ -258,18 +288,37 @@ async function createDeploymentEnvironmentForSourceInTx(tx: Tx, actorAccountId: 
         ...deploymentContentReference(input),
     }, include: { deployers: { select: { principalKind: true, principalId: true } } } });
     let revision = row.revision;
+    let runtimeTargetLinkId: string | undefined;
     if (input.firstTargetLink) {
         const linked = await linkDeploymentTargetForAdmittedEnvironmentInTx(tx, actorAccountId, {
             ...input.firstTargetLink, serverId: input.serverId, environmentId: row.id,
             expectedRevision: row.revision, requestKey: input.requestKey, targetId: 'own-server', role: 'runtime',
-        }, { ok: true, row, admission: source.admission });
+        }, { ok: true, row, admission: source.admission }, { contentAdmitted: true });
         if (!linked.ok) throw new DeploymentEnvironmentCreationError(linked);
         revision = linked.revision;
+        runtimeTargetLinkId = linked.targetLinkId;
     }
-    await saveRepeatKey(tx, repeatKey, `${digest}:${row.id}`, defaultRepeatKeyExpiresAt(now));
+    const previewDataTargets: ReturnType<typeof DeploymentPreviewDataTargetsV1Schema.parse> = [];
+    for (const item of dataRequests) {
+        const sourceLink = sourceDataById.get(item.templateDataTargetLinkId)!;
+        const linked = await linkDeploymentTargetForAdmittedEnvironmentInTx(tx, actorAccountId, {
+            ...deploymentContentReference(item), serverId: input.serverId, environmentId: row.id, expectedRevision: revision,
+            requestKey: `${input.requestKey}:${sourceLink.id}`, targetId: sourceLink.contributionLocalId!, role: 'data',
+            source: { kind: 'plugin', contribution: { pluginId: sourceLink.pluginId!, localId: sourceLink.contributionLocalId! } },
+            targetKind: sourceLink.targetKind, machines: [],
+            ...(sourceLink.machineId ? { machineId: sourceLink.machineId, installationId: sourceLink.installationId! } : {}),
+        }, { ok: true, row: { ...row, revision }, admission: source.admission }, { contentAdmitted: true });
+        if (!linked.ok) throw new DeploymentEnvironmentCreationError(linked);
+        revision = linked.revision;
+        previewDataTargets.push({ templateDataTargetLinkId: sourceLink.id,
+            targetLinkId: linked.targetLinkId, targetLinkRevision: linked.targetLinkRevision });
+    }
+    await saveRepeatKey(tx, repeatKey, `${digest}:${row.id}${previewDataTargets.length ? `:${JSON.stringify(previewDataTargets)}` : ''}`, defaultRepeatKeyExpiresAt(now));
     // The link owner has already published the final Environment revision.
-    if (!input.firstTargetLink) await publishDeploymentChangesInTx(tx, source.admission, row.id, revision);
-    return { ok: true as const, environmentId: row.id, projectSourceId: row.projectSourceId, revision };
+    if (!input.firstTargetLink && !dataRequests.length) await publishDeploymentChangesInTx(tx, source.admission, row.id, revision);
+    return { ok: true as const, environmentId: row.id, projectSourceId: row.projectSourceId, revision,
+        ...(runtimeTargetLinkId ? { runtimeTargetLinkId } : {}),
+        ...(previewDataTargets.length ? { previewDataTargets } : {}) };
 }
 
 /** Definition sub-revisions advance only for document/selectors; unrelated edits retain grants. */
@@ -278,6 +327,7 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
     contentWriter: 'environment' | 'template' | 'backup' = 'environment',
     admitted?: AdmittedDeploymentEnvironment,
     publicationAccountIds?: readonly string[],
+    executionBinding?: ExternalActionExecutionAuthorizationBindingV1 | null,
 ) {
     if (!admitted) await lockDeploymentEnvironmentInTx(tx, input.environmentId);
     const loaded = admitted ?? await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
@@ -330,21 +380,35 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
             return deploymentFailure('deployment_conflict');
         }
         if (!previous.content) return deploymentFailure('deployment_conflict');
-        let desiredBackup = previous.content.backup;
+        const candidate = content.content.definition;
+        const incumbent = previous.content.definition;
+        let reconciled = previous.content;
+        if (contentWriter === 'environment' && candidate.kind === 'stored' && !isDeepStrictEqual(incumbent, candidate)) {
+            try { reconciled = await reconcileDeploymentRemovedDataServicesV1(previous.content, candidate); }
+            catch (error) {
+                if (error instanceof Error && 'code' in error && error.code === 'invalid_request') {
+                    return deploymentFailure('deployment_invalid');
+                }
+                throw error;
+            }
+        }
+        let desiredBackup = reconciled.backup;
         if (contentWriter === 'environment' && input.patch?.backupRetention) {
-            const prepared = prepareDeploymentBackupRetentionV1({ currentBackup: previous.content.backup,
+            const prepared = prepareDeploymentBackupRetentionV1({ currentBackup: desiredBackup,
                 ...input.patch.backupRetention });
             if (!prepared.ok) return deploymentFailure('deployment_conflict');
             desiredBackup = prepared.configuration;
         }
         definitionChanged = contentWriter === 'environment' && !isDeepStrictEqual(previous.content, content.content);
+        const native = executionBinding?.deploymentNativeAdmission;
+        // Authentication admitted this exact prepared private edit; opaque and plain content share that owner.
+        const admittedPreparedContent = isDeploymentEnvironmentUpdateNativeAdmissionV1(native)
+            && native.environmentId === input.environmentId && native.inputDigest === input.authoredInputDigest;
         if (contentWriter === 'environment') {
-            if (!isDeepStrictEqual(previous.content.bindings, content.content.bindings)
+            if ((!input.preparedBindings && !isDeepStrictEqual(previous.content.bindings, content.content.bindings))
                 || !isDeepStrictEqual(previous.content.previewProvenance, content.content.previewProvenance)
-                || !isDeepStrictEqual(previous.content.template, content.content.template)
-                // Setup is prepared by the host's configuration owner in both Account modes.
-                // An explicit retention-only edit must still preserve its capture identity.
-                || (input.patch?.backupRetention !== undefined
+                || !isDeepStrictEqual(reconciled.template, content.content.template)
+                || ((!admittedPreparedContent || input.patch?.backupRetention !== undefined)
                     && !isDeepStrictEqual(desiredBackup, content.content.backup))) return deploymentFailure('deployment_conflict');
         } else if (contentWriter === 'backup') {
             if (!isDeepStrictEqual({ ...previous.content, backup: undefined }, { ...content.content, backup: undefined })) {
@@ -360,8 +424,6 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
             if (!provenance || definition.kind !== 'stored' || provenance.definition.contentRevision !== definition.contentRevision
                 || provenance.definition.composeDigest !== definition.composeDigest) return deploymentFailure('deployment_conflict');
         }
-        const candidate = content.content.definition;
-        const incumbent = previous.content.definition;
         if (candidate.kind === 'stored') {
             if (candidate.contentRevision !== resolveDeploymentStoredDefinitionRevisionV1(incumbent, candidate)) {
                 return deploymentFailure('deployment_conflict');
@@ -370,8 +432,8 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
     }
     const buildChanged = buildMachineId !== loaded.row.buildMachineId;
     const edgeChanged = edgeMachineId !== loaded.row.edgeMachineId;
-    // Prepared placement continues in the binding writer, which admits the combined mutation once.
-    if (!(buildChanged && input.preparedBindings) && (definitionChanged || buildChanged || edgeChanged)) {
+    // Prepared content and placement continue in the binding writer, which admits the combined mutation once.
+    if (!input.preparedBindings && (definitionChanged || buildChanged || edgeChanged)) {
         const denied = await admitDeploymentDefinitionMachinesInTx(tx, actorAccountId, loaded.admission.owner, [
             ...await readDeploymentDefinitionMachinesInTx(tx, loaded.row),
             ...placementAdmissions,
@@ -383,21 +445,21 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
         && !input.preparedBindings && isDeepStrictEqual(deploymentContentReference(loaded.row), deploymentContentReference(input))) {
         return { ok: true as const, environmentId: loaded.row.id, revision: loaded.row.revision };
     }
-    if (buildMachineId !== loaded.row.buildMachineId) {
-        if (!buildMachineId) return deploymentFailure('deployment_invalid');
-        if (input.preparedBindings) {
-            return setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx, actorAccountId, {
-                serverId: input.serverId, environmentId: input.environmentId, expectedRevision: input.expectedRevision,
-                ...deploymentContentReference(input), ...input.preparedBindings,
-            }, loaded, authentication, { buildMachineId, deployerMode,
-                ...(ingress !== undefined ? { edgeMachineId } : {}),
-                ...(input.patch?.deployerPrincipals !== undefined ? { deployerPrincipals: input.patch.deployerPrincipals } : {}),
-                ...(input.patch?.protection !== undefined ? { protection: input.patch.protection } : {}) });
-        }
+    if (buildChanged && !buildMachineId) return deploymentFailure('deployment_invalid');
+    if (input.preparedBindings) {
+        return setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx, actorAccountId, {
+            serverId: input.serverId, environmentId: input.environmentId, expectedRevision: input.expectedRevision,
+            ...deploymentContentReference(input), ...input.preparedBindings,
+        }, loaded, authentication, { buildMachineId, deployerMode,
+            ...(ingress !== undefined ? { edgeMachineId } : {}),
+            ...(input.patch?.deployerPrincipals !== undefined ? { deployerPrincipals: input.patch.deployerPrincipals } : {}),
+            ...(input.patch?.protection !== undefined ? { protection: input.patch.protection } : {}) });
+    }
+    if (buildChanged) {
         // Only the canonical plain reader can prove there is no binding custody.
         // Zero grant rows cannot establish that for opaque or unprepared content.
         if (content.content === null || content.content.bindings.length !== 0) return deploymentFailure('client_required');
-    } else if (input.preparedBindings) return deploymentFailure('deployment_conflict');
+    }
     const changed = await tx.deploymentEnvironment.updateMany({ where: { id: loaded.row.id, revision: input.expectedRevision },
         data: { ...deploymentContentReference(input),
             ...(input.patch?.buildMachineId !== undefined ? { buildMachineId: input.patch.buildMachineId } : {}),
@@ -442,7 +504,7 @@ export async function setDeploymentEnvironmentBindingsInTx(tx: Tx, actorAccountI
 /** Combined definition/binding edits continue the same locked Environment admission. */
 async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx, actorAccountId: string,
     input: DeploymentBindingsSetStorageInputV1, loaded: AdmittedDeploymentEnvironment, authentication: DeploymentAuthentication,
-    placement?: Readonly<{ buildMachineId: string; protection?: DeploymentEnvironmentCreateStorageInputV1['protection'];
+    placement?: Readonly<{ buildMachineId: string | null; protection?: DeploymentEnvironmentCreateStorageInputV1['protection'];
         edgeMachineId?: string | null;
         deployerMode?: DeploymentEnvironmentCreateStorageInputV1['deployerMode'];
         deployerPrincipals?: readonly DeploymentEnvironmentDeployerPrincipalV1[] }>,
@@ -460,6 +522,23 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         include: { machines: { orderBy: { position: 'asc' } } },
     }) : null;
     const buildMachineId = placement?.buildMachineId ?? loaded.row.buildMachineId;
+    const preparedContent = await readPlainDeploymentEnvironmentContentInTx(tx, actorAccountId, loaded.admission.owner, input);
+    if (!preparedContent.ok) return preparedContent;
+    const previous = isDeepStrictEqual(deploymentContentReference(loaded.row), deploymentContentReference(input)) ? preparedContent
+        : await readPlainDeploymentEnvironmentContentInTx(tx, actorAccountId, loaded.admission.owner, loaded.row);
+    if (!previous.ok) return previous;
+    if (preparedContent.content && (!previous.content || (!placement
+        && !isDeploymentEnvironmentBindingsOnlyUpdateV1(previous.content, preparedContent.content)))) {
+        return deploymentFailure('deployment_conflict');
+    }
+    const existingGrants = await readEnvironmentMachineSecretGrantsInTx(tx, { environmentId: loaded.row.id });
+    const retainedGrants = preparedContent.content && previous.content
+        ? readRetainedOperationalEnvironmentBindingGrantsV1({ previousBindings: previous.content.bindings,
+            bindings: preparedContent.content.bindings, existingGrants })
+        // Opaque binding semantics belong to the admitted content owner. Existing exact seals add no delivery authority.
+        : existingGrants.filter(existing => input.grants.some(grant => isDeepStrictEqual(existing, grant)));
+    if (retainedGrants === null) return deploymentFailure('deployment_conflict');
+    const retainedSubjects = new Map(retainedGrants.map(grant => [machineSecretGrantSubjectKey(grant), grant]));
     // References survive authoring before placement; grants cover only current installations.
     const secretRevisions = new Map(input.referencedSavedSecretRevisions.map(ref => [ref.resourceId, ref.revision]));
     const subjects = new Set<string>();
@@ -469,12 +548,14 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         const key = machineSecretGrantSubjectKey(grant);
         if (subjects.has(key)) return deploymentFailure('deployment_conflict');
         subjects.add(key);
+        const retained = retainedSubjects.get(key);
+        if (retained && !isDeepStrictEqual(retained, grant)) return deploymentFailure('deployment_conflict');
         const runtime = link?.machines.some(member => member.machineId === grant.machineId && member.installationId === grant.installationId);
         const build = buildMachineId === grant.machineId;
-        if (grant.kind === 'environmentValues' ? grant.binding.phase === 'runtime' ? !runtime : !build : !runtime && !build) {
+        if (!retained && (grant.kind === 'environmentValues' ? grant.binding.phase === 'runtime' ? !runtime : !build : !runtime && !build)) {
             return deploymentFailure('deployment_conflict');
         }
-        recipients.set(JSON.stringify([grant.machineId, grant.installationId]), {
+        if (runtime || build) recipients.set(JSON.stringify([grant.machineId, grant.installationId]), {
             machineId: grant.machineId, installationId: grant.installationId, role: runtime ? 'target' : 'build',
         });
         if (grant.kind === 'secret') {
@@ -487,23 +568,13 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         || input.referencedSavedSecretRevisions.some(ref => secretRevisions.get(ref.resourceId) !== ref.revision)) {
         return deploymentFailure('deployment_conflict');
     }
-    const preparedContent = await readPlainDeploymentEnvironmentContentInTx(tx, actorAccountId, loaded.admission.owner, input);
-    if (!preparedContent.ok) return preparedContent;
     let definitionChanged = preparedContent.content === null
         && !isDeepStrictEqual(deploymentContentReference(loaded.row), deploymentContentReference(input));
     let referencedSavedSecretRevisions = normalizeDeploymentBindingSavedSecretRevisionsV1(input.referencedSavedSecretRevisions);
     if (preparedContent.content) {
-        const previous = isDeepStrictEqual(deploymentContentReference(loaded.row), deploymentContentReference(input)) ? preparedContent
-            : await readPlainDeploymentEnvironmentContentInTx(tx, actorAccountId, loaded.admission.owner, loaded.row);
-        if (!previous.ok) return previous;
         definitionChanged = !isDeepStrictEqual(previous.content, preparedContent.content);
-        // Bindings are this writer's only leaf; definition/configuration keep their own writers.
-        if (!previous.content || (placement ? !isDeepStrictEqual(previous.content.bindings, preparedContent.content.bindings)
-            : !isDeploymentEnvironmentBindingsOnlyUpdateV1(previous.content, preparedContent.content))) {
-            return deploymentFailure('deployment_conflict');
-        }
         const contentReferences = new Map<string, number>();
-        const requiredSubjects = new Set<string>();
+        const requiredSubjects = new Set(retainedSubjects.keys());
         const registryTargetIds = new Set<string>();
         const buildRecipient = buildMachineId
             ? [...recipients.values()].find(recipient => recipient.machineId === buildMachineId) : undefined;
@@ -517,10 +588,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
                 if (previous !== undefined && previous !== binding.source.resourceRevision) return deploymentFailure('deployment_conflict');
                 contentReferences.set(resourceId, binding.source.resourceRevision);
             }
-            if (binding.purpose !== 'variable' && binding.purpose !== 'registry') {
-                // Operational owners must supply current exact destinations before these rows can be admitted.
-                return deploymentFailure('deployment_conflict');
-            }
+            if (!isEnvironmentSecretBindingManagedByBindingsWriterV1(binding)) continue;
             if (binding.purpose === 'registry') registryTargetIds.add(binding.targetLinkId);
             const needsBuild = binding.purpose === 'registry' ? buildMachineId !== null : binding.phase === 'build';
             if (needsBuild && !buildRecipient) return deploymentFailure('deployment_conflict');

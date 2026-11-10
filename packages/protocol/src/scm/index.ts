@@ -1115,3 +1115,4 @@ export {
   type ScmHostingRepositoryIdentityV1,
 } from './hostingRepositoryIdentity.js';
 export * from './suggestions.js';
+export * from './pullRequestLifecycleV1.js';

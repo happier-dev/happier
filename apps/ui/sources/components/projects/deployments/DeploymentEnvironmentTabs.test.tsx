@@ -7,6 +7,7 @@ import {
 import {
   createDeploymentEnvironmentDetailV1,
   createDeploymentEnvironmentHeaderV1,
+  createDeploymentTargetLinkHeaderV1,
   createDeploymentReceiptDetailV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -1173,6 +1174,32 @@ describe('Environment → Settings: checks, backups, previews', () => {
           patch: call[1] }).success).toBe(true);
       }
     } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('offers a managed branch for an unseeded template with a linked database, without reading provider branches before selection', async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Preview database', serverUrl: 'https://preview-database.test', accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = createDeploymentEnvironmentDetailV1({ content: { ...base.content, previewTemplate: {
+      v: 1, enabled: true, forkPreviews: 'off', repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/shop' },
+      runtimeTargetLinkId: base.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [], data: [],
+    } }, targetLinks: [...base.targetLinks, { targetLink: createDeploymentTargetLinkHeaderV1({ id: 'managed-data', role: 'data',
+      targetKind: 'managed', machines: [], members: [], source: { kind: 'plugin', contribution: { pluginId: 'com.example.database', localId: 'database' } } }),
+      content: { providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
+        providerEnvironment: { kind: 'custom', id: 'main' }, credentialPrincipal: { kind: 'account', accountId: 'account-owner',
+          purpose: { consumer: { pluginId: 'com.example.database', localId: 'link' }, purpose: 'database.manage' },
+          target: { kind: 'account', account: { service: { pluginId: 'com.example.database', localId: 'database' }, accountId: 'token' } } } } }] });
+    const actions = (await import('./deploymentActions')).createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { environmentActions: actions, lifetime: account.accountLifetime });
+    const id = 'project-deployments.environment.settings.previews.template';
+    try {
+      expect(await settle(`${id}.data`)).not.toBeNull();
+      const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+      const data = screen.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === `${id}.data`)!;
+      expect(data.props.options.find((option: { id: string }) => option.id === 'branch').disabled).toBe(false);
+      expect(screen.findByTestId(`${id}.branch.parent`)).toBeNull();
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
   it('turns previews on from the Project repository when none are set up, through the same update an agent sends', async () => {
