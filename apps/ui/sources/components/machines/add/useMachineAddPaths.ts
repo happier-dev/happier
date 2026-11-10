@@ -24,11 +24,12 @@ export function readMachineAddDevice(): MachineAddDevice {
 /**
  * This computer's machine id as its local daemon reports it (`null` before it has one). Reads the
  * canonical status projection; it does not start another daemon status task.
+ * An idle consumer neither creates the default task runner nor observes its status.
  */
-export function useThisComputerMachineId(taskRunner?: SystemTaskRunner): string | null {
-    const runner = taskRunner ?? getSystemTasksRunner();
-    const subscribe = React.useCallback((listener: () => void) => subscribeLocalDaemonSharedState(runner, listener), [runner]);
-    const read = React.useCallback(() => readLocalDaemonSharedState<LocalDaemonStatusData>(runner).status?.machineId ?? null, [runner]);
+export function useThisComputerMachineId(taskRunner?: SystemTaskRunner, enabled = true): string | null {
+    const runner = enabled ? taskRunner ?? getSystemTasksRunner() : null;
+    const subscribe = React.useCallback((listener: () => void) => runner ? subscribeLocalDaemonSharedState(runner, listener) : () => {}, [runner]);
+    const read = React.useCallback(() => runner ? readLocalDaemonSharedState<LocalDaemonStatusData>(runner).status?.machineId ?? null : null, [runner]);
     return React.useSyncExternalStore(subscribe, read, read);
 }
 

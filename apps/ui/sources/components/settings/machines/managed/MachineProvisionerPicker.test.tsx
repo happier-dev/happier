@@ -16,10 +16,13 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 
 // The JS host the app runs in is a platform boundary. The shared runtime-fetch owner is loaded by the global
 // test setup against the node stub, so a test that is a browser says so here; every other test keeps the real answer.
-const runtimeHost = vi.hoisted(() => ({ current: null as 'browser' | 'native' | null }));
+const runtimeHost = vi.hoisted(() => ({ current: null as 'browser' | 'native' | null, reads: vi.fn() }));
 vi.mock('@/utils/system/runtimeFetch', async (importActual) => {
   const actual = await importActual<typeof import('@/utils/system/runtimeFetch')>();
-  return { ...actual, readRuntimeFetchHost: (input: RequestInfo | URL) => runtimeHost.current ? Promise.resolve(runtimeHost.current) : actual.readRuntimeFetchHost(input) };
+  return { ...actual, readRuntimeFetchHost: (input: RequestInfo | URL) => {
+    runtimeHost.reads(input);
+    return runtimeHost.current ? Promise.resolve(runtimeHost.current) : actual.readRuntimeFetchHost(input);
+  } };
 });
 // Navigation is the app shell's boundary: the picker's ways out are observed as the routes they open.
 const routerPush = vi.hoisted(() => vi.fn());
@@ -59,27 +62,26 @@ async function installBundledMachinePlugins() {
   const { PLUGIN } = await import('../../../../../../../packages/plugins/machine-vercel/src/manifest');
   const { LIMA_PLUGIN } = await import('../../../../../../../packages/plugins/machine-lima/src/manifest');
   const { PLUGIN: E2B_PLUGIN } = await import('../../../../../../../packages/plugins/machine-e2b/src/manifest');
+  const { PLUGIN: MARITIME_PLUGIN } = await import('../../../../../../../packages/plugins/machine-maritime/src/manifest');
   const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
   const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
   const vercel = PluginPortableReleaseManifestV1Schema.parse(PLUGIN.manifest);
   const lima = PluginPortableReleaseManifestV1Schema.parse(LIMA_PLUGIN.manifest);
   const e2b = PluginPortableReleaseManifestV1Schema.parse(E2B_PLUGIN.manifest);
+  const maritime = PluginPortableReleaseManifestV1Schema.parse(MARITIME_PLUGIN.manifest);
   onTestFinished(installBundledPluginUiDeclarationsForTests([
     { pluginId: vercel.id, pluginVersion: vercel.version, packageName: '@happier-dev/plugins-machine-vercel', displayName: 'Vercel Machines', entriesById: {}, normalizedManifest: vercel },
     { pluginId: lima.id, pluginVersion: lima.version, packageName: '@happier-dev/plugins-machine-lima', displayName: 'Lima Machines', entriesById: {}, normalizedManifest: lima },
     { pluginId: e2b.id, pluginVersion: e2b.version, packageName: '@happier-dev/plugins-machine-e2b', displayName: 'E2B Machines', entriesById: {}, normalizedManifest: e2b },
+    { pluginId: maritime.id, pluginVersion: maritime.version, packageName: '@happier-dev/plugins-machine-maritime', displayName: 'Maritime Machines', entriesById: {}, normalizedManifest: maritime },
   ]));
-  return { vercel, lima, e2b };
-}
-
-async function installAppOnlyMachinePlugin() {
-  await installBundledMachinePlugins();
+  return { vercel, lima, e2b, maritime };
 }
 
 // Controller-only empty/loading states require a settled Account catalog with
 // no offers; a missing Account answer is an availability failure instead.
 async function publishNoAccountProvisioners(serverId: string) {
-  const { vercel, lima, e2b } = await installBundledMachinePlugins();
+  const { vercel, lima, e2b, maritime } = await installBundledMachinePlugins();
   const { PluginAccountAvailabilityIntentReadResponseV1Schema } = await import('@happier-dev/protocol/plugins/availability');
   const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
   const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
@@ -89,7 +91,7 @@ async function publishNoAccountProvisioners(serverId: string) {
     snapshot: {
       // This fixture settles Account offers, not the selected daemon's plugin census.
       availabilityCursor: 1, inventoryComplete: false, materializations: [], snapshots: [],
-      intentReads: [vercel, lima, e2b].map(({ id: pluginId }) => ({
+      intentReads: [vercel, lima, e2b, maritime].map(({ id: pluginId }) => ({
         pluginId,
         response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
           availabilityCursor: 1, hostingCapability: { enabled: false },
@@ -102,13 +104,71 @@ async function publishNoAccountProvisioners(serverId: string) {
 }
 
 describe('provisioner picker demand', () => {
+  it('lets a preset choose local descriptors without a controller or acquisition prerequisites', async () => {
+    // The native SDK is the platform boundary. Keep the real runner/bridge construction path beneath this observer.
+    const nativeSsh = await import('@happier-dev/ssh-native');
+    const sshAvailability = vi.spyOn(nativeSsh, 'getNativeSshAvailability');
+    onTestFinished(() => sshAvailability.mockRestore());
+    vi.stubEnv('EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE', 'native');
+    onTestFinished(() => vi.unstubAllEnvs());
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    // Before an authenticated catalog can create the shared Action executor, the real
+    // authoring scope must leave this computer's native runner cold. Add still observes it.
+    const coldPreset = await renderPicker(<MachineProvisionerPicker serverId="signed-out-native-home" presetOnly />);
+    try { expect(sshAvailability).not.toHaveBeenCalled(); }
+    finally { await coldPreset.unmount(); }
+    const coldAcquisition = await renderPicker(<MachineProvisionerPicker serverId="signed-out-native-home" />);
+    try { expect(sshAvailability).toHaveBeenCalledTimes(1); }
+    finally { await coldAcquisition.unmount(); }
+    const { lima, e2b } = await installBundledMachinePlugins();
+    const serverId = await harness.addHome({ name: 'Preset authoring', serverUrl: 'https://preset-authoring.example.test',
+      serverIdentityId: 'srv_preset_authoring', accountId: 'owner', currentAccount: true });
+    const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
+      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    runtimeHost.current = 'browser';
+    onTestFinished(() => { runtimeHost.current = null; });
+    const selected = vi.fn();
+    runtimeHost.reads.mockClear();
+    routerPush.mockClear();
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} presetOnly onSelectProvisioner={selected} />);
+    try {
+      for (const manifest of [lima, e2b]) {
+        const descriptor = manifest.contributes.machineProvisioners[0]!;
+        const key = buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: descriptor.id });
+        await waitForHomeGovernance(() => {
+          const cards = screen.tree.findAll(node => node.props.testID === 'managed-picker.provisioners')[0]?.props.cards;
+          expect(cards?.find((card: { id: string }) => card.id === key), screen.getTextContent()).toMatchObject({
+            action: { kind: 'choose' }, status: { tone: 'none', label: '' },
+          });
+        });
+        const group = descriptor.billing.location === 'local' ? 'local' : 'cloud-sandboxes';
+        const row = `managed-picker.provisioners.${group}.${key}`;
+        await act(async () => screen.pressByTestId(screen.findByTestId(`${row}.action`) ? `${row}.action` : row));
+        expect(selected).toHaveBeenLastCalledWith({ serverId, provisioner: key });
+      }
+      expect(runtimeHost.reads).not.toHaveBeenCalled();
+      expect(routerPush).not.toHaveBeenCalled();
+      expect(harness.requests.filter(request => /machines\.provisioners\.(check|options)|machines\.managed\.acquire/.test(request.path))).toHaveLength(0);
+      expect(harness.requestsFor('/v4/connect/qualified/accounts')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const editor = await renderPicker(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey({ pluginId: lima.id, localId: lima.contributes.machineProvisioners[0]!.id })} presetOnly />);
+    try { expect(sshAvailability).toHaveBeenCalledTimes(1); }
+    finally { await editor.unmount(); }
+  });
+
   it.each([
     { name: 'agent37', group: 'cloud-sandboxes', load: () => import('../../../../../../../packages/plugins/machine-agent37/src/manifest') },
     { name: 'maritime', group: 'cloud', load: () => import('../../../../../../../packages/plugins/machine-maritime/src/manifest') },
     { name: 'hetzner', group: 'cloud', load: () => import('../../../../../../../packages/plugins/machine-hetzner/src/manifest') },
-    { name: 'e2b', group: 'cloud-sandboxes', load: () => import('../../../../../../../packages/plugins/machine-e2b/src/manifest') },
     { name: 'boat', group: 'cloud', load: () => import('../../../../../../../packages/plugins/machine-boat/src/manifest') },
-  ])('offers the same $name Account action on the selected controller in a browser', async ({ name, group, load }) => {
+  ])('offers the browser-blocked $name Account action on the selected controller', async ({ name, group, load }) => {
     const { PLUGIN } = await load();
     const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
     const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN.manifest);
@@ -189,11 +249,11 @@ describe('provisioner picker demand', () => {
     } finally { await screen.unmount(); }
   });
   it('projects the same browser handoff on a directly opened configurator instead of asking for a hidden account (R8-9)', async () => {
-    await installAppOnlyMachinePlugin();
+    await installBundledMachinePlugins();
     const serverId = await harness.addHome({ name: 'Cloud', serverUrl: 'https://cloud-config.example.test',
       serverIdentityId: 'srv_cloud_config', accountId: 'owner', currentAccount: true });
-    const { CONTRIBUTION: contribution } = await import('../../../../../../../packages/plugins/machine-e2b/src/machine/schemas');
-    const { ACCOUNT_ID } = await import('../../../../../../../packages/plugins/machine-e2b/src/account');
+    const { CONTRIBUTION: contribution } = await import('../../../../../../../packages/plugins/machine-maritime/src/machine/schemas');
+    const { ACCOUNT_ID } = await import('../../../../../../../packages/plugins/machine-maritime/src/account');
     harness.answer(serverId, '/v4/connect/qualified/accounts', {
       body: { service: { pluginId: contribution.pluginId, localId: ACCOUNT_ID }, accounts: [] },
     });
@@ -226,14 +286,14 @@ describe('provisioner picker demand', () => {
     } finally { await screen.unmount(); }
   });
   it('says a browser-blocked provider needs the app and hands off without opening its configurator (58d AF8)', async () => {
-    await installAppOnlyMachinePlugin();
+    await installBundledMachinePlugins();
     const serverId = await harness.addHome({ name: 'Cloud', serverUrl: 'https://cloud-web.example.test',
       serverIdentityId: 'srv_cloud_web', accountId: 'owner', currentAccount: true });
-    const { CONTRIBUTION: contribution } = await import('../../../../../../../packages/plugins/machine-e2b/src/machine/schemas');
+    const { CONTRIBUTION: contribution } = await import('../../../../../../../packages/plugins/machine-maritime/src/machine/schemas');
     const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
     onTestFinished(clearPluginAccountAvailabilityProjection);
     const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
-    // E2B still declares browserReachable: false; Vercel now supports the browser recipe.
+    // Maritime declares browserReachable: false; Vercel and E2B support browser recipes.
     replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' },
       snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
     const { storage } = await import('@/sync/domains/state/storage');
@@ -1604,7 +1664,7 @@ describe('provisioner picker demand', () => {
       expect(harness.requests.some(request => request.path.includes('/connect/qualified/accounts'))).toBe(false);
     } finally { await hook.unmount(); }
   });
-  it('asks for an explicit Home, then reads the preselected controller catalog without allocation', async () => {
+  it('asks for an explicit Home, then reads preset descriptors without consulting its controller', async () => {
     const first = await harness.addHome({
       name: 'Build',
       serverUrl: 'https://build.example',
@@ -1656,39 +1716,15 @@ describe('provisioner picker demand', () => {
     ).toHaveLength(0);
     expect(screen.findByTestId('managed-picker.controller.chip')).toBeNull();
     await act(async () => screen.pressByTestId(`managed-picker.home:${first}`));
-    // The Home's only machine that can manage is preselected in the scope chip, so its catalog is the first frame.
+    // A known controller is future execution placement, not a prerequisite or catalog authority for authoring.
     await waitForHomeGovernance(() =>
-      expect(
-        screen.findByTestId('managed-picker.controller.chip'),
-      ).not.toBeNull(),
+      expect(screen.findByTestId('managed-picker.empty')).not.toBeNull(),
     );
-    await waitForHomeGovernance(() =>
-      expect(
-        harness.requestsFor('/v1/actions/machines.provisioners.list').length >
-          0 ||
-          screen.tree.findAll(
-            (node) => node.props.testID === 'managed-picker.unavailable',
-          ).length > 0,
-      ).toBe(true),
-    );
+    expect(screen.findByTestId('managed-picker.controller.chip')).toBeNull();
+    expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
     expect(
       harness.requestsFor('/v1/actions/machines.provisioners.list'),
-    ).toHaveLength(1);
-    expect(
-      harness.requestsFor('/v1/actions/machines.provisioners.list')[0],
-    ).toMatchObject({
-      serverId: first,
-      input: {
-        target: { kind: 'machine', machineId: 'build-controller' },
-        input: {
-          homeId: 'srv_build',
-          controller: {
-            machineId: 'build-controller',
-            installationId: 'build-installation',
-          },
-        },
-      },
-    });
+    ).toHaveLength(0);
     expect(
       harness.requests.some((request) => request.path.endsWith('/acquire')),
     ).toBe(false);

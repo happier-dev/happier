@@ -3,6 +3,7 @@ import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginProjectedActionPresentation } from '@/sync/domains/plugins/ui/actionPresentation';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { machinePluginActionSchemasRead } from '@/sync/ops/machineContributionRegistryProjection';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -11,7 +12,8 @@ import { retainDeep, retainShallow } from '@/sync/domains/state/structuralSharin
 
 export type ManagedProvisionerOptionsInput = Readonly<{ kind: 'none' | 'loading' }>
     | Readonly<{ kind: 'unavailable'; error: string }>
-    | Readonly<{ kind: 'ready'; schema: PluginJsonSchemaV2; action: Pick<PluginProjectedActionV2, 'pluginId' | 'id' | 'occurrenceId'> }>;
+    | Readonly<{ kind: 'ready'; schema: PluginJsonSchemaV2; action: Pick<PluginProjectedActionV2, 'pluginId' | 'id' | 'occurrenceId'>;
+        presentation?: PluginProjectedActionPresentation }>;
 const none = { kind: 'none' } as const;
 const loading = { kind: 'loading' } as const;
 const controllerUnavailable = { kind: 'unavailable', error: 'controller_unavailable' } as const;
@@ -21,6 +23,7 @@ export async function readManagedProvisionerOptionsInput(input: Readonly<{
     binding: ServerCredentialAccountScopeBinding;
     controller?: ManagedControllerV1;
     provisioner: MachineProvisionersListResultV1['provisioners'][number];
+    declarationsOnly?: boolean;
     signal: AbortSignal;
 }>): Promise<ManagedProvisionerOptionsInput> {
     const { binding, controller, provisioner, signal } = input;
@@ -29,12 +32,19 @@ export async function readManagedProvisionerOptionsInput(input: Readonly<{
     const identity = { pluginId: provisioner.contribution.pluginId, localId };
     const occurrenceId = provisioner.occurrenceId;
     if (!controller) {
-        const selected = await readPluginAccountAvailability(binding.scope).ensureCurrentAccountExecution(identity.pluginId);
+        const reader = readPluginAccountAvailability(binding.scope);
+        const selected = input.declarationsOnly ? reader.readCurrentAccountExecutionDeclarations()
+            .find(selection => selection.manifest.id === identity.pluginId && selection.custodyId === occurrenceId)
+            : await reader.ensureCurrentAccountExecution(identity.pluginId);
+        if (!selected) return { kind: 'unavailable', error: 'option_unavailable' };
         if (selected.kind !== 'available') return { kind: 'unavailable', error: selected.code };
         const action = selected.custodyId === occurrenceId
             ? selected.manifest.contributes.actions.find(action => action.id === localId) : undefined;
         return action?.inputSchema ? { kind: 'ready', schema: action.inputSchema,
-            action: { pluginId: identity.pluginId, id: localId, occurrenceId } }
+            action: { pluginId: identity.pluginId, id: localId, occurrenceId },
+            ...(input.declarationsOnly ? { presentation: {
+                title: action.title, description: action.description, inputHints: action.inputHints,
+            } } : {}) }
             : { kind: 'unavailable', error: 'option_unavailable' };
     }
     const result = await machinePluginActionSchemasRead(controller.machineId, {
@@ -56,6 +66,8 @@ export function useManagedProvisionerOptionsInput(input: Readonly<{
     binding: ServerCredentialAccountScopeBinding | null;
     controller?: ManagedControllerV1;
     provisioner?: MachineProvisionersListResultV1['provisioners'][number];
+    /** Read author-input metadata already owned by the descriptor catalog, without execution demand. */
+    declarationsOnly?: boolean;
     /** Changes when the person asks to read again. */
     refreshKey?: number;
 }>): ManagedProvisionerOptionsInput {
@@ -65,7 +77,7 @@ export function useManagedProvisionerOptionsInput(input: Readonly<{
     const localId = provisioner?.descriptor.actions.options;
     const identity = localId && provisioner ? { pluginId: provisioner.contribution.pluginId, localId } : null;
     const occurrenceId = provisioner?.occurrenceId;
-    const key = JSON.stringify([binding?.scope, binding?.revision, controller, identity, occurrenceId]);
+    const key = JSON.stringify([binding?.scope, binding?.revision, controller, identity, occurrenceId, input.declarationsOnly]);
     const [state, setState] = React.useState<Readonly<{ key: string; value: ManagedProvisionerOptionsInput }>>({ key: '', value: { kind: 'loading' } });
     React.useEffect(() => {
         if (!binding?.isCurrent() || !identity || !occurrenceId || !provisioner) return;
@@ -76,7 +88,7 @@ export function useManagedProvisionerOptionsInput(input: Readonly<{
         const publish = (value: ManagedProvisionerOptionsInput) => setState(current => retainShallow(current, {
             key, value: retainDeep(current.key === key ? current.value : undefined, value),
         }));
-        void readManagedProvisionerOptionsInput({ binding, controller, provisioner, signal: abort.signal }).then(value => {
+        void readManagedProvisionerOptionsInput({ binding, controller, provisioner, signal: abort.signal, declarationsOnly: input.declarationsOnly }).then(value => {
             if (abort.signal.aborted || !binding.isCurrent()) return;
             publish(value);
         }).catch(() => {

@@ -79,8 +79,8 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
     const onApprovalPending = React.useCallback((registration: ActionApprovalRegistration) => handler.current(registration), []);
     // "Managed from": the Machine that runs the offers placed on a Machine. The invoking host can also place
     // an Account role on it when the browser cannot run that role.
-    const scope = useManagedControllerScope({ serverId: props.serverId, testIDPrefix: 'managed-picker.controller' });
-    const controller = scope.controller;
+    const scope = useManagedControllerScope({ serverId: props.serverId, observeThisComputer: !props.presetOnly, testIDPrefix: 'managed-picker.controller' });
+    const controller = props.presetOnly ? undefined : scope.controller;
     const catalog = useManagedProvisioners(props.serverId, onApprovalPending, controller);
     const { checks, setChecks } = catalog;
     const approval = useActionApprovalContinuation({ serverId: props.serverId, scopeKey: JSON.stringify([props.serverId, catalog.binding?.accountId]), onExecuted: () => {} });
@@ -96,14 +96,15 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         id: string; binding: ServerCredentialAccountScopeBinding; controller: ManagedControllerV1 | undefined;
     }> | null>(null);
     const compact = useViewportClass() === 'compact';
-    const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller, accountScope: catalog.binding?.scope, purpose: 'repair', onApprovalPending });
+    const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller, accountScope: catalog.binding?.scope,
+        purpose: props.presetOnly ? 'presentation' : 'repair', declarationsOnly: props.presetOnly, onApprovalPending });
     const { localized, markFor } = presentation;
-    const accountHost = useManagedProvisionerRuntimeHost({ serverId: props.serverId, accountScope: catalog.binding?.scope });
+    const accountHost = useManagedProvisionerRuntimeHost({ serverId: props.serverId, accountScope: props.presetOnly ? undefined : catalog.binding?.scope });
     const repairAbort = React.useRef<AbortController | null>(null);
     React.useEffect(() => () => repairAbort.current?.abort(), [catalog.binding, controller]);
     React.useEffect(() => {
         const binding = catalog.binding;
-        if (!binding || !catalog.homeId || !catalog.client || catalog.reading) return;
+        if (props.presetOnly || !binding || !catalog.homeId || !catalog.client || catalog.reading) return;
         const needsAccountHost = catalog.provisioners.some(provisioner => needsRuntimeHost(provisioner, controller));
         if (needsAccountHost && accountHost === null) return;
         if (needsAccountHost && accountHost === 'unavailable') { setError('unavailable'); return; }
@@ -130,7 +131,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         void readChecks().then(() => { if (current()) setError(null); })
             .catch(() => { if (current()) setError('unavailable'); });
         return () => { abort.abort(); retirement.dispose(); };
-    }, [catalog.binding, catalog.homeId, catalog.client, catalog.provisioners, catalog.reading, controller, onApprovalPending, accountHost, setChecks]);
+    }, [props.presetOnly, catalog.binding, catalog.homeId, catalog.client, catalog.provisioners, catalog.reading, controller, onApprovalPending, accountHost, setChecks]);
     const open = (contribution: string, placedController: ManagedControllerV1 | undefined, connectPurpose?: string) => {
         if (!catalog.current) return;
         const handoff = placedController ? { controller: placedController } : {};
@@ -156,6 +157,12 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         return sharesTitle && kind ? `${title} ${kind}` : title;
     };
     const cards: ManagedProvisionerCard[] = catalog.provisioners.flatMap(provisioner => {
+        if (props.presetOnly) return [{ id: buildQualifiedPluginContributionKey(provisioner.contribution), title: titleOf(provisioner),
+            description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
+            location: provisioner.descriptor.billing.location === 'local' ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
+            acquire: provisioner.acquireExecutionTarget === 'daemon' ? 'daemon' : 'account', mark: (size: number) => markFor(provisioner, size),
+            status: { tone: 'none', label: '' }, action: { kind: 'choose', label: t('managedMachines.add.action.choose'),
+                onPress: () => open(buildQualifiedPluginContributionKey(provisioner.contribution), undefined), disabled: !catalog.current } }];
         if (waitsForComputer(provisioner, controller)) { waiting.push(titleOf(provisioner)); return []; }
         const location = provisioner.descriptor.billing.location;
         const id = buildQualifiedPluginContributionKey(provisioner.contribution);
@@ -234,7 +241,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
     // The controller's own state, said once, and only about a catalog that answered: while the first read
     // runs, the skeleton holds the page and nothing asks for a Machine yet.
     // Account providers need no Machine (plan 58): "none online" is said only once the catalog has nothing else to offer.
-    const scopeState = catalog.loading ? null : !controller ? (scope.hasCandidates && (scope.hasOnlineCandidate || cards.length === 0)
+    const scopeState = props.presetOnly || catalog.loading ? null : !controller ? (scope.hasCandidates && (scope.hasOnlineCandidate || cards.length === 0)
             ? <SurfaceStateCard testID="managed-picker.no-online-controller" kind="unavailable" size="line"
             title={t(scope.hasOnlineCandidate ? 'managedMachines.add.chooseController' : 'managedMachines.add.noOnlineController')} />
             : null)
@@ -248,26 +255,27 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         : null;
     const localResources = Object.values(checks).flatMap(result => result.kind === 'succeeded' && result.value.localResources
         ? [result.value.localResources] : [])[0];
-    const localDescription = !compact && localResources?.availableCpuCores !== undefined && localResources.availableMemoryBytes !== undefined
+    const localDescription = props.presetOnly ? '' : !compact && localResources?.availableCpuCores !== undefined && localResources.availableMemoryBytes !== undefined
         && localResources.availableDiskBytes !== undefined
         ? t('managedMachines.add.localDescription', { computer: controllerName, cores: String(localResources.availableCpuCores),
             memory: formatHappierDataBytes(localResources.availableMemoryBytes, { kind: 'memory' }), disk: formatHappierDataBytes(localResources.availableDiskBytes, { kind: 'storage' }) })
         : t('managedMachines.add.localDescriptionShort', { computer: controllerName });
     const pageSections = useListPresentation() === 'page' && !compact;
     // "Managed from" sits where it applies: on the section of offers a Machine runs (MachineProvisionerSections).
-    const sectionScope = scope.chip ? { chip: scope.chip, placement: pageSections ? 'header' as const : 'row' as const } : undefined;
+    const sectionScope = !props.presetOnly && scope.chip ? { chip: scope.chip, placement: pageSections ? 'header' as const : 'row' as const } : undefined;
     const shown = cards.length > 0 || waiting.length > 0;
     const retryMachineList = () => { void getSyncSingleton().refreshMachines({ serverId: props.serverId }).catch(() => {}); };
     const setUpThisComputer = props.onSetUpThisComputer ?? (() => router.push('/settings/machines/add?path=thisComputer' as never));
     // The first read reserves the catalog's own layout (its cards' skeletons), not a lone loading line.
-    const reading = !shown && (catalog.loading || !scope.hasCandidates && scope.machineList === 'loading');
+    const reading = !shown && (catalog.loading || !props.presetOnly && !scope.hasCandidates && scope.machineList === 'loading');
     return <View testID="managed-picker">
         {approval.approvalId ? <AttentionBanner testID="managed-picker.approval" title={t('approvals.title')} description={t('approvals.status.open')}
             action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
-        {!scope.hasCandidates && !shown && catalog.error ? <SurfaceStateCard testID="managed-picker.unavailable" kind="error"
+        {(props.presetOnly || !scope.hasCandidates) && !shown && catalog.error ? <SurfaceStateCard testID="managed-picker.unavailable" kind="error"
             title={t('managedMachines.providers.unavailable')} diagnosticCode={catalog.error}
             diagnosticDetail={describeManagedProvisionerFailure(catalog.error)} action={{ label: t('common.retry'), onPress: catalog.refresh }} />
             : reading ? <MachineProvisionerSectionsSkeleton compact={compact} testID="managed-picker.loading" />
+            : props.presetOnly && !shown ? <SurfaceStateCard testID="managed-picker.empty" kind="empty" size="line" title={t('managedMachines.providers.empty')} />
             : !scope.hasCandidates && !shown && scope.machineList === 'unavailable' ? <SurfaceStateCard testID="managed-picker.machines-unavailable" kind="error"
             title={t('managedMachines.providers.unavailable')} action={{ label: t('common.retry'), onPress: retryMachineList }} />
             : !scope.hasCandidates && !shown ? <SurfaceStateCard testID="managed-picker.no-controller" kind="empty"

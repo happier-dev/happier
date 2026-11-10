@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import type { MachineProvisionerOptionsResultV1, MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import type { ManagedControllerV1, ValidatedLaunchSnapshotV1, ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ValidatedLaunchSnapshotV1Schema, type ManagedControllerV1, type ValidatedLaunchSnapshotV1, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { buildManagedConfigurationFactsV1, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -187,6 +187,16 @@ export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDr
         optionStatus: input.delegatedFacts?.optionStatus ?? 'loading',
         ...(input.delegatedFacts ? { check: { available: input.delegatedFacts.optionStatus === 'current', prerequisites: input.delegatedFacts.prerequisites } } : {}),
         choicesSchema: createPluginJsonSchemaZodValueAdapter(input.provisioner.descriptor.launchSchema) };
+}
+/** Authoring validates the declared recipe without claiming a native availability or options review. */
+export function managedConfiguratorPresetLaunch(draft: ManagedConfiguratorDraft, input: Readonly<Record<string, unknown>>): ValidatedLaunchSnapshotV1 | null {
+    if (!draft.name.trim()) return null;
+    const choices = draft.choicesSchema.safeParse(input);
+    if (!choices.success) return null;
+    const launch = ValidatedLaunchSnapshotV1Schema.safeParse({ provider: draft.provisioner.contribution,
+        schemaVersion: draft.provisioner.descriptor.schemaVersion, name: draft.name, choices: choices.data,
+        ...(draft.credentials?.length ? { credentials: draft.credentials } : {}) });
+    return launch.success ? launch.data : null;
 }
 /** Saved launchs use the existing persistence projection; current edits remain strictly admitted. */
 export function managedConfiguratorOptionsSelectors(draft: ManagedConfiguratorDraft, inputSchema: PluginJsonSchemaV2, hints?: InputHints) {

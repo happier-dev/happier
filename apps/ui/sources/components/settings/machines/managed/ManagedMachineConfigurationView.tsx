@@ -52,6 +52,7 @@ import { ActionInputFields } from '@/components/sessions/actions/ActionInputFiel
 import { buildSessionActionFieldOptionsResolver } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
 import { actionInputOptionValueKey, resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { deriveActionInputHints } from '@happier-dev/protocol/actions/schemaInputHints';
 import { resolvePluginProjectedActionPresentation } from '@/sync/domains/plugins/ui/actionPresentation';
 import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
@@ -79,7 +80,7 @@ import { ManagedFieldRow, managedPresetLimitRow } from './MachinePresetDetail';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
 import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, refreshManagedConfiguratorProvisioner, beginManagedConfiguratorRead, settleManagedConfiguratorRead,
-    managedConfiguratorFacts, managedConfiguratorProjection, managedConfiguratorMissingDimension, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, setManagedConfiguratorCredentials, managedConfiguratorCredentialSelections, managedConfiguratorCapabilities,
+    managedConfiguratorFacts, managedConfiguratorPresetLaunch, managedConfiguratorProjection, managedConfiguratorMissingDimension, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, setManagedConfiguratorCredentials, managedConfiguratorCredentialSelections, managedConfiguratorCapabilities,
     type ManagedConfiguratorDraft } from './managedConfiguratorModel';
 import { describeKeepCosts, describeRetentionConsequence } from './managedRetentionPresentation';
 import { useAgentSignInTargets } from '@/components/settings/connectedServices/defaults/useAgentSignInTargets';
@@ -174,13 +175,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     }> | null>(null);
     // "Managed from" is the page's scope: the header chip, starting on the handed-off or preset controller.
     const scope = useManagedControllerScope({ serverId: props.serverId, preferred: delegatedAcquire ? creationPreset?.controller : props.initialController ?? creationPreset?.controller,
+        observeThisComputer: !props.presetOnly,
         delegatedAcquire: props.presetOnly ? undefined : delegatedAcquire,
         disabled: busy, testIDPrefix: 'managed-config.controller',
         onSelect: React.useCallback((next: ManagedControllerV1) => setDraft(current => current
             ? { ...current, controller: next, controllerPoolId: undefined, delegatedFacts: undefined, check: undefined, optionStatus: 'loading' } : current), []) });
     // Retain the selected computer until the shared host decision places this provisioner's acquire role.
     const [acquireTarget, setAcquireTarget] = React.useState<'account' | 'daemon' | undefined>();
-    const accountAcquire = !creationPreset && acquireTarget === 'account';
+    const accountAcquire = !props.presetOnly && !creationPreset && acquireTarget === 'account';
     // Pool authoring reads choices in the existing controller scope; acquire alone binds its target.
     const controllerCandidate = pooledDraft ? delegatedAcquire ? undefined : scope.controller
         : creationPreset ? draft ? draft.controller : creationPreset.controller : draft?.controller ?? scope.controller;
@@ -188,15 +190,16 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const requestedControllerPresent = useServerScopedMachine(props.serverId, requestedController?.machineId,
         React.useCallback((machine: Machine | null) => !!machine && isMachineVisibleForSelection(machine)
             && machine.installationId === requestedController?.installationId, [requestedController?.installationId]));
-    const catalogController = (!props.presetId || !!creationPreset) && !delegatedAcquire && requestedController && requestedControllerPresent
+    const catalogController = !props.presetOnly && (!props.presetId || !!creationPreset) && !delegatedAcquire && requestedController && requestedControllerPresent
         ? requestedController : undefined;
-    const catalogPlacementAvailable = requestedController === undefined || catalogController !== undefined;
+    const catalogPlacementAvailable = props.presetOnly || requestedController === undefined || catalogController !== undefined;
     const catalog = useManagedProvisioners(props.serverId, onApprovalPending, catalogController,
-        { enabled: !setupOnlyEdit && !delegatedAcquire && catalogPlacementAvailable && (!props.presetId || !!creationPreset), contributionKey: props.provisioner });
-    const accountHost = useManagedProvisionerRuntimeHost({ serverId: props.serverId, accountScope: catalog.binding?.scope });
+        { enabled: !setupOnlyEdit && (!delegatedAcquire || props.presetOnly) && catalogPlacementAvailable && (!props.presetId || !!creationPreset),
+            contributionKey: props.presetOnly ? undefined : props.provisioner });
+    const accountHost = useManagedProvisionerRuntimeHost({ serverId: props.serverId, accountScope: props.presetOnly ? undefined : catalog.binding?.scope });
     // A page that names its controller (deep link, reload, handoff) before the Home's machine list has synced
     // has not been refused anything: it waits for the list that will either contain the controller or not.
-    const controllerAwaitsMachineList = !delegatedAcquire && !!requestedController && !catalogController && !machineListSettled;
+    const controllerAwaitsMachineList = !props.presetOnly && !delegatedAcquire && !!requestedController && !catalogController && !machineListSettled;
     const accountSettings = useManagedMachineAccountSettings(catalog.binding, catalog.resolution);
     const [teamId, setTeamId] = React.useState('');
     const [limit, setLimit] = React.useState<number | undefined>();
@@ -219,7 +222,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const mutationAbort = React.useRef<AbortController | null>(null);
     const optionsAbort = React.useRef<AbortController | null>(null);
     const reviewed = React.useRef<ManagedConfigurationFactsV1 | null>(null);
-    const delegatedProvisioner = React.useMemo(() => delegatedAcquire ? projectManagedPresetProvisioner(preset) : undefined, [preset, delegatedAcquire]);
+    const delegatedProvisioner = React.useMemo(() => !props.presetOnly && delegatedAcquire ? projectManagedPresetProvisioner(preset) : undefined, [props.presetOnly, preset, delegatedAcquire]);
     const catalogProvisioner = delegatedProvisioner ?? catalog.provisioners.find(row => buildQualifiedPluginContributionKey(row.contribution) === props.provisioner);
     // Retry refreshes refused form reads along with native options.
     const retry = () => {
@@ -230,14 +233,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     };
     // Adopted in this render, so no effect ever sees a draft placed by the other role.
     const declaredAcquireTarget = delegatedProvisioner ? undefined : catalogProvisioner?.acquireExecutionTarget;
-    const hostAvailability = !creationPreset && !pooledDraft && catalogProvisioner && declaredAcquireTarget && accountHost !== null && accountHost !== 'unavailable'
+    const hostAvailability = !props.presetOnly && !creationPreset && !pooledDraft && catalogProvisioner && declaredAcquireTarget && accountHost !== null && accountHost !== 'unavailable'
         ? readMachineProvisionerHostAvailability({ host: accountHost, provisioner: catalogProvisioner.descriptor,
             acquireExecutionTarget: declaredAcquireTarget, controller: controllerCandidate }) : null;
     const effectiveAcquireTarget = creationPreset || declaredAcquireTarget === 'daemon' ? declaredAcquireTarget : hostAvailability?.executionTarget;
     if (effectiveAcquireTarget && effectiveAcquireTarget !== acquireTarget) setAcquireTarget(effectiveAcquireTarget);
     // Host discovery follows the catalog's Account binding. Do not create a controller-bound draft until it settles.
-    const accountHostPending = !creationPreset && declaredAcquireTarget === 'account' && accountHost === null;
-    const accountHostUnreadable = !creationPreset && declaredAcquireTarget === 'account' && accountHost === 'unavailable';
+    const accountHostPending = !props.presetOnly && !creationPreset && declaredAcquireTarget === 'account' && accountHost === null;
+    const accountHostUnreadable = !props.presetOnly && !creationPreset && declaredAcquireTarget === 'account' && accountHost === 'unavailable';
     const needsApp = hostAvailability?.available === false;
     const pageChip = accountAcquire || pooledDraft || props.presetOnly ? null : scope.chip;
     // A retained catalog remains readable while the selected controller answers, but cannot admit credential-bearing work.
@@ -282,12 +285,12 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     };
     const initialConnectConsumed = React.useRef(false);
     React.useEffect(() => {
-        if (initialConnectConsumed.current || !props.initialConnectPurpose || !catalogCurrent || !draft || !catalogProvisioner) return;
+        if (props.presetOnly || initialConnectConsumed.current || !props.initialConnectPurpose || !catalogCurrent || !draft || !catalogProvisioner) return;
         initialConnectConsumed.current = true;
         void openAccountSetup(props.initialConnectPurpose);
-    }, [props.initialConnectPurpose, catalogCurrent, draft, catalogProvisioner, catalogController]);
+    }, [props.presetOnly, props.initialConnectPurpose, catalogCurrent, draft, catalogProvisioner, catalogController]);
     // Only this occurrence's controller-qualified catalog authorizes purpose choices. Account inventory is display-only.
-    const credentialPurposes = catalogProvisioner?.credentialPurposes;
+    const credentialPurposes = props.presetOnly ? undefined : catalogProvisioner?.credentialPurposes;
     const requiredCredentialPurposes = React.useMemo(() => catalogProvisioner?.credentialPurposes?.filter(({ purpose }) =>
         isMachineProvisionerCredentialPurposeRequiredV1(catalogProvisioner.descriptor, purpose.purpose,
             draft?.optionsSelectors ?? draft?.selected?.launch)), [catalogProvisioner, draft?.optionsSelectors, draft?.selected]);
@@ -305,9 +308,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // A retained draft describes what was reviewed; only the current catalog admits new reads or mutations.
     const provisioner = catalogProvisioner ?? draft?.provisioner;
     const controller = hostAvailability ? hostAvailability.controller : requestedController;
-    const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: catalogController, accountScope: catalog.binding?.scope, provisioner, refreshKey: readRevision, purpose: 'repair', onApprovalPending });
-    const optionsInput = useManagedProvisionerOptionsInput({ binding: catalog.binding, controller: catalogController, provisioner: delegatedAcquire ? undefined : catalogProvisioner,
-        refreshKey: readRevision });
+    const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: catalogController, accountScope: catalog.binding?.scope, provisioner, refreshKey: readRevision,
+        purpose: props.presetOnly ? 'presentation' : 'repair', declarationsOnly: props.presetOnly, onApprovalPending });
+    const optionsInput = useManagedProvisionerOptionsInput({ binding: catalog.binding, controller: catalogController,
+        provisioner: delegatedAcquire && !props.presetOnly ? undefined : catalogProvisioner,
+        declarationsOnly: props.presetOnly, refreshKey: readRevision });
     const localizeActionText = usePluginLocalizedTextResolver({ projection: presentation.projection });
     // The account a purpose draws on is named by its service, never by the purpose id.
     const connectedServices = useProjectedConnectedServicesRegistry();
@@ -322,13 +327,19 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // doesn't describe that occurrence (not loaded, or still an earlier one after a plugin reload).
     const optionPresentation = React.useMemo(() => {
         if (optionsInput.kind !== 'ready') return { hints: undefined, missing: false };
-        const action = createPluginUiProjectedActionResolver(presentation.projection.actionsById)({
+        const projected = createPluginUiProjectedActionResolver(presentation.projection.actionsById)({
             pluginId: optionsInput.action.pluginId, localId: optionsInput.action.id });
-        if (!action || action.occurrenceId !== optionsInput.action.occurrenceId) return { hints: undefined, missing: true };
-        return { hints: resolvePluginProjectedActionPresentation({ pluginId: action.pluginId,
+        const action = optionsInput.presentation ?? (projected?.occurrenceId === optionsInput.action.occurrenceId ? projected : undefined);
+        if (!action) return { hints: undefined, missing: true };
+        return { hints: resolvePluginProjectedActionPresentation({ pluginId: optionsInput.action.pluginId,
             presentation: action, projection: presentation.projection, localize: localizeActionText }).inputHints ?? undefined, missing: false };
     }, [optionsInput, presentation.projection, localizeActionText]);
-    const optionHints = optionPresentation.hints;
+    // The declared options input names what a person authors; launch may also require native-derived facts.
+    const optionHints = React.useMemo(() => props.presetOnly
+        ? deriveActionInputHints(optionsInput.kind === 'ready' ? optionsInput.schema
+            : optionsInput.kind === 'none' ? provisioner?.descriptor.launchSchema : undefined, optionPresentation.hints)
+        : optionPresentation.hints,
+    [props.presetOnly, optionsInput, provisioner?.descriptor.launchSchema, optionPresentation.hints]);
     const launchPresentationPending = !delegatedReview && !optionHints && !presentation.projectionReady && !presentation.projectionFailed;
     // Settled without the form: say so with a re-read, rather than offering a size nobody can edit (R93).
     const launchFormUnreadable = optionPresentation.missing && !launchPresentationPending;
@@ -341,7 +352,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const readSelectorKey = JSON.stringify(readSelectors);
     // The fields show what the read is asked with: the person's values over the provider's declared defaults.
     const fieldInput = React.useMemo<Record<string, unknown>>(() => {
+        const savedChoices = props.presetOnly ? draft?.selected?.launch : undefined;
         let base = draft?.optionsSelectors ? { ...draft.optionsSelectors }
+            : savedChoices && typeof savedChoices === 'object' && !Array.isArray(savedChoices) ? { ...savedChoices }
             : selectors && typeof selectors === 'object' && !Array.isArray(selectors) ? { ...selectors } : {};
         if (draft?.preset) return base;
         // Only declared form fields consume native defaults. Fixed launch facts (for example
@@ -352,15 +365,15 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             if (value !== undefined && readInputPath(base, field.path) === undefined) base = writeInputPath(base, field.path, value);
         }
         return seedInputByFieldHints({ inputHints: optionHints }, base);
-    }, [draft?.optionsSelectors, draft?.selected, draft?.options?.base?.launch, draft?.preset, selectorKey, optionHints]);
+    }, [props.presetOnly, draft?.optionsSelectors, draft?.selected, draft?.options?.base?.launch, draft?.preset, selectorKey, optionHints]);
     // Fields the provider fills with its own defaults (a store, an image location, a driver) are reviewed rarely: they
     // fold into one Advanced disclosure. The set is decided once, when the provider first answers, so no field moves
     // while the person types; a required field it left blank stays in view.
     const advancedPaths = React.useRef<Readonly<{ key: string; paths: ReadonlySet<string> }> | null>(null);
     const [advancedOpen, setAdvancedOpen] = React.useState(false);
-    const fields = React.useMemo(() => optionsInput.kind === 'ready'
+    const fields = React.useMemo(() => props.presetOnly || optionsInput.kind === 'ready'
         ? resolveEffectiveActionInputFields({ inputHints: optionHints }, fieldInput) : [],
-        [optionsInput, optionHints, fieldInput]);
+        [props.presetOnly, optionsInput, optionHints, fieldInput]);
     const fieldRequests = React.useMemo(() => optionsInput.kind === 'ready' ? fields.map(field => ({ field,
         actionId: buildQualifiedPluginContributionKey({ pluginId: optionsInput.action.pluginId, localId: optionsInput.action.id }), draftInput: fieldInput })) : [],
         [fields, fieldInput, optionsInput]);
@@ -393,7 +406,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const presetQuery = useMachinePresetQuery({ serverId: props.serverId, homeId: catalog.homeId, presetId: props.presetId,
         binding: catalog.binding, resolution: catalog.resolution, read: readPreset, refreshRevision: readRevision, onApprovalPending,
         onAccessLost: clearProtectedPreset, onInvalidated: retry });
-    const fieldOptions = useInputFieldOptions({ requests: fieldRequests, enabled: catalogCurrent && presetQuery.sameScope && !!draft && credentialsReady && optionsInput.kind === 'ready',
+    const fieldOptions = useInputFieldOptions({ requests: fieldRequests, enabled: !props.presetOnly && catalogCurrent && presetQuery.sameScope && !!draft && credentialsReady && optionsInput.kind === 'ready',
         serverId: catalog.binding?.serverId ?? props.serverId, machineId: controller?.machineId, accountLifetime: catalog.binding });
     const teamDenied = !!props.presetId && (preset?.owner.kind === 'team' || !!teamId) && team.kind === 'bound'
         && (team.state.kind === 'ready' && !team.state.team.capabilities.viewTeam
@@ -403,7 +416,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     }, [teamDenied, presetQuery.state.value, presetQuery.withdraw]);
     React.useEffect(() => {
         if (!presetQuery.sameScope || !catalogPlacementAvailable || props.presetId || !provisioner || accountHostPending || accountHostUnreadable) return;
-        const initial = catalogController;
+        const initial = props.presetOnly ? requestedController : catalogController;
         setDraft(current => current ?? createManagedConfiguratorDraft({ provisioner, controller: initial,
             // A new preset started from a Store door has no name yet: it takes the provider's, as Add does.
             name: continuation?.draft.name || title,
@@ -413,7 +426,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             continuationEntered.current = true;
             if (continuationSetup?.ok === false) setError('machine_setup_conflict', 'save');
         }
-    }, [presetQuery.sameScope, catalogController, catalogPlacementAvailable, accountHostPending, accountHostUnreadable, props.presetId, props.initialOptionsSelectors, props.initialEnrollmentIdentity, provisioner, title, continuation, continuationSeed, continuationSetup, setError]);
+    }, [props.presetOnly, presetQuery.sameScope, requestedController, catalogController, catalogPlacementAvailable, accountHostPending, accountHostUnreadable, props.presetId, props.initialOptionsSelectors, props.initialEnrollmentIdentity, provisioner, title, continuation, continuationSeed, continuationSetup, setError]);
     React.useEffect(() => {
         if (!presetQuery.sameScope || !hasManagedMachinePresetCreationV1(preset) || !provisioner || teamDenied) return;
         // A hand-off for this Preset resumes its unsaved draft at the revision that draft was based on.
@@ -437,9 +450,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     }, [presetQuery.sameScope, preset, provisioner, catalogController, teamDenied, props.initialEnrollmentIdentity, delegatedAcquire, delegatedReview, continuation, continuationSeed, continuationSetup, setError]);
 
     React.useEffect(() => {
-        if (delegatedAcquire || !presetQuery.sameScope || !catalogProvisioner || !catalogPlacementAvailable || catalogProvisioner.credentialPurposes === undefined) return;
-        setDraft(current => current ? refreshManagedConfiguratorProvisioner(current, catalogProvisioner, pooledDraft ? undefined : catalogController) : current);
-    }, [delegatedAcquire, pooledDraft, presetQuery.sameScope, catalogProvisioner, catalogController, catalogPlacementAvailable, draft?.credentials, draft?.provisioner]);
+        if (delegatedAcquire && !props.presetOnly || !presetQuery.sameScope || !catalogProvisioner || !catalogPlacementAvailable
+            || !props.presetOnly && catalogProvisioner.credentialPurposes === undefined) return;
+        setDraft(current => current ? refreshManagedConfiguratorProvisioner(current, catalogProvisioner,
+            props.presetOnly ? current.controller : pooledDraft ? undefined : catalogController) : current);
+    }, [props.presetOnly, delegatedAcquire, pooledDraft, presetQuery.sameScope, catalogProvisioner, catalogController, catalogPlacementAvailable, draft?.credentials, draft?.provisioner]);
 
     React.useEffect(() => {
         if (!pendingCredential || catalog.reading) return;
@@ -511,7 +526,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const readOptions = React.useCallback(() => {
         optionsAbort.current?.abort();
         const binding = catalog.binding;
-        if (delegatedAcquire || !catalogCurrent || !presetQuery.sameScope || !binding || !catalog.homeId || !catalog.client) return;
+        if (props.presetOnly || delegatedAcquire || !catalogCurrent || !presetQuery.sameScope || !binding || !catalog.homeId || !catalog.client) return;
         if (accountHostPending || accountHostUnreadable || needsApp) return;
         if (!catalogProvisioner || !catalogPlacementAvailable || !credentialsReady) {
             setDraft(current => current && current.optionStatus !== 'unavailable'
@@ -537,7 +552,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             setError(result.failure ? describeManagedNativeFailureDiagnostic(result.failure.code, result.failure.nativeCause)
                 : optionsInput.kind === 'unavailable' ? optionsInput.error : null);
         });
-    }, [catalogCurrent, presetQuery.sameScope, catalog.binding, catalog.homeId, catalog.client, catalogProvisioner, catalogController, catalogPlacementAvailable, controller?.machineId, controller?.installationId,
+    }, [props.presetOnly, catalogCurrent, presetQuery.sameScope, catalog.binding, catalog.homeId, catalog.client, catalogProvisioner, catalogController, catalogPlacementAvailable, controller?.machineId, controller?.installationId,
         draft?.credentials, draft?.provisioner, credentialsReady, optionsInput, readSelectorKey, delegatedAcquire, pooledDraft, accountHostPending, accountHostUnreadable, needsApp]);
 
     React.useEffect(() => { readOptions(); return () => optionsAbort.current?.abort(); }, [readOptions]);
@@ -546,6 +561,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         ? { ...draft, categoryPreferences: accountSettings.settings.machineRetentionDefaultsV1 } : null, [presetQuery.sameScope, draft, accountSettings.settings]);
     const projection = React.useMemo(() => effectiveDraft ? managedConfiguratorProjection(effectiveDraft) : null, [effectiveDraft]);
     const facts = React.useMemo(() => effectiveDraft ? managedConfiguratorFacts(effectiveDraft, projection) : null, [effectiveDraft, projection]);
+    const presetLaunch = React.useMemo(() => props.presetOnly && presetQuery.sameScope && draft
+        ? managedConfiguratorPresetLaunch(draft, fieldInput) : null, [props.presetOnly, presetQuery.sameScope, draft, fieldInput]);
     const launchRefusal = effectiveDraft?.optionStatus === 'current' ? projection?.unavailableReason : undefined;
     React.useEffect(() => { if (facts) reviewed.current = facts; }, [facts]);
     // A settings refresh may withdraw mutation authority, not what the person already reviewed.
@@ -557,7 +574,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         && pluginJsonValuesEqual(draft.selected.launch, captured.launch.choices) ? captured : null);
     // Agents sign in as the Account's per-agent defaults on any machine; one presenter names them beside the provider accounts.
     const agentSignInTargets = useAgentSignInTargets();
-    const credentialTargets = React.useMemo(() => [
+    const credentialTargets = React.useMemo(() => props.presetOnly ? [] : [
         ...(credentialPurposes ?? []).flatMap(({ options }) => options.map(({ value }) => ({
             key: `credential-choice:${actionInputOptionValueKey(value)}`,
             target: { kind: 'account' as const, account: value },
@@ -565,7 +582,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         }))),
         ...agentSignInTargets,
         ...(receiptFacts ? managedCredentialReceiptTargets(receiptFacts.launch) : []),
-    ], [credentialPurposes, connectedServices, localizeServiceText, receiptFacts?.launch, agentSignInTargets]);
+    ], [props.presetOnly, credentialPurposes, connectedServices, localizeServiceText, receiptFacts?.launch, agentSignInTargets]);
     const credentialAccounts = useQualifiedConnectedAccountTargetPresentations({ binding: catalog.binding, targets: credentialTargets });
     // The chooser and receipt consume the same Account names, rather than native option placeholders.
     const credentialFields = React.useMemo(() => resolveEffectiveActionInputFields({ inputHints: { fields: (credentialPurposes ?? []).flatMap(({ purpose, options }, index) => options.length === 0 ? [] : [{
@@ -646,12 +663,19 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         : !setupInputsValid ? t('managedMachines.creationReview.inputsHelp') : null;
     const mayCreate = creationUnavailableReason === null;
     // A retained launch can still be saved, but explicit field edits must satisfy the declared input schema.
-    const maySave = !!facts && (pooledDraft ? !!draft?.controllerPoolId
-        : !(teamId || preset?.owner.kind === 'team') || !!draft?.controller)
-        && draft?.optionsSelectorsEdited !== true && (draft?.optionsSelectors === undefined || selectors !== null)
+    const saveLaunch = props.presetOnly ? presetLaunch : facts?.launch;
+    const saveTargetAvailable = pooledDraft ? !!draft?.controllerPoolId
+        : !(teamId || preset?.owner.kind === 'team') || !!draft?.controller;
+    const maySave = !!saveLaunch && saveTargetAvailable
+        && (props.presetOnly ? catalogCurrent : draft?.optionsSelectorsEdited !== true && (draft?.optionsSelectors === undefined || selectors !== null))
         && !!activeBinding?.isCurrent() && teamWritable && !busy;
     // Why Save is off, in the words Create uses; only who may write the Preset is Save's alone.
-    const saveUnavailableReason = maySave ? null : creationUnavailableReason ?? (teamWritable ? t('managedMachines.options.unavailable')
+    const authoringUnavailableReason = !props.presetOnly ? null : busy ? t('common.loading')
+        : !activeBinding?.isCurrent() || !catalogCurrent ? t('common.unavailable')
+        : !saveTargetAvailable ? t('managedMachines.controller.requiredUnnamed')
+        : missingLaunchField ? t('session.actionsDraft.validation.requiredField', { field: missingLaunchField.title })
+        : !presetLaunch ? t('managedMachines.options.unavailable') : null;
+    const saveUnavailableReason = maySave ? null : (props.presetOnly ? authoringUnavailableReason : creationUnavailableReason) ?? (teamWritable ? t('managedMachines.options.unavailable')
         : team.kind === 'bound' && team.state.kind === 'ready' ? t('machinePresets.memberCreateManagersOnly', { team: team.state.team.name })
         : t(team.kind === 'bound' && team.state.kind === 'unavailable' ? 'common.unavailable' : 'common.loading'));
     const presetRetention = draft?.override?.retention ?? draft?.preset?.retention;
@@ -686,9 +710,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         } }
     };
     const save = async () => {
-        if (!facts || !catalog.homeId || !activeBinding?.isCurrent() || !presetClient || !maySave) return;
-        const saveDraft: MachinePresetEditDraft = { name: facts.launch.name, setup: draft?.setup,
-            creation: { launch: facts.launch, ...(draft?.controllerPoolId ? { controllerPoolId: draft.controllerPoolId } : { controller: facts.controller }),
+        if (!saveLaunch || !catalog.homeId || !activeBinding?.isCurrent() || !presetClient || !maySave) return;
+        const saveDraft: MachinePresetEditDraft = { name: saveLaunch.name, setup: draft?.setup,
+            creation: { launch: saveLaunch, ...(draft?.controllerPoolId ? { controllerPoolId: draft.controllerPoolId }
+                : { controller: props.presetOnly ? draft?.controller : facts?.controller }),
                 ...(reusablePresetRetention ? { retention: reusablePresetRetention } : {}),
                 ...((draft?.override?.wakeOnAcceptedMessage ?? draft?.preset?.wakeOnAcceptedMessage) !== undefined
                     ? { wakeOnAcceptedMessage: draft?.override?.wakeOnAcceptedMessage ?? draft?.preset?.wakeOnAcceptedMessage } : {}),
@@ -975,11 +1000,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 busy={busy} resolveFieldOptions={fieldOptions.resolveOptions} resolveFieldTestID={field => `managed-config.field:${field.path}`}
                 onPatch={patch => setDraft(current => current ? setManagedConfiguratorOptionsSelectors(current, { ...fieldInput, ...patch }) : current)} />
         </SectionContentRow>
-        {invalidNotice && selectors === null && !awaitsRequiredInput ? <SurfaceStateCard kind="warning" size="line" title={t('managedMachines.options.unavailable')} diagnosticCode="invalid_parameters" /> : null}
+        {invalidNotice && (props.presetOnly ? presetLaunch === null : selectors === null) && !awaitsRequiredInput ? <SurfaceStateCard kind="warning" size="line" title={t('managedMachines.options.unavailable')} diagnosticCode="invalid_parameters" /> : null}
     </>;
     // A failed check is the cause: its own words say why and what to do ("Not installed · get it from …"), ahead of the option
     // reads that fail because of it. The generic line only fills the gap when the check named nothing.
-    const choiceState = !draft ? null
+    const choiceState = props.presetOnly || !draft ? null
         : launchFormUnreadable ? <SurfaceStateCard kind="warning" size="line" testID="managed-config.form-unavailable"
             title={t('managedMachines.options.error')}
             action={{ label: t('common.retry'), onPress: retry, testID: 'managed-config.form-unavailable:action' }} />
@@ -1076,7 +1101,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             })}
         </ItemGroup> : null}
         {/* Drawn once the form is known: before that a form-sized host's one size echo would show and then be replaced. */}
-        {draft && !launchPresentationPending ? <ManagedConfiguratorNativeChoices serverId={props.serverId} draft={draft} localized={localized} compact={compact} computer={controllerSentence} disabled={!catalogProvisioner || !catalogController && !accountAcquire || busy || !!preset && !props.presetOnly}
+        {draft && !props.presetOnly && !launchPresentationPending ? <ManagedConfiguratorNativeChoices serverId={props.serverId} draft={draft} localized={localized} compact={compact} computer={controllerSentence} disabled={!catalogProvisioner || !catalogController && !accountAcquire || busy || !!preset && !props.presetOnly}
             billing={selectedCapabilities!.billing}
             incomplete={!!missingLaunchField}
             formSize={formSized ? { editor: showLaunchFields && sizeFields.length ? launchForm(sizeFields, formFields.length === 0) : undefined } : undefined}

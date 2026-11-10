@@ -631,7 +631,7 @@ describe('managed configurator draft owner', () => {
         const refreshed = refreshManagedConfiguratorOptions(saved, options);
         expect(managedConfiguratorFacts(refreshed)?.launch.credentials).toEqual([credential]);
         const acquired = managedConfiguratorAcquireInput(selectManagedConfiguratorDimension(refreshed, 'size', 'large'), 'home');
-        expect(acquired?.selection).toEqual({ kind: 'preset', homeId: 'home', id: 'saved', revision: 1 });
+        expect(acquired?.selection).toEqual({ kind: 'preset', homeId: 'home', id: 'saved', revision: 1, name: 'Saved' });
         expect(acquired?.reviewedFacts?.launch).toMatchObject({ choices: { cpu: 4 }, credentials: [credential] });
     });
 

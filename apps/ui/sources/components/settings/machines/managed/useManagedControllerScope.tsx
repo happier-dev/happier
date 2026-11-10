@@ -83,6 +83,8 @@ export function useManagedControllerScope(
     preferred?: ManagedControllerV1;
     /** Exact preset authority fixes the controller without granting a Machine picker. */
     delegatedAcquire?: ManagedMachinePresetDelegatedAcquireV1;
+    /** Acquisition may prefer this device; recipe authoring does not demand its native task runner. */
+    observeThisComputer?: boolean;
     disabled?: boolean;
     onSelect?: (controller: ManagedControllerV1) => void;
     testIDPrefix: string;
@@ -92,7 +94,7 @@ export function useManagedControllerScope(
   const listStatus = useMachineListStatusForServer(input.serverId);
   const activeAccountScope = useActiveServerAccountScope();
   const { binding } = useServerCredentialAccountScopeBinding(input.serverId);
-  const thisMachineId = useThisComputerMachineId();
+  const thisMachineId = useThisComputerMachineId(undefined, input.observeThisComputer !== false);
   const preferences = useSetting('machineAdministrationTargetsLocalV1');
   const settingsScope = useAccountSettingsScope();
   const observationScope = binding?.isCurrent() ? binding.scope : null;

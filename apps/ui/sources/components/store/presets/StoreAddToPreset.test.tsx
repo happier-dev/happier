@@ -1,7 +1,12 @@
 import * as React from 'react';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+const routerPush = vi.hoisted(() => vi.fn());
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: { push: routerPush } }).module;
+});
 
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
@@ -60,4 +65,81 @@ it('starts a new preset from the door with the picked item already in it, and Ca
     await act(async () => back.pressByTestId('store.preset.new.cancel'));
     expect(onReturn).toHaveBeenCalledTimes(1);
     await back.unmount();
+});
+
+it('chooses a local provider and saves the carried Software without a controller or acquisition reads', async () => {
+    const { LIMA_PLUGIN } = await import('../../../../../../packages/plugins/machine-lima/src/manifest');
+    const { DEVCONTAINER_PLUGIN } = await import('../../../../../../packages/plugins/devcontainer/src/manifest');
+    const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(LIMA_PLUGIN.manifest);
+    const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
+    onTestFinished(installBundledPluginUiDeclarationsForTests([{ pluginId: manifest.id, pluginVersion: manifest.version,
+        packageName: '@happier-dev/plugins-machine-lima', displayName: 'Lima Machines', entriesById: {}, normalizedManifest: manifest },
+        { pluginId: DEVCONTAINER_PLUGIN.manifest.id, pluginVersion: DEVCONTAINER_PLUGIN.manifest.version,
+            packageName: '@happier-dev/plugins-devcontainer', displayName: 'Docker container Machines', entriesById: {},
+            normalizedManifest: PluginPortableReleaseManifestV1Schema.parse(DEVCONTAINER_PLUGIN.manifest) }]));
+    const serverId = await home.addHome({ name: 'Recipes', serverUrl: 'https://recipes.example.test',
+        serverIdentityId: 'srv_recipes', accountId: 'owner', currentAccount: true });
+    const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
+        snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    const { buildQualifiedPluginContributionKey } = await import('@happier-dev/protocol/plugins/contribution-identity');
+    const descriptor = manifest.contributes.machineProvisioners[0]!;
+    const provisioner = buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: descriptor.id });
+    const onReturn = vi.fn();
+    const runtime = await import('@/utils/system/runtimeFetch');
+    const runtimeHost = vi.spyOn(runtime, 'readRuntimeFetchHost');
+    onTestFinished(() => runtimeHost.mockRestore());
+    routerPush.mockClear();
+    const screen = await renderScreen(<StorePresetEditorHandoff choice={{ serverId, preset: null }} item={item} onReturn={onReturn} />);
+    try {
+        const row = `managed-picker.provisioners.local.${provisioner}`;
+        await waitForHomeGovernance(() => expect(screen.findByTestId(row), screen.getTextContent()).not.toBeNull());
+        await act(async () => screen.pressByTestId(screen.findByTestId(`${row}.action`) ? `${row}.action` : row));
+        const setup = () => screen.tree.findAll(node => node.props.testID === 'managed-config.setup'
+            && typeof node.props.onChange === 'function')[0]?.props.setup;
+        await waitForHomeGovernance(() => expect(setup(), screen.getTextContent()).toMatchObject({ items: [item] }));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:store')).not.toBeNull());
+        expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+        for (const [field, value] of Object.entries({ store: '/srv/lima', image: 'https://images.example.test/linux.qcow2',
+            cpus: '2', memoryGiB: '4', diskGiB: '20', mounts: '[]' })) {
+            await act(async () => screen.changeTextByTestId(`managed-config.field:${field}`, value));
+        }
+        // Enum fields use the production field-selection contract, just like a press in their menu.
+        const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+        const form = screen.tree.findAllByType(ActionInputFields)[0]!;
+        await act(async () => form.props.onPatch({ arch: 'x86_64', vmType: 'qemu' }));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled, screen.getTextContent()).toBe(false));
+        home.answer(serverId, '/v1/machines/presets/create', { select: input => ({ body: { kind: 'saved', preset: { ...input,
+            homeId: 'srv_recipes', revision: 1 } } }) });
+        await act(async () => screen.pressByTestId('managed-config.create'));
+        await waitForHomeGovernance(() => expect(onReturn).toHaveBeenCalledTimes(1));
+        expect(home.requestsFor('/v1/machines/presets/create')[0]?.input).toMatchObject({
+            setup: { items: [item] }, launch: { provider: { pluginId: manifest.id, localId: descriptor.id },
+                choices: { store: '/srv/lima', arch: 'x86_64', vmType: 'qemu', cpus: 2, memoryGiB: 4, diskGiB: 20, mounts: [] } },
+        });
+        expect(runtimeHost).not.toHaveBeenCalled();
+        expect(routerPush).not.toHaveBeenCalled();
+        expect(home.requests.filter(request => /machines\.provisioners\.(check|options)|machines\.managed\.acquire/.test(request.path))).toHaveLength(0);
+        expect(home.requestsFor('/v4/connect/qualified/accounts')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+
+    // A second local descriptor takes the same authoring path; its native review digest is never a user field.
+    const container = PluginPortableReleaseManifestV1Schema.parse(DEVCONTAINER_PLUGIN.manifest);
+    const containerKey = buildQualifiedPluginContributionKey({ pluginId: container.id, localId: container.contributes.machineProvisioners[0]!.id });
+    const next = await renderScreen(<StorePresetEditorHandoff choice={{ serverId, preset: null }} item={item} onReturn={onReturn} />);
+    try {
+        const row = `managed-picker.provisioners.local.${containerKey}`;
+        await waitForHomeGovernance(() => expect(next.findByTestId(row)).not.toBeNull());
+        await act(async () => next.pressByTestId(next.findByTestId(`${row}.action`) ? `${row}.action` : row));
+        await waitForHomeGovernance(() => expect(next.findByTestId('managed-config.setup')).not.toBeNull());
+        const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+        const fields = next.tree.findAllByType(ActionInputFields).flatMap(form => form.props.fields);
+        expect(fields.some(field => field.path === 'reviewedEffectDigest')).toBe(false);
+        expect(next.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+    } finally { await next.unmount(); }
 });

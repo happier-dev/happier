@@ -150,15 +150,17 @@ export function useManagedProvisionerPresentation(input: Readonly<{
     refreshKey?: number;
     /** Only repair surfaces activate client Actions; marks demand only the identity sections they draw. */
     purpose?: 'presentation' | 'mark' | 'repair';
+    /** Preset authoring consumes the catalog's declarations without demanding executable availability. */
+    declarationsOnly?: boolean;
     onApprovalPending?: (registration: ActionApprovalContinuation) => void;
 }>) {
     const pluginId = input.provisioner?.contribution.pluginId ?? input.provider?.pluginId;
     const accountReader = usePluginAccountAvailabilityReader(input.accountScope ?? null, pluginId, { enabled: !input.controller });
-    const accountSelection = !input.controller && pluginId ? accountReader?.readCurrentAccountExecution(pluginId) : null;
+    const accountSelection = !input.declarationsOnly && !input.controller && pluginId ? accountReader?.readCurrentAccountExecution(pluginId) : null;
     React.useEffect(() => {
-        if (!input.controller && pluginId && accountReader && accountSelection?.kind === 'unavailable'
+        if (!input.declarationsOnly && !input.controller && pluginId && accountReader && accountSelection?.kind === 'unavailable'
             && accountSelection.code === 'plugin_ui_declaration_pending') void accountReader.ensureCurrentAccountExecution(pluginId);
-    }, [accountReader, input.controller, pluginId, accountSelection?.kind, accountSelection?.kind === 'unavailable' ? accountSelection.code : null]);
+    }, [accountReader, input.declarationsOnly, input.controller, pluginId, accountSelection?.kind, accountSelection?.kind === 'unavailable' ? accountSelection.code : null]);
     const controllerInstallationId = useServerScopedMachine(input.serverId, input.controller?.machineId ?? '', selectInstallationId);
     const controllerAdmitted = !!input.controller && controllerInstallationId === input.controller.installationId;
     const { binding: controllerAccountLifetime } = useServerCredentialAccountScopeBinding(controllerAdmitted ? input.serverId : null);
@@ -236,7 +238,7 @@ export function useManagedProvisionerPresentation(input: Readonly<{
         description: provisioner?.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : null,
         resourceIdPath: provisioner?.descriptor.resourceIdPath ?? null,
         mark: markFor(markedProvisioner), markAt: (size: number) => markFor(markedProvisioner, size), markFor,
-        projection: uiProjection, projectionReady: input.controller ? projection.phase === 'ready' : accountReady,
+        projection: uiProjection, projectionReady: input.declarationsOnly ? true : input.controller ? projection.phase === 'ready' : accountReady,
         projectionFailed: input.controller ? projection.phase === 'error' || projection.phase === 'unsupported'
             : accountSelection?.kind === 'unavailable' && accountSelection.code !== 'plugin_ui_declaration_pending', repair };
 }
