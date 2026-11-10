@@ -144,6 +144,15 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
     // A card that scrolls its own body is the scroll source of the lists inside it; otherwise they keep the modal's.
     const bodyScrollRef = React.useRef<ScrollView | null>(null);
     const inheritedScrollSource = usePopoverScrollSourceRef();
+    // A body that does not scroll hands its content exactly its own height, so content that owns its
+    // scrolling (a placement list, a catalog beside its details) is the one scroller and reaches its end.
+    // Web bounds it by flex; a native ScrollView lays its content out unbounded, so the bound is measured.
+    const boundsContent = (fixedHeight || bounded) && bodyScroll !== 'auto';
+    const [bodyHeight, setBodyHeight] = React.useState(0);
+    const onBodyLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const height = Math.round(event.nativeEvent.layout.height);
+        setBodyHeight(previous => (previous === height ? previous : height));
+    }, []);
     const dimensions = useModalCardDimensions({
         ...props.dimensions,
         size: props.size ?? props.dimensions?.size,
@@ -244,8 +253,9 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                             // A fixed-height card whose content owns its scrolling (a catalog list beside its
                             // details): the body takes the card's height and never grows past it.
                             : fixedHeight || bounded ? styles.bodyBounded : styles.bodyUnscrolled}
+                        onLayout={boundsContent ? onBodyLayout : undefined}
                         contentContainerStyle={bodyScroll === 'auto' ? styles.bodyScrollContent
-                            : fixedHeight || bounded ? styles.bodyBounded : undefined}
+                            : boundsContent ? [styles.bodyBounded, bodyHeight > 0 ? { maxHeight: bodyHeight } : null] : undefined}
                         scrollEnabled={bodyScroll === 'auto'}
                         keyboardShouldPersistTaps="handled"
                         nestedScrollEnabled={bodyScroll === 'auto'}
