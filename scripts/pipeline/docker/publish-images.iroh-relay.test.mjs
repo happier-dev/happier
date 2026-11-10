@@ -36,14 +36,16 @@ test('canonical Docker publisher builds the stock Iroh relay with SBOM and prove
   assert.doesNotMatch(out, /\[pipeline\] verified pushed image index/);
   assert.match(out, /deploy\/iroh-relay(?:\s|$)/);
   assert.doesNotMatch(out, /--target\s+relay-server/);
+  assert.doesNotMatch(out, /sqlite-helper/);
 });
 
+for (const image of ['iroh-relay', 'sqlite-helper']) {
 for (const [label, architecture, armDigest, expectedStatus] of [
   ['without predicate annotations', 'arm64', 'sha256:' + 'b'.repeat(64), 0],
   ['with the wrong architecture', 'riscv64', 'sha256:' + 'b'.repeat(64), 1],
   ['without an immutable platform digest', 'arm64', 'invalid', 1],
 ]) {
-test('canonical Docker publisher verifies the immutable multiarch index ' + label, () => {
+test(`canonical Docker publisher verifies the immutable ${image} multiarch index ` + label, () => {
   const repoRoot = process.cwd();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-iroh-relay-index-'));
   const binDir = path.join(dir, 'bin');
@@ -74,7 +76,7 @@ test('canonical Docker publisher verifies the immutable multiarch index ' + labe
     '  process.exit(0);',
     '}',
     "if (args[1] === 'imagetools' && args[2] === 'inspect' && args[3] === '--raw') {",
-    "  if (args[4] !== 'happierdev/iroh-relay@' + indexDigest) process.exit(2);",
+    `  if (args[4] !== 'happierdev/${image}@' + indexDigest) process.exit(2);`,
     "  process.stdout.write(JSON.stringify(index));",
     '  process.exit(0);',
     '}',
@@ -89,7 +91,7 @@ test('canonical Docker publisher verifies the immutable multiarch index ' + labe
       '--sha', '0123456789abcdef0123456789abcdef01234567',
       '--build-relay', 'false',
       '--build-dev-box', 'false',
-      '--build-iroh-relay', 'true',
+      `--build-${image}`, 'true',
     ], {
       cwd: repoRoot,
       env: {
@@ -108,4 +110,5 @@ test('canonical Docker publisher verifies the immutable multiarch index ' + labe
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+}
 }

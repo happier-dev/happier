@@ -511,8 +511,9 @@ jobs:
       build_relay: true
       build_dev_box: true
       # The dev channel is a rolling publication of every image from dev head;
-      # state the relay decision explicitly now that the called default is off.
+      # State optional image decisions explicitly; the called defaults are off.
       build_iroh_relay: true
+      build_sqlite_helper: true
 
   verify_promoted:
     name: Verify promoted nightly references

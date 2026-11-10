@@ -4176,6 +4176,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'push-latest': { type: 'string', default: 'true' },
           'build-relay': { type: 'string', default: 'true' },
           'build-dev-box': { type: 'string', default: 'true' },
+          'build-sqlite-helper': { type: 'string', default: 'false' },
           'allow-dirty': { type: 'string', default: 'false' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
@@ -4222,6 +4223,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       const pushLatest = String(values['push-latest'] ?? '').trim();
       const buildRelay = String(values['build-relay'] ?? '').trim();
       const buildDevBox = String(values['build-dev-box'] ?? '').trim();
+      const buildSqliteHelper = String(values['build-sqlite-helper'] ?? '').trim();
       const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
       const dryRun = values['dry-run'] === true;
       if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
@@ -4241,6 +4243,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         ...(pushLatest ? ['--push-latest', pushLatest] : []),
         ...(buildRelay ? ['--build-relay', buildRelay] : []),
         ...(buildDevBox ? ['--build-dev-box', buildDevBox] : []),
+        ...(buildSqliteHelper ? ['--build-sqlite-helper', buildSqliteHelper] : []),
         ...(dryRun ? ['--dry-run'] : []),
       ],
     });

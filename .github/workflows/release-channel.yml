@@ -393,6 +393,7 @@ jobs:
       changed_cli: ${{ steps.plan.outputs.changed_cli }}
       changed_server: ${{ steps.plan.outputs.changed_server }}
       changed_iroh_relay: ${{ steps.plan.outputs.changed_iroh_relay }}
+      changed_sqlite_helper: ${{ steps.plan.outputs.changed_sqlite_helper }}
       changed_iroh_transport: ${{ steps.plan.outputs.changed_iroh_transport }}
       changed_website: ${{ steps.plan.outputs.changed_website }}
       changed_docs: ${{ steps.plan.outputs.changed_docs }}
@@ -1442,7 +1443,7 @@ jobs:
       retry_version: ${{ needs.publish_runner_binaries.outputs.version }}
 
   publish_docker:
-    if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.docker_complete != 'true' && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && (inputs.force_deploy == true || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true' || needs.plan.outputs.changed_iroh_relay == 'true') && (needs.promote_cli_binaries.result == 'success' || needs.promote_cli_binaries.result == 'skipped') && (needs.promote_server_runtime.result == 'success' || needs.promote_server_runtime.result == 'skipped') && (needs.plan.outputs.publish_cli_binaries_needed != 'true' || needs.verify_cli_candidate.result == 'success') && (needs.plan.outputs.publish_server_runtime_needed != 'true' || needs.verify_server_candidate.result == 'success')
+    if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.docker_complete != 'true' && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && (inputs.force_deploy == true || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true' || needs.plan.outputs.changed_iroh_relay == 'true' || needs.plan.outputs.changed_sqlite_helper == 'true') && (needs.promote_cli_binaries.result == 'success' || needs.promote_cli_binaries.result == 'skipped') && (needs.promote_server_runtime.result == 'success' || needs.promote_server_runtime.result == 'skipped') && (needs.plan.outputs.publish_cli_binaries_needed != 'true' || needs.verify_cli_candidate.result == 'success') && (needs.plan.outputs.publish_server_runtime_needed != 'true' || needs.verify_server_candidate.result == 'success')
     needs: [release_preflight, resolve_resume, plan, release_admission, prepare_release_candidate, publish_cli_binaries, publish_server_runtime, promote_cli_binaries, promote_server_runtime, verify_cli_candidate, verify_server_candidate]
     permissions:
       contents: read
@@ -1460,6 +1461,7 @@ jobs:
       build_relay: ${{ inputs.force_deploy == true || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_shared == 'true' }}
       build_dev_box: ${{ inputs.force_deploy == true || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true' }}
       build_iroh_relay: ${{ inputs.force_deploy == true || needs.plan.outputs.changed_iroh_relay == 'true' }}
+      build_sqlite_helper: ${{ inputs.force_deploy == true || needs.plan.outputs.changed_sqlite_helper == 'true' }}
 
   deploy_website:
     if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.deploy_website_complete != 'true' && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true)
@@ -1696,7 +1698,7 @@ jobs:
           REQUEST_DEPLOY_SERVER: ${{ contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true) }}
           REQUEST_DEPLOY_WEBSITE: ${{ contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true) }}
           REQUEST_DEPLOY_DOCS: ${{ contains(format(',{0},', inputs.deploy_targets), ',docs,') && (needs.deploy_plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true) }}
-          REQUEST_DOCKER: ${{ inputs.force_deploy == true || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true' || needs.plan.outputs.changed_iroh_relay == 'true' }}
+          REQUEST_DOCKER: ${{ inputs.force_deploy == true || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true' || needs.plan.outputs.changed_iroh_relay == 'true' || needs.plan.outputs.changed_sqlite_helper == 'true' }}
           REQUEST_NPM: ${{ needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_stack == 'true' || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.publish_plugin_sdk == 'true' || needs.plan.outputs.publish_sdk == 'true' }}
           REQUEST_PLUGIN_SDK: ${{ needs.plan.outputs.publish_plugin_sdk == 'true' }}
           REQUEST_SDK: ${{ needs.plan.outputs.publish_sdk == 'true' }}

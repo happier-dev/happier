@@ -24,6 +24,7 @@ export const COMMAND_HELP_DOCKER = {
       '--push-latest <bool>             true|false (default: true).',
       '--build-relay <bool>             true|false (default: true).',
       '--build-dev-box <bool>           true|false (default: true).',
+      '--build-sqlite-helper <bool>     true|false (default: false).',
       '--allow-dirty <bool>             true|false (default: false).',
       '--dry-run',
       '--secrets-source <auto|env|keychain>',

@@ -28,6 +28,11 @@ export const components = Object.freeze({
     // release nor force relay publication for unrelated Docker releases.
     changedPrefixes: ['deploy/iroh-relay/'],
   },
+  sqlite_helper: {
+    id: 'sqlite_helper',
+    // This digest-published deployment tool has no versioned component.
+    changedPrefixes: ['deploy/sqlite-helper/'],
+  },
   stack: {
     id: 'stack',
     changedPrefixes: ['apps/stack/'],

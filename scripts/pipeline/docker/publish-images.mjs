@@ -501,6 +501,7 @@ async function main() {
       // Workflow publication opts in explicitly. Keep direct/local invocations
       // backward-compatible unless they select the new image.
       'build-iroh-relay': { type: 'string', default: 'false' },
+      'build-sqlite-helper': { type: 'string', default: 'false' },
       'build-dev-box': { type: 'string', default: 'true' },
       'dry-run': { type: 'boolean', default: false },
     },
@@ -516,6 +517,7 @@ async function main() {
   const pushLatest = parseBool(values['push-latest'], '--push-latest');
   const buildRelay = parseBool(values['build-relay'], '--build-relay');
   const buildIrohRelay = parseBool(values['build-iroh-relay'], '--build-iroh-relay');
+  const buildSqliteHelper = parseBool(values['build-sqlite-helper'], '--build-sqlite-helper');
   const buildDevBox = parseBool(values['build-dev-box'], '--build-dev-box');
   const dryRun = values['dry-run'] === true;
   const sourceRef = String(values['source-ref'] ?? '').trim();
@@ -527,12 +529,13 @@ async function main() {
   const ghcrNamespaceRaw = String(process.env.GHCR_NAMESPACE ?? 'ghcr.io/happier-dev').trim();
   const ghcrNamespace = ghcrNamespaceRaw.endsWith('/') ? ghcrNamespaceRaw.slice(0, -1) : ghcrNamespaceRaw;
 
-  /** @type {Partial<Record<'dockerhub' | 'ghcr', Readonly<{ relayBase: string; irohRelayBase: string; devBase: string }>>>} */
+  /** @type {Partial<Record<'dockerhub' | 'ghcr', Readonly<{ relayBase: string; irohRelayBase: string; sqliteHelperBase: string; devBase: string }>>>} */
   const basesByRegistry = {};
   if (registries.has('dockerhub')) {
     basesByRegistry.dockerhub = {
       relayBase: 'happierdev/relay-server',
       irohRelayBase: 'happierdev/iroh-relay',
+      sqliteHelperBase: 'happierdev/sqlite-helper',
       devBase: 'happierdev/dev-box',
     };
   }
@@ -540,6 +543,7 @@ async function main() {
     basesByRegistry.ghcr = {
       relayBase: `${ghcrNamespace}/relay-server`,
       irohRelayBase: `${ghcrNamespace}/iroh-relay`,
+      sqliteHelperBase: `${ghcrNamespace}/sqlite-helper`,
       devBase: `${ghcrNamespace}/dev-box`,
     };
   }
@@ -595,6 +599,11 @@ async function main() {
         : null,
     ]).filter(Boolean),
   );
+
+  const sqliteHelperTagSets = Object.values(basesByRegistry).map((bases) => ({
+    base: bases.sqliteHelperBase,
+    tags: buildTagsForBase(bases.sqliteHelperBase),
+  }));
 
   /**
    * @param {readonly string[]} tags
@@ -742,6 +751,20 @@ async function main() {
         file: 'deploy/iroh-relay/Dockerfile',
         context: 'deploy/iroh-relay',
         cacheScope: 'iroh-relay',
+        extraArgs: ['--sbom=true', '--provenance=true'],
+        verifyPublishedIndex: true,
+        publishedBase: tagSet.base,
+      });
+    }
+  }
+
+  if (buildSqliteHelper) {
+    for (const tagSet of sqliteHelperTagSets) {
+      await runBuildxForTags(tagSet.tags, {
+        target: '',
+        file: 'deploy/sqlite-helper/Dockerfile',
+        context: 'deploy/sqlite-helper',
+        cacheScope: 'sqlite-helper',
         extraArgs: ['--sbom=true', '--provenance=true'],
         verifyPublishedIndex: true,
         publishedBase: tagSet.base,

@@ -57,6 +57,11 @@ on:
         required: true
         default: false
         type: boolean
+      build_sqlite_helper:
+        description: "Build/push SQLite backup helper image"
+        required: true
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       channel:
@@ -100,6 +105,10 @@ on:
         default: true
         type: boolean
       build_iroh_relay:
+        required: false
+        default: false
+        type: boolean
+      build_sqlite_helper:
         required: false
         default: false
         type: boolean
@@ -361,6 +370,7 @@ jobs:
           BUILD_RELAY: ${{ inputs.build_relay }}
           BUILD_DEV_BOX: ${{ inputs.build_dev_box }}
           BUILD_IROH_RELAY: ${{ inputs.build_iroh_relay }}
+          BUILD_SQLITE_HELPER: ${{ inputs.build_sqlite_helper }}
           HAPPIER_DOCKER_SERVER_VERSION: ${{ inputs.server_version }}
           HAPPIER_DOCKER_CLI_VERSION: ${{ inputs.cli_version }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -380,6 +390,7 @@ jobs:
             --push-latest "$PUSH_LATEST" \
             --build-relay "$BUILD_RELAY" \
             --build-iroh-relay "$BUILD_IROH_RELAY" \
+            --build-sqlite-helper "$BUILD_SQLITE_HELPER" \
             --build-dev-box "$BUILD_DEV_BOX"
 
       - name: Update Docker Hub README (relay-server)

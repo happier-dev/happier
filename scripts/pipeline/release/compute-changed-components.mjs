@@ -80,6 +80,7 @@ function main() {
     changed_cli: String(Boolean(classified.cli)),
     changed_server: String(Boolean(classified.server)),
     changed_iroh_relay: String(Boolean(classified.iroh_relay)),
+    changed_sqlite_helper: String(Boolean(classified.sqlite_helper)),
     // The transport sources are versioned through the app, CLI and server
     // components; this decision exists so the release plan can prove the pinned
     // Iroh version parity when they move, without implying a relay publication.

@@ -132,3 +132,15 @@ test('relay deployment changes produce the exact Iroh relay decision without an 
   assert.equal(serverSource.server, true);
   assert.equal(serverSource.iroh_relay, false);
 });
+
+test('SQLite helper changes select only the helper publication without version bumps', () => {
+  const classified = classifyChangedPaths(['deploy/sqlite-helper/Dockerfile']);
+  assert.equal(classified.sqlite_helper, true);
+  for (const [component, changed] of Object.entries(classified)) {
+    assert.equal(changed, component === 'sqlite_helper', component);
+  }
+  for (const [component, changed] of Object.entries(deriveVersionedComponentChanges(classified))) {
+    assert.equal(changed, false, component);
+  }
+  assert.equal(classifyChangedPaths(['deploy/iroh-relay/Dockerfile']).sqlite_helper, false);
+});

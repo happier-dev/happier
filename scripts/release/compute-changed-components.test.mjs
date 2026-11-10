@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
@@ -17,20 +17,25 @@ function git(cwd, args) {
   return String(res.stdout || '').trim();
 }
 
-test('compute-changed-components emits changed flags and commit_count for a git range', async () => {
+for (const [changedPath, changedComponent] of [
+  ['apps/cli/README.md', 'cli'],
+  ['deploy/iroh-relay/Dockerfile', 'iroh_relay'],
+  ['deploy/sqlite-helper/Dockerfile', 'sqlite_helper'],
+]) {
+test(`compute-changed-components emits exact ${changedComponent} flags and commit_count for a git range`, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happier-compute-changed-'));
 
   git(dir, ['init']);
   git(dir, ['config', 'user.email', 'test@example.com']);
   git(dir, ['config', 'user.name', 'Test']);
 
-  await mkdir(join(dir, 'apps', 'cli'), { recursive: true });
-  await writeFile(join(dir, 'apps', 'cli', 'README.md'), 'base\n', 'utf8');
+  await mkdir(dirname(join(dir, changedPath)), { recursive: true });
+  await writeFile(join(dir, changedPath), 'base\n', 'utf8');
   git(dir, ['add', '.']);
   git(dir, ['commit', '-m', 'base']);
   const base = git(dir, ['rev-parse', 'HEAD']);
 
-  await writeFile(join(dir, 'apps', 'cli', 'README.md'), 'changed\n', 'utf8');
+  await writeFile(join(dir, changedPath), 'changed\n', 'utf8');
   git(dir, ['add', '.']);
   git(dir, ['commit', '-m', 'head']);
   const head = git(dir, ['rev-parse', 'HEAD']);
@@ -40,9 +45,14 @@ test('compute-changed-components emits changed flags and commit_count for a git 
   assert.equal(res.status, 0, res.stderr || res.stdout);
 
   const parsed = JSON.parse(String(res.stdout).trim());
-  assert.equal(parsed.changed_cli, 'true');
+  assert.equal(parsed[`changed_${changedComponent}`], 'true');
+  assert.equal(parsed.changed_cli, String(changedComponent === 'cli'));
+  assert.equal(parsed.changed_sqlite_helper, String(changedComponent === 'sqlite_helper'));
+  assert.equal(parsed.changed_iroh_relay, String(changedComponent === 'iroh_relay'));
+  assert.equal(parsed.changed_server, 'false');
   assert.equal(parsed.commit_count, '1');
 });
+}
 
 test('compute-changed-components exposes cli-common changes as cli/stack shared release inputs', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happier-compute-shared-'));
