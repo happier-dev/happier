@@ -39,15 +39,16 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    // Selection highlight filling the whole active tab (icon + label); the capsule's own padding is the gap
-    // to its rim. A subtle overlay of the foreground colour so it reads softly over the glass material.
+    // Selection highlight: the active tab's full height (the capsule's own padding is the gap to its rim) and
+    // a step narrower than the tab, so it hugs the icon round-ish (42 x 36 at regular, as in 0.2) rather than
+    // filling the slot as a wide rounded rectangle. Its radius is a capsule from the metrics, concentric with
+    // the bar's. A subtle overlay of the foreground colour so it reads softly over the glass material.
     activePill: {
         position: 'absolute',
         top: 0,
         bottom: 0,
-        left: 0,
-        right: 0,
-        borderRadius: 16,
+        left: theme.space.s4,
+        right: theme.space.s4,
         backgroundColor: theme.colors.text.primary,
         opacity: 0.05,
     },

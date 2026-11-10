@@ -32,11 +32,9 @@ describe('resolveTabBarMetrics', () => {
         expect(resolveTabBarMetrics('large', true).tabPaddingHorizontal).toBe(7);
     });
 
-    it('rounds the active pill more when labels are shown (taller tab)', () => {
-        expect(resolveTabBarMetrics('regular', true).activePillRadius)
-            .toBeGreaterThan(resolveTabBarMetrics('regular', false).activePillRadius);
-        expect(resolveTabBarMetrics('large', false).activePillRadius)
-            .toBeGreaterThan(resolveTabBarMetrics('compact', false).activePillRadius);
+    it('sizes a regular icon-only tab so its highlight is 0.2\'s round-ish 42 x 36', () => {
+        const metrics = resolveTabBarMetrics('regular', false);
+        expect(metrics.iconSize + metrics.tabPaddingVertical * 2).toBe(36);
     });
 
     it('passes showLabels through', () => {

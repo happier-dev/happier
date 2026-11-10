@@ -26,8 +26,9 @@ import { resolveFloatingTabBarBottomPadding } from './floatingTabBarBottomInset'
 const TAB_BAR_RADIUS = 999;
 const FLOATING_SIDE_GUTTER = 16;
 const FLOATING_TOP_GAP = 4;
-// Capsule inner padding: the selected tab's highlight fills its tab, so this is the one gap from the
-// capsule rim to a selected tab on every side (phone lab R1: tabs 50 × 42 in a 50-tall bar).
+// Capsule inner padding: the selected tab's highlight spans its tab's height, so this is the gap from the
+// capsule rim to the highlight above and below it, and the highlight's capsule radius is the bar's radius
+// minus it (owner 2026-11-10: regular tabs 50 × 36 with a 42 × 36 highlight, in a 44-tall bar).
 const PILL_PADDING_VERTICAL = 4;
 const PILL_PADDING_HORIZONTAL = 4;
 // Breathing room between the bar and a sibling capsule. iOS 26 sets its search button off the tab
@@ -59,8 +60,9 @@ export function resolveFloatingTabBarSlotCount(input: Readonly<{
 }
 
 /**
- * How wide each of `slots` tabs may be in the accessory row (the bar and its accessory, centred together as
- * one group). Never wider than the tab's own width: a wide phone keeps a content-sized bar with room around it.
+ * How wide each of `slots` tabs may be in the accessory row, where the "+" holds the right gutter and the bar
+ * fills the room left of it (centred on the screen when it fits, shifted left when it does not). Never wider
+ * than the tab's own width: a wide phone keeps a content-sized bar with room around it.
  */
 export function resolveFloatingTabBarAccessorySlotWidth(input: Readonly<{
     windowWidth: number;
@@ -106,7 +108,18 @@ const styles = StyleSheet.create({
         // those surfaces.
         alignItems: 'stretch',
         alignSelf: 'stretch',
-        justifyContent: 'center',
+    },
+    // A leading twin of the accessory and its gap, so the bar centres on the SCREEN rather than in the room
+    // the accessory leaves (owner 2026-11-10). It gives way first when the bar needs the room: its shrink
+    // weight far outweighs the bar's, so a wide bar shifts left and stops beside the "+" before it narrows.
+    accessoryMirror: {
+        flexShrink: 1000,
+    },
+    // Equal free room on both sides of the bar; the trailing one closes up so the "+" stays on the gutter.
+    accessorySpacer: {
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 0,
     },
     // The accessory's square footprint: as wide as the bar is tall (a flex weight would clip it on a
     // narrow phone). Until the bar has been laid out once, `aspectRatio` stands in: Yoga resolves it from
@@ -122,7 +135,9 @@ const styles = StyleSheet.create({
         minWidth: 0,
         alignItems: 'center',
         justifyContent: 'center',
-        marginRight: ACCESSORY_GAP,
+    },
+    accessoryCell: {
+        marginLeft: ACCESSORY_GAP,
     },
 });
 
@@ -164,6 +179,10 @@ export const FloatingTabBarSurface = React.memo(function FloatingTabBarSurface(p
         if (height > 0) setBarHeightPx((current) => (current === height ? current : height));
     }, []);
     const accessoryFootprint = barHeightPx ? { width: barHeightPx } : styles.accessoryFootprintUnmeasured;
+    const accessoryMirror = React.useMemo(
+        () => [styles.accessoryMirror, barHeightPx ? { width: barHeightPx + ACCESSORY_GAP } : styles.accessoryFootprintUnmeasured],
+        [barHeightPx],
+    );
 
     const panel = (
         <GlassPanel
@@ -188,13 +207,17 @@ export const FloatingTabBarSurface = React.memo(function FloatingTabBarSurface(p
             style={[styles.positioner, { paddingBottom: bottomPadding }]}
         >
             {props.trailingAccessory == null ? <View style={props.stretch ? [styles.pillBounds, styles.pillBoundsStretch] : styles.pillBounds}>{bar}</View> : (
-                // The bar and its accessory are one group, centred together, 8 apart (phone lab R1).
+                // The bar centred on the screen, the "+" on the right gutter; a bar too wide for that shifts left
+                // and stops 8 before the "+", never under it (owner 2026-11-10).
                 <View style={styles.accessoryRow}>
+                    <View style={accessoryMirror} pointerEvents="none" />
+                    <View style={styles.accessorySpacer} pointerEvents="none" />
                     <View style={styles.accessoryRowBar} onLayout={handleBarCellLayout}>
                         {/* Bounded by its cell, so a bar of more items than fit scrolls instead of spilling past the edges. */}
                         <View style={styles.pillBounds}>{bar}</View>
                     </View>
-                    <View style={accessoryFootprint}>
+                    <View style={styles.accessorySpacer} pointerEvents="none" />
+                    <View style={[styles.accessoryCell, accessoryFootprint]}>
                         {props.trailingAccessory}
                     </View>
                 </View>
