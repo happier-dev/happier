@@ -31,6 +31,11 @@ import { useScreenSafeAreaBackdrop } from '@/components/navigation/safeArea/Hori
 import { useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
 import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
 
+/**
+ * The Sessions column's own rows (pinned boards, its destinations). The list draws them under its title, so the
+ * title leads the column on the shell's title row. One element, so the list's memo boundaries hold across renders.
+ */
+const SIDEBAR_COLUMN_ROWS = <SessionsListStorageChrome column="sessions" />;
 
 interface MainViewProps {
     variant: 'phone' | 'sidebar';
@@ -96,20 +101,14 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
             visible: true,
             interactive: resolveSidebarSessionListSurfaceInteractive(pathname),
         });
-        const storageChrome = (
-            <SessionsListStorageChrome
-                column="sessions"
-            />
-        );
-
         return (
             <>
                 <View style={styles.sidebarContainer}>
-                    {storageChrome}
                     <View style={styles.sidebarContentContainer}>
                         <SessionsListPaneContent
                             fallbackGuidanceVariant="sidebar"
                             surfaceOwnership={surfaceOwnership}
+                            leading={SIDEBAR_COLUMN_ROWS}
                         />
                     </View>
                     {/* The sidebar's one "+": the phone's glass button, over the list's bottom-right. */}

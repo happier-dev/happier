@@ -48,6 +48,11 @@ type SessionsListPaneContentProps = Readonly<{
     surfaceRoutePathname?: string;
     sessionListSurfaceDataActive?: boolean;
     surfaceOwnership?: Partial<SessionListSurfaceOwnership>;
+    /**
+     * The column's own rows (pinned boards, its destinations). The list draws them under its title, which leads the
+     * column on the shell's title row; an empty list, with no title drawn, leads with them.
+     */
+    leading?: React.ReactNode;
 }>;
 
 const stylesheet = StyleSheet.create(() => ({
@@ -212,6 +217,7 @@ const SessionsListPaneContentView = React.memo(function SessionsListPaneContentV
     const styles = stylesheet;
 
     if (props.sessionListPaneState.showLoading) {
+        // The column's own rows arrive with the list, under its title, rather than standing here and then moving.
         return (
             <>
             <PhoneTabNavRowWithoutList />
@@ -227,6 +233,7 @@ const SessionsListPaneContentView = React.memo(function SessionsListPaneContentV
     if (props.sessionListPaneState.showEmptyState) {
         return (
             <>
+                {props.leading ?? null}
                 <SessionsListPaneEmptyState
                     fallbackGuidanceVariant={props.fallbackGuidanceVariant}
                     sessionListPaneState={props.sessionListPaneState}
@@ -244,6 +251,7 @@ const SessionsListPaneContentView = React.memo(function SessionsListPaneContentV
             paneState={props.sessionListPaneState}
             pathname={props.pathname}
             surfaceOwnership={props.surfaceOwnership}
+            leading={props.leading}
         />
     );
 });

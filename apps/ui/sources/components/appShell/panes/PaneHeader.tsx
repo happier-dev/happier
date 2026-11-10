@@ -3,7 +3,7 @@ import { useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurfa
 import * as React from 'react';
 import { Platform, View, type LayoutChangeEvent, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, HAPPIER_PAGE_METRICS, HAPPIER_PRESS_FEEDBACK_V1, happierPageTextMetrics, useHappierMaterialColorResolver, useHappierTextPresentation } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HappierShellTitleRowContext, HAPPIER_PAGE_METRICS, HAPPIER_PRESS_FEEDBACK_V1, happierPageTextMetrics, useHappierMaterialColorResolver, useHappierTextPresentation } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiDetailsPanePresentation } from '@happier-dev/plugin-ui/advanced';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -332,6 +332,9 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     const topInset = props.navigation?.includeTopInset ? insets.top : 0;
     const navigationBandEdges = useNavigationBandEdges();
     const hasTitle = props.title.trim().length > 0 || Boolean(props.leading) || Boolean(props.titleControl) || chipVisible;
+    // On the desktop shell's title row the title line itself centres on the band (level with the rail's first icon
+    // and every column title) and the live line hangs beneath it, instead of the pair centring together.
+    const titleOnRow = React.useContext(HappierShellTitleRowContext) && hasTitle && !large;
     const titleText = (
         <Text
             ref={props.headingRef}
@@ -357,11 +360,11 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
         />
     ) : null;
     const identity = (
-        <View style={large ? styles.largeIdentityRow : styles.identity}>
+        <View style={large ? styles.largeIdentityRow : titleOnRow ? [styles.identity, styles.identityOnRow] : styles.identity}>
         {chipVisible ? <PaneMainRestoreChip /> : null}
         {props.leading ? <View style={large ? styles.identityMark : styles.identityMarkCentered}>{props.leading}</View> : null}
-        <View style={styles.titleBlock}>
-            {props.overline ?? null}
+        <View style={titleOnRow ? styles.titleBlockOnRow : styles.titleBlock}>
+            {titleOnRow ? <View style={styles.aboveTitle}>{props.overline ?? null}</View> : props.overline ?? null}
             {/* A host that already names the thing (a breadcrumb ending on it) passes no title: the live line stands alone. */}
             {hasTitle ? <View style={styles.titleRow}>
             {typeof props.titleControl === 'function' ? props.titleControl(titleText) : props.titleControl ?? titleText}
@@ -373,7 +376,7 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                 </View>
             ) : null}
             </View> : null}
-            {large ? null : lineView}
+            {large ? null : titleOnRow ? <View style={styles.belowTitle}>{lineView}</View> : lineView}
         </View>
         </View>
     );
@@ -499,6 +502,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
         justifyContent: 'center',
     },
+    // On the shell's title row the block spans the band and the title row sits between two equal halves, so the
+    // title line itself centres on the band; the overline stands in the half above it, the live line in the one below.
+    identityOnRow: { alignSelf: 'stretch' },
+    titleBlockOnRow: { flex: 1, minWidth: 0, alignSelf: 'stretch' },
+    aboveTitle: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 0, justifyContent: 'flex-end' },
+    belowTitle: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 0, justifyContent: 'flex-start' },
     titleRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, minWidth: 0 },
     titleText: { flexShrink: 1, minWidth: 0 },
     // The title row at its natural width, out of flow and unseen (`onTitleNaturalWidth`).

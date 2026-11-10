@@ -145,6 +145,8 @@ export function SessionsListViewWithFilterController(props: Readonly<{
     pathname?: string;
     surfaceOwnership?: Partial<SessionListSurfaceOwnership>;
     releaseRetentionOnRouteRemoval?: boolean;
+    /** The column's own rows (pinned boards, its destinations): under the list's title, above its sessions. */
+    leading?: React.ReactNode;
 }>) {
     const attentionInteraction = useSessionListAttentionInteractionOwner();
     React.useEffect(() => {
@@ -164,6 +166,7 @@ export function SessionsListViewWithFilterController(props: Readonly<{
                 paneState={props.paneState}
                 pathname={props.pathname}
                 surfaceOwnership={props.surfaceOwnership}
+                leading={props.leading}
             />
             </SessionListAttentionInteractionContext.Provider>
         );
@@ -178,6 +181,7 @@ export function SessionsListViewWithFilterController(props: Readonly<{
             pathname={props.pathname}
             surfaceOwnership={props.surfaceOwnership}
             releaseRetentionOnRouteRemoval={props.releaseRetentionOnRouteRemoval}
+            leading={props.leading}
         />
         </SessionListAttentionInteractionContext.Provider>
     );
@@ -190,6 +194,7 @@ function SessionsListViewWithResolvedPaneState(props: Readonly<{
     pathname?: string;
     surfaceOwnership?: Partial<SessionListSurfaceOwnership>;
     releaseRetentionOnRouteRemoval?: boolean;
+    leading?: React.ReactNode;
 }>) {
     const attentionInteraction = React.useContext(SessionListAttentionInteractionContext);
     const attentionInteractionHeld = useSessionListAttentionInteractionHeld(attentionInteraction);
@@ -254,6 +259,7 @@ function SessionsListViewWithResolvedPaneState(props: Readonly<{
                 paneState={renderedPaneState}
                 pathname={props.pathname}
                 surfaceOwnership={surfaceOwnership}
+                leading={props.leading}
             />
         </>
     );
@@ -311,6 +317,7 @@ type SessionsListViewContentProps = Readonly<{
     paneState: VisibleSessionListPaneState;
     pathname?: string;
     surfaceOwnership?: Partial<SessionListSurfaceOwnership>;
+    leading?: React.ReactNode;
 }>;
 
 function SessionsListViewContent(props: SessionsListViewContentProps) {
@@ -574,6 +581,8 @@ function VisibleSessionsListViewContent(
                     filterChips={filterChips}
                     presentation={runsPresentation ? 'runs' : 'sessions'}
                 />
+                {/* The title leads the column on the shell's title row; the column's own rows follow it. */}
+                {props.leading ?? null}
                 {queryVisibleSessionCount > 0 ? (
                     <HomeReachabilityGate
                         variant="line"
