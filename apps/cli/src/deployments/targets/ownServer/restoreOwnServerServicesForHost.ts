@@ -10,6 +10,14 @@ import { createCliDeploymentActionDeps } from '../../createCliDeploymentActionDe
 import { openDeploymentReceiptForHost, readDeploymentReceiptForHost,
     readOwnServerDeploymentReceiptHistoryForHost } from '../../readReceiptForHost';
 import { restoreOwnServerDeploymentServices, type RestoreOwnServerDeploymentServicesInput } from './restoreOwnServerDeploymentServices';
+import { createDaemonDeploymentActionDeps } from '../../createDaemonDeploymentActionDeps';
+import { createOwnServerDeploymentRuntimeForHost, type OwnServerDeploymentRuntimeHostInput } from './ownServerDeploymentHostRuntime';
+import { restorePrivateServiceReferencesForHost } from './privateServiceReferenceRecovery';
+import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+import { decodeBase64 } from '@/api/encryption';
+import { resolveOwnServerDeploymentIdentityForHost } from './paths';
+import { configuration } from '@/configuration';
 
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
 
@@ -23,6 +31,7 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
     signal: AbortSignal;
     isCurrent(): boolean;
     resolveRuntime(signal: AbortSignal): Promise<MachineTerminalAccountReadRuntime | null>;
+    acquireServiceExportForward?: OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
 }>): Promise<void> {
     input.signal.throwIfAborted();
     const runtime = await input.resolveRuntime(input.signal);
@@ -96,7 +105,32 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
             const version = projection.getVersions()[input.machineId];
             if (!version?.deploymentId || version.uncertain) continue;
             const receipt = opened.get(version.deploymentId) ?? await readReceipt(version.deploymentId);
-            await restoreOwnServerDeploymentServices({ ...input, receipt, readReceipt });
+            await restoreOwnServerDeploymentServices({ ...input, receipt, readReceipt,
+                async restoreServiceReferences({ docker, engine, onFailure }) {
+                    const addresses = receipt.content.ownServer?.referenceAddresses ?? [];
+                    if (!addresses.some(address => address.route?.kind === 'iroh')) return { async close() {} };
+                    const identity = readInstallationIdentityIfExistsSync();
+                    if (!identity || identity.installationId !== input.installationId) return refuse('admission_unavailable');
+                    const acquirePluginRuntimeRegistryLease = async () => {
+                        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+                        return lease ?? refuse('service_unavailable');
+                    };
+                    const host = { credentials: runtime.credentials, serverId: input.serverId,
+                        serverHttpBaseUrl: runtime.serverHttpBaseUrl, machineId: input.machineId,
+                        resolveRequesterIdentity: async () => ({ kind: 'unknown' as const, reason: 'requester_authority_unavailable' }),
+                        acquirePluginRuntimeRegistryLease, acquireServiceExportForward: input.acquireServiceExportForward };
+                    const dependencies = createDaemonDeploymentActionDeps({ ...host, runtime: createOwnServerDeploymentRuntimeForHost(host) });
+                    const lease = await acquirePluginRuntimeRegistryLease();
+                    try {
+                        const { homeServerIdentityId } = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
+                            serverId: input.serverId, environmentId: environment.id });
+                        const restored = await restorePrivateServiceReferencesForHost({ environmentId: environment.id,
+                            referenceAddresses: addresses, host, context, signal: input.signal, owner: lease.registry.projectManagedServices,
+                            homeServerIdentityId, installationId: input.installationId, privateKey: decodeBase64(identity.privateKey, 'base64url'),
+                            readEnvironment: dependencies.readDeploymentEnvironment, docker, engine, onFailure });
+                        return { async close() { try { await restored.close(); } finally { await lease.release(); } } };
+                    } catch (error) { await lease.release(); throw error; }
+                } });
         }
         cursor = page.nextCursor ?? undefined;
     } while (cursor);

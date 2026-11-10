@@ -11,6 +11,18 @@ import { DeploymentSourceAdmissionFailureV1Schema, DeploymentReceiptFailureV1Sch
     type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/deployment-protocol';
+import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
+
+/** The acquisition boundary supplies context; arbitrary deployment network errors
+ * are not reclassified as service-forward failures. */
+export function privateServiceForwardAcquisitionError(error: unknown): Error & { code: string } {
+    const original = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+    const code = original === 'machine_carrier_unavailable' ? original
+        : original === 'tcp_connect_failed' || original === 'ECONNREFUSED' || original === 'ENETUNREACH'
+            || original === 'EHOSTUNREACH' || original === 'ETIMEDOUT' ? 'private_service_destination_unreachable'
+        : error instanceof MachineCarrierError ? 'private_service_forward_refused' : original ?? 'private_service_destination_unreachable';
+    return Object.assign(new Error(code, { cause: projectDeploymentFailure(code, error, 'deployment.reference.acquire') }), { code });
+}
 
 /** One receipt projection for provider failures, including their effect provenance. */
 export function projectDeploymentReceiptFailure(result: ActionExecuteFailure,

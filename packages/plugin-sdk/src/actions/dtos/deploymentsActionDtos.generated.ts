@@ -730,8 +730,8 @@ export type DeploymentsActionInputById = {
     } | {
         purpose: 'preview' | 'standard';
         serverId: string;
-        protection: 'nonProduction' | 'production';
         requestKey: string;
+        protection: 'nonProduction' | 'production';
         deployerMode: 'chosen' | 'managers' | 'members';
         name: string;
         projectSourceId?: string | undefined;
@@ -1114,12 +1114,15 @@ export type DeploymentsActionInputById = {
             };
             ownServer?: undefined | {
                 serviceExports?: undefined | {
-                    exposure: 'privateNetwork';
-                    privateNetwork: string;
                     key: string;
                     service: string;
                     containerPort: number;
                     scheme: string;
+                    exposure: 'loopback' | 'privateNetwork' | 'public';
+                    privateNetwork?: string | undefined;
+                    transport?: undefined | {
+                        kind: 'iroh';
+                    };
                 }[];
                 rollout?: 'recreate' | 'startFirst' | undefined;
                 autoRestorePreviousRelease?: boolean | undefined;
@@ -1703,46 +1706,6 @@ export type DeploymentsActionInputById = {
         serverId: string;
     };
     readonly "deployments.teardown": {
-        expectedRevision: number;
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        serverId: string;
-        environmentId: string;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        requestKey: string;
-        dataCreation: {
-            runId: string;
-            invocationId: string;
-        };
-        volumes?: ({
-            name: string;
-            disposition: 'delete';
-            confirmation: string;
-        } | {
-            name: string;
-            disposition: 'keep';
-        })[] | undefined;
-        machines?: string[] | undefined;
-        removeEnvironment?: true | undefined;
-    } | {
-        expectedRevision: number;
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        serverId: string;
-        environmentId: string;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        requestKey: string;
-        volumes?: ({
-            name: string;
-            disposition: 'delete';
-            confirmation: string;
-        } | {
-            name: string;
-            disposition: 'keep';
-        })[] | undefined;
-        machines?: string[] | undefined;
-        removeEnvironment?: true | undefined;
-    } | {
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
         contentArtifactId: string;
         contentHeaderVersion: number;
@@ -1775,6 +1738,46 @@ export type DeploymentsActionInputById = {
         serverId: string;
         volumes?: [
         ] | undefined;
+    } | {
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        serverId: string;
+        expectedRevision: number;
+        requestKey: string;
+        environmentId: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        dataCreation: {
+            runId: string;
+            invocationId: string;
+        };
+        machines?: string[] | undefined;
+        volumes?: ({
+            name: string;
+            disposition: 'delete';
+            confirmation: string;
+        } | {
+            name: string;
+            disposition: 'keep';
+        })[] | undefined;
+        removeEnvironment?: true | undefined;
+    } | {
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        serverId: string;
+        expectedRevision: number;
+        requestKey: string;
+        environmentId: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        machines?: string[] | undefined;
+        volumes?: ({
+            name: string;
+            disposition: 'delete';
+            confirmation: string;
+        } | {
+            name: string;
+            disposition: 'keep';
+        })[] | undefined;
+        removeEnvironment?: true | undefined;
     } | {
         serverId: string;
         environmentId: string;
@@ -4655,8 +4658,8 @@ export type DeploymentsActionResultById = {
         } | {
             purpose: 'preview' | 'standard';
             serverId: string;
-            protection: 'nonProduction' | 'production';
             requestKey: string;
+            protection: 'nonProduction' | 'production';
             deployerMode: 'chosen' | 'managers' | 'members';
             name: string;
             projectSourceId?: string | undefined;

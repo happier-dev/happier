@@ -228,7 +228,8 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
         installations: readonly Readonly<{ machineId: string; installationId: string; seed: Uint8Array }>[] }>;
 }>) => Promise<void>, options: Readonly<{ mode?: 'source' | 'mixed' | 'prebuilt' | 'stored' | 'closure'; secretRevision?: number;
     deploymentId?: string; buildSecret?: boolean; revokeAfter?: 'config' | 'build'; registryAccess?: 'pull' | 'pushPull'; failBuild?: boolean;
-    coldImages?: boolean; buildReference?: boolean; changingBuildReference?: boolean }> = {}) {
+    coldImages?: boolean; buildReference?: boolean; changingBuildReference?: boolean;
+    referenceBindAddress?: string; referencePublishedPort?: number; referenceIroh?: boolean }> = {}) {
     const root = await mkdtemp(join(tmpdir(), 'happier-build-receipt-'));
     const homeServerIdentityId = 'srv_build_receipt';
     const previousConfiguration = { happyHomeDir: configuration.happyHomeDir, settingsFile: configuration.settingsFile,
@@ -299,11 +300,12 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
         referenceEnvironment.environment.runtimeTargetLinkId = 'source-link';
         referenceEnvironment.content.ownServer = { rollout: 'recreate', autoRestorePreviousRelease: false,
             serviceExports: [{ key: 'database', service: 'db', containerPort: 5432, scheme: 'postgres',
-                exposure: 'privateNetwork', privateNetwork: 'network' }] };
+                ...(options.referenceIroh ? { exposure: 'loopback' as const, transport: { kind: 'iroh' as const } }
+                    : { exposure: 'privateNetwork' as const, privateNetwork: 'network' }) }] };
         referenceEnvironment.targetLinks[0]!.targetLink = { ...referenceEnvironment.targetLinks[0]!.targetLink,
             id: 'source-link', environmentId: 'source-database', activeDeploymentId: 'source-release', machines: ['builder-c'],
             members: [{ machineId: 'builder-c', installationId: 'installation-c', state: 'active' }] };
-        let referencePort = 25432;
+        let referencePort = options.referencePublishedPort ?? 25432;
         if (options.buildReference) {
             // Native service observation and Home metadata are the boundaries;
             // retained service selection and address resolution remain real.
@@ -338,13 +340,16 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
             await mounted.lease.registry.projectManagedServices.superviseProject({ kind: 'environment',
                 serverId: homeServerIdentityId, machineId: 'builder-c', environmentId: 'source-database',
                 environmentInstanceId: sourceIdentity.environmentInstanceId, deploymentId: 'source-release', release,
-                composeService: 'db', serviceId: `${sourceIdentity.environmentInstanceId}/db`, specIdentity: 'db', isCurrent: () => true,
+                composeService: 'db', serviceId: `${sourceIdentity.environmentInstanceId}/db`,
+                appliedServiceExports: referenceEnvironment.content.ownServer.serviceExports,
+                specIdentity: JSON.stringify({ service: 'db', bindAddress: options.referenceBindAddress ?? '100.64.0.7',
+                    publishedPort: referencePort, exports: referenceEnvironment.content.ownServer.serviceExports }), isCurrent: () => true,
                 releaseObservation: async () => {}, nativeEffects: { keys: [] }, processSpec: { mode: { kind: 'native', builtinLifecycle: {
                     async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
                     runtimeFacts(): ProjectNativeRuntimeFacts { return { observedAt: 1, freshness: 'current', configuration: {
                         name: 'db', replicas: null, resources: { cpus: null, memory: null }, restartPolicy: 'unless-stopped',
                         healthcheck: 'absent', mounts: [], ports: [{ target: 5432, published: referencePort,
-                            bindAddress: '100.64.0.7', protocol: 'tcp' }] } }; },
+                            bindAddress: options.referenceBindAddress ?? '100.64.0.7', protocol: 'tcp' }] } }; },
                     async stop() { return { status: 'stopped' }; },
                 } } } });
         }

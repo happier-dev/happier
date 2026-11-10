@@ -483,7 +483,7 @@ describe('own-server installed host acquisition', () => {
             } finally { await acquired.release(); }
         } finally { try { await mounted.dispose(); } finally { await rm(root, { recursive: true, force: true }); } }
     });
-    it.each(['deployment', 'restoration', 'review'] as const)('materializes exact deployment facts through installation grants for %s without fabricating unavailable values', async kind => {
+    it.each(['deployment', 'restoration', 'review', 'copySourceRead'] as const)('materializes exact deployment facts through installation grants for %s without fabricating unavailable values', async kind => {
         const mounted = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [] } });
         const keys = nacl.sign.keyPair();
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
@@ -507,7 +507,8 @@ describe('own-server installed host acquisition', () => {
         // exact definitions and phase selection remain the real P42 path.
         const materializations: unknown[] = [];
         const network = vi.spyOn(axios, 'request').mockImplementation(async config => {
-            if (!config.url?.endsWith('/environment/secret-launch-admission')) throw new Error('Unexpected source or native read');
+            if (!config.url?.endsWith('/environment/secret-launch-admission')
+                && !config.url?.endsWith('/source-environment/secret-launch-admission')) throw new Error('Unexpected source or native read');
             materializations.push(config.data.materialization);
             return { status: 200, data: { ok: true, grants } };
         });
@@ -536,6 +537,16 @@ describe('own-server installed host acquisition', () => {
                 expect(materializations).toEqual([kind === 'review' ? { kind: 'review', contentArtifactId: 'candidate-artifact' }
                     : { kind: 'deployment', deploymentId: kind === 'restoration' ? 'failed-operation' : 'deployment',
                         actionOperationId: kind === 'restoration' ? 'original-operation' : 'operation' }]);
+                if (kind === 'copySourceRead') {
+                    const source = await acquired.acquireCopySourceSecrets!({ environmentId: 'source-environment',
+                        targetLinkId: 'source-link', deploymentId: 'failed-source-capture', actionOperationId: 'source-operation' });
+                    try {
+                        expect(materializations.at(-1)).toEqual({ kind: 'copySourceRead',
+                            deploymentId: 'failed-source-capture', actionOperationId: 'source-operation' });
+                        expect(network.mock.calls.at(-1)?.[0].data).toMatchObject({ environmentId: 'source-environment',
+                            targetLinkId: 'source-link', machineId: 'machine', installationId: 'installation' });
+                    } finally { await source.release?.(); }
+                }
                 admittedEnvironment.content.name = 'Renamed after acquisition';
                 const prepare = (phase: 'build' | 'runtime') => prepareEnvironmentSecretBindingsForLaunch({ ...acquired.secrets,
                     environmentId: 'environment', machineId: 'machine', installationId: 'installation',

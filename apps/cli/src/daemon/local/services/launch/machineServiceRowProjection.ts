@@ -94,7 +94,10 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
             for (const { result } of healthResults.get(handle)?.values() ?? []) {
                 if (!checkResult || statusRank[result.result.status] > statusRank[checkResult.result.status]) checkResult = result;
             }
-            const health: NonNullable<MachineServiceRowV1['health']> = checkResult && nativeHealth.status !== 'down'
+            const dependencyFailure = handle.kind !== 'adopted' ? handle.readDependencyFailure?.() : undefined;
+            const health: NonNullable<MachineServiceRowV1['health']> = nativeHealth.status === 'down' ? nativeHealth : dependencyFailure
+                ? { ...nativeHealth, status: 'down', reason: dependencyFailure.errorCode }
+                : checkResult && nativeHealth.status !== 'down'
                 ? { status: checkResult.result.status, observedAtMs: checkResult.result.observedAt, freshness: 'current',
                     ...(nativeHealth.expectedDown ? { expectedDown: nativeHealth.expectedDown } : {}) }
                 : nativeHealth;

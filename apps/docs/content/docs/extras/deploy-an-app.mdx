@@ -75,6 +75,22 @@ Domain step fails. Read the completed steps and choose **Open environment**.
 Resolve the address problem there instead of creating another copy of the app.
 </Callout>
 
+## Private service connections
+
+Keep a database private when another Environment needs to use it. The current
+**Private sharing** editor configures an observed private network; both Machines
+need access to that same network. Save the export, deploy its publication, then
+use an Environment reference for the consuming variable. A declaration alone
+does not make a service reachable, and variable changes apply on deployment.
+
+Unreleased 0.3 source also accepts an Iroh export through the Environment update
+Action: `exposure: 'loopback'` with `transport: { kind: 'iroh' }` and no private
+network selection. It requires a TCP publication bound to loopback. The sharing
+editor shows **Happier network** as **Not available yet** while its native and
+security validation is pending. Machine forwarding,
+container networking and platform validation are separate from accepting that
+declaration; this guide does not yet certify the Iroh connection journey.
+
 ## 3. Add a Domain
 
 Open the Environment's **Domains** tab and choose **Add domain**. Enter the

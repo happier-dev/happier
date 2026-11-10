@@ -29,6 +29,11 @@ import {
 const registeredTunnelApps = new WeakSet<FastifyInstance>();
 const DEFAULT_OPEN_STREAM_TIMEOUT_MS = 30_000;
 
+export type ServiceExportTunnelOwner = Readonly<{
+    closeByRequester: (accountId: string) => Promise<void>;
+    readRequesterAccountIds: () => readonly string[];
+}>;
+
 export type RegisterPeerTcpTunnelLoopbackRoutesOptions = Omit<OpenPeerTcpTunnelInput, 'open' | 'nowMs' | 'grantConsumption'> & Readonly<{
     nowMs: () => number;
     resolveTrustRoots?: () => OpenPeerTcpTunnelInput['trustRoots'];
@@ -39,12 +44,13 @@ export type RegisterPeerTcpTunnelLoopbackRoutesOptions = Omit<OpenPeerTcpTunnelI
     openStreamTimeoutMs?: number;
     voiceBinaryAppendConsumer?: PeerTcpTunnelVoiceBinaryAppendConsumer;
     voiceBinaryTerminalConsumer?: PeerTcpTunnelVoiceBinaryTerminalConsumer;
+    onServiceExportTunnelsReady?: (owner: ServiceExportTunnelOwner) => void;
 }>;
 
 type ActivePeerTcpTunnel = (OpenPeerTcpTunnelResult & { ok: true }) & Readonly<{
     openStreamTimeout?: ReturnType<typeof setTimeout>;
 }> & {
-    closeTransport?: () => void;
+    closeTransport?: () => void | Promise<void>;
     onPreviewAbort?: () => void;
     pendingControl?: Readonly<{ detach: () => void; close: () => void }>;
 };
@@ -105,7 +111,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
     const openTunnel = options.openTunnel ?? openPeerTcpTunnel;
     const maxActiveTunnels = normalizeMachineTunnelPositiveInt(options.maxActiveTunnels, undefined);
     const activeTunnels = new Map<string, ActivePeerTcpTunnel>();
-    const releaseTunnel = (tunnelId: string, kind: 'flow.closed' | 'flow.aborted' = 'flow.closed', reasonCode?: string): void => {
+    const releaseTunnel = (tunnelId: string, kind: 'flow.closed' | 'flow.aborted' = 'flow.closed', reasonCode?: string): Promise<void> | undefined => {
         const tunnel = activeTunnels.get(tunnelId);
         if (!tunnel) return;
         activeTunnels.delete(tunnelId);
@@ -115,9 +121,16 @@ export function registerPeerTcpTunnelLoopbackRoutes(
         if (tunnel.openStreamTimeout) clearTimeout(tunnel.openStreamTimeout);
         if (tunnel.onPreviewAbort) tunnel.previewApplication?.signal.removeEventListener('abort', tunnel.onPreviewAbort);
         tunnel.pendingControl?.close();
-        tunnel.closeTransport?.();
-        void tunnel.previewApplication?.close();
+        return Promise.all([tunnel.closeTransport?.(), tunnel.previewApplication?.close()]).then(() => undefined);
     };
+    options.onServiceExportTunnelsReady?.({
+        readRequesterAccountIds: () => [...new Set([...activeTunnels.values()]
+            .flatMap(tunnel => tunnel.serviceExportRequesterAccountId ? [tunnel.serviceExportRequesterAccountId] : []))],
+        async closeByRequester(accountId) {
+            await Promise.all([...activeTunnels].filter(([, tunnel]) => tunnel.serviceExportRequesterAccountId === accountId)
+                .map(([tunnelId]) => releaseTunnel(tunnelId, 'flow.aborted')));
+        },
+    });
     const grantConsumption = createAtomicRouteGrantConsumption({ activationFailurePolicy: 'consume' });
     const openStreamTimeoutMs =
         typeof options.openStreamTimeoutMs === 'number' && Number.isFinite(options.openStreamTimeoutMs) && options.openStreamTimeoutMs >= 1
@@ -211,6 +224,13 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                     } : {}),
                 };
                 sessions.set(tunnelId, entry);
+                if (tunnel.serviceExportRequesterAccountId) {
+                    tunnel.closeTransport = async () => {
+                        sessions.delete(tunnelId);
+                        await substreamMux?.close();
+                        if (sessions.size === 0) closeSocket(socket);
+                    };
+                }
                 if (tunnel.previewApplication) {
                     tunnel.closeTransport = () => closeSocket(socket);
                     tunnel.pendingControl?.detach();
@@ -336,7 +356,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
         });
     });
     app.addHook('onClose', async () => {
-        for (const tunnelId of activeTunnels.keys()) releaseTunnel(tunnelId);
+        await Promise.all([...activeTunnels.keys()].map(tunnelId => releaseTunnel(tunnelId)));
         grantConsumption.clear();
     });
 

@@ -1165,6 +1165,7 @@ export async function startDaemonSessionControlRuntime(
     /** Resolved Account server for this daemon lifecycle's PAT introspection. */
     serverBaseUrl: string;
     runtimeActionExecute?: RuntimeActionExecute;
+    acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
     managedProviderOperationAuthority?: import('../connectedServices/purposeBindings/managedProviderOperationAuthority').ManagedProviderOperationAuthority;
     readManagedMachinePolicyCurrent?: Parameters<
       typeof createDaemonManagedMachineActionAdapter
@@ -1282,6 +1283,8 @@ export async function startDaemonSessionControlRuntime(
     onMachineAccessLossReceiverReady?: (
       options: Parameters<ApiMachineClient['registerMachineAccessLossReceiver']>[0],
     ) => void;
+    cleanupRequesterServiceForwards?: (accountId: string) => Promise<void>;
+    readRequesterServiceForwardAccountIds?: () => readonly string[];
     onComputerRoutesReady?: (resolveComputer: () => ComputerRoutes | null) => void;
     onLocalServicesPreviewRoutesReady?: (
       routes: LocalServicePreviewRoutes,
@@ -9468,8 +9471,12 @@ export async function startDaemonSessionControlRuntime(
     const machineAccessLossReceiver: Parameters<ApiMachineClient['registerMachineAccessLossReceiver']>[0] = {
       serverId: params.serverId,
       readLiveWorkInventory: params.readLiveWorkInventory,
+      readRequesterMachineResourceAccountIds: params.readRequesterServiceForwardAccountIds,
       cleanupRequesterMachineResources: async ({ requesterAccountId }) => {
-        await pluginRuntimeController.retireHostResourceWatches(requesterAccountId);
+        await Promise.all([
+          pluginRuntimeController.retireHostResourceWatches(requesterAccountId),
+          params.cleanupRequesterServiceForwards?.(requesterAccountId),
+        ]);
         return { kind: 'settled' };
       },
       resolveInstallationId: () =>

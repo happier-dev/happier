@@ -53,6 +53,8 @@ export type OpenPeerTcpTunnelResult =
          * normalization from the open frame. Absent for `voice_media`, which never dials TCP.
          */
         destination?: PeerTcpTunnelDestinationV1;
+        /** Signed actor retained only for service-export interactive lifetime cleanup. */
+        serviceExportRequesterAccountId?: string;
         voiceMediaApplicationAuthority?: VoiceMediaApplicationAuthorityV1;
         limits: PeerTcpTunnelRuntimeLimits;
         previewApplication?: Readonly<{ signal: AbortSignal; close: () => Promise<void> }>;
@@ -366,6 +368,7 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
         receipt: PEER_MEDIATION_RECEIPTS.tunnelOpened,
         flowKind: requestedFlowKind,
         destination,
+        ...(scope.serviceExport ? { serviceExportRequesterAccountId: grantVerification.payload.accountId } : {}),
         ...(previewApplication ? { previewApplication } : {}),
         limits: {},
     };

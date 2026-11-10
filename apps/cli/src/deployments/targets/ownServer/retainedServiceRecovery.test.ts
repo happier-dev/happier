@@ -21,6 +21,7 @@ import { createMachineServicesRuntime } from '@/daemon/local/services/launch/mac
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import type { StoredCredentials } from '@/persistence';
+import type { DeploymentServiceExportV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
@@ -42,7 +43,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopped' | 'removed' | 'partially-removed' = 'running',
     homeInventoryMode?: 'plain' | 'e2ee', sourceCase?: 'reused-container' | 'foreign-environment' | 'mixed-service-sources', publishedPorts = true, noHealthcheck = false,
-    primaryService = 'app') {
+    primaryService = 'app', appliedServiceExports: DeploymentServiceExportV1[] = []) {
     const root = await mkdtemp(join(tmpdir(), 'happier-retained-service-recovery-'));
     const home = createHash('sha256').update(root).digest('hex').slice(0, 12);
     const docker = await createOwnServerDockerBoundary(join(root, 'tools'), { engineId: `recovery-${home}`, accounting: { memoryBytes: 2097152 } });
@@ -122,6 +123,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
                 targetLinkRevision: link.revision, sourceIntent: definition, manifestFingerprint: source.manifestFingerprint,
                 configInputDigests: [{ path: 'compose.yaml', digest: definition.composeDigest }], physicalProjectName: sourceIdentity.projectName,
                 toolVersion: '2.39.4', services: composeServices, profiles: [], bindings: [], images,
+                ownServer: { rollout: 'recreate', autoRestorePreviousRelease: false, serviceExports: appliedServiceExports },
                 members: [{ machineId: 'machine-a', installationId: 'installation-a' }],
             } } },
     });
@@ -231,6 +233,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
     const readInput = { ...target, environmentId: environment.id, deploymentId: receipt.deployment.id,
         targetLinkId: link.id, installationId: 'installation-a', service };
     return { docker, runtime, reads, context, readInput, service, serviceFor,
+        readHandle: () => fixture.registry.projectManagedServices.resolveEnvironmentService(identity.homeServerIdentityId, service),
         targetLinkId: link.id,
         async discoverDomain(job: DeploymentChildRpcV1) {
             const channel = await createRequesterCurrentnessSocketHarness();
@@ -277,6 +280,49 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
 }
 
 describe('retained Environment service recovery on first use', () => {
+    it('restores applied Iroh export declarations on the recreated managed service handle', async () => {
+        const appliedServiceExports: DeploymentServiceExportV1[] = [{ key: 'database', service: 'app', containerPort: 5432,
+            scheme: 'postgres', exposure: 'loopback', transport: { kind: 'iroh' } }];
+        const fixture = await createRestartedEnvironmentFixture('running', undefined, undefined, true, false, 'app', appliedServiceExports);
+        try {
+            expect(fixture.readHandle()).toBeNull();
+            await fixture.list();
+            expect(fixture.readHandle()?.appliedServiceExports).toEqual(appliedServiceExports);
+        } finally { await fixture.dispose(); }
+    });
+    it('publishes a retained reference failure in the existing consumer diagnostic without stopping native custody', async () => {
+        const fixture = await createRestartedEnvironmentFixture('running');
+        try {
+            await fixture.list();
+            const handle = fixture.readHandle();
+            if (!handle?.reportDependencyFailure) throw new Error('Retained consumer diagnostics required');
+            handle.reportDependencyFailure({ ok: false, errorCode: 'private_service_destination_unreachable', error: 'private_service_destination_unreachable' });
+            expect(handle.snapshot().diagnostics).toEqual(expect.arrayContaining([
+                expect.objectContaining({ code: 'private_service_destination_unreachable', severity: 'error' }),
+            ]));
+            expect(handle.retirementSignal.aborted).toBe(false);
+            expect(await fixture.list()).toMatchObject({ kind: 'snapshot', services: [expect.objectContaining({
+                health: expect.objectContaining({ status: 'down', reason: 'private_service_destination_unreachable' }),
+            })] });
+            handle.reportDependencyFailure(null);
+            expect((await fixture.list())).not.toMatchObject({ kind: 'snapshot', services: [expect.objectContaining({
+                health: expect.objectContaining({ reason: 'private_service_destination_unreachable' }),
+            })] });
+        } finally { await fixture.dispose(); }
+    });
+    it('retires Environment observation custody at ApiMachine replacement without stopping its native container', async () => {
+        const fixture = await createRestartedEnvironmentFixture('running');
+        try {
+            await fixture.list();
+            const handle = fixture.readHandle();
+            expect(handle?.retirementSignal.aborted).toBe(false);
+            await fixture.runtime.dispose();
+            expect(handle?.retirementSignal.aborted).toBe(true);
+            expect(fixture.readHandle()).toBeNull();
+            const calls = await fixture.docker.readInvocations();
+            expect(calls.filter(call => call.args.includes('stop') || call.args.includes('down') || call.args.includes('rm'))).toEqual([]);
+        } finally { await fixture.dispose(); }
+    });
     it.each([{ service: 'uptime-kuma', state: 'running' }, { service: 'linkding', state: 'running' },
         { service: 'linkding', state: 'removed' }] as const)('recovers Store $service Docker when Domain discovery is the first read after restart ($state)', async ({ service, state }) => {
         const fixture = await createRestartedEnvironmentFixture(state, 'plain', undefined, false, false, service);

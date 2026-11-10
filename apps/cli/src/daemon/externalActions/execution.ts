@@ -151,6 +151,7 @@ prepareTeamCredentialNativeSource?: import('@/providers/modelManagement/runtimeS
 serverId: string;
 serverBaseUrl: string;
 runtimeActionExecute?: RuntimeActionExecute;
+acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
 managedProviderOperationAuthority?: import('@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority').ManagedProviderOperationAuthority;
 workflowAcceptedAuthorizationCurrentness?: Parameters<
       typeof createCliActionExecutorFromCredentials
@@ -614,6 +615,7 @@ resolveServerFeaturesSnapshot?: () =>
             shutdownCancellationDomains.daemonWorkSignal.throwIfAborted();
           },
           signal: shutdownCancellationDomains.daemonWorkSignal,
+          ...(params.acquireServiceExportForward ? { acquireServiceExportForward: params.acquireServiceExportForward } : {}),
         }),
       }) : null;
       const fallbackRuntimeActionExecute = params.runtimeActionExecute;

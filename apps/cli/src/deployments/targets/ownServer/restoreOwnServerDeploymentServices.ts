@@ -10,6 +10,9 @@ import { createOwnServerNativeRuntime } from './nativeRuntime';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createOwnServerSourceCustodyReader } from './sourceProvenance';
 import { observeRetainedDeploymentSourceForHost } from './exactCommitRelease';
+import type { NativeDockerEngineFacts } from '@happier-dev/cli-common/machineSetup';
+import type { ProjectNativeDockerPort } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export type RestoreOwnServerDeploymentServicesInput = Readonly<{
     serverId: string;
@@ -20,6 +23,8 @@ export type RestoreOwnServerDeploymentServicesInput = Readonly<{
     signal: AbortSignal;
     isCurrent(): boolean;
     readReceipt?(deploymentId: string): Promise<DeploymentReceiptDetailV1>;
+    restoreServiceReferences?(input: Readonly<{ docker: ProjectNativeDockerPort; engine: NativeDockerEngineFacts;
+        onFailure(failure: ActionExecuteFailure | null): void }>): Promise<Readonly<{ close(): Promise<void> }>>;
 }>;
 
 /** Restore observations only. The receipt supplies definition/source custody;
@@ -53,10 +58,13 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
     const runtime = createOwnServerNativeRuntime({ cwd: configuration.happyHomeDir, signal: input.signal,
         isCurrent: input.isCurrent });
     let launch: Awaited<ReturnType<typeof authorizePluginExecLaunchForHost>> | undefined;
+    let serviceReferences: Readonly<{ close(): Promise<void> }> | undefined;
+    const consumers: Awaited<ReturnType<typeof produceEnvironmentProjectServices>>[number][] = [];
+    let referenceFailure: ActionExecuteFailure | undefined;
     let references = 1;
     const release = async () => {
         if (--references !== 0) return;
-        try { await launch?.release(); await runtime.settleNative(); }
+        try { try { await serviceReferences?.close(); } finally { await launch?.release(); await runtime.settleNative(); } }
         finally { await readPluginExecProcessCustodyForHost(runtime.exec).requestStop(); }
     };
     try {
@@ -85,6 +93,10 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
         // A removed generation has no native resources to observe. Retained
         // source alone never manufactures an executable service generation.
         if (!generation) return;
+        serviceReferences = await input.restoreServiceReferences?.({ engine,
+            onFailure(failure) { referenceFailure = failure ?? undefined; for (const consumer of consumers) consumer.reportDependencyFailure?.(failure); },
+            docker: { engineId: engine.id,
+            async run(args) { const result = await run(args); return { ...result, exitCode: result.exitCode ?? -1 }; } } });
         const { projectName, targets } = generation;
         // Compose may retain an unchanged service from an earlier source while
         // creating another service from the current one. Each source is proven
@@ -109,7 +121,8 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
                     if (!await custody(sourcePath)) throw Object.assign(new Error('Retained source is unavailable'), { code: 'deployment_source_unavailable' });
                 } });
             const composeArgs = ['compose', '--project-name', projectName];
-            await produceEnvironmentProjectServices({ owner: input.owner, serverId: identity.homeServerIdentityId,
+            const handles = await produceEnvironmentProjectServices({ owner: input.owner, serverId: identity.homeServerIdentityId,
+                appliedServiceExports: basis.ownServer?.serviceExports,
                 release: releaseSource, specIdentity: receipt.deployment.id, signal: input.signal, isCurrent: input.isCurrent,
                 nativeEffects: { keys: [{ kind: 'composeProject', dockerEndpoint: engine.id, projectName }], settleNative: runtime.settleNative },
                 io: runtime.nativeIo, project: { composeArgs,
@@ -130,6 +143,8 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
                             await release();
                         } };
                     } } });
+            consumers.push(...handles);
+            if (referenceFailure) for (const handle of handles) handle.reportDependencyFailure?.(referenceFailure);
         }
     } finally { await release(); }
 }

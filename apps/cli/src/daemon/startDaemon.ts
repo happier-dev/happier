@@ -1,3 +1,7 @@
+import { readRequesterAccountActionContext } from './sessionEncryption/requesterAccountActionContext';
+import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
+import { createOwnServerDeploymentRuntimeForHost } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
+import { createServiceExportMachineForward } from './peer/iroh/serviceExportMachineForward';
 import { observeSourceRuntimeDependencies } from '@happier-dev/cli-common/sourceRuntimeEntries';
 import { combineRecordingStorageOwners, type RecordingStorageOwner } from './recording/service';
 import { randomUUID } from 'node:crypto';
@@ -447,6 +451,13 @@ export async function startDaemon(
     createDaemonWorkspaceSyncRuntimeCustody<ProductionDaemonWorkspaceSyncRuntime & Pick<ApiMachineClientLifecycleDependencies, 'createProjectFiniteRuntime' | 'readProjectFiniteLoad'>>();
   let projectWorkerAdmission: ReturnType<typeof createProjectWorkerAdmission> | null = null;
   let projectWorkerAction: ActionExecutorDeps['projectWorkerAction'];
+  const requesterServiceForwards = new Map<string, Set<Readonly<{ close(): Promise<void> }>>>();
+  const closeRequesterServiceForwards = async (accountId: string) => {
+    const forwards = requesterServiceForwards.get(accountId);
+    requesterServiceForwards.delete(accountId);
+    if (forwards) await Promise.all([...forwards].map(forward => forward.close()));
+  };
+  let serviceExportTunnels: import('./peer/mediation/tunnel/registerRoutes').ServiceExportTunnelOwner | undefined;
   let machineIrohRuntime: DaemonMachineIrohRuntime | null = null;
   let homeIrohTransport: DaemonHomeTransport | null = null;
   const preparedIrohState: {
@@ -2264,6 +2275,41 @@ export async function startDaemon(
       const stamp = target.requesterWorkAttributionV1 ?? tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1;
       return !stamp || stamp.serverId === configuration.activeServerId && stamp.accountId === externalActionAccountId;
     }, externalActionAccountId ? { serverId: requesterRuntimeServerId, accountId: externalActionAccountId } : undefined);
+    const acquireServiceExportForward: NonNullable<ApiMachineClientLifecycleDependencies['acquireServiceExportForward']> = async input => {
+        const runtime = machineIrohRuntime;
+        const authorization = input.context.externalActionExecutionAuthorization;
+        const requester = authorization ? readRequesterAccountActionContext(authorization) : undefined;
+        const accountId = authorization?.binding.accountId ?? externalActionAccountId;
+        const requesterCredentials = authorization ? requester?.credentials : credentials;
+        if (!runtime || !accountId || !requesterCredentials || !machineId) throw Object.assign(
+          new Error('The private service carrier is unavailable'), { code: 'machine_carrier_unavailable' });
+        const requesterApi = await ApiClient.create(requesterCredentials);
+        const nativeForward = await createServiceExportMachineForward({ accountId, localMachineId: machineId, runtime,
+          resolveTrustRoots: resolvePeerMediationTrustRoots,
+          readTargetMachine: (targetMachineId, signal) => runWithServerHttpBaseUrl(readDaemonHomeServerHttpBaseUrl(),
+            () => requesterApi.getMachine(targetMachineId, { signal })),
+          mintGrant: (request, signal) => runWithServerHttpBaseUrl(readDaemonHomeServerHttpBaseUrl(),
+            () => requesterApi.mintPeerMediationRouteGrant(request, { signal })),
+        })({ targetMachineId: input.targetMachineId, serviceExport: input.serviceExport, signal: input.signal,
+          preferredListenPort: input.preferredListenPort, onFailure: input.onFailure, onRecovered: input.onRecovered });
+        const forwardSignal = input.signal;
+        const forget = () => {
+          const owned = requesterServiceForwards.get(accountId);
+          owned?.delete(forward);
+          if (!owned?.size) requesterServiceForwards.delete(accountId);
+          forwardSignal.removeEventListener('abort', forget);
+        };
+        const forward = { ...nativeForward, async close() {
+          forget();
+          await nativeForward.close();
+        } };
+        const owned = requesterServiceForwards.get(accountId) ?? new Set();
+        owned.add(forward);
+        requesterServiceForwards.set(accountId, owned);
+        forwardSignal.addEventListener('abort', forget, { once: true });
+        if (forwardSignal.aborted) forget();
+        return forward;
+    };
     const {
       processOwnershipRuntime,
       processActionLifecycle,
@@ -2315,6 +2361,7 @@ export async function startDaemon(
       refreshBrowserRouteOwners: refreshBrowserRouteOwnersFromSessionControl,
       processLeftBehindPass: sessionControlLeftBehindPass,
     } = await startDaemonSessionControlRuntime({
+      acquireServiceExportForward,
       agentIsolation,
       observeSessionScopeExit: async tracked => {
         const result = await sessionCeiling?.observeRunnerExit(tracked);
@@ -2517,6 +2564,12 @@ export async function startDaemon(
       onBrowserRecordingRuntimeReady: bindStorageRecordings,
       onSimulatorPreviewRoutesReady: machineRpcRouteAttachments.attachSimulatorPreviewRoutes,
       onMachineAccessLossReceiverReady: machineRpcRouteAttachments.attachMachineAccessLossReceiver,
+      cleanupRequesterServiceForwards: async accountId => {
+        await Promise.all([closeRequesterServiceForwards(accountId), serviceExportTunnels?.closeByRequester(accountId)]);
+      },
+      readRequesterServiceForwardAccountIds: () => [...new Set([
+        ...requesterServiceForwards.keys(), ...(serviceExportTunnels?.readRequesterAccountIds() ?? []),
+      ])],
       onConnectedServicePoolSelectionReadReady: machineRpcRouteAttachments.attachConnectedServicePoolSelectionRead,
       resolveServerFeaturesSnapshot: () => readServerFeaturesSnapshot(serverFeaturesSnapshotStore, refreshServerFeaturesSnapshot),
       liveStreamCaptureRegistry,
@@ -3977,6 +4030,7 @@ export async function startDaemon(
         requestShutdown,
         directPeerServerLifecycle,
         ...(machineIrohRuntime ? { machineIrohRuntime } : {}),
+        onServiceExportTunnelsReady: owner => { serviceExportTunnels = owner; },
         prepareServerTransportForReconnect: async () => (
           homeIrohTransport
             ? await homeIrohTransport.reacquire()
@@ -4035,6 +4089,22 @@ export async function startDaemon(
         localServiceSummary,
         onPublicVoiceModelPackRuntimeReady: bindStorageModels,
         ...(machineResourceSummary ? { machineResourceSummary } : {}),
+        acquireServiceExportForward,
+        async resolveServiceExport({ binding, signal }) {
+          const homeId = managedPolicyHomeId;
+          if (!homeId || !machineId) return null;
+          const acquirePluginRuntimeRegistryLease = async () => {
+            const lease = pluginReloadController.tryAcquireRuntimeRegistry();
+            if (!lease) throw Object.assign(new Error('Service runtime is unavailable'), { code: 'service_unavailable' });
+            return lease;
+          };
+          const host = { credentials, serverId: homeId, serverHttpBaseUrl: readDaemonHomeServerHttpBaseUrl(), machineId,
+            resolveRequesterIdentity: async () => ({ kind: 'unknown' as const, reason: 'requester_authority_unavailable' }),
+            acquirePluginRuntimeRegistryLease };
+          const dependencies = createDaemonDeploymentActionDeps({ ...host,
+            runtime: createOwnServerDeploymentRuntimeForHost(host) });
+          return await dependencies.resolveServiceExportBinding(binding, signal ?? homeTransportCancellation.signal);
+        },
         acquireLocalServicePreviewApplication,
         resolveLocalServicePreviewApplication,
         resolveManagedPurposeBindingIntent:

@@ -389,6 +389,9 @@ describe('Environment project native activation', () => {
         let disposed = 0;
         let prepared = 0;
         let current = true;
+        const reviewReferenceAddress = 'http://127.0.0.1:44111';
+        const containerReferenceAddress = 'http://172.22.0.1:44111';
+        let referenceAddress = reviewReferenceAddress;
         const config = JSON.stringify({ os: 'linux', architecture: 'amd64', config: {} });
         const configDigest = `sha256:${createHash('sha256').update(config).digest('hex')}`;
         const manifestDigest = `sha256:${'b'.repeat(64)}`;
@@ -405,8 +408,11 @@ describe('Environment project native activation', () => {
         });
         const envPort = createDeploymentExecEnvPortForHost({ source, phase: 'runtime',
             signal: new AbortController().signal, isCurrent: () => current,
-            async prepare() { prepared += 1; return { env: { PATH: '/tools', HOME: root, SECRET: 'native-secret', PORT: '3000' },
+            async prepare() { prepared += 1; return { env: { PATH: '/tools', HOME: root, SECRET: 'native-secret', PORT: '3000', DATABASE_URL: referenceAddress },
                 secretValues: ['native-secret'], refs: [{ resourceId: 'credential', resourceRevision: 7 }],
+                referenceAddresses: [{ machineId: 'machine', installationId: 'installation', phase: 'runtime', name: 'DATABASE_URL',
+                    source: { kind: 'reference', environmentId: 'database-env', export: 'database', via: 'auto' },
+                    address: referenceAddress, route: { kind: 'iroh', observedPath: 'unknown' } }],
                 async recheck() {}, dispose() { disposed += 1; } }; },
         });
         let runtimePath = '';
@@ -416,10 +422,12 @@ describe('Environment project native activation', () => {
         const model = { name: 'happier-project', 'x-build': { args: { BUILDER_ONLY: '${BUILD_PUBLIC:?required}' } }, services: {
             web: { image: 'mutable:latest', deploy: { replicas: 2, resources: { limits: { cpus: '0.5', memory: '512M' } } },
                 build: { args: { BUILDER_ONLY: '${BUILD_PUBLIC:?required}' }, secrets: ['BUILD_SECRET'] },
-                environment: { SECRET: '${SECRET:?required}', 'x-setting': 'runtime-literal' }, configs: ['runtime'], privileged: true,
+                environment: { SECRET: '${SECRET:?required}', DATABASE_URL: '${DATABASE_URL:?required}', 'x-setting': 'runtime-literal' },
+                networks: { default: {} }, configs: ['runtime'], privileged: true,
                 volumes: [{ type: 'bind', source: '/actual-native-bind', target: '/data' }] },
             db: { image: 'mutable-db:latest', volumes: [{ type: 'volume', source: 'db', target: '/db' }] },
-        }, configs: { runtime: { environment: 'SECRET' } }, volumes: { db: { name: 'preserved-database' } },
+        }, networks: { default: { name: 'reference-consumer-network' } },
+            configs: { runtime: { environment: 'SECRET' } }, volumes: { db: { name: 'preserved-database' } },
             secrets: { BUILD_SECRET: { environment: 'BUILD_SECRET' } } };
         const io: ProjectNativeToolchainIo = { resolveTool: async () => ({ executablePath: '/docker', version: '29.9.0' }),
             async run(request) {
@@ -455,6 +463,10 @@ describe('Environment project native activation', () => {
                     await createTar({ file: request.args[request.args.indexOf('--output') + 1], cwd: root }, [`${configDigest.slice(7)}.json`, 'manifest.json']);
                 }
                 if (request.args.includes('ps')) return { exitCode: 0, stdout: ['a'.repeat(64), 'c'.repeat(64)].join('\n') };
+                if (request.args.includes('up')) {
+                    const projection = await readNativeProjection(request);
+                    expect(projection.services.web.environment.DATABASE_URL).toBe(containerReferenceAddress);
+                }
                 if (selectedSubset && request.args.includes('up')) {
                     const projection = await readNativeProjection(request);
                     expect(Object.keys(projection.services)).toEqual(['web', 'db']);
@@ -480,10 +492,18 @@ describe('Environment project native activation', () => {
             await writeFile(join(root, 'compose.yaml'), JSON.stringify(model));
             const project = createNativeComposeLifecycle({ kind: 'environmentProject', exec, envPort, source, files: ['compose.yaml'],
                 services: ['web', 'db'], images: ['web', 'db'].map(service => ({ service, platform: 'linux/amd64', configDigest, manifestDigest })), io,
+                async prepareReferenceContainerNetwork(request) {
+                    expect(request.networkId).toBe('reference-consumer-network');
+                    referenceAddress = containerReferenceAddress;
+                },
                 async settleNative() {} });
             await expect(project.prepareImages()).rejects.toMatchObject({ code: 'unsupported' });
             expect(requests.some(request => request.args.includes('build') || request.args.includes('up'))).toBe(false);
             const rendered = await project.render();
+            expect(referenceAddress).toBe(reviewReferenceAddress);
+            expect(rendered.referenceAddresses?.[0]?.address).toBe(reviewReferenceAddress);
+            const sourceDigest = `sha256:${createHash('sha256').update(await readFile(join(root, 'compose.yaml'))).digest('hex')}`;
+            expect(rendered.basis.configInputDigests).toEqual([{ path: 'compose.yaml', digest: sourceDigest }]);
             expect(rendered).toMatchObject({ engine: { id: 'actual-engine', kind: 'native' } });
             expect(rendered.keys).toEqual([
                 { kind: 'composeProject', dockerEndpoint: 'actual-engine', projectName: rendered.projectName },
@@ -494,6 +514,8 @@ describe('Environment project native activation', () => {
             expect(JSON.stringify(rendered)).not.toContain('native-secret');
             const activation = await machineNativeEffectAdmission.run({ operation: { operationId: 'deploy', kind: 'deploy' }, keys: rendered.keys },
                 context => project.activate({ render: rendered, context }));
+            expect(referenceAddress).toBe(containerReferenceAddress);
+            expect(rendered.basis.configInputDigests).toEqual([{ path: 'compose.yaml', digest: sourceDigest }]);
             expect(activation.nativeIdsForService('web')).toEqual(['a'.repeat(64)]);
             expect(activation.nativeIdsForService('db')).toEqual(['c'.repeat(64)]);
             expect(() => activation.nativeIdsForService('unadmitted')).toThrow();

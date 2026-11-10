@@ -2477,6 +2477,26 @@ that already holds those grants and requires a reachable destination database;
 cross-Machine credential transfer is not implemented. Ordinary restore retains
 its same-Environment admission and generation rules.
 
+The public copy consumer keeps the root Environment and Link as the destination;
+`deploymentId`, `restoreBackupId` and optional `backupOperationId` select the
+source capture. `copy.source` names its Environment and Link, while
+`copy.destination` names the destination service and database. The installed
+executor must also serve the destination's existing native generation. Copy
+uses the original capture receipt's operation for `copySourceRead`, including
+a failed historical capture, rather than substituting the latest source deploy.
+The destination database must be absent: the existing restore safety rule
+refuses an occupied database because the source purpose cannot write a
+destination safety backup into the source repository. Copy creates and verifies
+staging through the ordinary restore lifecycle; it does not change either
+Environment's serving deployment pointer or the source database.
+
+Private export references can select `component: 'host'` or `'port'`; omitting
+it retains the complete endpoint. These are projections of the same admitted
+export and forward, including its actual Iroh route. Database credentials do
+not enter the export: the app binds the database administrator's Saved Secret
+through ordinary Environment bindings and assembles its connection URL in the
+reviewed Compose definition.
+
 The Project deployment read controller opens Environment collection content and
 visible history receipt content through the existing Account Artifact reader.
 Compact Environment rows expose optional `backupConfigured`, derived from that

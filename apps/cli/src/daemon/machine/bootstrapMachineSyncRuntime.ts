@@ -388,6 +388,8 @@ export async function maybeStartPeerMediationLoopback(params: Readonly<{
   directPeerServerLifecycle: DirectTransferServerLifecycle | null;
   acquireWorkspaceSyncMachineIngress?: BootstrapMachineSyncRuntimeParams['acquireWorkspaceSyncMachineIngress'];
   acquireLocalServicePreviewApplication?: BootstrapMachineSyncRuntimeParams['acquireLocalServicePreviewApplication'];
+  resolveServiceExport?: BootstrapMachineSyncRuntimeParams['resolveServiceExport'];
+  onServiceExportTunnelsReady?: BootstrapMachineSyncRuntimeParams['onServiceExportTunnelsReady'];
   getServerFeaturesSnapshot?: BootstrapMachineSyncRuntimeParams['getServerFeaturesSnapshot'];
   resolvePeerMediationTrustRoots?: BootstrapMachineSyncRuntimeParams['resolvePeerMediationTrustRoots'];
 }>): Promise<StartedPeerMediationLoopback | null> {
@@ -406,6 +408,8 @@ export async function maybeStartPeerMediationLoopback(params: Readonly<{
       : {}),
     rpcHandlerManager: params.connectedApiMachine.getPeerMediationMachineRpcHandlerManager(),
     tunnel: {
+      ...(params.onServiceExportTunnelsReady ? { onServiceExportTunnelsReady: params.onServiceExportTunnelsReady } : {}),
+      ...(params.resolveServiceExport ? { resolveServiceExport: params.resolveServiceExport } : {}),
       ...(params.acquireLocalServicePreviewApplication ? { acquirePreviewApplication: params.acquireLocalServicePreviewApplication } : {}),
       ...(params.voiceBinaryAppendConsumer ? { voiceBinaryAppendConsumer: params.voiceBinaryAppendConsumer } : {}),
       ...(params.voiceBinaryTerminalConsumer ? { voiceBinaryTerminalConsumer: params.voiceBinaryTerminalConsumer } : {}),
@@ -659,6 +663,8 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   prepareWorkspaceSyncResolutionExport?: NonNullable<import('@/api/machine/rpcHandlers.workspaceSync').MachineWorkspaceSyncRpcService['prepareConflictResolutionExport']>;
   machineIrohRuntime?: DaemonMachineIrohRuntime;
   acquireLocalServicePreviewApplication?: import('../local/services/preview/routes').LocalServicePreviewRoutes['acquireNativeApplication'];
+  resolveServiceExport?: import('../peer/mediation/tunnel/open').OpenPeerTcpTunnelInput['resolveServiceExport'];
+  onServiceExportTunnelsReady?: import('../peer/mediation/tunnel/registerRoutes').RegisterPeerTcpTunnelLoopbackRoutesOptions['onServiceExportTunnelsReady'];
   resolveLocalServicePreviewApplication?: import('../local/services/preview/routes').LocalServicePreviewRoutes['resolveApplication'];
   prepareServerTransportForReconnect?: () => Promise<ReadinessProbeResult>;
   acquireWorkspaceSyncMachineIngress?: (
@@ -1504,6 +1510,8 @@ export async function bootstrapMachineSyncRuntime(
       ...(params.machineIrohRuntime ? { machineIrohRuntime: params.machineIrohRuntime } : {}),
       directPeerServerLifecycle: params.directPeerServerLifecycle,
       ...(params.acquireLocalServicePreviewApplication ? { acquireLocalServicePreviewApplication: params.acquireLocalServicePreviewApplication } : {}),
+      ...(params.resolveServiceExport ? { resolveServiceExport: params.resolveServiceExport } : {}),
+      ...(params.onServiceExportTunnelsReady ? { onServiceExportTunnelsReady: params.onServiceExportTunnelsReady } : {}),
       ...(params.acquireWorkspaceSyncMachineIngress
         ? { acquireWorkspaceSyncMachineIngress: params.acquireWorkspaceSyncMachineIngress }
         : {}),

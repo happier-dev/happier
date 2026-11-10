@@ -1,4 +1,9 @@
 import { projectDeploymentFailure } from './deploymentFailure';
+import { resolvePrivateServiceExportAdmissionForHost } from './targets/ownServer/privateServiceReference';
+import { resolveOwnServerDeploymentIdentityForHost } from './targets/ownServer/paths';
+import { configuration } from '@/configuration';
+import { decodeBase64 } from '@/api/encryption';
+import type { TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
@@ -6,6 +11,7 @@ import { createDeploymentBackupActionForHost, createDeploymentBackupRecordedHeal
 import { createProjectReadinessActionForHost, projectReadinessEnvironmentFactForHost } from './actions/projectReadiness';
 import { DeploymentHealthReadResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createPlatformFailureEnrollmentForHost } from './platformFailureEnrollment';
+import { createPreviewEnrollmentForHost } from './previewEnrollment';
 import { deploymentAuthorizationFailure, refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
 import { logger } from '@/ui/logger';
 import axios from '@/api/client/credentialAxios';
@@ -74,7 +80,8 @@ import { readDeploymentUniformTargetLinkRevisionV1 } from './deploymentUniformPr
 import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
 import { readStoredPromotionCandidateForHost, createStoredPromotionReceiptContentForHost } from './storedPromotionCandidate';
 import { preparePromotionForHost } from './preparePromotionForHost';
-import { isDeploymentPromoteActionIdV1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1,
+    DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { admitStoredComposeDefinition } from '@/workspaces/projectSetup/nativeComposeSource';
 import { createPrepareDeploymentBindingsForHost } from './secrets/prepareDeploymentBindingsForHost';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -93,7 +100,8 @@ import { readDeploymentObservationForHost } from './readObservationForHost';
 import { openDeploymentReceiptForHost, readDeploymentReceiptForHost, readOwnServerDeploymentReceiptHistoryForHost } from './readReceiptForHost';
 import { readDeploymentCreationDefaultInputsForHost, prepareDeploymentCreationDefaultsForHost,
     type DeploymentCreationDefaultRequestForHost } from './readCreationDefaultsForHost';
-import { createPrepareEnvironmentCreateForHost, resolveEnvironmentCreateCopyForHost } from './prepareEnvironmentCreateForHost';
+import { createPrepareEnvironmentCreateForHost, resolveEnvironmentCreateCopyForHost,
+    resolveEnvironmentCreatePreviewForHost } from './prepareEnvironmentCreateForHost';
 import { COPY_ENVIRONMENT_BINDINGS_ROLE, createEnvironmentWithCopyForHost } from './copyEnvironmentForHost';
 import { prepareServiceAdoptionForHost } from './serviceAdoptionForHost';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -110,7 +118,8 @@ import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourc
 import { prepareTargetLinkForHost, TargetLinkPreparationError } from './prepareTargetLinkForHost';
 import { DeploymentInvalidV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createOwnServerDomainActions, createOwnServerDomainContentWriter,
-    prepareOwnServerDomainReviewedChildren, prepareOwnServerTeardownDomainReviewedChildren } from './targets/ownServer/ownServerDomainActions';
+    prepareOwnServerDomainReviewedChildren, prepareOwnServerTeardownDomainReviewedChildren,
+    prepareOwnServerMembershipDomainReviewedChildren } from './targets/ownServer/ownServerDomainActions';
 import { createOwnServerDomainNative, createOwnServerStartFirstRoutesForHost } from './targets/ownServer/ownServerDomainNative';
 import { resolveDeploymentDefinitionRoleForHost, admitUseDeploymentDefinition } from './deploymentDefinitionAdmission';
 import { createDeploymentRestartActionForHost } from './actions/restart';
@@ -418,6 +427,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             ReturnType<OwnServerDeploymentTargetHostInput['writeTransition']>;
     }> = { ...host, ...targetHostReaders,
         settlePrivateWorkloadFirewall: createPrivateServicePublicationSettlementForHost(host),
+        async enrollMemberRoutes(request, input) {
+            const result = await domainActions.reconcileMembership({ environmentId: request.input.environmentId,
+                targetLinkId: input.link.id, deploymentId: request.receipt.deploymentId,
+                requestKey: request.input.requestKey }, { ...request.context, signal: input.signal });
+            return result ?? request.receipt;
+        },
         async readStartFirstRoutes(request, input) {
             return createOwnServerStartFirstRoutesForHost({ ...host, open,
                 list: async (query, signal) => DeploymentActionOutputSchemasV1['deployments.domains.list'].parse(
@@ -680,8 +695,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (input.serverId !== host.serverId) return failure('server_scope_mismatch');
             if (input.definition?.from === 'catalogApp') return templates.prepareCreate(input, context, creationReview);
             const defaultsHost = atHome(() => creationDefaultsHost(context));
-            const createHost = { ...host, assertCurrent: defaultsHost.assertCurrent, resolveRequestHeaders: headers };
-            const copy = await resolveEnvironmentCreateCopyForHost({ input, context }, {
+            const createHost = { ...host, assertCurrent: defaultsHost.assertCurrent, resolveRequestHeaders: headers,
+                readPreviewTemplate: (request: Readonly<{ environmentId: string; context: ActionExecutorContext }>) =>
+                    readDeploymentEnvironmentForHost(request, { readMetadata: readEnvironmentMetadata, open, assertCurrent }) };
+            const preview = await resolveEnvironmentCreatePreviewForHost({ input, context }, createHost);
+            if ('errorCode' in preview) return preview;
+            const copy = await resolveEnvironmentCreateCopyForHost({ input: preview.input, context }, {
                 ...createHost, readMetadata: readEnvironmentMetadata,
             });
             if ('errorCode' in copy) return copy;
@@ -716,7 +735,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             };
             const materializeCreate = createPrepareEnvironmentCreateForHost(createHost);
             const prepared = await materializeCreate({ input: { ...authored, ...defaults.values },
-                projectOwner: defaults.projectOwner, context, copy, nativeOrigin });
+                projectOwner: defaults.projectOwner, context, copy, nativeOrigin, admittedPreview: preview });
             if ('errorCode' in prepared) return prepared;
             return { input: prepared, preview: normalizeStrictJsonValue({ creationDefaults: {
                 values: defaults.values, sources: defaults.sources }, ...(defaults.reviewBasis ? { creationDefaultsBasis: defaults.reviewBasis } : {}),
@@ -735,7 +754,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             }
             if (receipt.deployment.state !== 'succeeded' && receipt.deployment.state !== 'cancelled') {
                 request.context.signal?.throwIfAborted();
-                const retirement = await domainActions.retireEnvironment(request.input, request.context);
+                const retirement = await domainActions.retireEnvironment({ ...request.input,
+                    deploymentId: receipt.deployment.id }, request.context);
                 if (retirement) {
                     const details = projectDeploymentFailureRecoveryV1(isRecord(retirement.details) ? retirement.details : {});
                     const domain = details.domainHostname ?? details.domainId;
@@ -808,12 +828,20 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     });
     const failureEnrollment = createPlatformFailureEnrollmentForHost({ ...host,
         readEnvironment: targetHostReaders.readEnvironment });
+    const previewEnrollment = createPreviewEnrollmentForHost({ ...host,
+        readEnvironment: request => readDeploymentEnvironmentForHost(request, {
+            readMetadata: readEnvironmentMetadata, open, assertCurrent,
+        }) });
     const storage: NonNullable<ActionExecutorDeps['deploymentAction']> = async (actionId, input, context, creationReview) => {
         const result = await storageDeps.deploymentAction!(actionId, input, context, creationReview);
         if (actionId === 'deployments.targets.link' && 'ok' in result && result.ok && 'targetLinkId' in result) {
             const linked = DeploymentActionOutputSchemasV1['deployments.targets.link'].parse(result);
             const scope = DeploymentActionInputSchemasV1['deployments.targets.link'].parse(input);
             if (linked.ok) return failureEnrollment.completeLink(linked, scope, context);
+        }
+        if (actionId === 'deployments.environments.update' && 'ok' in result && result.ok) {
+            const updated = DeploymentActionOutputSchemasV1[actionId].parse(result);
+            if (updated.ok) return previewEnrollment.completeUpdate(updated, DeploymentActionInputSchemasV1[actionId].parse(input), context);
         }
         return result;
     };
@@ -1046,6 +1074,14 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
         async prepareHostReviewedChildren(request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0]) {
+            if (isDeploymentMembershipActionIdV1(request.actionId) && request.actionId !== DEPLOYMENT_TEARDOWN_ACTION_ID_V1) {
+                const input = DeploymentActionInputSchemasV1[request.actionId].parse(request.input);
+                if (!('targetLinkId' in input)) return null;
+                try { return await prepareOwnServerMembershipDomainReviewedChildren(input, request.context,
+                    { serverId: host.serverId, storage, open, dispatch: sendChild,
+                        readEnvironment: targetHostReaders.readEnvironment, readInstallation }); }
+                catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
+            }
             if (request.actionId === 'machines.services.adopt') return prepareServiceAdoptionForHost(request, {
                 ...host, prepareCreate: prepareEnvironmentCreate,
                 readInstallation: context => readInstallation(host.machineId, context),
@@ -1056,6 +1092,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (request.actionId === 'deployments.targets.link') {
                 const input = DeploymentActionInputSchemasV1['deployments.targets.link'].safeParse(request.input);
                 return input.success ? failureEnrollment.prepare(input.data, request.context) : failure('invalid_parameters');
+            }
+            if (request.actionId === 'deployments.environments.update') {
+                const input = DeploymentActionInputSchemasV1[request.actionId].safeParse(request.input);
+                return input.success ? previewEnrollment.prepare(input.data, request.context) : failure('invalid_parameters');
             }
             if (request.actionId === 'deployments.receipts.observe') {
                 const input = DeploymentActionInputSchemasV1['deployments.receipts.observe'].safeParse(request.input);
@@ -1078,9 +1118,16 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     readEnvironment: targetHostReaders.readEnvironment, readInstallation }); }
                 catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
-            if (request.actionId === 'deployments.templates.instantiate') {
-                // Canonical template preparation declares its resolved Domain and deploy effects.
-                return null;
+            if (request.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
+                // Existing Environment upgrades also enroll retained Domains during their reviewed deploy child.
+                const input = DeploymentTemplateInstantiateInputV1Schema.parse(request.input);
+                if (input.mode !== 'apply' || input.environment.kind !== 'existing' || input.target.kind !== 'existing' || !input.deploy) return null;
+                try { return await prepareOwnServerMembershipDomainReviewedChildren({
+                    environmentId: input.environment.environmentId, targetLinkId: input.target.targetLinkId,
+                    requestKey: input.deploy.requestKey }, request.context,
+                    { serverId: host.serverId, storage, open, dispatch: sendChild,
+                        readEnvironment: targetHostReaders.readEnvironment, readInstallation }); }
+                catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
             if (request.actionId === 'deployments.environments.create') {
                 const copy = DeploymentEnvironmentCreateInputV1Schema.safeParse(request.input);
@@ -1430,6 +1477,28 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             catch (error) { return failure(errorCode(error), error); }
         },
         resolveEnvironmentApprovalScope: storageDeps.resolveEnvironmentApprovalScope,
+        async resolveServiceExportBinding(binding: TcpTunnelServiceExportBindingV1, signal: AbortSignal): Promise<TcpTunnelServiceExportBindingV1 | null> {
+            const identity = readInstallationIdentityIfExistsSync();
+            if (!identity || !host.acquirePluginRuntimeRegistryLease) return null;
+            signal.throwIfAborted();
+            const lease = await host.acquirePluginRuntimeRegistryLease();
+            try {
+                const { homeServerIdentityId } = await resolveOwnServerDeploymentIdentityForHost({
+                    happierHomeDir: configuration.happyHomeDir, serverId: host.serverId, environmentId: binding.service.environmentId });
+                const owner = lease.registry.projectManagedServices;
+                const handle = owner.resolveEnvironmentService(homeServerIdentityId, binding.service);
+                if (!handle) return null;
+                const admission = await resolvePrivateServiceExportAdmissionForHost({
+                    kind: 'applied', exportKey: binding.exportKey, machineId: host.machineId, installationId: identity.installationId,
+                    exports: handle.appliedServiceExports ?? [], row: owner.machineServiceRows.read(handle), signal,
+                });
+                return admission.kind === 'iroh' ? admission.serviceExport : null;
+            } catch (error) {
+                signal.throwIfAborted();
+                if (error instanceof Error && 'code' in error && error.code === 'reference_unavailable') return null;
+                throw error;
+            } finally { await lease.release(); }
+        },
         readDeploymentEnvironment: targetHostReaders.readEnvironment,
         readPreparedDeploymentContent,
         readSetupAppArtifact: (input: Readonly<{ contentArtifactId: string }>, context: ActionExecutorContext) => open(input.contentArtifactId, context),

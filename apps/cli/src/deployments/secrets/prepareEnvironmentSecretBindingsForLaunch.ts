@@ -45,7 +45,9 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
     grants: readonly MachineSecretGrantV1[];
     assertCurrent: () => Promise<void>;
     resolveNonSecret?: (source: Exclude<Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }>['source'],
-        { kind: 'secret' } | { kind: 'value' }>) => Promise<string>;
+        { kind: 'secret' } | { kind: 'value' }>) => Promise<string | Readonly<{
+            value: string; route: NonNullable<DeploymentReferenceAddressV1['route']>;
+        }>>;
 }>) {
     await input.assertCurrent();
     const bindings = input.bindings.map(binding => {
@@ -157,12 +159,14 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
             const opened = openMachineSecretGrant({ grant, machineId: input.machineId,
                 installationId: input.installationId, installationPrivateSeed: input.installationPrivateSeed });
             if (!opened || opened.kind !== 'environmentValues' || !isDeepStrictEqual(opened.definition, binding.source)) return missing();
-            const value = opened.definition.kind === 'value' ? opened.definition.value
+            const resolved = opened.definition.kind === 'value' ? opened.definition.value
                 : input.resolveNonSecret ? await input.resolveNonSecret(opened.definition) : missing();
+            const value = typeof resolved === 'string' ? resolved : resolved.value;
             definitions.set(binding.name, value);
             if (opened.definition.kind === 'reference') referenceAddresses.push({
                 machineId: input.machineId, installationId: input.installationId, phase: binding.phase,
                 name: binding.name, source: opened.definition, address: value,
+                ...(typeof resolved === 'string' ? {} : { route: resolved.route }),
             });
         }
     }

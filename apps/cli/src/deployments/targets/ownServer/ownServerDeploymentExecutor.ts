@@ -25,6 +25,7 @@ import { isProjectNativeProcessUncertain } from '@/plugins/runtime/lifecycle/con
 import { createDeploymentSourceMaterializationPort, readDeploymentSourceCommitSubjectForHost } from './exactCommitRelease';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createOwnServerNativeImageAcquisition } from './nativeImageAcquisition';
+import { assertIrohServicePublications } from './privateServicePublication';
 import { admitOwnServerDeploymentSource, admitOwnServerDeploymentTargetLink, admitOwnServerDeploymentTargetSource } from './ownServerTargetAdmission';
 import { isOwnServerBuildReceiptComplete } from './buildReceipt';
 import { projectOwnServerDeploymentReview } from './ownServerDeploymentReview';
@@ -194,12 +195,14 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         if (nativeOrigin?.capture && !link.members.some(member => member.installationId === nativeOrigin.capture!.installationId)) refuse('target_mismatch');
         const sourceIntent = content.sourceIntent;
         let rollbackReceipt: OwnServerDeploymentReceipt | undefined;
+        let imageTargetLinkId = link.id;
         if (request.materialization.kind === 'restoration') {
             const retained = snapshot.servingReceipt?.deployment.id === request.materialization.sourceDeploymentId
                 ? snapshot.servingReceipt : await host.readReceipt({ environmentId: environment.environment.id,
                     deploymentId: request.materialization.sourceDeploymentId, context: request.context });
             if (!isDeepStrictEqual(retained.content.sourceIntent, sourceIntent)
                 || !isDeepStrictEqual(retained.content.images, content.images)) refuse('target_mismatch');
+            imageTargetLinkId = retained.deployment.targetLinkId;
         } else if (request.actionId === 'deployments.rollback') {
             if (!('deploymentId' in request.input)) refuse('invalid_parameters');
             const retained = await host.readReceipt({ environmentId: environment.environment.id,
@@ -266,9 +269,13 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 });
                 const referenceAddresses: NonNullable<NonNullable<OwnServerDeploymentReceipt['content']['ownServer']>['referenceAddresses']> = [];
                 const project = createNativeComposeLifecycle({ kind: 'environmentProject', exec: runtime.exec, envPort, source,
+                    ...(runtime.prepareReferenceContainerNetwork ? { prepareReferenceContainerNetwork: runtime.prepareReferenceContainerNetwork } : {}),
                     onReferenceAddresses: addresses => {
-                        for (const address of addresses) if (!referenceAddresses.some(value => isDeepStrictEqual(value, address))) {
-                            referenceAddresses.push(address);
+                        for (const address of addresses) {
+                            const previous = referenceAddresses.findIndex(value => value.machineId === address.machineId
+                                && value.installationId === address.installationId && value.phase === address.phase && value.name === address.name);
+                            if (previous < 0) referenceAddresses.push(address);
+                            else referenceAddresses[previous] = address;
                         }
                     },
                     files: [compose.path], profiles: compose.profiles, services: compose.services, sourceKind: sourceIntent.kind,
@@ -310,7 +317,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         } },
                     imageAcquisition: createOwnServerNativeImageAcquisition({ runtime, source, environment: environment.content,
                         imageArchives: content.ownServer?.imageArchives,
-                        targetLinkId: link.id, operation: request.actionId === 'deployments.rollback'
+                        targetLinkId: imageTargetLinkId, operation: request.actionId === 'deployments.rollback'
                             || request.materialization.kind === 'restoration' ? 'rollback' : 'deploy',
                         signal, assertCurrent }) });
                 return { runtime, source, project, assertCurrent, stageOutput, referenceAddresses,
@@ -324,6 +331,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
     async function withNativeRestoreRuntime<T>(input: Readonly<{
         request: OwnServerDeploymentRuntimeRequest; snapshot: Snapshot;
         generation: OwnServerDeploymentReceipt; installationId: string;
+        copySource?: Readonly<{ environment: DeploymentEnvironmentDetailV1; receipt: OwnServerDeploymentReceipt }>;
         operationKind?: OwnServerBackupRequestForHost['actionId'] | 'deployments.backups.restore';
         operationId?: string;
         context?: MachineNativeEffectContext; onStopPending?: () => void;
@@ -347,6 +355,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         const project = generationBasis.ownServer?.rollout === 'startFirst'
             ? recovery.project.createStartFirstCandidate() : recovery.project;
         let activation: NativeComposeActivatedProject | undefined;
+        let copySecrets: Awaited<ReturnType<NonNullable<OwnServerDeploymentRuntimeAcquisition['acquireCopySourceSecrets']>>> | undefined;
         try {
             const render = await project.render({ signal: input.context?.operation.signal ?? input.snapshot.signal });
             const run = async (context: MachineNativeEffectContext) => {
@@ -361,12 +370,22 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     onIncumbentServicesChanged: input.onIncumbentServicesChanged };
                 const createInput: OwnServerNativeRestoreInputFactory = async capture => {
                     const identities = new Set(capture.configuration.credentialBindings.map(environmentSecretBindingIdentityV1));
+                    const credentialEnvironment = input.copySource?.environment ?? input.snapshot.environment;
+                    if (input.copySource) {
+                        if (!recovery.runtime.acquireCopySourceSecrets) refuse('unsupported_action');
+                        copySecrets = await recovery.runtime.acquireCopySourceSecrets!({
+                            environmentId: input.copySource.environment.environment.id,
+                            targetLinkId: input.copySource.receipt.deployment.targetLinkId,
+                            deploymentId: input.copySource.receipt.deployment.id,
+                            actionOperationId: input.copySource.receipt.deployment.actionOperationId });
+                    }
                     const credentials = createDeploymentBackupEnvironmentForHost({ ...capture.repository,
                         signal: context.operation.signal!, isCurrent: () => currentActivation.isCurrent(), preparation: {
-                            ...recovery.runtime.secrets, environmentId: capture.destination.environmentId,
+                            ...recovery.runtime.secrets, ...(copySecrets ? { grants: copySecrets.grants } : {}),
+                            environmentId: credentialEnvironment.environment.id,
                             machineId: host.machineId, installationId: input.installationId,
-                            bindings: input.snapshot.environment.content.bindings,
-                            backupDestinationUses: input.snapshot.environment.content.bindings.filter((binding): binding is Extract<typeof binding, { purpose: 'backupDestination' }> => binding.purpose === 'backupDestination'
+                            bindings: credentialEnvironment.content.bindings,
+                            backupDestinationUses: credentialEnvironment.content.bindings.filter((binding): binding is Extract<typeof binding, { purpose: 'backupDestination' }> => binding.purpose === 'backupDestination'
                                 && identities.has(environmentSecretBindingIdentityV1(binding))), assertCurrent: recovery.assertCurrent } });
                     return { ...native, ...credentials, runtimeImage: await project.prepareResticRuntime({ render, context }),
                         operationProgress: input.request.context.operationProgress,
@@ -385,12 +404,13 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             return await machineNativeEffectAdmission.run({ operation: { operationId, kind: input.operationKind ?? 'deployments.backups.restore',
                 signal: input.snapshot.signal }, keys: render.keys, settleNative: project.settleNative }, run);
         } finally {
-            try { await activation?.dispose(); }
+            try { await copySecrets?.release?.(); }
+            finally { try { await activation?.dispose(); }
             finally {
                 try { if (project !== recovery.project) await project.dispose(); }
                 finally { try { await recovery.project.dispose(); }
                     finally { try { await recovery.source.abort(); } finally { await recovery.runtime.release(); } } }
-            }
+            } }
         }
     }
 
@@ -455,7 +475,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         const operationId = context.operationAcceptance?.operationId;
         if (!operationId) refuse('operation_unavailable');
         const generation = await host.readReceipt({ environmentId: input.environmentId, deploymentId: generationId, context });
-        const captureReceipt = input.mode === 'prepare' && !input.backupOperationId ? await host.readReceipt({ environmentId: input.environmentId,
+        const copySourceEnvironment = input.copy ? await host.readEnvironment({ environmentId: input.copy.source.environmentId, context }) : undefined;
+        const captureReceipt = input.copy || input.mode === 'prepare' && !input.backupOperationId ? await host.readReceipt({ environmentId: input.copy?.source.environmentId ?? input.environmentId,
             deploymentId: input.deploymentId, context }) : undefined;
         const backup = request.backup?.capture ?? captureReceipt?.content.ownServer?.preMigrationBackup;
         if (input.mode === 'prepare' && !backup && !request.backup) refuse('backup_required');
@@ -469,6 +490,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         return withNativeRestoreRuntime<OwnServerRestoreResultForHost>({ request: runtimeRequest,
             snapshot: { ...snapshot, content: generation.content, deployment: generation.deployment },
             generation, installationId: input.installationId,
+            ...(copySourceEnvironment && captureReceipt ? { copySource: { environment: copySourceEnvironment, receipt: captureReceipt } } : {}),
             ...(request.backup && !backup ? { operationKind: 'deployments.backups.restore' as const } : {}) },
         async ({ native, createInput, runtime, createBackupInput }) => {
             const retained = request.prepared;
@@ -478,7 +500,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             const operands = input.mode === 'prepare' && request.backup && !backup
                 ? await runtime.preparePreMigrationBackupOperands?.() : undefined;
             try {
-                const target = input.mode === 'prepare' ? backup?.target ?? operands?.destination : retained?.prepared.destination;
+                const target = input.mode === 'prepare' ? input.copy
+                    ? { ...input.copy.destination, adapter: 'postgres-v1' as const }
+                    : backup?.target ?? operands?.destination : retained?.prepared.destination;
                 if (!target) refuse('operation_unavailable');
                 const destination = await observeOwnServerNativeRestoreDestination(native, {
                     operationId: input.mode === 'prepare' ? operationId : retained!.prepared.operationId,
@@ -486,6 +510,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 if (input.mode === 'prepare') {
                     const access = operands?.readAccess();
                     const resolved = resolveDeploymentRestoreCaptureV1({ environmentId: input.environmentId,
+                        ...(input.copy && backup ? { copy: {
+                            source: { environmentId: input.copy.source.environmentId, ...backup.target },
+                            destination: { environmentId: input.environmentId, ...input.copy.destination, adapter: 'postgres-v1' as const },
+                        } } : {}),
                         restoreBackupId: input.restoreBackupId, destination, ...(backup ? { capture: backup }
                             : operands && access && request.backup ? { manifest: request.backup.manifest,
                                 configuration: operands.configuration, repository: { repository: access.repository,
@@ -495,8 +523,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     const capture = resolved.capture;
                     const prepared = await prepareOwnServerNativeRestore(operands ? await createBackupInput(operands) : await createInput(capture),
                         { ...capture, operationId,
-                            safetyBackup: { environmentId: destination.environmentId, configuration: capture.configuration,
-                                data: { engine: 'postgres', service: destination.service, logicalBackup: { adapter: 'postgres-v1' } } } });
+                            // Copy's source purpose is read-only. The lifecycle's existing
+                            // safety requirement refuses an occupied destination without a
+                            // destination-owned backup; a new database needs no safety write.
+                            ...(input.copy ? {} : { safetyBackup: { environmentId: destination.environmentId, configuration: capture.configuration,
+                                data: { engine: 'postgres' as const, service: destination.service, logicalBackup: { adapter: 'postgres-v1' as const } } } }) });
                     return { kind: 'prepared', prepared, configuration: capture.configuration };
                 }
                 const prepared = retained!.prepared;
@@ -683,8 +714,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 || restored && input.selectedDeploymentId !== snapshot.link.activeDeploymentId) refuse('target_mismatch');
             const selected = restored ? await host.readReceipt({ environmentId: receipt.deployment.environmentId,
                 deploymentId: input.selectedDeploymentId, context: request.context }) : receipt;
-            if (selected.deployment.environmentId !== receipt.deployment.environmentId
-                || selected.deployment.targetLinkId !== receipt.deployment.targetLinkId) refuse('target_mismatch');
+            // The current link's active pointer above owns retained U, including
+            // U carried forward from a predecessor link after membership edits.
+            if (selected.deployment.environmentId !== receipt.deployment.environmentId) refuse('target_mismatch');
             if (restored && (!['succeeded', 'running_unverified'].includes(selected.deployment.state)
                 || !selected.content.images.length || !selected.content.ownServer?.approvedInputBasis)) refuse('rollback_image_unavailable');
             // Recovery renders U with U's recorded inputs. An Environment edit
@@ -772,6 +804,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     purpose: 'serviceCommand', service: migration.service }) : undefined;
                 if (migration && !firstRuntime && !receipt.content.steps.some(step => step.id === MIGRATION_STEP
                     && (step.state === 'succeeded' || step.state === 'skipped'))) refuse('outcome_unknown');
+                if (input.phase !== 'observe') assertIrohServicePublications({
+                    exports: selectedSnapshot.environment.content.ownServer?.serviceExports ?? [],
+                    services: activationRender.review.services,
+                    risks: activationRender.review.risks,
+                });
                 const settlePrivatePublications = input.phase !== 'observe' && await (async () => {
                     if (selectedSnapshot.environment.content.ownServer?.serviceExports
                         ?.some(exported => exported.exposure === 'privateNetwork')) return true;
@@ -838,9 +875,18 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 // Forward cutover observes retained U. Reverse cutover observes
                 // the candidate B from this same receipt, never today's source.
                 // Observe-only/already-restored paths above need no cutover.
-                const incumbentReceipt = restored ? receipt : snapshot.link.activeDeploymentId ? await host.readReceipt({
-                    environmentId: receipt.deployment.environmentId, deploymentId: snapshot.link.activeDeploymentId,
-                    context: request.context }) : undefined;
+                // A joining member receives U before attempting B. A fresh
+                // installation has no incumbent; a previous failed rollout can
+                // have left a different recorded generation serving locally.
+                const joiningCurrent = input.phase === 'restore' && (previous?.activation ?? 'pending') === 'pending'
+                    && snapshot.link.members.some(member => member.machineId === host.machineId
+                        && member.installationId === input.installationId && member.state === 'joining');
+                const incumbentDeploymentId = restored ? joiningCurrent
+                    ? previous?.currentDeploymentId === selected.deployment.id ? undefined : previous?.currentDeploymentId
+                    : receipt.deployment.id : snapshot.link.activeDeploymentId;
+                const incumbentReceipt = incumbentDeploymentId === receipt.deployment.id ? receipt
+                    : incumbentDeploymentId ? await host.readReceipt({ environmentId: receipt.deployment.environmentId,
+                        deploymentId: incumbentDeploymentId, context: request.context }) : undefined;
                 let incumbentRender: NativeComposeProjectRender | undefined;
                 let readIncumbentDatabaseUsername: OwnServerNativeRestoreInput['readDatabaseUsername'] | undefined;
                 const prepareIncumbent = async (current: OwnServerDeploymentReceipt) => {
@@ -1029,8 +1075,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     try {
                         const handles = await produceEnvironmentProjectServices({ owner: prepared.runtime.projectManagedServices,
                             serverId: prepared.homeServerIdentityId, release: prepared.source, specIdentity: selected.deployment.id,
+                            appliedServiceExports: selectedSnapshot.environment.content.ownServer?.serviceExports,
                             signal: snapshot.signal, isCurrent: () => project.isCurrent(),
                             nativeEffects: { keys: activationRender.keys, settleNative: prepared.project.settleNative }, io: prepared.runtime.nativeIo, project });
+                        prepared.runtime.retainServiceReferences?.(handles);
                         await prepared.source.commit(); committed = true;
                         const staged = await stage(row(project.health));
                         if (!staged.ok) return staged;

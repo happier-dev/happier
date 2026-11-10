@@ -69,6 +69,14 @@ export type OwnServerDeploymentRetentionRequest = Readonly<{
     request: OwnServerDeploymentRequest; machineId: string; installationId: string;
     settledTargetLinkRevision: number; settledDeploymentRevision: number; activeDeploymentId: string;
 }>;
+/** The admitted rollout lends its current-U native result to the ingress owner.
+ * Final receipt settlement remains the sole membership commit. */
+export type OwnServerDeploymentMemberRouteEnrollmentForHost = Readonly<{
+    link: DeploymentTargetLinkHeaderV1;
+    member: Readonly<{ machineId: string; installationId: string }>;
+    selectedDeploymentId: string;
+    signal: AbortSignal;
+}>;
 export type OwnServerDeploymentReadContext = Readonly<{
     environmentId: string;
     context: ActionExecutorContext;
@@ -135,6 +143,14 @@ export type OwnServerDeploymentRuntime = Readonly<{
     }>): Promise<OwnServerDeploymentRuntimeAcquisition>;
 }>;
 export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
+        prepareReferenceContainerNetwork?(request: Readonly<{
+            docker: import('@/plugins/runtime/invocation/services/managedProcessSupervisor').ProjectNativeDockerPort;
+            engine: import('@happier-dev/cli-common/machineSetup').NativeDockerEngineFacts;
+            networkId: string;
+            signal?: AbortSignal;
+        }>): Promise<void>;
+        retainServiceReferences?(consumers: readonly Pick<import('@/plugins/runtime/invocation/services/managedServicesOwner').ProjectManagedServiceHandle,
+            'retirementSignal' | 'reportDependencyFailure'>[]): void;
         /** Invocation-owned empty cwd; build tools must not discover source .env files. */
         buildExecutionDirectory?: string;
         exec: ExecService;
@@ -144,6 +160,9 @@ export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
         source: DeploymentSourceAdmissionForHost;
         secrets: Omit<Parameters<typeof prepareEnvironmentSecretBindingsForLaunch>[0],
             'environmentId' | 'machineId' | 'installationId' | 'phase' | 'bindings' | 'assertCurrent'>;
+        /** Source backup credentials retain their original Environment/installation subjects. */
+        acquireCopySourceSecrets?(input: Readonly<{ environmentId: string; targetLinkId: string;
+            deploymentId: string; actionOperationId: string }>): Promise<import('./ownServerDeploymentHostRuntime').OwnServerSecretLaunchAdmission>;
         /** Lazy use of this acquisition's captured destination and P42 bindings. */
         preparePreMigrationBackupOperands?(): Promise<import('./backupDestination').OwnServerPreMigrationBackupOperandsForHost>;
         prepareBackupRepositoryOperands?(): Promise<import('./backupDestination').OwnServerBackupRepositoryOperandsForHost>;
@@ -175,6 +194,8 @@ export type OwnServerDeploymentTargetHostInput = Readonly<{
     }>): AsyncIterable<OwnServerDeploymentReceipt>;
     writeTransition(request: OwnServerDeploymentTransition): Promise<OwnServerDeploymentResult>;
     dispatchMember?(request: OwnServerDeploymentMemberRequest): Promise<OwnServerDeploymentResult>;
+    enrollMemberRoutes?(request: OwnServerDeploymentRequest,
+        input: OwnServerDeploymentMemberRouteEnrollmentForHost): Promise<OwnServerDeploymentResult>;
     dispatchRetention?(request: OwnServerDeploymentRetentionRequest): Promise<OwnServerDeploymentResult>;
     dispatchBuild?(request: OwnServerDeploymentRequest, receiptHeader: DeploymentReceiptHeaderV1): Promise<OwnServerDeploymentResult>;
     reviewMember?(request: OwnServerDeploymentMemberReviewRequest): Promise<OwnServerDeploymentReview>;

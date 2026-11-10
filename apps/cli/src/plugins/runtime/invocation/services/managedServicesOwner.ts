@@ -1,6 +1,8 @@
 import { resolveProjectManagedService } from './projectServiceResolution';
 import { createHash, randomBytes } from 'node:crypto';
 import { createEnvironmentServiceRecovery } from './environmentServiceRecovery';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { DeploymentServiceExportV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { bindManagedWorkloadsForHost, type ManagedWorkloadAdmissionForHost } from './managedWorkloads';
 import { fetchWithCredentialRedirectRefusal, CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { toPluginHttpRedirectFailure } from '../../fetch/redirect';
@@ -85,6 +87,7 @@ import {
     type ProjectBuiltinNativeLifecycle,
     type ProjectNativeStageOutput,
     readManagedServiceProcessCredentialRedactionValues,
+    retainManagedServiceDiagnostic,
 } from './managedProcessSupervisor';
 import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import type { HostAuthorizedPluginExecLaunch, ResolvedPluginExecutable } from './exec';
@@ -148,6 +151,8 @@ export type WorkspaceProjectManagedServiceWitness = Readonly<{
 
 export type EnvironmentProjectManagedServiceWitness = Readonly<{
     kind: 'environment';
+    /** Declarations captured from the applied deployment, never a later authoring save. */
+    appliedServiceExports?: readonly DeploymentServiceExportV1[];
     serverId: string;
     machineId: string;
     environmentInstanceId: string;
@@ -182,6 +187,9 @@ export type ManagedServiceResourceTarget = Readonly<{
     }>[];
 }>;
 export type ProjectManagedServiceHandle = ManagedServiceHandle & ProjectManagedServiceWitness & Readonly<{
+    /** Host-owned retained dependencies publish through the existing diagnostic projection. */
+    reportDependencyFailure?(failure: ActionExecuteFailure | null): void;
+    readDependencyFailure?(): ActionExecuteFailure | undefined;
     /** Existing exact Home identity captured once at native admission, never resolved per observation. */
     homeServerIdentityId?: string | null;
     instanceId: string;
@@ -4391,7 +4399,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             }
             witness = Object.freeze({ kind: 'environment', serverId: request.serverId, machineId: identity.machineId,
                 environmentId: identity.environmentId, environmentInstanceId: identity.environmentInstanceId,
-                deploymentId: request.deploymentId, release: request.release, composeService: identity.composeService, serviceId: identity.serviceId });
+                deploymentId: request.deploymentId, release: request.release, composeService: identity.composeService, serviceId: identity.serviceId,
+                ...(request.appliedServiceExports ? { appliedServiceExports: structuredClone(request.appliedServiceExports) } : {}) });
             entryKey = JSON.stringify(['environment-service', request.serverId, identity.machineId, identity.environmentInstanceId, identity.composeService]);
         } else {
             const workspace = Object.freeze(WorkspaceRefV1Schema.parse(request.workspace));
@@ -4609,6 +4618,11 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 false,
                 witness.kind === 'environment',
             );
+            let dependencyFailure: ActionExecuteFailure | undefined;
+            const withDependencyFailure = (snapshot: ManagedServiceSnapshot): ManagedServiceSnapshot => dependencyFailure
+                ? { ...snapshot, ...retainManagedServiceDiagnostic(snapshot, { code: dependencyFailure.errorCode,
+                    severity: 'error', message: 'A retained service reference is unavailable. Retry or redeploy the Environment.' }) }
+                : snapshot;
             const handle = Object.freeze({
                 ...wrapped,
                 ...witness,
@@ -4736,12 +4750,19 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                         return translateSnapshot(process.snapshot());
                     }, notifyActivity);
                 } } : {}),
-                snapshot: () => process.snapshot().state === 'stopped' && failedSnapshot ? failedSnapshot : wrapped.snapshot(),
+                readDependencyFailure: () => dependencyFailure,
+                reportDependencyFailure(failure: ActionExecuteFailure | null) {
+                    if (!isCurrent()) return;
+                    dependencyFailure = failure ?? undefined;
+                    machineServiceRows.publish(handle);
+                    notifyActivity();
+                },
+                snapshot: () => withDependencyFailure(process.snapshot().state === 'stopped' && failedSnapshot ? failedSnapshot : wrapped.snapshot()),
                 readHealthSnapshot: () => process.snapshot(),
                 async inspectCurrentOccurrence() {
                     if (!process.inspectCurrentOccurrence) throw new Error('preview_target_unresolved');
                     await process.inspectCurrentOccurrence();
-                    return wrapped.snapshot();
+                    return withDependencyFailure(wrapped.snapshot());
                 },
                 observe(listener: Parameters<ManagedServiceHandle['observe']>[0]) {
                     return wrapped.observe(snapshot => listener(snapshot.state === 'stopped' && failedSnapshot ? failedSnapshot : snapshot));

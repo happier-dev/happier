@@ -88,7 +88,9 @@ describe('opened Environment content preparation', () => {
             ownServer: { ...detail.content.ownServer, autoRestorePreviousRelease: false } });
         expect(created.size).toBe(2);
         const serviceExports = [{ key: 'database', service: 'app', containerPort: 5432, scheme: 'postgres',
-            exposure: 'privateNetwork' as const, privateNetwork: 'network-a' }];
+            exposure: 'privateNetwork' as const, privateNetwork: 'network-a' },
+            { key: 'cache', service: 'app', containerPort: 6379, scheme: 'redis',
+                exposure: 'loopback' as const, transport: { kind: 'iroh' as const } }];
         const definition = { from: 'compose' as const,
             document: 'services: {app: {image: "example/app:1", ports: ["10.0.0.8:5432:5432"]}}',
             profiles: [], services: ['app'] };

@@ -444,7 +444,18 @@ export function createMachineServicesRuntime(input: Readonly<{
         lifetime.abort('Machine service observations detached');
         const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
         if (!lease) return;
-        try { await lease.registry.projectManagedServices.retireMachineServices(target); }
+        try {
+            const owner = lease.registry.projectManagedServices;
+            const homeServerIdentityId = await resolveServerProfileHomeIdentityId(target.serverId);
+            const results = await Promise.allSettled([
+                owner.retireMachineServices(target),
+                ...owner.listProjectServices().filter(handle => handle.kind === 'environment'
+                    && (handle.serverId === target.serverId || homeServerIdentityId !== null && handle.serverId === homeServerIdentityId)
+                    && handle.machineId === target.machineId).map(handle => handle.dispose()),
+            ]);
+            const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+            if (failures.length) throw new AggregateError(failures, 'Failed to detach service observations');
+        }
         finally { await lease.release(); }
     } };
 }

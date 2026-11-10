@@ -123,9 +123,14 @@ export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTar
             const freshness = facts?.freshness === 'current' ? 'current' as const : 'unavailable' as const;
             const observedAtMs = facts?.observedAt ?? null;
             if (actionId === 'deployments.health.read') {
+                const current = freshness === 'current' && handle.deploymentId === input.deploymentId;
+                const dependencyFailure = current ? handle.readDependencyFailure?.() : undefined;
+                if (dependencyFailure) {
+                    await assertDisclosureCurrent();
+                    return dependencyFailure;
+                }
                 const snapshot = handle.snapshot();
                 const native = { phase: snapshot.nativePhase ?? 'unknown', readiness: snapshot.readiness ?? 'not_reported' };
-                const current = freshness === 'current' && handle.deploymentId === input.deploymentId;
                 const health = !current || native.phase === 'unknown' ? 'unknown'
                     : native.phase === 'stopped' || native.readiness === 'not_ready' ? 'unhealthy'
                         : native.readiness === 'ready' ? 'healthy' : 'running_unverified';

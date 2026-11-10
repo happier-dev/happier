@@ -524,6 +524,7 @@ export type ConnectedServicesProjectionNotification = Readonly<{
 }>;
 
 export type ApiMachineClientLifecycleDependencies = Readonly<{
+    acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
     /** The operation owner retains Project Open receipts in its existing device-local storage. */
     projectOpenReceiptPersistence?: Parameters<typeof createHostActionOperationRuntime>[0]['projectOpenReceiptPersistence'];
     /** The authenticated daemon's captured credential owner for admitted deployment children. */
@@ -2964,6 +2965,7 @@ export class ApiMachineClient {
                 if (!installationId || !serverId) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
                 const { restoreOwnServerServicesForHost } = await import('@/deployments/targets/ownServer/restoreOwnServerServicesForHost');
                 await restoreOwnServerServicesForHost({ serverId, machineId: this.machine.id, installationId, owner, signal,
+                    acquireServiceExportForward: this.lifecycleDependencies.acquireServiceExportForward,
                     resolveRuntime: workSignal => this.resolveInstalledAccountObservationRuntime(workSignal),
                     isCurrent: () => !this.projectionSchedulingClosed && !signal.aborted
                         && configuration.activeServerId === this.machineRuntimeServerId

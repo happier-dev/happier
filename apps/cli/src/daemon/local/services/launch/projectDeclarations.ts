@@ -17,6 +17,7 @@ import { resolveProjectServiceStartChoice } from '@/workspaces/execution/project
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { buildProjectManagedServiceStartRequest, type ProjectManagedServiceSupervisionInput, type ProjectManagedServiceHandle, type EnvironmentProjectManagedServiceHandle, type createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
+import type { DeploymentServiceExportV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import type { ManagedServiceNativeLogReadV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import type { ManagedServiceNativeInstanceV1, ManagedServiceNativeLogWatchV1 } from '@happier-dev/plugin-sdk/managed-services';
@@ -75,6 +76,7 @@ export async function produceEnvironmentProjectServices(input: Readonly<{
     owner: Pick<ReturnType<typeof createManagedServicesOwner>, 'superviseProject'>;
     serverId: string;
     release: DeploymentSourceMaterializationV1;
+    appliedServiceExports?: readonly DeploymentServiceExportV1[];
     specIdentity: string;
     signal?: AbortSignal;
     isCurrent(): boolean;
@@ -104,6 +106,7 @@ export async function produceEnvironmentProjectServices(input: Readonly<{
                 machineId: input.release.machineId, environmentId: input.release.environmentId,
                 environmentInstanceId: input.release.environmentInstanceId, deploymentId: input.release.deploymentId,
                 release: input.release, composeService, serviceId: `${input.release.environmentInstanceId}/${composeService}`,
+                appliedServiceExports: input.appliedServiceExports,
                 specIdentity: input.specIdentity, signal: input.signal, isCurrent: input.isCurrent,
                 nativeEffects: input.nativeEffects, releaseObservation,
                 processSpec: { mode: { kind: 'native', builtinLifecycle: native.lifecycle } },

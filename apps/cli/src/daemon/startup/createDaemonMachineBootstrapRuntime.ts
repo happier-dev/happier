@@ -208,6 +208,8 @@ export function createDaemonMachineBootstrapRuntime(
     prepareServerTransportForReconnect?: BootstrapRuntime['prepareServerTransportForReconnect'];
     acquireWorkspaceSyncMachineIngress?: BootstrapRuntime['acquireWorkspaceSyncMachineIngress'];
     acquireLocalServicePreviewApplication?: BootstrapRuntime['acquireLocalServicePreviewApplication'];
+    resolveServiceExport?: BootstrapRuntime['resolveServiceExport'];
+    acquireServiceExportForward?: ApiMachineClientLifecycleDependencies['acquireServiceExportForward'];
     resolveLocalServicePreviewApplication?: BootstrapRuntime['resolveLocalServicePreviewApplication'];
     directTransferRegistryHost: BootstrapRuntime['directTransferRegistryHost'];
     daemonServerWorkScheduler: BootstrapRuntime['daemonServerWorkScheduler'];
@@ -411,6 +413,7 @@ export function createDaemonMachineBootstrapRuntime(
     isShuttingDown: params.isShuttingDown,
     ...(params.mcpServers ? { mcpServers: params.mcpServers } : {}),
     ...(params.machineIrohRuntime ? { machineIrohRuntime: params.machineIrohRuntime } : {}),
+    ...(params.resolveServiceExport ? { resolveServiceExport: params.resolveServiceExport } : {}),
     ...(params.prepareServerTransportForReconnect
       ? { prepareServerTransportForReconnect: params.prepareServerTransportForReconnect }
       : {}),
@@ -459,6 +462,7 @@ export function createDaemonMachineBootstrapRuntime(
             ...(params.serviceLabel ? { serviceLabel: params.serviceLabel } : null),
           }, {
             controlPort: params.controlPort,
+            acquireServiceExportForward: params.acquireServiceExportForward,
             onMachineControlReadinessChange: params.onMachineControlReadinessChange,
             ...(params.resolveCurrentServerIdentityId ? { resolveCurrentServerIdentityId: params.resolveCurrentServerIdentityId } : {}),
             isDaemonQuiescing: params.isPublicationQuiescing ?? params.isShuttingDown,

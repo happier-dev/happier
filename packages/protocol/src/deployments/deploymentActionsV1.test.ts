@@ -786,7 +786,10 @@ describe('deployment semantic preparation', () => {
         source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('password'), resourceRevision: 1 } }] };
     expect(spec.inputSchema.parse(input)).toEqual(input);
     expect(spec.inputSchema.safeParse({ ...input, bindings: [...input.bindings, ...input.bindings] }).success).toBe(false);
-    expect(spec.inputSchema.safeParse({ ...input, destination: { kind: 'stored' } }).success).toBe(false);
+    // Add preparation owns the current definition; agent reads expose only its Artifact reference.
+    expect(spec.inputSchema.safeParse({ ...input, destination: { kind: 'stored' } }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, destination: { kind: 'stored' }, bindings: [{ purpose: 'variable',
+      name: 'DB_PASSWORD', phase: 'runtime', source: { kind: 'generated', key: 'DB_PASSWORD' } }] }).success).toBe(true);
     expect(spec.inputSchema.safeParse({ ...input, templateRef: { ...input.templateRef, ref: undefined } }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ ...input, bindings: [{ ...input.bindings[0],
       source: { kind: 'secret', value: 'plaintext-must-not-enter-the-Action' } }] }).success).toBe(false);
@@ -887,12 +890,20 @@ describe('deployment build placement update', () => {
       patch: { ownServer: { serviceExports: [serviceExport] }, definition: { from: 'compose',
         document: 'services: {db: {image: "postgres:17"}}', profiles: [], services: ['db'] } } };
     expect(DeploymentEnvironmentUpdateInputV1Schema.parse(input)).toEqual(input);
+    const irohExport = { ...serviceExport, exposure: 'loopback', privateNetwork: undefined, transport: { kind: 'iroh' } };
+    const irohInput = { ...input, patch: { ownServer: { serviceExports: [irohExport] } } };
+    expect(DeploymentEnvironmentUpdateInputV1Schema.parse(irohInput)).toEqual(irohInput);
+    expect(omitDeploymentEnvironmentPrivateContentPatchV1(irohInput.patch)).toEqual({});
     expect(omitDeploymentEnvironmentPrivateContentPatchV1(input.patch)).toEqual({});
     expect(omitDeploymentEnvironmentPrivateContentPatchV1({ ...input.patch,
       ownServer: { ...input.patch.ownServer, rollout: 'startFirst' } })).toEqual({ ownServer: { rollout: 'startFirst' } });
     for (const serviceExports of [
       [{ ...serviceExport, exposure: 'public', privateNetwork: undefined }],
       [{ ...serviceExport, exposure: 'loopback', privateNetwork: undefined }],
+      [{ ...irohExport, exposure: 'public' }],
+      [{ ...serviceExport, transport: { kind: 'iroh' } }],
+      [{ ...irohExport, privateNetwork: 'network-a' }],
+      [{ ...irohExport, transport: { kind: 'other' } }],
       [{ ...serviceExport, privateNetwork: undefined }],
       [{ ...serviceExport, containerPort: 0 }],
       [serviceExport, serviceExport],

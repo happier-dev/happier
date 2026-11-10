@@ -39,8 +39,8 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 import { privateServicePublicationBindings } from './privateServicePublication';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
-import { database, sourceManifest, installRestoreBoundary } from './nativeRestore.testkit';
-import { RESTIC_RUNTIME_V1 } from '@happier-dev/deployments';
+import { archive, database, snapshot, sourceManifest, installRestoreBoundary } from './nativeRestore.testkit';
+import { RESTIC_RUNTIME_V1, runDeploymentBackupV1 } from '@happier-dev/deployments';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
@@ -70,7 +70,8 @@ import { sealMachineSecretGrant } from '../../secrets/machineSecretGrant';
 import { createOwnServerDeploymentTargetForHost, type OwnServerDeploymentRequest, type OwnServerDeploymentTargetHostInput, type OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
 import { prepareStoredPromotionCandidate, readStoredPromotionCandidateForHost } from '../../storedPromotionCandidate';
 import { DeploymentApprovalReviewV1Schema, DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol/v1';
-import { EnvironmentSecretLaunchAdmissionInputV1Schema, computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/deployment-protocol';
+import { EnvironmentSecretLaunchAdmissionInputV1Schema, computeEnvironmentSecretLaunchAdmissionDigestV1,
+    createDeploymentReceiptArtifactHeaderV1, readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { createDaemonDeploymentActionDeps } from '../../createDaemonDeploymentActionDeps';
 import { createDaemonDeploymentChildExecutor } from '../../deploymentChild';
@@ -226,9 +227,9 @@ describe('own-server target at the Action host boundary', () => {
         expect(effects().runtimeAcquisitions).toBe(1);
     });
     for (const { scenario, sourceKind } of [
-        ...(['private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
+        ...(['iroh_publication_refused', 'iroh_publication_loopback', 'iroh_publication_host_network', 'private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
-        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'public_backup', 'public_backup_restore', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'public_copy', 'public_backup', 'public_backup_restore', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
     ]) it(
         `native deployment admission, finite execution and retained C1 observation: ${scenario}`, async () => {
         const startedAt = Date.now();
@@ -253,12 +254,18 @@ describe('own-server target at the Action host boundary', () => {
         await mkdir(repository);
         const docker = await createOwnServerDockerBoundary(join(root, 'docker'), { operatingSystem: 'Docker Desktop' });
         vi.stubEnv('PATH', `${join(root, 'docker')}${delimiter}${process.env.PATH ?? ''}`);
-        const image = await docker.registerImage('app', 'A');
+        const registeredImage = await docker.registerImage('app', 'A');
+        const image = scenario === 'joining_current_successor'
+            ? { ...registeredImage, registryReference: `registry.example.test/app@${registeredImage.manifestDigest}` } : registeredImage;
+        if (scenario === 'joining_current_successor') {
+            execFileSync(process.execPath, [docker.executablePath, 'image', 'tag', registeredImage.registryReference!, image.registryReference!]);
+        }
         await writeFile(join(repository, 'compose.yaml'), JSON.stringify({ services: { app: { image: image.registryReference,
+            ...(scenario === 'iroh_publication_host_network' ? { network_mode: 'host' } : {}),
             privileged: true, restart: 'on-failure', deploy: { replicas: 2, resources: { limits: { cpus: '1.0', memory: '128M' } } },
-            ...(startFirst ? { healthcheck: { test: ['CMD', 'true'] }, stop_grace_period: '17s' } : scenario === 'routing_review' ? {} : {
+            ...(startFirst || scenario.startsWith('joining_current') ? { healthcheck: { test: ['CMD', 'true'] }, stop_grace_period: '17s' } : scenario === 'routing_review' ? {} : {
                 volumes: [{ type: 'volume', source: 'shared', target: '/data' }],
-                ports: [{ target: 3000, published: '3000', protocol: 'tcp', host_ip: scenario === 'private_publication_refused' || scenario === 'private_publication_failed_attempt' || scenario === 'private_publication_matching_restore' || scenario === 'private_publication_forward_withdrawal' || scenario === 'runtime_stage' ? '100.81.1.12' : '0.0.0.0' }],
+                ports: [{ target: 3000, published: '3000', protocol: 'tcp', host_ip: scenario === 'iroh_publication_loopback' || scenario === 'iroh_publication_host_network' ? '127.0.0.1' : scenario === 'private_publication_refused' || scenario === 'private_publication_failed_attempt' || scenario === 'private_publication_matching_restore' || scenario === 'private_publication_forward_withdrawal' || scenario === 'runtime_stage' ? '100.81.1.12' : '0.0.0.0' }],
             }), environment: { PRIVATE_INPUT: 'sensitive-host-value',
                 DEPLOY_PASSWORD: '${DEPLOY_PASSWORD:?required}' } } },
             ...(scenario === 'routing_review' ? {} : { volumes: { shared: { name: 'target-review-shared' } } }) }));
@@ -275,6 +282,7 @@ describe('own-server target at the Action host boundary', () => {
             git('commit', '--quiet', '-m', 'A');
         }
         const environment = createDeploymentEnvironmentDetailV1();
+        if (scenario.startsWith('joining_current')) environment.content.ownServer!.rollout = 'startFirst';
         if (storedPrivatePublication) {
             const document = await readFile(join(repository, 'compose.yaml'), 'utf8');
             environment.content.definition = { kind: 'stored', document, contentRevision: 1,
@@ -283,6 +291,9 @@ describe('own-server target at the Action host boundary', () => {
         if (scenario === 'private_publication_refused' || scenario === 'private_publication_failed_attempt' || scenario === 'private_publication_forward_withdrawal') environment.content.ownServer = { rollout: 'recreate', autoRestorePreviousRelease: false,
             serviceExports: [{ key: 'application', service: 'app', containerPort: 3000, scheme: 'http',
                 exposure: 'privateNetwork', privateNetwork: 'shop-net' }] };
+        if (scenario.startsWith('iroh_publication_')) environment.content.ownServer = { rollout: 'recreate', autoRestorePreviousRelease: false,
+            serviceExports: [{ key: 'application', service: 'app', containerPort: 3000, scheme: 'http',
+                exposure: 'loopback', transport: { kind: 'iroh' } }] };
         const promotionSource = structuredClone(environment);
         promotionSource.environment.id = 'promotion-source';
         let promotionDestinationContent: typeof environment.content | undefined;
@@ -343,6 +354,16 @@ describe('own-server target at the Action host boundary', () => {
             installationId: 'installation-a', environmentId: environment.environment.id, resourceId: 'review-secret', resourceRevision: 1 },
             installationPublicKey, content: { kind: 'secret', value: 'review-secret-value-sentinel' } });
         const runtimeGrants = [secretGrant];
+        const copySourceGrants: typeof runtimeGrants = [];
+        let copySourceAdmissions = 0;
+        if (scenario === 'joining_current_successor') {
+            environment.content.bindings.push({ purpose: 'registry', targetLinkId: environment.targetLinks[0].targetLink.id,
+                registryOrigin: 'https://registry.example.test', access: 'pushPull',
+                source: { kind: 'secret', ref: 'happier:shared-secret:v1:registry', resourceRevision: 1 } });
+            runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', machineId: 'machine-a',
+                installationId: 'installation-a', environmentId: environment.environment.id, resourceId: 'registry', resourceRevision: 1 },
+                installationPublicKey, content: { kind: 'secret', value: JSON.stringify({ username: 'deploy', password: 'retained-registry-sentinel' }) } }));
+        }
         if (scenario === 'runtime_stage') runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1,
             kind: 'environmentValues', environmentId: environment.environment.id, machineId: 'machine-a', installationId: 'installation-a',
             binding: { purpose: 'variable', phase: 'runtime', name: 'RUNNING_SERVICE_URL' } }, installationPublicKey,
@@ -623,7 +644,7 @@ describe('own-server target at the Action host boundary', () => {
                 return { ok: false as const, errorCode: code, error: code };
             } } : {}),
             async readEnvironmentMetadata() { return structuredClone(promotionSource.environment); },
-            async readEnvironment({ context }) {
+            async readEnvironment({ environmentId, context }) {
                 environmentReads++;
                 // Retained C1 observation is an independent live consumer with
                 // its own context, not another snapshot in this invocation.
@@ -637,9 +658,10 @@ describe('own-server target at the Action host boundary', () => {
                     // read, not after an admitted observer has begun its work.
                     if (scenario === 'retained_health_denied') environment.environment.capabilities.read = false;
                 }
-                return structuredClone(environment);
+                return structuredClone(scenario === 'public_copy' && environmentId === promotionSource.environment.id
+                    ? promotionSource : environment);
             },
-            async readReceipt({ deploymentId }) { memberReceiptReads++; return structuredClone(deploymentId === serving.deployment.id ? serving : recoveryCapture?.deployment.id === deploymentId ? recoveryCapture : receipt); },
+            async readReceipt({ deploymentId }) { memberReceiptReads++; return structuredClone(deploymentId === serving.deployment.id ? serving : recoveryCapture?.deployment.id === deploymentId ? recoveryCapture : earlierReceipt?.deployment.id === deploymentId ? earlierReceipt : receipt); },
             readBuildHistory() {
                 // Home gives a review its exact receipt reads, never history admission.
                 if (scenario === 'review_receipt_scope') throw Object.assign(new Error('Receipt history is not admitted'), { code: 'deployment_access_denied' });
@@ -698,6 +720,14 @@ describe('own-server target at the Action host boundary', () => {
                 resolveRequesterIdentity,
                 async acquirePluginRuntimeRegistryLease() { return mounted.controller.tryAcquireRuntimeRegistry()!; },
                 async readEnvironmentSecretLaunchAdmission(input) {
+                    if (scenario === 'public_copy' && input.materialization.kind === 'copySourceRead') {
+                        expect(input).toMatchObject({ environmentId: promotionSource.environment.id,
+                            targetLinkId: promotionSource.targetLinks[0].targetLink.id,
+                            materialization: { kind: 'copySourceRead', deploymentId: recoveryCapture!.deployment.id,
+                                actionOperationId: recoveryCapture!.deployment.actionOperationId } });
+                        copySourceAdmissions++;
+                        return { grants: copySourceGrants, async assertCurrent() {} };
+                    }
                     if ((scenario === 'public_restore' || scenario === 'standalone_public_restore')
                         && input.materialization.kind === 'deployment') {
                         const deploymentId = input.materialization.deploymentId;
@@ -1279,14 +1309,22 @@ describe('own-server target at the Action host boundary', () => {
                     .toBe(scenario === 'candidate_backup_configured_failure' ? 7 : 0);
                 return;
             }
-            if (scenario === 'public_restore' || scenario === 'standalone_public_restore') {
+            if (scenario === 'public_restore' || scenario === 'standalone_public_restore' || scenario === 'public_copy') {
                 phase('standalone-seed');
+                const captureEnvironment = scenario === 'public_copy' ? promotionSource : environment;
+                if (scenario === 'public_copy') {
+                    promotionSource.environment.id = 'copy-source-environment';
+                    promotionSource.targetLinks[0].targetLink.id = 'copy-source-link';
+                    promotionSource.targetLinks[0].targetLink.environmentId = promotionSource.environment.id;
+                    promotionSource.targetLinks[0].targetLink.activeDeploymentId = 'source-current-release';
+                    promotionSource.content.bindings = [];
+                }
                 const roles = ['repositoryPassword', 'accessKeyId', 'secretAccessKey'] as const;
                 for (const role of roles) {
-                    environment.content.bindings.push({ purpose: 'backupDestination', configKey: 'destination', role,
+                    captureEnvironment.content.bindings.push({ purpose: 'backupDestination', configKey: 'destination', role,
                         source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(role), resourceRevision: 1 } });
-                    runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', machineId: 'machine-a',
-                        installationId: 'installation-a', environmentId: environment.environment.id, resourceId: role, resourceRevision: 1 },
+                    (scenario === 'public_copy' ? copySourceGrants : runtimeGrants).push(sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', machineId: 'machine-a',
+                        installationId: 'installation-a', environmentId: captureEnvironment.environment.id, resourceId: role, resourceRevision: 1 },
                         installationPublicKey, content: { kind: 'secret', value: `private-${role}` } }));
                 }
                 const initial = await target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: sourceContext });
@@ -1300,20 +1338,163 @@ describe('own-server target at the Action host boundary', () => {
                 environment.targetLinks[0].targetLink.activeDeploymentId = serving.deployment.id;
                 await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
                 const boundary = await installRestoreBoundary(root, scenario === 'standalone_public_restore' ? 'safety' : 'success',
-                    { toolDirectory: join(root, 'docker'), environmentId: environment.environment.id });
-                const capture = { source: { ...sourceManifest, environmentId: environment.environment.id,
-                    snapshot: { ...sourceManifest.snapshot, hostname: `happier-env-${environment.environment.id}`,
-                        tags: ['happier', `env:${environment.environment.id}`, 'kind:dump', 'src:database'] } },
+                    { toolDirectory: join(root, 'docker'), environmentId: captureEnvironment.environment.id });
+                const capture = { source: { ...sourceManifest, environmentId: captureEnvironment.environment.id,
+                    snapshot: { ...sourceManifest.snapshot, hostname: `happier-env-${captureEnvironment.environment.id}`,
+                        tags: ['happier', `env:${captureEnvironment.environment.id}`, 'kind:dump', 'src:database'] } },
                     sourceFormat: 'postgresCustom' as const, target: { service: 'app', adapter: 'postgres-v1' as const, database },
                     configuration: { configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 's3' },
                         occurrenceId: 'storage', config: { endpoint: 'https://fixture.invalid', bucket: 'backup',
                             region: 'us-east-1', addressing: 'path' },
                         credentialBindings: roles.map(role => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role })),
                         sources: [{ kind: 'dump' as const, sourceId: 'database', service: 'app', consistency: 'logical' as const }],
-                        ownership: { environmentId: environment.environment.id, prefix: environment.environment.id }, retention: { kind: 'keepEverything' as const } },
+                        ownership: { environmentId: captureEnvironment.environment.id, prefix: captureEnvironment.environment.id }, retention: { kind: 'keepEverything' as const } },
                     repository: { repository: 's3:https://fixture.invalid/backup',
                         s3: { region: 'us-east-1', addressing: 'path' as const } } };
                 const originalRequest = request;
+                if (scenario === 'public_copy') {
+                    const operations = createHostActionOperationRuntime({ machineId: 'machine-a', serverId: 'home',
+                        custodyBinding: { serverId: 'home', installationId: 'installation-a' }, resolveAccountId: async () => accountId });
+                    const backupTarget = { serverId: 'home', environmentId: promotionSource.environment.id,
+                        targetLinkId: promotionSource.targetLinks[0].targetLink.id, machineId: 'machine-a',
+                        installationId: 'installation-a', deploymentId: 'source-capture',
+                        expectedRevision: promotionSource.environment.revision, configRevision: 1 };
+                    const nativeSnapshot = { ...snapshot, hostname: `happier-env-${promotionSource.environment.id}`,
+                        tags: ['happier', `env:${promotionSource.environment.id}`, 'kind:dump', 'src:database'] };
+                    const checksumSha256 = createHash('sha256').update(archive).digest('hex');
+                    const producedOperation = await operations.runActionOperation({ actionId: 'deployments.backups.run',
+                        input: buildDeploymentBackupActionInputV1('deployments.backups.run', backupTarget),
+                        context: { ...sourceContext, surface: 'ui', actionCaller: { kind: 'host' }, serverId: 'home',
+                            runtimeAccountId: accountId, actionRequestId: 'public-copy-source-backup' },
+                        async execute(context) {
+                            const produced = await runDeploymentBackupV1({ environmentId: promotionSource.environment.id,
+                                configuration: { ...capture.configuration, sources: [{ kind: 'dump', sourceId: 'database',
+                                    service: 'database', consistency: 'logical' }] },
+                                data: { engine: 'postgres', service: 'database', logicalBackup: { adapter: 'postgres-v1', database: 'DB_NAME' } },
+                                restoreTarget: { service: 'database', adapter: 'postgres-v1', database },
+                                access: { ...capture.repository, passwordFilePath: '/run/secrets/repository-password',
+                                    credentialFiles: [{ hostPath: '/private/source-password',
+                                        containerPath: '/run/secrets/repository-password', readOnly: true }], environmentVariableNames: [] },
+                                signal: caller.signal,
+                                // Substitute only native process results. The real producer
+                                // builds the manifest and capture after payload read-back.
+                                async execute(nativeRequest) {
+                                    const completed = { kind: 'completed' as const, exitCode: 0, stdoutTruncated: false };
+                                    if (nativeRequest.argv.includes('config')) return { ...completed,
+                                        stdout: JSON.stringify({ version: 2, id: 'c'.repeat(64) }) };
+                                    if (nativeRequest.argv.includes('backup')) return { ...completed,
+                                        stdout: JSON.stringify({ message_type: 'summary', snapshot_id: nativeSnapshot.id,
+                                            total_bytes_processed: archive.length, total_files_processed: 1 }),
+                                        producer: { exitCode: 0, checksumSha256 } };
+                                    if (nativeRequest.argv.includes('snapshots')) return { ...completed, stdout: JSON.stringify([nativeSnapshot]) };
+                                    if (nativeRequest.argv.includes('blob')) return { ...completed,
+                                        stdout: JSON.stringify({ nodes: [{ name: 'database.dump', type: 'file', size: archive.length }] }) };
+                                    if (nativeRequest.argv.includes('dump')) return { ...completed, stdout: '',
+                                        stdoutChecksumSha256: checksumSha256, stdoutBytes: archive.length };
+                                    throw new Error('Unexpected native source backup request');
+                                } });
+                            return { ok: true, result: { ...produced, operationId: context.operationAcceptance!.operationId } };
+                        } });
+                    expect(producedOperation, JSON.stringify(producedOperation)).toMatchObject({ ok: true, result: { kind: 'verified' } });
+                    if (!producedOperation.ok) throw new Error('Expected a retained source backup operation');
+                    const produced = DeploymentBackupRunResultV1Schema.parse(producedOperation.result);
+                    const recordedCapture = produced.restoreCaptures?.[0];
+                    if (!recordedCapture) throw new Error('Expected the real backup producer to retain its restore capture');
+                    // The source's current configuration and generation advance
+                    // after capture. Copy still consumes the original retained bytes.
+                    recoveryCapture = structuredClone(serving);
+                    recoveryCapture.deployment = { ...recoveryCapture.deployment, id: 'source-capture',
+                        environmentId: promotionSource.environment.id,
+                        targetLinkId: promotionSource.targetLinks[0].targetLink.id,
+                        actionOperationId: 'original-source-capture-operation', state: 'failed' };
+                    const capturedContent = { ...recoveryCapture.content, ownServer: { ...recoveryCapture.content.ownServer,
+                        preMigrationBackup: recordedCapture } };
+                    const opened = readDeploymentReceiptArtifactV1(recoveryCapture.deployment, {
+                        artifactId: recoveryCapture.deployment.contentArtifactId,
+                        revision: { headerVersion: recoveryCapture.deployment.contentHeaderVersion,
+                            bodyVersion: recoveryCapture.deployment.contentBodyVersion },
+                        header: createDeploymentReceiptArtifactHeaderV1('Recorded source capture', capturedContent),
+                        body: JSON.stringify(capturedContent) });
+                    if (!opened.ok) throw new Error(opened.error);
+                    recoveryCapture.content = opened.content;
+                    expect(recoveryCapture.content.ownServer?.preMigrationBackup).toEqual(recordedCapture);
+                    promotionSource.content.backup = { ...recordedCapture.configuration, configRevision: 2,
+                        config: { ...recordedCapture.configuration.config, endpoint: 'https://changed.invalid', bucket: 'changed' } };
+                    const deploymentRestore = createDeploymentRestoreActionForHost({ serverId: 'home', machineId: 'machine-a',
+                        async assertCurrent() { caller.signal.throwIfAborted(); }, restore: target.restore,
+                        readBackupOperations: (target, context) => {
+                            expect(target).toMatchObject({ environmentId: promotionSource.environment.id,
+                                targetLinkId: promotionSource.targetLinks[0].targetLink.id, machineId: 'machine-a',
+                                installationId: 'installation-a', deploymentId: 'source-capture' });
+                            return operations.readDeploymentBackupOperations({ target, context });
+                        },
+                        readPreparation: (operationId, context) => operations.readRestorePreparation({ operationId, context }) });
+                    const storage = createCliDeploymentActionDeps({ serverHttpBaseUrl, admitAccount: async () => null,
+                        resolveRequestHeaders: async () => ({ Authorization: `Bearer ${token}` }),
+                        async dispatchReceipt() { throw new Error('Copy must not allocate a deployment receipt'); } });
+                    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), serverId: 'home', machineId: 'machine-a',
+                        resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
+                        deploymentRestore, runActionOperation: value => operations.runActionOperation(value) });
+                    const actionContext = { ...sourceContext, surface: 'ui' as const, actionCaller: { kind: 'host' as const },
+                        serverId: 'home', runtimeAccountId: accountId,
+                        actionsSettings: setScopedActionApprovalPreference({ settings: ActionsSettingsV1Schema.parse({ v: 1 }),
+                            actionId: 'deployments.backups.restore', scope: { kind: 'environment', environmentId: environment.environment.id },
+                            surface: 'ui', mode: 'waived' }) };
+                    const destinationDatabase = 'copied-database';
+                    const restoreInput = { mode: 'prepare' as const, serverId: 'home', environmentId: environment.environment.id,
+                        machineId: 'machine-a', installationId: 'installation-a', targetLinkId: environment.targetLinks[0].targetLink.id,
+                        deploymentId: recoveryCapture.deployment.id, restoreBackupId: recordedCapture.source.snapshot.snapshotId,
+                        backupOperationId: produced.operationId,
+                        expectedRevision: environment.environment.revision,
+                        copy: { source: { environmentId: promotionSource.environment.id,
+                            targetLinkId: promotionSource.targetLinks[0].targetLink.id },
+                            destination: { service: 'app', database: destinationDatabase } } };
+                    const pointer = environment.targetLinks[0].targetLink.activeDeploymentId;
+                    const beforeTransitions = transitionWrites;
+                    const beforeDeploys = (await docker.readInvocations()).filter(call => call.args.includes('up')).length;
+                    const preparation = await executor.execute('deployments.backups.restore', restoreInput,
+                        { ...actionContext, actionRequestId: 'public-copy-prepare' });
+                    expect(preparation, JSON.stringify(preparation)).toMatchObject({ ok: true, result: { kind: 'prepared' } });
+                    if (!preparation.ok) throw new Error('Expected public copy preparation');
+                    const prepared = DeploymentBackupRestoreResultV1Schema.parse(preparation.result);
+                    if (prepared.kind !== 'prepared') throw new Error('Expected public copy preparation evidence');
+                    expect(prepared.evidence).toMatchObject({ native: { prepared: { source: recordedCapture.source,
+                        repository: recordedCapture.repository, destination: { environmentId: environment.environment.id,
+                            database: destinationDatabase, databaseExists: false, hasMeaningfulData: false } },
+                        configuration: recordedCapture.configuration } });
+                    const result = await executor.execute('deployments.backups.restore', { ...restoreInput,
+                        mode: 'confirm', prepareOperationId: prepared.operationId },
+                        { ...actionContext, actionRequestId: 'public-copy-confirm' });
+                    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'restored', verified: true } });
+                    expect(copySourceAdmissions).toBeGreaterThan(0);
+                    const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n')
+                        .filter(Boolean).map(line => JSON.parse(line) as { kind: string; argv?: string[] });
+                    expect(events.filter(event => event.kind === 'safetyBytes')).toHaveLength(0);
+                    const repositoryReads = events.filter(event => event.kind === 'restic');
+                    expect(repositoryReads.length).toBeGreaterThan(0);
+                    for (const event of repositoryReads) {
+                        expect(event.argv).toContain(recordedCapture.repository.repository);
+                        expect(event.argv).not.toContain('backup');
+                    }
+                    expect(events.filter(event => event.kind === 'postgres' && event.argv?.[0] === 'pg_restore'
+                        && !event.argv.includes('--version'))).toHaveLength(1);
+                    expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).names).toContain(destinationDatabase);
+                    // A second copy encounters meaningful destination data. A
+                    // source-read grant must never write its safety backup there.
+                    const beforeRefusal = await readFile(boundary.eventsFile, 'utf8');
+                    expect(await executor.execute('deployments.backups.restore', restoreInput,
+                        { ...actionContext, actionRequestId: 'public-copy-meaningful-prepare' }))
+                        .toMatchObject({ ok: false, errorCode: 'backup_required' });
+                    const refusalEvents = (await readFile(boundary.eventsFile, 'utf8')).slice(beforeRefusal.length)
+                        .trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as { kind: string; argv?: string[] });
+                    expect(refusalEvents.filter(event => event.kind === 'safetyBytes'
+                        || event.kind === 'restic' && event.argv?.includes('backup'))).toHaveLength(0);
+                    expect(environment.targetLinks[0].targetLink.activeDeploymentId).toBe(pointer);
+                    expect(promotionSource.targetLinks[0].targetLink.activeDeploymentId).toBe('source-current-release');
+                    expect(transitionWrites).toBe(beforeTransitions);
+                    expect((await docker.readInvocations()).filter(call => call.args.includes('up'))).toHaveLength(beforeDeploys);
+                    return;
+                }
                 if (scenario === 'public_restore') for (const mode of ['unknown', 'otherEnvironment', 'foreignSnapshot', 'noBackup', 'recorded'] as const) {
                     recoveryCapture = structuredClone(serving);
                     recoveryCapture.deployment = { ...recoveryCapture.deployment, id: 'failed-migration', state: 'failed' };
@@ -1567,6 +1748,64 @@ describe('own-server target at the Action host boundary', () => {
                 return;
             }
             const review = await target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: sourceContext });
+            if (scenario.startsWith('joining_current')) {
+                // The joining installation has never hosted U or B. Restore
+                // consumes U's immutable artifacts without expecting a B incumbent.
+                serving.content = { ...structuredClone(receipt.content), ownServer: { approvedInputBasis: {
+                    ...structuredClone(review.inputBasis), members: [{ machineId: 'machine-b', installationId: 'installation-b' }],
+                } } };
+                if (scenario === 'joining_current_successor') {
+                    const predecessorTargetLinkId = 'prior-runtime-link';
+                    environment.targetLinks[0].targetLink.predecessorTargetLinkId = predecessorTargetLinkId;
+                    serving.deployment.targetLinkId = predecessorTargetLinkId;
+                    serving.content.ownServer!.approvedInputBasis.targetLinkId = predecessorTargetLinkId;
+                    serving.content.ownServer!.approvedInputBasis.bindings = serving.content.ownServer!.approvedInputBasis.bindings
+                        .map(binding => binding.purpose === 'registry' ? { ...binding, targetLinkId: predecessorTargetLinkId } : binding);
+                    // The Docker process is the external registry boundary.
+                    // Model a cold joining engine while retaining registry
+                    // image bytes in this process fixture for the later pull.
+                    const executable = await readFile(docker.executablePath, 'utf8');
+                    const firstLine = executable.indexOf('\n') + 1;
+                    const requireRegistryAuth = String.raw`const fixtureFs = require('node:fs');
+const fixturePath = require('node:path');
+const fixturePulled = fixturePath.join(__dirname, 'retained-registry-pulled');
+if (process.argv.includes('image') && process.argv.includes('inspect') && !fixtureFs.existsSync(fixturePulled)) process.exit(1);
+if (process.argv.includes('image') && process.argv.includes('pull') && process.argv.some(arg => arg.startsWith('registry.example.test/'))) {
+    const fixtureConfig = process.env.DOCKER_CONFIG && JSON.parse(fixtureFs.readFileSync(fixturePath.join(process.env.DOCKER_CONFIG, 'config.json'), 'utf8'));
+    if (fixtureConfig?.auths?.['registry.example.test']?.auth !== Buffer.from('deploy:retained-registry-sentinel').toString('base64')) {
+        process.stderr.write('fixture_registry_auth_required'); process.exit(1);
+    }
+    fixtureFs.writeFileSync(fixturePulled, 'pulled'); process.exit(0);
+}
+`;
+                    await writeFile(docker.executablePath, executable.slice(0, firstLine) + requireRegistryAuth + executable.slice(firstLine));
+                }
+                const immutableUniform = structuredClone(serving);
+                environment.targetLinks[0].targetLink.members[0].state = 'joining';
+                receipt.deployment.state = 'running';
+                receipt.content.ownServer = { approvedInputBasis: review.inputBasis };
+                const before = (await docker.readInvocations()).length;
+                if (scenario === 'joining_current_successor') {
+                    expect(await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
+                        phase: 'restore', selectedDeploymentId: 'unrelated-environment-release' }))
+                        .toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+                    expect((await docker.readInvocations()).length).toBe(before);
+                }
+                const joined = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
+                    phase: 'restore', selectedDeploymentId: serving.deployment.id });
+                expect(joined, JSON.stringify(joined)).toMatchObject({ ok: true, state: 'running' });
+                expect(receipt.content.machineResults).toEqual([expect.objectContaining({ currentDeploymentId: serving.deployment.id,
+                    restoration: 'succeeded', health: 'healthy' })]);
+                expect(await docker.readRunningImageConfig('app')).toBe(image.configDigest);
+                if (scenario === 'joining_current_successor') {
+                    expect(await readFile(join(root, 'docker', 'retained-registry-pulled'), 'utf8')).toBe('pulled');
+                }
+                const native = (await docker.readInvocations()).slice(before);
+                expect(native.filter(call => call.args.includes('up'))).toHaveLength(1);
+                expect(native.some(call => call.args.includes('build'))).toBe(false);
+                expect(serving).toEqual(immutableUniform);
+                return;
+            }
             // Preview and basis consume the same captured Environment; the
             // later mutation CAS admits edits without a second review read.
             if (scenario !== 'canonical_home_build') expect(environmentReads).toBe(1);
@@ -1694,7 +1933,9 @@ describe('own-server target at the Action host boundary', () => {
                 }
                 return;
             }
-            if (scenario === 'private_publication_refused' || scenario === 'private_publication_withdrawal_refused') {
+            if (scenario === 'iroh_publication_loopback' || scenario === 'iroh_publication_refused'
+                || scenario === 'iroh_publication_host_network'
+                || scenario === 'private_publication_refused' || scenario === 'private_publication_withdrawal_refused') {
                 if (scenario === 'private_publication_withdrawal_refused') serving.content.ownServer = {
                     approvedInputBasis: { ...review.inputBasis, ownServer: { ...review.inputBasis.ownServer!,
                         serviceExports: [{ key: 'application', service: 'app', containerPort: 3000, scheme: 'http',
@@ -1704,8 +1945,11 @@ describe('own-server target at the Action host boundary', () => {
                 receipt.content.ownServer = { approvedInputBasis: review.inputBasis };
                 const result = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
                     phase: 'activate', selectedDeploymentId: receipt.deployment.id });
-                expect(result).toMatchObject({ ok: false, errorCode: 'private_scope_unenforceable' });
-                expect((await docker.readInvocations()).some(call => call.args.includes('up'))).toBe(false);
+                if (scenario === 'iroh_publication_loopback') expect(result).toMatchObject({ ok: true });
+                else {
+                    expect(result).toMatchObject({ ok: false, errorCode: 'private_scope_unenforceable' });
+                    expect((await docker.readInvocations()).some(call => call.args.includes('up'))).toBe(false);
+                }
                 return;
             }
             if (startFirst) {
@@ -1735,6 +1979,22 @@ describe('own-server target at the Action host boundary', () => {
                     expect(receipt.content.machineResults).toEqual([expect.objectContaining({ activation: 'succeeded', health: 'healthy' })]);
                 }
                 if (reverseStartFirst) {
+                    if (scenario === 'candidate_start_first_restore_join_recovery') {
+                        // A prior B reached native success, but its Environment
+                        // rollout failed before this joining member was committed.
+                        earlierReceipt = structuredClone(receipt);
+                        earlierReceipt.deployment.state = 'failed';
+                        receipt.deployment = { ...receipt.deployment, id: 'join-recovery', actionOperationId: 'join-recovery-operation',
+                            contentArtifactId: 'join-recovery-content', revision: 1 };
+                        receipt.content = { ...receipt.content, ownServer: { approvedInputBasis: review.inputBasis }, steps: [],
+                            machineResults: receipt.content.machineResults.map(({ machineId, installationId, currentDeploymentId }) => ({
+                                machineId, installationId, currentDeploymentId, steps: [], activation: 'pending', health: 'unknown',
+                            })) };
+                        environment.targetLinks[0].targetLink.members[0].state = 'joining';
+                        request = { ...request, input: { ...request.input, contentArtifactId: receipt.deployment.contentArtifactId },
+                            receipt: { ...request.receipt, deploymentId: receipt.deployment.id, deploymentRevision: 1 },
+                            context: { ...request.context, operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } };
+                    }
                     if (unhealthyCandidateConfig) {
                         expect(unhealthyCandidateConfig).not.toBe(serving.content.images[0]!.configDigest);
                         await docker.failImageHealth(unhealthyCandidateConfig);
@@ -2380,7 +2640,7 @@ describe('own-server target at the Action host boundary', () => {
     // executes activate, candidate cleanup and restore in sequence.
     // Give each native effect the existing 60s integration harness budget;
     // this is not a native process, Action or product freshness deadline.
-    }, scenario === 'runtime_stage' || scenario === 'private_publication_forward_withdrawal' || scenario === 'public_restore' || scenario === 'standalone_public_restore' || scenario.startsWith('public_backup') || scenario.startsWith('candidate_start_first_restore') ? 3 * 60_000
+    }, scenario === 'runtime_stage' || scenario === 'private_publication_forward_withdrawal' || scenario === 'public_restore' || scenario === 'standalone_public_restore' || scenario === 'public_copy' || scenario.startsWith('public_backup') || scenario.startsWith('candidate_start_first_restore') ? 3 * 60_000
         : scenario.startsWith('candidate_start_first') || scenario === 'member_health' || scenario.startsWith('candidate_backup_configured') ? 2 * 60_000 : scenario === 'runtime_reads' || scenario === 'runtime_health'
         || scenario.startsWith('retained_health') || scenario.startsWith('candidate_') ? 60_000 : undefined);
     it('reviews the prepared candidate before receipt admission without requiring an accepted operation', async () => {

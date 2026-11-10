@@ -30,7 +30,11 @@ import { resolveOwnServerDeploymentIdentityForHost, resolveOwnServerDeploymentRo
 import { resolveOwnServerImageArchivePathForHost } from './releaseProvenance';
 import { createDeploymentImageArchiveCopyForHost } from './imageArchiveCopy';
 import { createOwnServerNativeRuntime } from './nativeRuntime';
-import { resolvePrivateServiceReferenceForHost } from './privateServiceReference';
+import { resolvePrivateServiceReferenceMaterialForHost } from './privateServiceReference';
+import { createServiceReferenceForwardCustody } from './serviceReferenceForwardCustody';
+import { acquirePrivateServiceContainerBridge } from './privateServiceContainerBridge';
+import type { ServiceExportMachineForward } from '@/daemon/peer/iroh/serviceExportMachineForward';
+import { privateServiceForwardAcquisitionError, projectDeploymentFailure } from '../../deploymentFailure';
 import { prepareOwnServerPreMigrationBackupOperandsForHost, prepareOwnServerBackupRepositoryOperandsForHost } from './backupDestination';
 import { materializeCaddyInitialConfigV1 } from './caddyRouteMaterialization';
 export { openDeploymentBackupDestinationForHost, prepareOwnServerPreMigrationBackupOperandsForHost } from './backupDestination';
@@ -64,6 +68,15 @@ export type OwnServerDeploymentRuntimeHostInput = Readonly<{
     serverId: string;
     serverHttpBaseUrl: string;
     machineId: string;
+    acquireServiceExportForward?: (input: Readonly<{
+        targetMachineId: string;
+        serviceExport: import('@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1').TcpTunnelServiceExportBindingV1;
+        context: ActionExecutorContext;
+        signal: AbortSignal;
+        preferredListenPort?: number;
+        onFailure?(error: import('@/daemon/peer/iroh/machineCarrier').MachineCarrierError): void;
+        onRecovered?(): void;
+    }>) => Promise<import('@/daemon/peer/iroh/serviceExportMachineForward').ServiceExportMachineForward>;
     acquirePluginRuntimeRegistryLease(): Promise<PluginRuntimeRegistryLease>;
     /** Admitted installed-holder lifetime, independently of requester content custody. */
     assertInstalledCurrent?(): Promise<void>;
@@ -182,6 +195,40 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     ...(buildExecutionDirectory ? { buildExecutionDirectory } : {}), signal, nativeIoSignal: hostSignal,
                     isCurrent: () => !released });
                 const retainedLease = lease;
+                let referenceContainerNetwork: Parameters<NonNullable<OwnServerDeploymentRuntimeAcquisition['prepareReferenceContainerNetwork']>>[0] | undefined;
+                const referenceBridges = new Map<ServiceExportMachineForward, ReturnType<typeof acquirePrivateServiceContainerBridge> | undefined>();
+                const materializeBridge = async (forward: ServiceExportMachineForward) => {
+                    if (!referenceContainerNetwork) return forward;
+                    let bridge = referenceBridges.get(forward);
+                    if (!bridge) {
+                        bridge = acquirePrivateServiceContainerBridge({ ...referenceContainerNetwork, forward, signal: hostSignal });
+                        referenceBridges.set(forward, bridge);
+                    }
+                    return await bridge;
+                };
+                const referenceForwards = createServiceReferenceForwardCustody({ signal: hostSignal, async acquire(selected, lifetimeSignal) {
+                    if (!host.acquireServiceExportForward) return refuse('machine_carrier_unavailable');
+                    const acquisition = new AbortController();
+                    const abort = () => acquisition.abort(signal.reason);
+                    signal.throwIfAborted();
+                    signal.addEventListener('abort', abort, { once: true });
+                    let nativeForward: ServiceExportMachineForward;
+                    try { nativeForward = await host.acquireServiceExportForward({ targetMachineId: selected.machineId,
+                        serviceExport: selected.serviceExport, context: request.context,
+                        onFailure(error) {
+                            const failure = privateServiceForwardAcquisitionError(error);
+                            referenceForwards.reportFailure(selected, projectDeploymentFailure(failure.code, failure));
+                        },
+                        onRecovered() { referenceForwards.reportFailure(selected, null); },
+                        signal: AbortSignal.any([lifetimeSignal, acquisition.signal]) }); }
+                    finally { signal.removeEventListener('abort', abort); }
+                    const forward: ServiceExportMachineForward = { ...nativeForward, async close() {
+                        try { await (await referenceBridges.get(forward))?.close(); }
+                        finally { referenceBridges.delete(forward); await nativeForward.close(); }
+                    } };
+                    referenceBridges.set(forward, undefined);
+                    return forward;
+                } });
                 const selectedArchives = structuredClone(content?.ownServer?.imageArchives ?? []);
                 const environmentName = environment.content.name;
                 const commitSha = intent.kind === 'repository' ? intent.sha : undefined;
@@ -195,16 +242,28 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                             if (source.fact === 'commitSha' && commitSha !== undefined) return commitSha;
                             if (source.fact === 'deploymentId' && materialization.kind !== 'review') return materializationId;
                         }
-                        if (source.kind === 'reference') return resolvePrivateServiceReferenceForHost({
+                        if (source.kind === 'reference') return resolvePrivateServiceReferenceMaterialForHost({
                             source, environment, homeServerIdentityId, readEnvironment: snapshot.readReferenceEnvironment,
                             host, context: request.context, actionId: request.actionId, signal,
                             owner: retainedLease.registry.projectManagedServices,
                             installationId: identity.installationId, privateKey: decodeBase64(identity.privateKey, 'base64url'),
+                            acquireForward: referenceForwards.acquire,
+                            materializeForwardAddress: materializeBridge,
                         });
                         return refuse('reference_unavailable');
                     },
                 };
                 return { exec, nativeIo, projectManagedServices: retainedLease.registry.projectManagedServices,
+                    async prepareReferenceContainerNetwork(network) {
+                        referenceContainerNetwork = network;
+                        // The native owner lends Docker for this callback only.
+                        // Inspect/bind every reviewed forward before returning.
+                        await Promise.all([...referenceBridges.keys()].map(materializeBridge));
+                    },
+                    retainServiceReferences(consumers) {
+                        referenceForwards.retain(consumers.map(consumer => consumer.retirementSignal),
+                            failure => { for (const consumer of consumers) consumer.reportDependencyFailure?.(failure); });
+                    },
                     currentDomainEdgeObservation: retainedLease.registry.currentDomainEdgeObservation, sourceIntent: intent,
                     ...(buildExecutionDirectory === undefined ? {} : { buildExecutionDirectory }),
                     source: { environmentId: environment.environment.id, environmentInstanceId,
@@ -216,6 +275,15 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                             ...(intent.pullRequestHead ? { pullRequestHead: intent.pullRequestHead, repository: sourceRepository } : {}) }), deploymentRoot,
                         artifactDirectory: join(configuration.happyHomeDir, 'tmp', 'deployment-source') },
                     secrets,
+                    async acquireCopySourceSecrets(source) {
+                        await assertCurrent();
+                        return readSecretAdmission({ credentials: host.credentials, serverId: host.serverId,
+                            serverHttpBaseUrl: host.serverHttpBaseUrl, machineId: host.machineId,
+                            installationId: identity.installationId, environmentId: source.environmentId,
+                            targetLinkId: source.targetLinkId, materialization: { kind: 'copySourceRead',
+                                deploymentId: source.deploymentId, actionOperationId: source.actionOperationId },
+                            context: request.context, signal });
+                    },
                     async prepareBackupRepositoryOperands() {
                         return prepareOwnServerBackupRepositoryOperandsForHost({ registry: retainedLease.registry,
                             configuration: environment.content.backup,
@@ -273,7 +341,10 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                                 else await cleanupRegistry;
                             } finally {
                                 try { if (buildExecutionDirectory) await rm(buildExecutionDirectory, { recursive: true, force: true }); }
-                                finally { try { await admission.release?.(); } finally { await retainedLease.release(); } }
+                                finally {
+                                    try { await referenceForwards.release(); }
+                                    finally { try { await admission.release?.(); } finally { await retainedLease.release(); } }
+                                }
                             }
                         }
                     },

@@ -6,9 +6,21 @@ import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happie
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createMachineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { logger } from '@/ui/logger';
-import { projectDeploymentFailure } from './deploymentFailure';
+import { projectDeploymentFailure, privateServiceForwardAcquisitionError } from './deploymentFailure';
+import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 
 describe('deployment failure diagnostics', () => {
+    it.each([
+        [new MachineCarrierError('service_export_unavailable', 'private-export'), 'private_service_forward_refused'],
+        [Object.assign(new Error('private-destination'), { code: 'ECONNREFUSED' }), 'private_service_destination_unreachable'],
+        [new MachineCarrierError('machine_carrier_unavailable', 'private-carrier'), 'machine_carrier_unavailable'],
+    ])('publishes the private forward failure without exposing transport error text', (error, code) => {
+        const failure = privateServiceForwardAcquisitionError(error);
+        const result = projectDeploymentFailure(failure.code, failure);
+        expect(ActionExecuteFailureSchema.parse(result)).toMatchObject({ ok: false, errorCode: code });
+        expect(result.failureCause).toBeDefined();
+        expect(JSON.stringify(result)).not.toContain('private-');
+    });
     it.each(['deployment_content_unavailable', 'deployment_unavailable', 'unsupported', 'unclassified_provider_refusal'])(
         'supplies recovery for %s without a refusal-code classification', errorCode => {
             const result = projectDeploymentFailure(errorCode);
