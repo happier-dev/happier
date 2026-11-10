@@ -28,7 +28,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { if (database) await database.close(); });
 
-it.each(['available', 'update-required', 'unavailable'] as const)(
+it.each(['available', 'update-required', 'unavailable', 'uncommitted'] as const)(
     'publishes a retained approval outcome using the resumed Session target (%s)', async state => {
     const account = await db.account.create({ data: { encryptionMode: 'plain' } });
     const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
@@ -41,7 +41,11 @@ it.each(['available', 'update-required', 'unavailable'] as const)(
     await db.accessKey.create({ data: { accountId: account.id, sessionId: session.id, machineId: machine.id, data: 'test-key' } });
     const target = { homeId: homeIdentity, accountId: account.id, sessionId: session.id,
         machineId: machine.id, installationId: machine.installationId };
-    await db.session.update({ where: { id: session.id }, data: { runtimeMachineTarget: target } });
+    // A Session without a publisher-committed target still needs the sender's
+    // Machine to retain the exact admitted tuple on its Pending receipt.
+    if (state !== 'uncommitted') {
+        await db.session.update({ where: { id: session.id }, data: { runtimeMachineTarget: target } });
+    }
     const metadata = { machineId: machine.id, path: '/repo', host: 'resumed-host',
         sessionCreationCorrespondenceV1: buildSessionCreationCorrespondence({
             identity: { callerCreationNamespace: 'approval-delivery', creationKey: randomUUID() },
@@ -97,7 +101,7 @@ it.each(['available', 'update-required', 'unavailable'] as const)(
         const executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => home.id });
         const replay = () => executor.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user',
             currentAccount: { accountId: account.id, serverId: home.id, serverIdentityId: homeIdentity } });
-        if (state !== 'available') {
+        if (state === 'update-required' || state === 'unavailable') {
             expect(await replay()).toMatchObject({ ok: false, errorCode: state === 'update-required'
                 ? 'session_input_target_update_required' : 'session_input_target_unavailable' });
             expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(0);
