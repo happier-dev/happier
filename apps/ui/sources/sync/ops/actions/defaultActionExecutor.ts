@@ -1,5 +1,6 @@
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
+import { resolveLocalServiceDomainActionRpcBinding } from '@happier-dev/protocol/actions/specs/localServices';
 import { LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
 import { resolveApprovalReplayRoute } from './approvalReplayRoute';
@@ -937,7 +938,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         credentialKey: resolveAuthCredentialsScopeKey(accountContext.credentials) } } : {}),
     },
   }, accountContext?.accountLifetime, async (args) => {
-    if ((isComputerRuntimeActionId(args.actionId) || Object.hasOwn(LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION, args.actionId)) && accountContext) {
+    if ((isComputerRuntimeActionId(args.actionId) || Object.hasOwn(LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION, args.actionId)
+      || resolveLocalServiceDomainActionRpcBinding(args.actionId)) && accountContext) {
       return await createUiAccountAction({ account: accountContext })({ ...args,
         context: { ...args.context, actionCaller: args.context.actionCaller ?? { kind: 'host' } } });
     }

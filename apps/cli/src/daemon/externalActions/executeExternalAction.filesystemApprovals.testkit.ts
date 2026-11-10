@@ -162,7 +162,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   }>, worker = false, sameMachineWorker = false,
   cliPolicy?: Readonly<{ authentication: 'account' | 'terminal'; askWithUiWaiver?: boolean; hostOnlyAsk?: 'waived' | 'unavailable';
     requireMoveChild?: true; approvalDecisionActorAccountId?: string; machineCustodianAccountId?: string; machineRole?: 'manage' | 'use';
-    deploymentRuntimeMachine?: true; waiveDeploymentChild?: true }>) {
+    deploymentRuntimeMachine?: true; waiveDeploymentChild?: true; additionalActionIds?: readonly ActionId[] }>) {
   const serviceAction = actionId.startsWith('localServices.') || actionId.startsWith('machines.services.')
     || actionId === 'projects.service.relocate';
   const deploymentAction = actionId.startsWith('deployments.');
@@ -423,10 +423,13 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     networkPaths.push('POST ' + path);
     const admitted = homeRequest('POST', path, body, options?.headers);
     if (admitted) return await admitted;
+    const additionalActionId = cliPolicy?.additionalActionIds?.find(id => path === `/v1/actions/${id}`
+      || path === `/v1/actions/${id}/execution-authorization`);
     if (path === '/v1/actions/projects.worker.copy.inspect/execution-authorization'
       || path === '/v1/actions/projects.worker.status/execution-authorization'
       || path === '/v1/actions/approval.request.decide/execution-authorization'
       || path === `/v1/actions/${actionId}/execution-authorization`
+      || additionalActionId && path === `/v1/actions/${additionalActionId}/execution-authorization`
       || path === '/v1/actions/projects.inspect/execution-authorization'
       || path === '/v1/actions/projects.execution.output.read/execution-authorization'
       || path === '/v1/actions/projects.execution.output.copy/execution-authorization'
@@ -436,7 +439,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         : path === '/v1/actions/projects.worker.status/execution-authorization' ? 'projects.worker.status'
         : path === '/v1/actions/projects.inspect/execution-authorization' ? 'projects.inspect'
         : path === '/v1/actions/projects.execution.output.read/execution-authorization' ? 'projects.execution.output.read'
-        : path === '/v1/actions/projects.execution.output.copy/execution-authorization' ? 'projects.execution.output.copy' : actionId;
+        : path === '/v1/actions/projects.execution.output.copy/execution-authorization' ? 'projects.execution.output.copy' : additionalActionId ?? actionId;
       const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       const authentication = { kind: options?.headers?.Authorization === `Bearer ${cliToken}` || options?.headers?.Authorization === `Bearer ${token}`
         ? 'terminal' as const : 'account' as const, tokenEpoch: 1 };
@@ -454,6 +457,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     if (path === '/v1/actions/projects.worker.status' || path === '/v1/actions/projects.worker.copy.inspect' || path === '/v1/actions/projects.inspect'
       || path === '/v1/actions/approval.request.decide'
       || path === `/v1/actions/${actionId}`
+      || additionalActionId && path === `/v1/actions/${additionalActionId}`
       || path === '/v1/actions/projects.execution.output.read' || path === '/v1/actions/projects.execution.output.copy'
       || Object.keys(PROJECT_FINITE_ACTION_RPC_METHODS_V1).some(id => path === `/v1/actions/${id}`)) {
       const requestedActionId = path === '/v1/actions/approval.request.decide' ? 'approval.request.decide'
@@ -461,7 +465,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         : path === '/v1/actions/projects.worker.copy.inspect' ? 'projects.worker.copy.inspect'
         : path === '/v1/actions/projects.inspect' ? 'projects.inspect'
         : path === '/v1/actions/projects.execution.output.read' ? 'projects.execution.output.read'
-        : path === '/v1/actions/projects.execution.output.copy' ? 'projects.execution.output.copy' : actionId;
+        : path === '/v1/actions/projects.execution.output.copy' ? 'projects.execution.output.copy' : additionalActionId ?? actionId;
       const originalStatus = requestedActionId === 'projects.worker.status' ? ExternalActionRequestEnvelopeV1Schema.safeParse(body) : null;
       const request = originalStatus?.success ? (() => {
         const envelope = originalStatus.data;

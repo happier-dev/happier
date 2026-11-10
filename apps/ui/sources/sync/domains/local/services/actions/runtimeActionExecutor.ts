@@ -1,5 +1,5 @@
 import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
-import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, type DaemonLocalServicePreviewRevokeRequestV1, type LocalServicePreviewSnapshotV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import { DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, DaemonLocalServicePreviewRevokeResponseV1Schema, type LocalServicePreviewSnapshotV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema, DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema, DaemonLocalServicePublicPreviewStatusRequestV1Schema, redactLocalServicePublicPreviewCreateResponseForAgentEgress, redactLocalServicePublicPreviewRevokeResponseForAgentEgress, redactLocalServicePublicPreviewSnapshotForAgentEgress, type LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol/local/services/public/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -51,17 +51,10 @@ import {
 } from '../launch/machineRpc';
 import {
     normalizeLocalServicePreviewSnapshotPayload,
-    type LocalServicePreviewLifecycleFailureReason,
-    type LocalServicePreviewOpenOrCreateClientInput,
-    type LocalServicePreviewOpenOrCreateClientResult,
-    type LocalServicePreviewRevokeClientInput,
-    type LocalServicePreviewRevokeClientResult,
     type LocalServicePreviewSnapshotClientInput,
 } from '../preview/api';
 import {
     fetchLocalServicePreviewSnapshotViaMachineRpc,
-    openOrCreateLocalServicePreviewViaMachineRpc,
-    revokeLocalServicePreviewViaMachineRpc,
     type LocalServicePreviewSnapshotRpcResult,
 } from '../preview/machineRpc';
 import { publishLocalServicePreviewSnapshot } from '../preview/sharedStore';
@@ -124,12 +117,6 @@ export type CreateLocalServicesRuntimeActionExecutorInput = Readonly<{
     fetchPreviewSnapshot?: (
         input: LocalServicePreviewSnapshotClientInput,
     ) => Promise<LocalServicePreviewSnapshotRpcResult>;
-    openOrCreatePreview?: (
-        input: LocalServicePreviewOpenOrCreateClientInput,
-    ) => Promise<LocalServicePreviewOpenOrCreateClientResult>;
-    revokePreview?: (
-        input: LocalServicePreviewRevokeClientInput,
-    ) => Promise<LocalServicePreviewRevokeClientResult>;
     // Action-driven invalidation sink: each preview lifecycle/status snapshot is published into
     // the shared preview-status store (PRV-4) so an open pane refreshes immediately. Defaults to
     // the singleton store; injectable for isolated unit tests.
@@ -227,32 +214,6 @@ function readTargetIdFromInput(input: unknown): string | null {
     return isRecord(input) ? normalizeNonEmptyString(input.targetId) : null;
 }
 
-function previewLifecycleFailureResult(reason: LocalServicePreviewLifecycleFailureReason) {
-    // Transport failures reuse the preview route-failure code; a daemon domain refusal carries a
-    // `refused:<code>` → preserve the producer code inside the typed preview-refusal namespace.
-    if (reason === 'unavailable' || reason === 'request_failed' || reason === 'invalid_response') {
-        return routeFailureResult('preview', reason);
-    }
-    return disabledResult(`local_services_preview_refused:${reason.slice('refused:'.length)}`);
-}
-
-// The openOrCreate request resolves the preview from exactly one canonical target reference
-// (inventory entry / managed service / launch target) — never a raw URL. The action input carries
-// these through its passthrough schema; forward only the recognised reference fields.
-function readPreviewTargetReferences(input: unknown): Readonly<Record<string, unknown>> {
-    if (!isRecord(input)) return {};
-    const references: Record<string, unknown> = {};
-    const inventoryEntryId = normalizeNonEmptyString(input.inventoryEntryId);
-    if (inventoryEntryId) references.inventoryEntryId = inventoryEntryId;
-    const managedServiceId = normalizeNonEmptyString(input.managedServiceId);
-    if (managedServiceId) references.managedServiceId = managedServiceId;
-    if (isRecord(input.serviceTarget)) references.serviceTarget = input.serviceTarget;
-    const launchTargetId = normalizeNonEmptyString(input.launchTargetId);
-    if (launchTargetId) references.launchTargetId = launchTargetId;
-    if (isRecord(input.initialPath)) references.initialPath = input.initialPath;
-    return references;
-}
-
 function publishLifecycleSnapshot(
     sink: (input: Readonly<{ machineId: string; serverId?: string; snapshot: LocalServicePreviewSnapshot }>) => void,
     machineId: string,
@@ -341,8 +302,6 @@ export function createLocalServicesRuntimeActionExecutor(
     const registerLauncherPreview = input.registerLauncherPreview ?? registerLocalServiceLauncherPreviewViaMachineRpc;
     const clearLauncherHistory = input.clearLauncherHistory ?? clearLocalServiceLauncherHistoryViaMachineRpc;
     const fetchPreviewSnapshot = input.fetchPreviewSnapshot ?? fetchLocalServicePreviewSnapshotViaMachineRpc;
-    const openOrCreatePreview = input.openOrCreatePreview ?? openOrCreateLocalServicePreviewViaMachineRpc;
-    const revokePreview = input.revokePreview ?? revokeLocalServicePreviewViaMachineRpc;
     const onPreviewSnapshot: NonNullable<CreateLocalServicesRuntimeActionExecutorInput['onPreviewSnapshot']> = published => {
         if (!mayPublishCatalog(published.serverId)) return;
         if (input.onPreviewSnapshot) input.onPreviewSnapshot(published);
@@ -545,32 +504,24 @@ export function createLocalServicesRuntimeActionExecutor(
             return result.protocolSnapshot;
         }
 
-        if (args.actionId === 'localServices.preview.openOrCreate') {
-            if (!machineId) return disabledResult('local_services_machine_unavailable');
-            const request = DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.safeParse({
-                machineId,
-                ...(sessionId ? { sessionId } : {}),
-                ...readPreviewTargetReferences(parsed.input),
-            });
-            if (!request.success) return invalidParametersResult;
-            const result = await openOrCreatePreview({ request: request.data, serverId, signal: args.context.signal });
-            if (!result.ok) return previewLifecycleFailureResult(result.reason);
-            publishLifecycleSnapshot(onPreviewSnapshot, machineId, serverId, result.response.snapshot);
-            return result.response;
-        }
-
-        if (args.actionId === 'localServices.preview.revoke') {
+        if (args.actionId === 'localServices.preview.openOrCreate' || args.actionId === 'localServices.preview.revoke') {
             if (!machineId) return disabledResult('local_services_machine_unavailable');
             const request = parseLocalServiceDomainActionRpcRequest(args.actionId, {
                 ...(isRecord(parsed.input) ? parsed.input : {}), machineId,
+                ...(args.actionId === 'localServices.preview.openOrCreate' && sessionId ? { sessionId } : {}),
             });
             if (!request?.success) return invalidParametersResult;
-            // This constant Action selects the Revoke schema in the canonical lowerer.
-            const result = await revokePreview({ request: request.data as DaemonLocalServicePreviewRevokeRequestV1,
-                serverId, signal: args.context.signal });
-            if (!result.ok) return previewLifecycleFailureResult(result.reason);
-            publishLifecycleSnapshot(onPreviewSnapshot, machineId, serverId, result.response.snapshot);
-            return result.response;
+            if (!input.executeOnMachine) return routeFailureResult('preview', 'unavailable');
+            // UI review already admitted this intent. Use the incumbent Account Action
+            // transport so the receiving Machine gets the requester's private carrier.
+            const result = await input.executeOnMachine({ ...args, input: request.data, context: {
+                ...args.context, externalActionTarget: args.context.externalActionTarget ?? { kind: 'machine', machineId },
+            } });
+            const response = args.actionId === 'localServices.preview.openOrCreate'
+                ? DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.safeParse(result)
+                : DaemonLocalServicePreviewRevokeResponseV1Schema.safeParse(result);
+            if (response.success) publishLifecycleSnapshot(onPreviewSnapshot, machineId, serverId, response.data.snapshot);
+            return result;
         }
 
         if (args.actionId === 'localServices.publicPreview.status') {

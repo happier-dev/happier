@@ -947,7 +947,10 @@ and access routes obtain the exact managed occurrence and endpoint through
 `readLocalServicePreviewAdmission` (`app/local/services/preview/admission.ts`), which asks
 the Machine's existing declared-service owner and preserves viewer/starter Machine admission.
 In unreleased 0.3, the daemon preview lifecycle selects an admitted guest's forwarded
-Account credential to mint that guest's viewer access. The native registration channel
+Account credential to mint that guest's viewer access. Native UI Open and Revoke retain
+the UI's existing confirmation, then use the same Account Action transport as agent
+execution; they do not send an effect through the credential-free metadata RPC path.
+The native registration channel
 retains the daemon credential. Guest preview metadata uses the existing requester Service
 projection and omits viewer URLs; observing it does not require forwarding credentials
 or minting access. Inventory preview remains under the custodian's credential scope.

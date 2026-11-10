@@ -1,6 +1,7 @@
 import '../../../../ui/sources/dev/vitestSetup';
 import axios from 'axios';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { DaemonLocalServicePreviewOpenOrCreateResponseV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -60,12 +61,13 @@ it('preserves the real WORKER handler refusal at the UI control decoder', async 
   }
 });
 
-it.each(['localServices.actions.stopManaged', 'machines.services.control', 'localServices.actions.openPreview'] as const)(
+it.each(['localServices.actions.stopManaged', 'machines.services.control', 'localServices.actions.openPreview', 'localServices.preview.openOrCreate'] as const)(
   'controls A’s own Service on B through the real UI, Machine ingress and native owner: %s', async actionId => {
   const h = await createHarness(actionId, 'ask', false, 'srv_n2', undefined, false, false,
-    { authentication: 'account', machineCustodianAccountId: 'host', machineRole: actionId === 'localServices.actions.openPreview' ? 'use' : 'manage' });
+    { authentication: 'account', machineCustodianAccountId: 'host', machineRole: actionId === 'localServices.actions.openPreview' || actionId === 'localServices.preview.openOrCreate' ? 'use' : 'manage',
+      ...(actionId === 'localServices.preview.openOrCreate' ? { additionalActionIds: ['localServices.preview.revoke'] } : {}) });
   try {
-    const opening = actionId === 'localServices.actions.openPreview';
+    const opening = actionId === 'localServices.actions.openPreview' || actionId === 'localServices.preview.openOrCreate';
     const workspace = actionId !== 'machines.services.control' ? await h.seedMoveService(opening ? 'http://127.0.0.1:42518' : null) : null;
     if (opening) {
       const post = vi.mocked(axios.post).getMockImplementation()!;
@@ -92,13 +94,14 @@ it.each(['localServices.actions.stopManaged', 'machines.services.control', 'loca
       homes.answer(serverId, path, { select: async () => ({ body: (await axios.get('https://home.example.test' + path,
         { headers: { Authorization: 'Bearer ' + h.humanToken } })).data }) });
     }
-    for (const path of [`/v1/actions/${actionId}/execution-authorization`, `/v1/actions/${actionId}`]) {
+    const homeActionIds = actionId === 'localServices.preview.openOrCreate' ? [actionId, 'localServices.preview.revoke'] : [actionId];
+    for (const homeActionId of homeActionIds) for (const path of [`/v1/actions/${homeActionId}/execution-authorization`, `/v1/actions/${homeActionId}`]) {
       homes.answer(serverId, path, { select: async input => {
-        if (path === `/v1/actions/${actionId}`) {
+        if (path === `/v1/actions/${homeActionId}`) {
           const signed = ExternalActionExecutionAuthorizationRequestV1Schema.parse(input);
           expect(signed.executionAuthorization?.binding).toMatchObject({
             accountId: 'account', custodianAccountId: 'host', authentication: { kind: 'account' },
-            actionId, requestId: signed.envelope.requestId,
+            actionId: homeActionId, requestId: signed.envelope.requestId,
           });
         }
         const result = await axios.post('https://home.example.test' + path, input,
@@ -113,7 +116,9 @@ it.each(['localServices.actions.stopManaged', 'machines.services.control', 'loca
     let showConfirmation!: () => void;
     const confirmationPending = new Promise<void>(resolve => { showConfirmation = resolve; });
     confirmModal.mockImplementation(() => { showConfirmation(); return decision; });
-    const execution = createDefaultActionExecutor().execute(actionId, native
+    const execution = createDefaultActionExecutor().execute(actionId, actionId === 'localServices.preview.openOrCreate'
+      ? { machineId: workspace!.request.currentTarget.machineId, serviceTarget: workspace!.request.currentTarget }
+      : native
       ? { ...native.target, operation: 'stop' }
       : { ...request!, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request!) },
       { surface: 'ui', authority: 'present_user', serverId });
@@ -137,6 +142,25 @@ it.each(['localServices.actions.stopManaged', 'machines.services.control', 'loca
     expect(confirmModal).toHaveBeenCalledTimes(1);
     expect(h.hasApproval()).toBe(false);
     expect(h.networkPaths.filter(path => path === `POST /v1/actions/${actionId}`)).toHaveLength(1);
+    if (actionId === 'localServices.preview.openOrCreate') {
+      const opened = DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.parse(result.ok ? result.result : null);
+      await homes.requireUiApproval(serverId, 'localServices.preview.revoke');
+      vi.spyOn(axios, 'delete').mockImplementation(async (url, config) => {
+        expect(new URL(String(url)).pathname).toBe('/v1/local-services/preview/' + opened.preview.previewId);
+        expect(config?.headers?.Authorization).toBe('Bearer ' + h.humanToken);
+        return { status: 200, data: { ok: true } };
+      });
+      const revoked = await createDefaultActionExecutor().execute('localServices.preview.revoke', {
+        machineId: workspace!.request.currentTarget.machineId,
+        previewId: opened.preview.previewId, serviceTarget: workspace!.request.currentTarget,
+      }, { surface: 'ui', authority: 'present_user', serverId });
+      expect(revoked, JSON.stringify(revoked)).toMatchObject({ ok: true, result: { revoked: true,
+        snapshot: { resources: [], previews: [] } } });
+      expect(confirmModal).toHaveBeenCalledTimes(2);
+      expect(seeded.snapshot().state).toBe('running');
+      expect(seeded.stopCalls()).toBe(0);
+    }
+
   } finally {
     await Promise.all(h.serviceInstances().map(service => service.stop()));
     await h.close();

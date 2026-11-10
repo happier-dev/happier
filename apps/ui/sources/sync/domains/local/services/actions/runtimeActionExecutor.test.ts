@@ -1064,11 +1064,12 @@ describe('UI local-services runtime action executor', () => {
     it('dispatches localServices.preview.openOrCreate to the daemon route and publishes the snapshot', async () => {
         const mod = await import('./runtimeActionExecutor');
 
-        const openOrCreatePreview = vi.fn(async () => ({ ok: true as const, response: previewOpenOrCreateResponse }));
+        // The Machine Action transport is outside the UI process.
+        const executeOnMachine = vi.fn(async () => previewOpenOrCreateResponse);
         const onPreviewSnapshot = vi.fn();
         const execute = mod.createLocalServicesRuntimeActionExecutor({
             resolveMachineId: () => 'machine_1',
-            openOrCreatePreview,
+            executeOnMachine,
             onPreviewSnapshot,
         });
 
@@ -1078,14 +1079,7 @@ describe('UI local-services runtime action executor', () => {
             context: { serverId: 'server_1' },
         }))).resolves.toEqual(previewOpenOrCreateResponse);
 
-        expect(openOrCreatePreview).toHaveBeenCalledWith({
-            request: {
-                machineId: 'machine_1',
-                sessionId: 'session_1',
-                inventoryEntryId: 'entry-vite',
-            },
-            serverId: 'server_1',
-        });
+
         // Action-driven invalidation: the returned snapshot is published into the shared store.
         expect(onPreviewSnapshot).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine_1',
@@ -1104,11 +1098,11 @@ describe('UI local-services runtime action executor', () => {
     ])('revokes a $binding preview with its exact binding and publishes the refreshed snapshot', async ({ serviceTarget }) => {
         const mod = await import('./runtimeActionExecutor');
 
-        const revokePreview = vi.fn(async () => ({ ok: true as const, response: previewRevokeResponse }));
+        const executeOnMachine = vi.fn(async () => previewRevokeResponse);
         const onPreviewSnapshot = vi.fn();
         const execute = mod.createLocalServicesRuntimeActionExecutor({
             resolveMachineId: () => 'machine_1',
-            revokePreview,
+            executeOnMachine,
             onPreviewSnapshot,
         });
 
@@ -1117,24 +1111,22 @@ describe('UI local-services runtime action executor', () => {
             input: { previewId: previewResource.previewId, ...(serviceTarget ? { serviceTarget } : {}) },
         }))).resolves.toEqual(previewRevokeResponse);
 
-        expect(revokePreview).toHaveBeenCalledWith({
-            request: { machineId: 'machine_1', previewId: previewResource.previewId, ...(serviceTarget ? { serviceTarget } : {}) },
-            serverId: undefined,
-        });
+
         expect(onPreviewSnapshot).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine_1',
             snapshot: expect.objectContaining({ generatedAt: 5_000 }),
         }));
     });
 
-    it('maps a daemon preview-lifecycle refusal to a stable preview_<reason> disabled code', async () => {
+    it('preserves the Machine Action preview refusal without publishing a snapshot', async () => {
         const mod = await import('./runtimeActionExecutor');
 
-        const openOrCreatePreview = vi.fn(async () => ({ ok: false as const, reason: 'refused:wrong_machine' as const }));
+        const executeOnMachine = vi.fn(async () => ({ ok: false as const, errorCode: 'runtime_action_disabled',
+            error: 'runtime_action_disabled:localServices:local_services_preview_refused:wrong_machine' }));
         const onPreviewSnapshot = vi.fn();
         const execute = mod.createLocalServicesRuntimeActionExecutor({
             resolveMachineId: () => 'machine_1',
-            openOrCreatePreview,
+            executeOnMachine,
             onPreviewSnapshot,
         });
 
@@ -1152,10 +1144,10 @@ describe('UI local-services runtime action executor', () => {
     it('fails localServices.preview.revoke closed when previewId is missing', async () => {
         const mod = await import('./runtimeActionExecutor');
 
-        const revokePreview = vi.fn();
+        const executeOnMachine = vi.fn();
         const execute = mod.createLocalServicesRuntimeActionExecutor({
             resolveMachineId: () => 'machine_1',
-            revokePreview,
+            executeOnMachine,
         });
 
         await expect(execute(runtimeArgs({
@@ -1166,6 +1158,6 @@ describe('UI local-services runtime action executor', () => {
             errorCode: 'invalid_parameters',
             error: 'invalid_parameters',
         });
-        expect(revokePreview).not.toHaveBeenCalled();
+        expect(executeOnMachine).not.toHaveBeenCalled();
     });
 });
