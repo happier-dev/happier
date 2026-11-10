@@ -14,26 +14,42 @@ describe('Home identity admission through Action transports', () => {
       source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Result' } } } };
     let returnedHome = 'canonical-home';
     const approvals: unknown[] = [];
-    const executor = createActionExecutor({ sessionBoardAction: async () => ({ v: 1, serverId: returnedHome,
-      sessionId: 'source', capabilities: { readTranscript: true, editSessionRecords: true }, layout: null,
-      items: [{ itemId: 'visual', item, revision, title: item.title, sourceKind: item.source.kind }],
-      incomplete: false, page: { cursor: null, hasNext: false } }),
+    const confirmations: string[] = [];
+    const copied: unknown[] = [];
+    const executor = createActionExecutor({ sessionBoardAction: async ({ actionId, input, context: mutationContext }) => {
+      if (actionId === 'session.board.get') return { v: 1, serverId: returnedHome,
+        sessionId: 'source', capabilities: { readTranscript: true, editSessionRecords: true }, layout: null,
+        items: [{ itemId: 'visual', item, revision, title: item.title, sourceKind: item.source.kind }],
+        incomplete: false, page: { cursor: null, hasNext: false } };
+      copied.push({ input, context: mutationContext });
+      return { v: 1, serverId: 'local-profile', sessionId: 'session', itemDestination: 'transcript',
+        destination: null, preview: { title: item.title, sourceKind: item.source.kind },
+        result: { operation: 'upsert_item', itemId: 'visual', outcome: 'created', itemRevision: revision } };
+    },
+      presentUserActionConfirmation: async ({ actionId }) => { confirmations.push(actionId); return true; },
       approvalsCreate: async ({ request }) => { approvals.push(request); return { artifactId: 'approval' }; },
     });
     const input = { itemId: 'visual', destination: 'transcript', expectedItemRevision: null,
       copySource: { serverId: 'canonical-home', sessionId: 'source', itemId: 'visual', expectedItemRevision: revision } };
     const caller = { ...context, defaultSessionId: 'session', defaultSessionMachineId: 'machine',
       runtimeAccountId: 'account', actionRequestId: 'copy', actionCaller: { kind: 'host' as const } };
-    expect(await executor.execute('session.board.item.upsert', input, caller))
-      .toEqual({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval', actionId: 'session.board.item.upsert' } });
-    expect(approvals).toHaveLength(1);
+    const copiedResult = await executor.execute('session.board.item.upsert', input, caller);
+    expect(copiedResult, JSON.stringify(copiedResult))
+      .toMatchObject({ ok: true, result: { serverId: 'canonical-home', sessionId: 'session',
+        itemDestination: 'transcript', result: { operation: 'upsert_item', itemId: 'visual', outcome: 'created' } } });
+    expect(confirmations).toEqual(['session.board.item.upsert']);
+    expect(copied).toEqual([{ input: { ...input, item: { ...item, destination: 'transcript' } },
+      context: expect.objectContaining({ defaultSessionId: 'session', serverId: 'local-profile', serverIdentityId: 'canonical-home' }) }]);
+    expect(approvals).toEqual([]);
     expect(await executor.execute('session.board.item.upsert', { ...input,
       copySource: { ...input.copySource, serverId: 'foreign-home' } }, caller))
       .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
     returnedHome = 'foreign-home';
     expect(await executor.execute('session.board.item.upsert', input, caller))
       .toMatchObject({ ok: false, errorCode: 'session_board_invalid' });
-    expect(approvals).toHaveLength(1);
+    expect(approvals).toEqual([]);
+    expect(copied).toHaveLength(1);
+    expect(confirmations).toHaveLength(1);
   });
 
   it('archives canonical same-Home reports without following a foreign report', async () => {

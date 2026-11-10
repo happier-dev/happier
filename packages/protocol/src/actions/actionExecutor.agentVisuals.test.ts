@@ -5,6 +5,7 @@ import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { normalizeUiSurfaceCapabilityRequestV1 } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import { SessionBoardAuthoredItemUpsertInputV1Schema, SessionBoardGetInputV1Schema } from '../sessions/board/actions.js';
 import { SessionSurfaceItemV1Schema, type SessionSurfaceItemV1 } from '../sessions/board/item.js';
+import { SessionInputAdmissionResultV1Schema } from '../sessions/messages/sessionInputAdmission.js';
 import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1 } from './actionSettings.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { createWidgetActionInputResolverV1 } from '../widgets/widgetActionInputResolverV1.js';
@@ -30,6 +31,7 @@ function harness(initialSetting: unknown = 'allowed', extraDeps: Partial<ActionE
   const approvals: ApprovalRequest[] = [];
   const writes: SessionSurfaceItemV1[] = [];
   const boardReads: unknown[] = [];
+  const deliveries = new Map<string, Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0]>();
   let executor: ReturnType<typeof createActionExecutor>;
   const deps: Partial<ActionExecutorDeps> = {
     // Exact Account settings and sealed Session record transports are boundaries;
@@ -58,6 +60,16 @@ function harness(initialSetting: unknown = 'allowed', extraDeps: Partial<ActionE
     approvalsCreate: async ({ request }: { request: ApprovalRequest }) => { approval = request; approvals.push(request); return { artifactId: 'approval' }; },
     approvalsGet: async () => approval,
     approvalsUpdate: async ({ request }: { request: ApprovalRequest }) => { approval = request; return { ok: true }; },
+    // The originating Session's Pending transport acknowledges publication with
+    // its existing local-id identity; all approval settlement remains real.
+    sessionSendMessage: async request => {
+      const result = SessionInputAdmissionResultV1Schema.parse({
+        status: request.localId && deliveries.has(request.localId) ? 'alreadyAccepted' : 'accepted',
+        localId: request.localId,
+      });
+      if (result.status === 'accepted') deliveries.set(result.localId, request);
+      return result;
+    },
     isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverId === 'home'
       && origin.machineId === 'machine' && origin.sessionId === 'session',
     // The app's replay transport reaches the exact originating daemon, whose
@@ -65,12 +77,14 @@ function harness(initialSetting: unknown = 'allowed', extraDeps: Partial<ActionE
     approvalRequestApprovedReplay: async ({ artifactId, request, context, signal }) => {
       expect(request.status).toBe('approved');
       expect(approval).toEqual(request);
-      return executor.replayApprovedApprovalRequest({ artifactId, ...(signal ? { signal } : {}), callerAuthority: context.authority ?? 'account_automation' });
+      return executor.replayApprovedApprovalRequest({ artifactId, ...(signal ? { signal } : {}),
+        callerAuthority: context.authority ?? 'account_automation',
+        currentAccount: { accountId: 'account', serverId: 'home', serverIdentityId: 'home' } });
     },
     ...extraDeps,
   };
   executor = createActionExecutor(deps);
-  return { executor, approvals, writes, boardReads, get stored() { return stored; }, get approval() { return approval; },
+  return { executor, approvals, writes, boardReads, deliveries, get stored() { return stored; }, get approval() { return approval; },
     get policyReads() { return policyReads; },
     setSetting(value: unknown) { setting = value; },
     setStored(value: typeof stored) { stored = value; },
@@ -79,7 +93,7 @@ function harness(initialSetting: unknown = 'allowed', extraDeps: Partial<ActionE
       return executor.execute('session.board.item.upsert', { itemId: 'visual', expectedItemRevision, item }, ctx);
     },
     decide(decision: 'approve' | 'reject') { return executor.execute('approval.request.decide', { artifactId: 'approval', decision },
-      { surface: 'ui', authority: 'present_user', serverId: 'home' }); },
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'account' }); },
   };
 }
 
@@ -110,6 +124,12 @@ describe('agent visuals through canonical Action admission', () => {
     expect(await host.decide('approve')).toMatchObject({ ok: true, result: { status: 'executed' } });
     expect(host.writes).toHaveLength(1);
     expect(host.approvals).toHaveLength(1);
+    expect([...host.deliveries.keys()]).toEqual(['approval-result:approval']);
+    const delivered = host.deliveries.get('approval-result:approval')!;
+    expect(delivered).toMatchObject({ sessionId: 'session', reply: 'none', requestedAction: { kind: 'enqueue' },
+      context: { runtimeAccountId: 'account', serverId: 'home', authority: 'account_automation' } });
+    expect(JSON.parse(delivered.message)).toMatchObject({ artifactId: 'approval', actionId: 'session.board.item.upsert',
+      status: 'executed', execution: { ok: true, result: { result: { outcome: 'created' } } } });
   });
 
   it('keeps the same visual direct for a present person under the real host policy', async () => {
@@ -151,7 +171,7 @@ describe('agent visuals through canonical Action admission', () => {
     }
   });
 
-  it('applies reversible present-user visual edits directly and honors an explicit Ask', async () => {
+  it('applies reversible present-user visual edits directly and requires native review for an explicit Ask', async () => {
     const ui = { ...context, surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
     const host = harness();
     expect(await host.show(note, null, ui)).toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
@@ -164,7 +184,9 @@ describe('agent visuals through canonical Action admission', () => {
     const ask = harness();
     expect(await ask.show(note, null, { ...ui, actionsSettings: normalizeActionsSettingsV1({ v: 1,
       actions: { 'session.board.item.upsert': { approvalRequiredSurfaces: ['ui'] } },
-    }) })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    }) })).toEqual({ ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required', requestId: 'show' });
+    expect(ask.approvals).toEqual([]);
+    expect(ask.writes).toEqual([]);
   });
   it.each(['ui', 'agent'] as const)('asks for own-Session capability expansion and copies on %s, but honors the generic waiver', async surface => {
     const caller = surface === 'ui'
@@ -181,20 +203,24 @@ describe('agent visuals through canonical Action admission', () => {
       for (const waived of [false, true]) {
         const actionsSettings = normalizeActionsSettingsV1({ v: 1,
           ...(waived ? { approvalWaivedSurfaces: { 'session.board.item.upsert': [surface] } } : {}) });
-        // The actual host holds Account policy outside caller context. Keep the
-        // canonical policy real so dropping a consequence fact loses Ask here.
+        // The host supplies the same Account policy to automation admission and
+        // native UI review; both keep the canonical consequence decision real.
         const host = harness('allowed', { isActionApprovalRequired: (id, ctx, input, uiConfirmation, approvedOperation, approvalScope, defaultSafety) =>
           isApprovalRequiredByActionsSettings(id, actionsSettings, ctx, defaultSafety, undefined, input, uiConfirmation, undefined, approvedOperation, approvalScope) });
+        const invocation = { ...caller, actionsSettings };
         if (testCase.prior) host.setStored({ item: SessionSurfaceItemV1Schema.parse(testCase.prior), revision });
         else host.setCopyItem(SessionSurfaceItemV1Schema.parse(html({ network: 'open' })));
         const result = testCase.next
-          ? await host.show(testCase.next, revision, caller)
+          ? await host.show(testCase.next, revision, invocation)
           : await host.executor.execute('session.board.item.upsert', { itemId: 'visual', destination: 'transcript',
             expectedItemRevision: null, copySource: { serverId: 'home', sessionId: 'source', itemId: 'visual', expectedItemRevision: revision } },
-          caller);
+          invocation);
         expect(result, JSON.stringify({ surface, waived, testCase })).toMatchObject(waived
           ? { ok: true, result: { result: { outcome: testCase.next ? 'updated' : 'created' } } }
-          : { ok: true, result: { kind: 'approval_request_created' } });
+          : surface === 'ui'
+            ? { ok: false, errorCode: 'action_interactive_review_required', requestId: 'show' }
+            : { ok: true, result: { kind: 'approval_request_created' } });
+        expect(host.approvals).toHaveLength(!waived && surface === 'agent' ? 1 : 0);
         expect(host.writes).toHaveLength(waived ? 1 : 0);
         expect(host.boardReads).toEqual([{ sessionId: testCase.next ? 'session' : 'source', itemIds: ['visual'] }]);
       }
@@ -368,7 +394,7 @@ describe('agent visuals through canonical Action admission', () => {
     }
   });
 
-  it.each(['installed', 'inline'] as const)('retains %s renderer admission and asks before switching an existing explicit override to inheritance', async kind => {
+  it.each(['installed', 'inline'] as const)('retains %s renderer admission and requires native review before switching an existing explicit override to inheritance', async kind => {
     const surface = { pluginId: 'acme.visuals', localId: 'report' };
     const installed = SessionSurfaceItemV1Schema.parse({ ...note, source: { kind: 'widget', instance: {
       v: 1, id: 'visual', definition: kind === 'installed' ? { kind, surface } : { kind, definition: {
@@ -395,8 +421,9 @@ describe('agent visuals through canonical Action admission', () => {
     expect(await host.show(explicitNone, revision)).toMatchObject({ ok: true, result: { result: { outcome: 'updated' } } });
     expect(host.stored?.item.source).toMatchObject({ instance: { networkOverride: { network: 'none' } } });
     expect(await host.show(installed, revision, { ...context, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
-      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    await host.decide('reject');
+      .toEqual({ ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required', requestId: 'show' });
+    expect(host.approvals).toEqual([]);
+    expect(host.writes).toHaveLength(2);
     expect(host.stored?.item.source).toMatchObject({ instance: { networkOverride: { network: 'none' } } });
   });
 
@@ -460,7 +487,7 @@ describe('agent visuals through canonical Action admission', () => {
       sessionBoardAction: async () => { mutationRan = true; return { ok: false, errorCode: 'session_board_invalid', error: 'session_board_invalid' }; } });
     const result = await executor.execute('session.board.item.upsert', { itemId: 'visual', expectedItemRevision: null,
       item: html({ network: 'open' }) }, context);
-    expect(result).toEqual({ ok: false, errorCode: 'action_failed', error: 'action_failed' });
+    expect(result).toEqual({ ok: false, errorCode: 'action_failed', error: 'action_failed', requestId: 'show' });
     expect(mutationRan).toBe(false);
   });
 
@@ -473,7 +500,7 @@ describe('agent visuals through canonical Action admission', () => {
         result: { operation: 'upsert_item', itemId: 'visual', outcome: 'created', itemRevision: revision } }; } });
     expect(await executor.execute('session.board.item.upsert', { itemId: 'visual', expectedItemRevision: null,
       item: html({ network: 'open' }) }, { ...context, signal: controller.signal }))
-      .toEqual({ ok: false, errorCode: 'cancelled', error: 'cancelled' });
+      .toEqual({ ok: false, errorCode: 'cancelled', error: 'cancelled', requestId: 'show' });
     expect(mutationRan).toBe(false);
   });
 

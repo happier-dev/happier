@@ -163,10 +163,11 @@ describe('createActionExecutor (Session Board family)', () => {
       'session.board.layout.update': { approvalRequiredSurfaces: [surface] },
       'widgets.item.frame.set': { approvalRequiredSurfaces: [surface] },
     } }) };
+    const reviewError = surface === 'ui' ? 'action_interactive_review_required' : 'approvals_not_supported';
     expect(await executor.execute('widgets.item.frame.set', widgetInput, askedContext))
-      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+      .toMatchObject({ ok: false, errorCode: reviewError });
     expect(await executor.execute('session.board.layout.update', domainInput, askedContext))
-      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+      .toMatchObject({ ok: false, errorCode: reviewError });
     expect(document).toBe(beforeAsk);
     const actionsSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
       'session.board.layout.update': [surface], 'widgets.item.frame.set': [surface],
@@ -353,7 +354,7 @@ describe('createActionExecutor (Session Board family)', () => {
         ok: false,
         errorCode: 'invalid_parameters',
         error: 'invalid_parameters',
-        details: { issues },
+        details: { issues: issues.map(issue => ({ ...issue, message: expect.any(String) })) },
       });
     }
     expect(sessionBoardAction).not.toHaveBeenCalled();
