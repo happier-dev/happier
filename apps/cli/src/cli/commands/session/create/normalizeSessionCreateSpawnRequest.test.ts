@@ -1,7 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { parseSessionCreateSpawnOptions } from './parseSessionCreateSpawnOptions';
+import { tmpdir } from 'node:os';
+import { withConfiguredDaemonTestHome, writeDaemonSettingsFixture } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { readSettings } from '@/persistence';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { registerSessionCreationTargetPreparationRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
+
+afterEach(() => vi.restoreAllMocks());
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -42,6 +51,49 @@ function createDeps(
 }
 
 describe('normalizeSessionCreateSpawnRequest', () => {
+  it.each(['approval-delivery-1110', 'qa-fixtures-1103-a'])('seals the current Home before the %s CLI recipe reaches another daemon profile', async identity => {
+    const activeServerId = `stack_agent-qa-servers-deploy__id_${identity}`;
+    const serverIdentityId = 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN';
+    const machineId = 'target-machine';
+    await withConfiguredDaemonTestHome({ prefix: 'happier-session-create-home-',
+      env: { HAPPIER_ACTIVE_SERVER_ID: activeServerId } }, async ({ homeDir }) => {
+      await writeDaemonSettingsFixture(homeDir, { activeServerId,
+        servers: { [activeServerId]: { id: activeServerId, name: identity,
+          serverUrl: 'https://home.test', webappUrl: 'https://home.test', createdAt: 0, updatedAt: 0, lastUsedAt: 0,
+          homeConnectionDescriptorAuthority: 'exact', homeConnectionDescriptor: { v: 1,
+            homeServerIdentityId: serverIdentityId, canonicalServerUrl: 'https://home.test', revision: 1,
+            endpoints: [{ kind: 'https', url: 'https://home.test' }] } } },
+        machineIdByServerIdByAccountId: { [activeServerId]: { owner: machineId } },
+        lastTokenSubByServerId: { [activeServerId]: 'owner' },
+      });
+      const rpc = new RpcHandlerManager({ scopePrefix: machineId, encryptionMode: 'plain', logger() {} });
+      registerSessionCreationTargetPreparationRpc({ rpcHandlerManager: rpc });
+      vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request =>
+        rpc.invokeLocal(request.method, request.request, { signal: request.signal }));
+      // Only the receiving Machine transport is substituted. Profile identity
+      // resolution, argv normalization and target preparation remain real.
+      const receiver = createCliActionDeps({ token: 'fixture-token', credentials: { token: 'fixture-token', encryption: null },
+        sessionId: '', mode: 'plain', ctx: null, serverId: 'different-daemon-profile', serverIdentityId,
+        serverHttpBaseUrl: 'https://home.test', machineActionDirectTargetTransport: { machineId,
+          invoke: (method, request, options) => rpc.invokeLocal(method, request, { signal: options?.signal }) } });
+      const preflight = receiver.sessionSpawnNewDirectoryApprovalPreflight;
+      if (!preflight) throw new Error('Missing Session target preparation');
+      for (const selectedServerId of [undefined, activeServerId, serverIdentityId]) {
+        const parsed = parseSessionCreateSpawnOptions(['create', '--path', tmpdir(), '--agent', 'claude',
+          ...(selectedServerId ? ['--server-id', selectedServerId] : [])]);
+        const normalized = await normalizeSessionCreateSpawnRequest(parsed.spawnRequest,
+          createDeps({ activeServerId, readSettings }));
+        expect(normalized.input.executionTarget).toEqual({ serverId: serverIdentityId, machineId });
+        const prepared = await preflight({ input: normalized.input });
+        expect(prepared, JSON.stringify(prepared)).toMatchObject({ type: 'not_required' });
+        await expect(preflight({ input: { ...normalized.input,
+          executionTarget: { serverId: activeServerId, machineId } } })).resolves.toEqual({ type: 'error',
+          result: { type: 'error', code: 'target_unavailable', retryable: false } });
+      }
+      await expect(normalizeSessionCreateSpawnRequest({ directory: tmpdir(), backendTargetKey: null, serverId: 'srv_other_home' },
+        createDeps({ activeServerId, readSettings }))).rejects.toMatchObject({ details: { field: 'serverId' } });
+    });
+  });
   it('admits the P0-DATA no-prompt Codex recipe with read-only permission and low effort', async () => {
     const serverId = 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN';
     const machineId = '3ca2700f-c0a8-440f-be06-cb4f3f51cb01';

@@ -13,6 +13,7 @@ import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol';
 import { SessionCapabilitySelectionAuthoringV1Schema, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 
 import { configuration } from '@/configuration';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
 import { readSettings, readStoredCredentials, type Settings } from '@/persistence';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
@@ -208,10 +209,11 @@ async function resolveExecutionTarget(
   if (!activeServerId) {
     invalidSessionCreateArgument('the active server is unavailable.');
   }
+  const homeServerId = await resolveServerProfileHomeIdentityId(activeServerId) ?? activeServerId;
   const requestedServerId = nonEmptyString(request.serverId);
-  if (requestedServerId && requestedServerId !== activeServerId) {
+  if (requestedServerId && requestedServerId !== activeServerId && requestedServerId !== homeServerId) {
     invalidSessionCreateArgument('--server-id must match the active server.', {
-      field: 'serverId', allowedValues: [activeServerId],
+      field: 'serverId', allowedValues: [...new Set([activeServerId, homeServerId])],
     });
   }
   const settings = await deps.readSettings();
@@ -222,7 +224,9 @@ async function resolveExecutionTarget(
   if (!machineId) {
     throw new Error('Missing machine id. Start the local daemon or pass --machine-id.');
   }
-  return { serverId: activeServerId, machineId };
+  // The saved profile scopes local settings; the portable Home scopes the
+  // recipe that another daemon receives, retains and replays.
+  return { serverId: homeServerId, machineId };
 }
 
 /**
