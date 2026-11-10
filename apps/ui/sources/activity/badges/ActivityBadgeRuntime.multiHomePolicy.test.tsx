@@ -170,8 +170,10 @@ vi.mock('@/activity/source/activityPersonalSessionMembership', () => ({
 // `installBadgeHomeIdentities`: the real Home owner, with a spy on the one genuine boundary. See
 // the rule recorded at that helper for why neither module is `vi.mock`ed here.
 
+// Collect the cold production graph before starting a case's assertion timeout.
+const { ActivityBadgeRuntime } = await import('./ActivityBadgeRuntime');
+
 async function renderBadgeRuntime(): Promise<renderer.ReactTestRenderer> {
-    const { ActivityBadgeRuntime } = await import('./ActivityBadgeRuntime');
     const { tree } = await renderScreen(<ActivityBadgeRuntime />);
     // Each Home's credential scope resolves asynchronously; nothing is written before it does.
     await flushHookEffects();
