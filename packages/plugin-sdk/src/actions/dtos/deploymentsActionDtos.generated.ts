@@ -7419,6 +7419,11 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         projectSourceId?: string | undefined;
+        preparedArtifact?: undefined | {
+            contentArtifactId: string;
+            contentHeaderVersion: number;
+            contentBodyVersion: number;
+        };
         creationDefaults?: undefined | {
             values: {
                 retainPreviousDeployments: number;
