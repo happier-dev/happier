@@ -176,9 +176,10 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
         }
         throw error;
     }
-    // Joining a retained fleet requires route enrollment and the member CAS;
-    // native image/health success alone cannot prove that transition.
-    if (admitted.link.activeDeploymentId && admitted.link.members.some(member => member.state === 'joining')) {
+    const joining = admitted.selected ? admitted.link.members.filter(member => member.state === 'joining') : [];
+    // Keep the refusal until the deployed-current-image producer and ingress
+    // owner are both mounted. Native success alone never commits membership.
+    if (joining.length && !host.enrollMemberRoutes) {
         return rejectBeforeEffects('unsupported_action');
     }
     const versions = await host.readMemberVersions?.({ environmentId: receipt.deployment.environmentId,
@@ -194,6 +195,33 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
     if (!started.ok) return started;
     await read();
     try {
+        if (admitted.selected) {
+            for (const target of joining) {
+                // Join with U's retained artifacts first. The ordinary requested B
+                // build/rollout below remains independent of this enrollment.
+                const restored = await dispatch(target, 'restore', admitted.selected.deployment.id);
+                if (!current()) return finishChild(restored);
+                const row = member(target.machineId);
+                if (!restored.ok && restored.errorCode === 'outcome_unknown' || row?.restoration === 'outcome_unknown') {
+                    return await write('outcome_unknown');
+                }
+                if (!restored.ok || row?.restoration !== 'succeeded' || row.health !== 'healthy') {
+                    return await write('failed', { ...receipt.content,
+                        failure: projectFailure('restore', restored.ok ? 'deployment_health_failed' : restored.errorCode,
+                            restored.ok ? undefined : restored) });
+                }
+            }
+            if (joining.length) {
+                // The ingress owner reconciles the complete admitted member set,
+                // after every joining receiver has established healthy U.
+                const enrolled = await host.enrollMemberRoutes!(request, { link: admitted.link,
+                    signal: initial.signal });
+                await read();
+                if (!current()) return finishChild(enrolled);
+                if (!enrolled.ok) return await write(enrolled.errorCode === 'outcome_unknown' ? 'outcome_unknown' : 'failed',
+                    { ...receipt.content, failure: projectFailure('activate', enrolled.errorCode, enrolled) });
+            }
+        }
         if (admitted.selected) for (const target of admitted.link.members) {
             const observed = await dispatch(target, 'observe', admitted.selected.deployment.id);
             if (!current()) return finishChild(observed);

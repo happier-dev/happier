@@ -162,8 +162,8 @@ it.each(['service', 'missing_artifact', 'root_verify'] as const)('preserves nati
                     machineId, installationId: installation.installationId }), context));
             };
             const { executor } = createCliActionExecutorHarness({ token: credentials.token, sessionId: '', mode: 'plain', ctx: null,
-                serverHttpBaseUrl: endpoint, deploymentAction: deployment,
-                onApprovalRequested: (id, signal) => onApprovalRequested?.(id, signal) }, {
+                serverHttpBaseUrl: endpoint, serverId, serverIdentityId: 'srv_domain_failure', machineId, deploymentAction: deployment,
+                onApprovalRequested: (id, signal, decide) => onApprovalRequested?.(id, signal, decide) }, {
                 ...createUnavailableActionTransportDeps(), deploymentAction: deployment,
                 resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(deployment),
                 runActionOperation: runtime.runActionOperation,

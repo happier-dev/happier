@@ -7,7 +7,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentCreateInputV1Schema, DeploymentActionInputSchemasV1,
+    DeploymentBindingsPreparedInputV1Schema } from '@happier-dev/protocol';
 import { DeploymentDeployAdmissionInputV1Schema, DeploymentBackupRestoreResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { configuration } from '@/configuration';
@@ -74,6 +75,22 @@ import { EnvironmentSecretLaunchAdmissionInputV1Schema, computeEnvironmentSecret
     createDeploymentReceiptArtifactHeaderV1, readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { createDaemonDeploymentActionDeps } from '../../createDaemonDeploymentActionDeps';
+import { resolvePreviewWorkflowForHost } from '../../previewWorkflowForHost';
+import { createRegistryHostV1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
+import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { createSavedSecretsCliHttpFixture } from '@/cli/actions/adapters/savedSecretsCliHttpFixture';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolveWorkflowActionFieldBinding, evaluateWorkflowCondition } from '@/daemon/workflows/input';
+import { readPreviewCloseWorkflowForHost } from '../../previewCloseWorkflowForHost';
+import { createOwnServerTeardownForHost } from './teardown';
+import { DeploymentTeardownRequestInputV1Schema } from '@happier-dev/protocol/deployments/deploymentTeardownRequestV1';
+import { MachineSecretGrantV1Schema, DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol';
+import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { WorkflowActionLeafV1 } from '@happier-dev/protocol/workflows';
+import { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { prepareWorkflowDeploymentResultCapture } from './workflowDeploymentResult';
+import { readPreviewCopyReadinessForHost } from '../../previewCopyReadinessForHost';
 import { createDaemonDeploymentChildExecutor } from '../../deploymentChild';
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
@@ -229,7 +246,7 @@ describe('own-server target at the Action host boundary', () => {
     for (const { scenario, sourceKind } of [
         ...(['iroh_publication_refused', 'iroh_publication_loopback', 'iroh_publication_host_network', 'private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
-        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'public_copy', 'public_backup', 'public_backup_restore', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'public_copy', 'public_preview_copy', 'public_preview_copy_failure', 'native_preview_cleanup', 'public_backup', 'public_backup_restore', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
     ]) it(
         `native deployment admission, finite execution and retained C1 observation: ${scenario}`, async () => {
         const startedAt = Date.now();
@@ -237,6 +254,8 @@ describe('own-server target at the Action host boundary', () => {
         // integration budget, including setup; no shorter per-wait deadline.
         const waitForNativeRead = (assertion: () => unknown) => vi.waitFor(assertion,
             { timeout: 60_000 - (Date.now() - startedAt) });
+        const previewCopy = scenario === 'public_preview_copy' || scenario === 'public_preview_copy_failure';
+        const publicCopy = scenario === 'public_copy' || previewCopy;
         const runtimeRead = scenario === 'runtime_reads' || scenario === 'runtime_health';
         const promotionScenario = scenario === 'promote_source_demoted' || scenario === 'promote_destination_demoted'
             || scenario === 'promote_build_refused' || scenario === 'promote_archive_custody' || scenario === 'promote_cleanup_refused';
@@ -250,6 +269,7 @@ describe('own-server target at the Action host boundary', () => {
         onTestFailed(() => { console.info('Native target phases', { scenario, phases: stagePhases }); });
         phase('fixture');
         const root = await mkdtemp(join(tmpdir(), 'happier-deployment-health-'));
+        const nativeHttp = { get: axios.get.bind(axios), post: axios.post.bind(axios) };
         const repository = join(root, 'repository');
         await mkdir(repository);
         const docker = await createOwnServerDockerBoundary(join(root, 'docker'), { operatingSystem: 'Docker Desktop' });
@@ -267,7 +287,9 @@ describe('own-server target at the Action host boundary', () => {
                 volumes: [{ type: 'volume', source: 'shared', target: '/data' }],
                 ports: [{ target: 3000, published: '3000', protocol: 'tcp', host_ip: scenario === 'iroh_publication_loopback' || scenario === 'iroh_publication_host_network' ? '127.0.0.1' : scenario === 'private_publication_refused' || scenario === 'private_publication_failed_attempt' || scenario === 'private_publication_matching_restore' || scenario === 'private_publication_forward_withdrawal' || scenario === 'runtime_stage' ? '100.81.1.12' : '0.0.0.0' }],
             }), environment: { PRIVATE_INPUT: 'sensitive-host-value',
-                DEPLOY_PASSWORD: '${DEPLOY_PASSWORD:?required}' } } },
+                ...(previewCopy ? {} : { DEPLOY_PASSWORD: '${DEPLOY_PASSWORD:?required}' }) } },
+                ...(scenario === 'native_preview_cleanup' ? { 'later-app': { image: image.registryReference,
+                    ports: [{ target: 3000, published: '3000', protocol: 'tcp', host_ip: '127.0.0.1' }] } } : {}) },
             ...(scenario === 'routing_review' ? {} : { volumes: { shared: { name: 'target-review-shared' } } }) }));
         const git = (...args: string[]) => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
         if (scenario === 'required_project_secret') {
@@ -282,6 +304,10 @@ describe('own-server target at the Action host boundary', () => {
             git('commit', '--quiet', '-m', 'A');
         }
         const environment = createDeploymentEnvironmentDetailV1();
+        if (previewCopy) {
+            environment.environment.createdByAccountId = 'account-cli-fixture';
+            environment.environment.owner = { kind: 'account', accountId: 'account-cli-fixture' };
+        }
         if (scenario.startsWith('joining_current')) environment.content.ownServer!.rollout = 'startFirst';
         if (storedPrivatePublication) {
             const document = await readFile(join(repository, 'compose.yaml'), 'utf8');
@@ -294,6 +320,19 @@ describe('own-server target at the Action host boundary', () => {
         if (scenario.startsWith('iroh_publication_')) environment.content.ownServer = { rollout: 'recreate', autoRestorePreviousRelease: false,
             serviceExports: [{ key: 'application', service: 'app', containerPort: 3000, scheme: 'http',
                 exposure: 'loopback', transport: { kind: 'iroh' } }] };
+        if (scenario === 'native_preview_cleanup') {
+            environment.environment.purpose = 'preview';
+            environment.content.ownServer = { rollout: 'recreate', autoRestorePreviousRelease: false,
+                serviceExports: [{ key: 'later-app', service: 'later-app', containerPort: 3000, scheme: 'http',
+                    exposure: 'loopback', transport: { kind: 'iroh' } },
+                { key: 'later-private', service: 'later-app', containerPort: 3000, scheme: 'http',
+                    exposure: 'privateNetwork', privateNetwork: 'shop-net' }] };
+            environment.content = DeploymentEnvironmentContentV1Schema.parse({ ...environment.content,
+                template: { templateRef: { sourceId: 'apps', itemId: 'postgresql', version: '17',
+                    ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } }, services: ['app'],
+                    definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+                    data: { engine: 'postgres', service: 'app', logicalBackup: { adapter: 'postgres-v1', database: 'DB_NAME' } } } });
+        }
         const promotionSource = structuredClone(environment);
         promotionSource.environment.id = 'promotion-source';
         let promotionDestinationContent: typeof environment.content | undefined;
@@ -523,7 +562,7 @@ describe('own-server target at the Action host boundary', () => {
         const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: root,
             controller: pluginReloadController, runtimeOptions: {
                 pluginIds: [...(storedPrivatePublication ? [] : ['happier.scm.backend.git']),
-                ...(migrationBackup || scenario === 'public_copy' ? ['happier.backup.destinations'] : [])] } });
+                ...(migrationBackup || publicCopy ? ['happier.backup.destinations'] : [])] } });
         // Each scenario is a different installed daemon lifetime. Reusing its
         // Home would collide with the preceding committed immutable release.
         Reflect.set(configuration, 'happyHomeDir', root);
@@ -658,7 +697,7 @@ describe('own-server target at the Action host boundary', () => {
                     // read, not after an admitted observer has begun its work.
                     if (scenario === 'retained_health_denied') environment.environment.capabilities.read = false;
                 }
-                return structuredClone(scenario === 'public_copy' && environmentId === promotionSource.environment.id
+                return structuredClone(publicCopy && environmentId === promotionSource.environment.id
                     ? promotionSource : environment);
             },
             async readReceipt({ deploymentId }) { memberReceiptReads++; return structuredClone(deploymentId === serving.deployment.id ? serving : recoveryCapture?.deployment.id === deploymentId ? recoveryCapture : earlierReceipt?.deployment.id === deploymentId ? earlierReceipt : receipt); },
@@ -698,6 +737,8 @@ describe('own-server target at the Action host boundary', () => {
                 // Home persists serialized bytes, not the sender's object.
                 // Later boundary mutations must not rewrite its expected CAS.
                 receipt.content = structuredClone(input.content);
+                if (previewCopy && input.state === 'succeeded' && receipt.deployment.operation !== 'teardown')
+                    environment.targetLinks[0]!.targetLink.activeDeploymentId = receipt.deployment.id;
                 // An independent manager can edit the next desired definition
                 // after this finite member invocation admitted its snapshot.
                 if (input.content.ownServer?.sources?.length) {
@@ -720,7 +761,7 @@ describe('own-server target at the Action host boundary', () => {
                 resolveRequesterIdentity,
                 async acquirePluginRuntimeRegistryLease() { return mounted.controller.tryAcquireRuntimeRegistry()!; },
                 async readEnvironmentSecretLaunchAdmission(input) {
-                    if (scenario === 'public_copy' && input.materialization.kind === 'copySourceRead') {
+                    if (publicCopy && input.materialization.kind === 'copySourceRead') {
                         expect(input).toMatchObject({ environmentId: promotionSource.environment.id,
                             targetLinkId: promotionSource.targetLinks[0].targetLink.id,
                             materialization: { kind: 'copySourceRead', deploymentId: recoveryCapture!.deployment.id,
@@ -1309,11 +1350,25 @@ describe('own-server target at the Action host boundary', () => {
                     .toBe(scenario === 'candidate_backup_configured_failure' ? 7 : 0);
                 return;
             }
-            if (scenario === 'public_restore' || scenario === 'standalone_public_restore' || scenario === 'public_copy') {
+            if (scenario === 'native_preview_cleanup') {
+                const initial = await target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: sourceContext });
+                receipt.deployment.state = 'running';
+                receipt.content.ownServer = { approvedInputBasis: initial.inputBasis };
+                receipt.content.services = ['app'];
+                await docker.seedVolume('template-postgres-data', 'template-project');
+                expect(await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
+                    phase: 'activate', selectedDeploymentId: receipt.deployment.id })).toMatchObject({ ok: true });
+                expect(receipt.content.ownServer?.previewCleanup).toEqual({ machines: ['machine-a'], volumes: [
+                    { name: 'target-review-shared', disposition: 'delete', confirmation: 'target-review-shared' },
+                ] });
+                expect(await docker.readVolumeNames()).toEqual(['target-review-shared', 'template-postgres-data']);
+                return;
+            }
+            if (scenario === 'public_restore' || scenario === 'standalone_public_restore' || publicCopy) {
                 phase('standalone-seed');
-                const captureEnvironment = scenario === 'public_copy' ? promotionSource : environment;
+                const captureEnvironment = publicCopy ? promotionSource : environment;
                 const destinationDatabase = 'copied-database';
-                if (scenario === 'public_copy') {
+                if (publicCopy) {
                     promotionSource.environment.id = 'copy-source-environment';
                     promotionSource.targetLinks[0].targetLink.id = 'copy-source-link';
                     promotionSource.targetLinks[0].targetLink.environmentId = promotionSource.environment.id;
@@ -1324,11 +1379,11 @@ describe('own-server target at the Action host boundary', () => {
                 for (const role of roles) {
                     captureEnvironment.content.bindings.push({ purpose: 'backupDestination', configKey: 'destination', role,
                         source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(role), resourceRevision: 1 } });
-                    (scenario === 'public_copy' ? copySourceGrants : runtimeGrants).push(sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', machineId: 'machine-a',
+                    (publicCopy ? copySourceGrants : runtimeGrants).push(sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', machineId: 'machine-a',
                         installationId: 'installation-a', environmentId: captureEnvironment.environment.id, resourceId: role, resourceRevision: 1 },
                         installationPublicKey, content: { kind: 'secret', value: `private-${role}` } }));
                 }
-                if (scenario === 'public_copy') {
+                if (publicCopy) {
                     for (const role of roles) {
                         const resourceId = `destination-${role}`;
                         environment.content.bindings.push({ purpose: 'backupDestination', configKey: 'destination', role,
@@ -1345,15 +1400,18 @@ describe('own-server target at the Action host boundary', () => {
                         binding: { purpose: 'variable', phase: 'runtime', name: 'DB_NAME' } }, installationPublicKey,
                         content: { kind: 'environmentValues', definition: databaseBinding.source } }));
                 }
-                const initial = await target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: sourceContext });
-                receipt.deployment.state = 'running';
-                receipt.content.ownServer = { approvedInputBasis: initial.inputBasis };
-                expect(await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
-                    phase: 'activate', selectedDeploymentId: receipt.deployment.id })).toMatchObject({ ok: true });
-                phase('standalone-seeded');
-                Object.assign(serving, structuredClone(receipt));
-                serving.deployment.state = 'succeeded';
-                environment.targetLinks[0].targetLink.activeDeploymentId = serving.deployment.id;
+                const activateDestination = async () => {
+                    const initial = await target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: sourceContext });
+                    receipt.deployment.state = 'running';
+                    receipt.content.ownServer = { approvedInputBasis: initial.inputBasis };
+                    expect(await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
+                        phase: 'activate', selectedDeploymentId: receipt.deployment.id })).toMatchObject({ ok: true });
+                    phase('standalone-seeded');
+                    Object.assign(serving, structuredClone(receipt));
+                    serving.deployment.state = 'succeeded';
+                    environment.targetLinks[0].targetLink.activeDeploymentId = serving.deployment.id;
+                };
+                if (!previewCopy) await activateDestination();
                 await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
                 const boundary = await installRestoreBoundary(root, scenario === 'standalone_public_restore' ? 'safety' : 'success',
                     { toolDirectory: join(root, 'docker'), environmentId: captureEnvironment.environment.id });
@@ -1370,7 +1428,7 @@ describe('own-server target at the Action host boundary', () => {
                     repository: { repository: 's3:https://fixture.invalid/backup',
                         s3: { region: 'us-east-1', addressing: 'path' as const } } };
                 const originalRequest = request;
-                if (scenario === 'public_copy') {
+                if (publicCopy) {
                     const operations = createHostActionOperationRuntime({ machineId: 'machine-a', serverId: 'home',
                         custodyBinding: { serverId: 'home', installationId: 'installation-a' }, resolveAccountId: async () => accountId });
                     const backupTarget = { serverId: 'home', environmentId: promotionSource.environment.id,
@@ -1427,6 +1485,7 @@ describe('own-server target at the Action host boundary', () => {
                         actionOperationId: 'original-source-capture-operation', state: 'failed' };
                     const capturedContent = { ...recoveryCapture.content, ownServer: { ...recoveryCapture.content.ownServer,
                         preMigrationBackup: recordedCapture } };
+                    if (previewCopy) DeploymentOwnServerContentV1Schema.parse(capturedContent);
                     const opened = readDeploymentReceiptArtifactV1(recoveryCapture.deployment, {
                         artifactId: recoveryCapture.deployment.contentArtifactId,
                         revision: { headerVersion: recoveryCapture.deployment.contentHeaderVersion,
@@ -1438,6 +1497,339 @@ describe('own-server target at the Action host boundary', () => {
                     expect(recoveryCapture.content.ownServer?.preMigrationBackup).toEqual(recordedCapture);
                     promotionSource.content.backup = { ...recordedCapture.configuration, configRevision: 2,
                         config: { ...recordedCapture.configuration.config, endpoint: 'https://changed.invalid', bucket: 'changed' } };
+                    if (previewCopy) {
+                        const catalog: unknown = JSON.parse(await readFile(new URL('../../../../../../packages/plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8'));
+                        const registrySource: RegistrySourceDescriptorV1 = { id: 'apps', title: 'Apps', format: 'happier-catalog', kinds: ['app'],
+                            url: 'https://apps.test/catalog.json', enabled: true, addedAt: 1, origin: { kind: 'user' }, removable: true };
+                        const registry = createRegistryHostV1({ host: 'node', readSources: async () => [registrySource], http: {
+                            getJson: async () => ({ ok: true, value: catalog, fetchedAt: 1 }),
+                            getText: async () => { throw new Error('No text fetch'); }, getBytes: async () => { throw new Error('No binary fetch'); },
+                        } });
+                        const selected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await registry.execute('registries.items.read', {
+                            sourceId: 'apps', kind: 'app', itemId: 'postgresql' })).item;
+                        if (selected.payload.kind !== 'app') throw new Error('Expected bundled PostgreSQL');
+                        const template = structuredClone(promotionSource);
+                        template.environment.id = 'preview-template';
+                        template.environment.purpose = 'standard';
+                        template.environment.runtimeTargetLinkId = template.targetLinks[0]!.targetLink.id;
+                        template.targetLinks[0]!.targetLink.environmentId = template.environment.id;
+                        template.content.definition = { kind: 'repository', ref: 'main', compose: {
+                            path: 'compose.yaml', profiles: [], services: ['app'], primaryService: 'app' } };
+                        const repositoryIdentity = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/app' };
+                        const { ownership: _sourceOwnership, ...backupConfiguration } = recordedCapture.configuration;
+                        const policy = { v: 1 as const, enabled: true, forkPreviews: 'off' as const, repository: repositoryIdentity,
+                            runtimeTargetLinkId: template.environment.runtimeTargetLinkId, domain: null, bindingBlueprints: [], data: [{
+                                kind: 'template' as const, templateRef: { sourceId: 'apps', itemId: 'postgresql', version: selected.summary.version!,
+                                    ref: selected.payload.ref },
+                                dataExportNames: ['DATABASE_URL'], connectTo: { service: 'app' },
+                                copyFrom: { environmentId: promotionSource.environment.id,
+                                    targetLinkId: promotionSource.targetLinks[0]!.targetLink.id, deploymentId: 'source-capture',
+                                    backupOperationId: produced.operationId, restoreBackupId: recordedCapture.source.snapshot.snapshotId },
+                                destinationBackup: { prefix: 'previews',
+                                    configuration: { ...backupConfiguration,
+                                        destinationRef: { pluginId: 'happier.backup.destinations', localId: 's3' },
+                                        occurrenceId: mounted.registry.readPluginOccurrenceId('happier.backup.destinations'),
+                                        config: { endpoint: 'https://fixture.invalid', bucket: 'destination-safety', prefix: '' },
+                                        sources: [{ kind: 'dump' as const, sourceId: 'destination-database', service: 'database', consistency: 'logical' as const }] },
+                                    bindings: environment.content.bindings.filter(binding => binding.purpose === 'backupDestination') },
+                            }] };
+                        template.content.previewTemplate = policy;
+                        const composed = await resolvePreviewWorkflowForHost({ templateRef: { serverId: 'home', environmentId: template.environment.id },
+                            occurrenceKey: 'preview-copy-open', event: { id: '17', number: 17, action: 'opened', headSha: git('rev-parse', 'HEAD'),
+                                headRef: 'feature/postgres', baseRef: 'main', baseRepository: repositoryIdentity, headRepository: repositoryIdentity,
+                                author: { id: '19', login: 'contributor', kind: 'human' } },
+                            readEnvironment: async () => ({ environment: template.environment, content: template.content,
+                                targetLinks: template.targetLinks.map(row => row.targetLink) }),
+                            readTargetLink: async () => { throw new Error('Native preview does not read a plugin data link'); },
+                            readTargetDeclaration: async () => { throw new Error('Native preview does not select a plugin branch Action'); } });
+                        expect(composed, JSON.stringify(composed)).toMatchObject({ kind: 'available' });
+                        if (composed.kind !== 'available') throw new Error(composed.reason);
+                        expect(composed.definition.blocks.filter(block => block.kind === 'action'
+                            && block.actionId === 'deployments.backups.restore')).toHaveLength(2);
+                        const secretFixture = await createSavedSecretsCliHttpFixture();
+                        try {
+                            for (const role of roles) {
+                                const resourceId = `destination-${role}`;
+                                secretFixture.resources.set(resourceId, { resourceId, displayName: role, kind: 'token',
+                                    encryptionMode: 'plain', revision: 1, storedContent: sealSavedSecretResourceStoredContentV1({
+                                        resourceId, mode: 'plain', content: { v: 1, name: role, kind: 'token', value: `private-destination-${role}` } }) });
+                            }
+                            const { origin: _origin, removable: _removable, ...sourceRow } = registrySource;
+                            const previousGet = axios.get.bind(axios);
+                            const previousPost = axios.post.bind(axios);
+                            const previousRequest = axios.request.bind(axios);
+                            vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(catalog));
+                            vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+                                const path = new URL(url).pathname;
+                                if (path.startsWith('/v1/account/saved-secrets/'))
+                                    return nativeHttp.get(`${secretFixture.origin}${path}`, config);
+                                if (path === '/v1/account/entity-rows/prompt-library') return { status: 200,
+                                    data: PromptLibraryRowsListResponseV1Schema.parse({ status: 'listed',
+                                        rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1,
+                                            content: key === 'registry-sources' ? { t: 'plain', v: { key,
+                                                value: { v: 2, sources: [sourceRow], disabledSourceIds: [] } } } : null })) }) };
+                                return previousGet(url, config);
+                            });
+                            vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) =>
+                                new URL(url).pathname.startsWith('/v1/account/saved-secrets/')
+                                    ? nativeHttp.post(`${secretFixture.origin}${new URL(url).pathname}`, body, config)
+                                    : previousPost(url, body, config));
+                            const readContent = (id: string) => {
+                                const raw = stored.get(id)?.body;
+                                if (typeof raw !== 'string') throw new Error(`Missing persisted Artifact ${id}`);
+                                const opened: unknown = decodePlainArtifactStoredContent(raw);
+                                if (!opened || typeof opened !== 'object' || !('body' in opened) || typeof opened.body !== 'string')
+                                    throw new Error('Expected Artifact body');
+                                return JSON.parse(opened.body) as unknown;
+                            };
+                            const adopt = (reference: Pick<typeof environment.environment,
+                                'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>) => {
+                                environment.content = DeploymentEnvironmentContentV1Schema.parse(readContent(reference.contentArtifactId));
+                                Object.assign(environment.environment, reference);
+                            };
+                            vi.spyOn(axios, 'request').mockImplementation(async http => {
+                                const path = new URL(http.url ?? serverHttpBaseUrl).pathname;
+                                const method = http.method?.toUpperCase();
+                                if (method === 'GET' && path.endsWith('/deployment-defaults')) return { status: 200, data: {
+                                    ok: true, projectSourceId: template.environment.projectSourceId, sourceRevision: 1, revision: 0, content: null } };
+                                if (method === 'GET' && path === `/v1/deployments/environments/${template.environment.id}`)
+                                    return { status: 200, data: { ok: true, environment: template.environment,
+                                        targetLinks: template.targetLinks.map(row => row.targetLink) } };
+                                if (method === 'POST' && path === '/v1/deployments/environments') {
+                                    const created = DeploymentEnvironmentCreateInputV1Schema.parse(http.data);
+                                    adopt(created);
+                                    environment.environment.purpose = 'preview';
+                                    environment.environment.protection = created.protection;
+                                    environment.environment.revision = 1;
+                                    environment.environment.runtimeTargetLinkId = environment.targetLinks[0]!.targetLink.id;
+                                    environment.environment.controllerMachineId = created.controllerMachineId;
+                                    environment.environment.buildMachineId = created.buildMachineId;
+                                    if (!created.firstTargetLink) throw new Error('Expected native runtime creation');
+                                    const { machines, ...linkReference } = created.firstTargetLink;
+                                    Object.assign(environment.targetLinks[0]!.targetLink, linkReference,
+                                        { machines: machines.map(member => member.machineId),
+                                            members: machines.map(member => ({ ...member, state: 'active' })) });
+                                    delete environment.targetLinks[0]!.targetLink.activeDeploymentId;
+                                    return { status: 200, data: { ok: true, environmentId: environment.environment.id, revision: 1,
+                                        runtimeTargetLinkId: environment.environment.runtimeTargetLinkId,
+                                        runtimeTargetLinkRevision: environment.targetLinks[0]!.targetLink.revision } };
+                                }
+                                if (method === 'POST' && path.endsWith('/secret-launch-admission')) {
+                                    const installation = { machineId: 'machine-a', installationId: 'installation-a',
+                                        publicKey: Buffer.from(installationPublicKey).toString('base64url') };
+                                    return { status: 200, data: { ok: true, grants: runtimeGrants,
+                                        bindingPreparation: { runtimeInstallations: [installation], buildInstallation: installation } } };
+                                }
+                                if (method === 'POST' && path.endsWith('/bindings')) {
+                                    const body: unknown = http.data;
+                                    if (!body || typeof body !== 'object' || !('grants' in body) || !Array.isArray(body.grants))
+                                        throw new Error('Expected binding storage grants');
+                                    const { grants, ...rawInput } = body;
+                                    const bound = DeploymentBindingsPreparedInputV1Schema.parse(rawInput);
+                                    adopt(bound);
+                                    runtimeGrants.splice(0, runtimeGrants.length, ...grants.map(grant => MachineSecretGrantV1Schema.parse(grant)));
+                                    environment.environment.revision++;
+                                    return { status: 200, data: { ok: true, environmentId: environment.environment.id,
+                                        revision: environment.environment.revision } };
+                                }
+                                if (method === 'POST' && path === `/v1/deployments/environments/${environment.environment.id}`) {
+                                    const updated = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(http.data);
+                                    adopt(updated);
+                                    environment.environment.revision++;
+                                    return { status: 200, data: { ok: true, environmentId: environment.environment.id,
+                                        revision: environment.environment.revision } };
+                                }
+                                return previousRequest(http);
+                            });
+                            // The template is stored content at the Home boundary; its reader
+                            // opens those exact bytes during the ordinary create Action.
+                            const parentArtifact = template.environment.contentArtifactId;
+                            stored.set(parentArtifact, { id: parentArtifact, ownerAccountId: accountId, access: 'owner', publicAudience: 'none',
+                                encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                                header: encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Preview template' }),
+                                body: encodePlainArtifactStoredContent({ body: JSON.stringify(template.content) }),
+                                headerVersion: template.environment.contentHeaderVersion, bodyVersion: template.environment.contentBodyVersion,
+                                seq: 1, createdAt: 1, updatedAt: 1 });
+                            const savedSecretOperationContext = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl,
+                                snapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1,
+                                    scopeKey: resolveAccountSettingsScopeKey(credentials), settingsSecretsReadKeys: [] }, isCurrent: async () => true });
+                            const deps = createDaemonDeploymentActionDeps({ ...host, resolveRequesterIdentity, savedSecretOperationContext,
+                                readBackupOperations: (input, context) => operations.readDeploymentBackupOperations({ target: input, context }),
+                                runActionOperation: value => operations.runActionOperation(value) });
+                            const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                                serverId: 'home', machineId: 'machine-a', runActionOperation: value => operations.runActionOperation(value) });
+                            const actionContext = { ...sourceContext, surface: 'ui' as const, actionCaller: { kind: 'host' as const },
+                                serverId: 'home', runtimeAccountId: accountId, signal: caller.signal, executionRunWorkflowRunId: 'preview-copy-run',
+                                actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+                                    'deployments.environments.create': ['ui'], 'deployments.bindings.set': ['ui'],
+                                    'deployments.environments.update': ['ui'], 'deployments.deploy': ['ui'], 'deployments.backups.restore': ['ui'],
+                                } }) };
+                            const outputs = new Map<string, ReturnType<typeof normalizeStrictJsonValue>>();
+                            const values = { inputs: {}, resolveResult: async (producer: { blockId: string }) => {
+                                const output = outputs.get(producer.blockId);
+                                if (output === undefined) throw new Error(`Missing owner result ${producer.blockId}`);
+                                return output;
+                            }, resolveWorkspace: async () => { throw new Error('Native preview has no workspace references'); } };
+                            const block = (id: string): WorkflowActionLeafV1 => {
+                                const selected = composed.definition.blocks.find(block => block.id === id);
+                                if (selected?.kind !== 'action') throw new Error(`Missing factory Action ${id}`);
+                                return selected;
+                            };
+                            const operands = async (action: WorkflowActionLeafV1) => Object.fromEntries(await Promise.all(
+                                Object.entries(action.input).map(async ([key, value]) => [key, await resolveWorkflowActionFieldBinding(value, values)])));
+                            const create = block('preview-create');
+                            const created = await executor.execute(create.actionId, await operands(create),
+                                { ...actionContext, actionRequestId: 'native-preview-create' });
+                            expect(created, JSON.stringify(created)).toMatchObject({ ok: true, result: { previewNativeData: [{ service: 'database', database: 'app' }] } });
+                            if (!created.ok) throw new Error('Expected real preview child creation');
+                            outputs.set(create.id, normalizeStrictJsonValue(created.result));
+                            expect(secretFixture.writes).toHaveLength(1);
+                            expect(environment.content.template?.data).toMatchObject([{ engine: 'postgres', service: 'database' }]);
+                            expect(environment.content.definition.kind).toBe('repository');
+                            expect(environment.content.previewCreationRunId).toBe('preview-copy-run');
+                            const pgImage = await docker.registerImage('database', 'postgres17');
+                            execFileSync(process.execPath, [docker.executablePath, 'image', 'tag', pgImage.registryReference!, 'postgres:17']);
+                            const nativeReceipts: OwnServerDeploymentReceipt[] = [];
+                            const executeNative = async (action: WorkflowActionLeafV1, deploymentId: string) => {
+                                if (action.actionId !== 'deployments.deploy') throw new Error('Expected native deployment Action');
+                                const authored = await operands(action);
+                                const prepared = await deps.prepareDeploymentAction!({ actionId: action.actionId, input: authored, context: actionContext });
+                                if ('errorCode' in prepared) throw new Error(JSON.stringify(prepared));
+                                const deployInput = DeploymentActionInputSchemasV1['deployments.deploy'].parse(prepared.input);
+                                receipt.content = DeploymentOwnServerContentV1Schema.parse(readContent(deployInput.contentArtifactId));
+                                receipt.deployment = { ...receipt.deployment, id: deploymentId, actionOperationId: `${deploymentId}-operation`,
+                                    contentArtifactId: deployInput.contentArtifactId, contentHeaderVersion: deployInput.contentHeaderVersion,
+                                    contentBodyVersion: deployInput.contentBodyVersion, revision: 1, state: 'queued' };
+                                request = { ...request, input: deployInput,
+                                    receipt: { ...request.receipt, deploymentId, deploymentRevision: 1, state: 'queued' },
+                                    context: { ...actionContext, operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } };
+                                const result = await target.execute(request);
+                                expect(result, JSON.stringify(result)).toMatchObject({ ok: true, state: 'succeeded' });
+                                if (!result.ok || !('state' in result) || result.state !== 'succeeded') throw new Error('Expected native deployment');
+                                Object.assign(serving, structuredClone(receipt));
+                                nativeReceipts.push(structuredClone(receipt));
+                                outputs.set(action.id, normalizeStrictJsonValue(result));
+                                return { input: authored, result };
+                            };
+                            const provision = block('preview-data-provision');
+                            expect((await operands(provision)).services).toEqual(['database']);
+                            const provisioned = await executeNative(provision, 'preview-postgres-release');
+                            expect(receipt.content.services).toEqual(['database']);
+                            expect(receipt.content.ownServer?.previewCleanup?.volumes).toHaveLength(1);
+                            expect((await docker.readInvocations()).filter(call => call.args.includes('up'))).toHaveLength(1);
+                            outputs.set('preview-data-current', normalizeStrictJsonValue({ ok: true, environment: environment.environment,
+                                targetLinks: environment.targetLinks.map(row => row.targetLink) }));
+                            const provisionedPostgres = JSON.parse(await readFile(boundary.stateFile, 'utf8'));
+                            await writeFile(boundary.stateFile, JSON.stringify({ ...provisionedPostgres, names: ['app'] }));
+                            const restore = createDeploymentRestoreActionForHost({ serverId: 'home', machineId: 'machine-a',
+                                async assertCurrent() { caller.signal.throwIfAborted(); }, restore: target.restore,
+                                readBackupOperations: (target, context) => operations.readDeploymentBackupOperations({ target, context }),
+                                readPreparation: (operationId, context) => operations.readRestorePreparation({ operationId, context }) });
+                            const restoreExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), serverId: 'home', machineId: 'machine-a',
+                                resolveEnvironmentApprovalScope: deps.resolveEnvironmentApprovalScope,
+                                deploymentRestore: restore, runActionOperation: value => operations.runActionOperation(value) });
+                            const prepareCopy = block('preview-copy-0-prepare');
+                            const restoreInput = await operands(prepareCopy);
+                            expect(restoreInput.copy).toEqual({ source: { environmentId: promotionSource.environment.id,
+                                targetLinkId: promotionSource.targetLinks[0]!.targetLink.id }, destination: { service: 'database', database: 'app' } });
+                            const preparation = await restoreExecutor.execute(prepareCopy.actionId, restoreInput,
+                                { ...actionContext, actionRequestId: 'native-preview-copy-prepare' });
+                            expect(preparation, JSON.stringify(preparation)).toMatchObject({ ok: true, result: { kind: 'prepared' } });
+                            if (!preparation.ok) throw new Error('Expected preview copy preparation');
+                            outputs.set(prepareCopy.id, normalizeStrictJsonValue(preparation.result));
+                            if (scenario === 'public_preview_copy_failure') {
+                                const state = JSON.parse(await readFile(boundary.stateFile, 'utf8'));
+                                await writeFile(boundary.stateFile, JSON.stringify({ ...state, mode: 'failure' }));
+                            }
+                            const confirm = block('preview-copy-0-confirm');
+                            const restored = await restoreExecutor.execute(confirm.actionId, await operands(confirm),
+                                { ...actionContext, actionRequestId: 'native-preview-copy-confirm' });
+                            expect(restored, JSON.stringify(restored)).toMatchObject({ ok: true });
+                            if (!restored.ok) throw new Error('Expected typed native restore result');
+                            outputs.set(confirm.id, normalizeStrictJsonValue(restored.result));
+                            const full = block('preview-deploy');
+                            if (!full.onlyWhen) throw new Error('Factory must guard the app behind verified copy');
+                            const mayDeployApp = await evaluateWorkflowCondition(full.onlyWhen, values);
+                            expect(mayDeployApp).toBe(scenario !== 'public_preview_copy_failure');
+                            if (mayDeployApp) await executeNative(full, 'preview-app-release');
+                            const activations = (await docker.readInvocations()).filter(call => call.args.includes('up'));
+                            expect(activations).toHaveLength(mayDeployApp ? 2 : 1);
+                            expect(promotionSource.targetLinks[0]!.targetLink.activeDeploymentId).toBe('source-current-release');
+                            const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean)
+                                .map(line => JSON.parse(line) as { kind: string; argv?: string[] });
+                            expect(events.filter(event => event.kind === 'safetyBytes')).toHaveLength(1);
+                            expect(events.findIndex(event => event.kind === 'safetyBytes'))
+                                .toBeLessThan(events.findIndex(event => event.kind === 'imported'));
+                            expect(events.filter(event => event.kind === 'restic' && event.argv?.includes(recordedCapture.repository.repository))
+                                .every(event => !event.argv?.includes('backup'))).toBe(true);
+                            expect(recoveryCapture.content.ownServer?.preMigrationBackup).toEqual(recordedCapture);
+                            expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).archive).toBe(archive.toString('base64'));
+                            const makeInvocation = (action: WorkflowActionLeafV1, input: unknown, result: unknown, ordinal: number) => {
+                                const captured = prepareWorkflowDeploymentResultCapture(action.actionId)?.(normalizeStrictJsonValue(result));
+                                if (!captured) throw new Error('Expected the actual immutable Action capture');
+                                const index = { id: `native-preview-invocation-${ordinal}`, runId: 'preview-copy-run', sequence: String(ordinal),
+                                    parentRecordId: null, memberOrdinal: '0', attempt: '0', contentRevision: '0', lifecycle: 'completed',
+                                    createdAt: '2026-11-10T00:00:00.000Z', updatedAt: '2026-11-10T00:00:01.000Z' };
+                                return { index, parentRevision: 1, progress: { kind: 'happier.workflow-progress.v1', blockKind: 'action',
+                                    invocationPath: { blockId: action.id, scope: [] }, attempt: '0', logicalInvocationRecordId: index.id,
+                                    execution: { kind: 'action', actionId: action.actionId, actionRequestId: `${action.id}-request`,
+                                        localInputId: action.id, input, output: captured } } };
+                            };
+                            const capturedInvocations = [makeInvocation(provision, provisioned.input, provisioned.result, 0),
+                                makeInvocation(confirm, await operands(confirm), restored.result, 1)];
+                            const page = WorkflowInvocationListResultV1Schema.parse({ parentRevision: 1,
+                                invocations: capturedInvocations.map(row => row.index), invocationDetails: capturedInvocations });
+                            const ready = await readPreviewCopyReadinessForHost(environment, async () => page);
+                            expect(ready).toBe(mayDeployApp);
+                            const synchronize = await resolvePreviewWorkflowForHost({ templateRef: { serverId: 'home', environmentId: template.environment.id },
+                                occurrenceKey: 'preview-copy-sync', event: { id: '17', number: 17, action: 'synchronize', headSha: git('rev-parse', 'HEAD'),
+                                    headRef: 'feature/postgres', baseRef: 'main', baseRepository: repositoryIdentity, headRepository: repositoryIdentity,
+                                    author: { id: '19', login: 'contributor', kind: 'human' } },
+                                readEnvironment: async () => ({ environment: template.environment, content: template.content,
+                                    targetLinks: template.targetLinks.map(row => row.targetLink) }),
+                                readExistingPreview: async () => ({ environment: environment.environment, nativeData: ready ? 'ready' : 'incomplete' }),
+                                readTargetLink: async () => { throw new Error('Native preview does not use a DATA plugin'); },
+                                readTargetDeclaration: async () => { throw new Error('Existing native preview needs no branch declaration'); } });
+                            expect(synchronize).toMatchObject(mayDeployApp ? { kind: 'available' }
+                                : { kind: 'refused', reason: 'restore_prepare_required' });
+                            const cleanup = provisioned.result.previewCleanup;
+                            if (!cleanup || cleanup.volumes.length !== 1) throw new Error('Expected exact provisioned PostgreSQL volume');
+                            const pgVolume = cleanup.volumes[0]!.name;
+                            await docker.seedVolume('template-postgres-data', 'template-project');
+                            const close = await readPreviewCloseWorkflowForHost({ readEnvironments: async () => [environment.environment],
+                                readEnvironment: async () => environment, readInvocations: async () => page });
+                            const closeAction = close?.blocks[0];
+                            if (closeAction?.kind !== 'action') throw new Error('Expected ordinary native close Action');
+                            const closeInput = DeploymentTeardownRequestInputV1Schema.parse(await operands(closeAction));
+                            expect(closeInput.volumes).toEqual(cleanup.volumes);
+                            let candidate: ReturnType<typeof DeploymentOwnServerContentV1Schema.parse> | undefined;
+                            const teardown = createOwnServerTeardownForHost({ ...host,
+                                readBuildHistory: () => (async function* () { for (const saved of [...nativeReceipts].reverse()) yield saved; })(),
+                                findReceipt: async () => null,
+                                createCandidate: async (_environment, content) => {
+                                    candidate = DeploymentOwnServerContentV1Schema.parse(content);
+                                    return { contentArtifactId: 'preview-teardown-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
+                                } });
+                            const teardownPreparation = await teardown.prepare({ input: closeInput, context: actionContext });
+                            expect(teardownPreparation, JSON.stringify(teardownPreparation)).not.toHaveProperty('errorCode');
+                            if (!('input' in teardownPreparation) || !('contentArtifactId' in teardownPreparation.input) || !candidate) throw new Error('Expected canonical native teardown preparation');
+                            expect(await teardown.admit(environment, environment.targetLinks[0]!.targetLink.id,
+                                candidate, teardownPreparation.input, actionContext)).toBeNull();
+                            receipt.content = candidate;
+                            receipt.deployment = { ...receipt.deployment, id: 'preview-close', actionOperationId: 'preview-close-operation',
+                                operation: 'teardown', revision: 1, state: 'queued', contentArtifactId: 'preview-teardown-content',
+                                contentHeaderVersion: 1, contentBodyVersion: 1 };
+                            const closed = await teardown.execute({ actionId: 'deployments.teardown', input: teardownPreparation.input,
+                                receipt: { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
+                                    deploymentId: receipt.deployment.id, deploymentRevision: 1, state: 'queued' },
+                                context: { ...actionContext, operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } });
+                            expect(closed, JSON.stringify(closed)).toMatchObject({ ok: true, state: 'succeeded' });
+                            expect(await docker.readVolumeNames()).not.toContain(pgVolume);
+                            expect(await docker.readVolumeNames()).toContain('template-postgres-data');
+                            expect(promotionSource.targetLinks[0]!.targetLink.activeDeploymentId).toBe('source-current-release');
+                            return;
+                        } finally { await secretFixture.close(); }
+                    }
                     const deploymentRestore = createDeploymentRestoreActionForHost({ serverId: 'home', machineId: 'machine-a',
                         async assertCurrent() { caller.signal.throwIfAborted(); }, restore: target.restore,
                         readBackupOperations: (target, context) => {
@@ -2674,7 +3066,7 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
     // executes activate, candidate cleanup and restore in sequence.
     // Give each native effect the existing 60s integration harness budget;
     // this is not a native process, Action or product freshness deadline.
-    }, scenario === 'runtime_stage' || scenario === 'private_publication_forward_withdrawal' || scenario === 'public_restore' || scenario === 'standalone_public_restore' || scenario === 'public_copy' || scenario.startsWith('public_backup') || scenario.startsWith('candidate_start_first_restore') ? 3 * 60_000
+    }, scenario === 'runtime_stage' || scenario === 'private_publication_forward_withdrawal' || scenario === 'public_restore' || scenario === 'standalone_public_restore' || scenario === 'public_copy' || scenario === 'public_preview_copy' || scenario === 'public_preview_copy_failure' || scenario.startsWith('public_backup') || scenario.startsWith('candidate_start_first_restore') ? 3 * 60_000
         : scenario.startsWith('candidate_start_first') || scenario === 'member_health' || scenario.startsWith('candidate_backup_configured') ? 2 * 60_000 : scenario === 'runtime_reads' || scenario === 'runtime_health'
         || scenario.startsWith('retained_health') || scenario.startsWith('candidate_') ? 60_000 : undefined);
     it('reviews the prepared candidate before receipt admission without requiring an accepted operation', async () => {

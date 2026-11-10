@@ -9,6 +9,7 @@ import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifact
 import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1 } from './storedAppInputV1.js';
 import { DeploymentDeployInputV1Schema, DeploymentDeployIntentInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentRollbackIntentInputV1Schema, DeploymentPromoteInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema } from './deploymentActionsV1.js';
 import { deploymentChildEffectActionIdForRootV1, isDeploymentDomainRemoveActionIdV1, isDeploymentDomainAddActionIdV1,
+    isDeploymentMembershipActionIdV1,
     DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
 import { DeploymentDomainAddInputV1Schema, DeploymentDomainAddPreparedInputV1Schema, DeploymentDomainRemoveInputV1Schema, DeploymentDomainVerifyInputV1Schema,
     DeploymentDomainPlacementV1Schema, DeploymentDomainTopologyV1Schema } from './deploymentDomainV1.js';
@@ -119,6 +120,16 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
             && (!('expectedTargetLinkRevision' in intent.data) || intent.data.expectedTargetLinkRevision === child.input.expectedTargetLinkRevision)
             && (!('machines' in intent.data) || sameStrictJsonValue(intent.data.machines, child.input.machines));
     }
+    if (isDeploymentMembershipActionIdV1(input.rootActionId ?? '', input.rootPreparationAdmission)
+        && (child.kind === 'domainDiscover' || child.kind === 'domain') && isDeploymentDomainAddActionIdV1(child.actionId)
+        && (child.kind === 'domain' || child.input.membershipDeploymentId !== undefined)) {
+        if (child.kind === 'domain') return true;
+        const binding = input.rootBinding;
+        return binding !== undefined && binding.actionId === input.rootActionId
+            && binding.serverIdentityId === child.input.serverId
+            && (binding.environmentId === undefined || binding.environmentId === child.input.environmentId)
+            && child.input.membershipDeploymentId !== undefined && child.input.membershipMachines !== undefined;
+    }
     if (input.rootActionId === 'deployments.teardown' && (child.kind === 'domainDiscover' || child.kind === 'domain')) {
         if (!isDeploymentDomainRemoveActionIdV1(child.actionId)) return false;
         const binding = input.rootBinding;
@@ -212,6 +223,7 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
                 && semantic.data.environmentId === child.input.environmentId
                 && (semantic.data.targetLinkId === undefined || semantic.data.targetLinkId === child.input.targetLinkId)
                 && (semantic.data.requestKey === undefined || semantic.data.requestKey === child.input.requestKey)
+                && sameStrictJsonValue(semantic.data.services ?? null, child.input.services ?? null)
                 && (semantic.data.onFailure ?? DEFAULT_DEPLOYMENT_ON_FAILURE_V1) === (child.input.onFailure ?? DEFAULT_DEPLOYMENT_ON_FAILURE_V1)
                 && (semantic.data.whenBusy ?? 'refuse') === (child.input.whenBusy ?? 'refuse');
         }
@@ -220,6 +232,7 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
         return child.kind === 'prepare' ? sameStrictJsonValue(child.input, {
             serverId: original.data.serverId, environmentId: original.data.environmentId, targetLinkId: original.data.targetLinkId,
             ...(original.data.onFailure ? { onFailure: original.data.onFailure } : {}),
+            ...(original.data.services ? { services: original.data.services } : {}),
         }) : sameStrictJsonValue(original.data, child.input);
     }
     if (child.actionId === 'deployments.rollback') {

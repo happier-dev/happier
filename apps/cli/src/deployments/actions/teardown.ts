@@ -97,7 +97,8 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
         }
         if (request.input.serverId !== host.serverId || !link || !intent || receipt.deployment.operation !== 'teardown'
             || receipt.deployment.environmentId !== request.input.environmentId || receipt.deployment.targetLinkId !== link.id
-            || intent.targetLinkRevision + (receipt.deployment.state === 'succeeded' ? 1 : 0) !== link.revision
+            || intent.targetLinkRevision + (receipt.deployment.state === 'succeeded'
+                && intent.machines.length === link.machines.length ? 1 : 0) !== link.revision
             || intent.reason !== request.input.reason
             || !isDeepStrictEqual(intent.machines.map(member => member.machineId), request.input.machines ?? link.machines)
             || intent.machines.some(member => !link.members.some(current => current.machineId === member.machineId

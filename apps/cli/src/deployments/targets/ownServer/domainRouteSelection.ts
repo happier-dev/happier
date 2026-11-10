@@ -30,6 +30,23 @@ export function resolveDomainIngress(domain: DeploymentDomainContentV1, ingress?
 export type DomainCaddyMemberObservation = Readonly<{
     machineId: string; state: 'active' | 'joining'; caddy: NativeCaddyObservationResult;
 }>;
+type DomainMemberIdentity = Readonly<{ machineId: string; installationId: string }>;
+
+/** Ordinary Domains follow active membership; an admitted membership child
+ * consumes its exact desired installations, including healthy joining members. */
+export function selectDomainIngressMembers<T extends DomainMemberIdentity & Readonly<{ state: 'active' | 'joining' }>>(
+    members: readonly T[], membershipMachines?: readonly DomainMemberIdentity[],
+): Array<T & Readonly<{ state: 'active' }>> {
+    return members.filter(member => membershipMachines
+        ? membershipMachines.some(desired => desired.machineId === member.machineId && desired.installationId === member.installationId)
+        : member.state === 'active').map(member => ({ ...member, state: 'active' as const }));
+}
+
+/** The admitted root names removed members; the remaining set also owns ingress. */
+export function selectDomainMembershipMachines(members: readonly DomainMemberIdentity[], drainingMachines?: readonly string[]): DomainMemberIdentity[] {
+    const draining = new Set(drainingMachines);
+    return members.filter(member => !draining.has(member.machineId)).map(({ machineId, installationId }) => ({ machineId, installationId }));
+}
 const activeDomainMembersDetails = { requiredFact: 'activeDomainMembers',
     remedy: 'Deploy the app so it is running on this Machine, then add the domain' } as const;
 export type DomainRouteSelectionUnavailable = Readonly<{
@@ -49,7 +66,7 @@ export function selectDomainCaddyPlacements(input: Readonly<{
     ingress?: DeploymentIngressV1; members: readonly InstalledCaddyMember[];
     edge?: Readonly<{ machineId: string; installationId: string; dockerEngineId: string; caddy: NativeCaddyObservationResult }>;
 }>): DomainCaddyPlacementsSelection {
-    const members = input.members.filter(member => member.state === 'active');
+    const members = selectDomainIngressMembers(input.members);
     if (!members.length || !input.ingress && members.length > 1) return { status: 'unavailable',
         reason: 'required_fact_unavailable', machineIds: members.map(member => member.machineId),
         details: members.length ? { requiredFact: 'domain_ingress_required',

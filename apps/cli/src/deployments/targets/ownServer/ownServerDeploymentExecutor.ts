@@ -23,6 +23,7 @@ import { produceEnvironmentProjectServices } from '@/daemon/local/services/launc
 import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError, type MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { isProjectNativeProcessUncertain } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { createDeploymentSourceMaterializationPort, readDeploymentSourceCommitSubjectForHost } from './exactCommitRelease';
+import { resolveOwnServerComposeFiles } from './composeFiles';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createOwnServerNativeImageAcquisition } from './nativeImageAcquisition';
 import { assertIrohServicePublications } from './privateServicePublication';
@@ -35,6 +36,7 @@ import { createOwnServerSourceRetention, projectOwnServerUnsettledDeploymentIds 
 import { readDeploymentUniformTargetLinkRevisionV1 } from '@/deployments/deploymentUniformProof';
 import { logger } from '@/ui/logger';
 import { admitOwnServerMigration, executeOwnServerMigration, MIGRATION_STEP } from './migration';
+import { readOwnServerPreviewCleanup } from './teardownVolumes';
 import { captureOwnServerDeploymentSource, createOwnServerSourceCustodyReader, replaceOwnServerDeploymentSource } from './sourceProvenance';
 import { executeOwnServerNativeRestore, observeOwnServerNativeRestoreDestination, prepareOwnServerNativeRestore,
     confirmOwnServerNativeRestore, type OwnServerNativeRestoreInputFactory, type OwnServerNativeRestoreInput } from './nativeRestore';
@@ -278,7 +280,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             else referenceAddresses[previous] = address;
                         }
                     },
-                    files: [compose.path], profiles: compose.profiles, services: compose.services, sourceKind: sourceIntent.kind,
+                    files: resolveOwnServerComposeFiles(sourceIntent), profiles: compose.profiles, services: content.services ?? compose.services, sourceKind: sourceIntent.kind,
                     ...(nativeOrigin && (!nativeOrigin.capture || nativeOrigin.capture.installationId === runtime.source.installationId)
                         ? { physicalProjectName: nativeOrigin.projectName, expectedEngineId: nativeOrigin.dockerEndpoint } : {}),
                     // Review a new deployment's current policy. Execution and
@@ -595,6 +597,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             { ...snapshot, servingReceipt });
         try {
             const native = await prepared.project.render({ signal: snapshot.signal });
+            // A reviewed restriction cannot start dependencies outside its explicit set.
+            const services = content.services;
+            if (services && native.services.some(service => !services.includes(service))) refuse('target_mismatch');
             await prepared.assertCurrent();
             // Publish basis and preview from the same captured render. The
             // later mutation CAS owns admission of an edited Environment.
@@ -679,8 +684,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             if (input.machineId !== host.machineId || !snapshot.link.members.some(member => member.machineId === host.machineId
                 && member.installationId === input.installationId)) refuse('target_mismatch');
             if (receipt.deployment.state !== 'running') return failure('outcome_unknown');
-            const migrationAdmitted = input.phase === 'activate' && request.actionId !== 'deployments.rollback'
-                && snapshot.environment.content.ownServer?.migration && receipt.content.machines[0] === host.machineId
+            const deploymentConfiguration = snapshot.environment.content.ownServer;
+            const migrationConfiguration = request.actionId !== 'deployments.rollback' && deploymentConfiguration?.migration
+                && (!receipt.content.services || receipt.content.services.includes(deploymentConfiguration.migration.service)) ? deploymentConfiguration : undefined;
+            const migrationAdmitted = input.phase === 'activate'
+                && migrationConfiguration?.migration && receipt.content.machines[0] === host.machineId
                 ? admitOwnServerMigration(receipt.content.steps) : false;
             const parentApproval = receipt.content.ownServer?.approvedInputBasis;
             if (!parentApproval || snapshot.link.members.length > 1 && !parentApproval.runtimeProjections) refuse('invalid_parameters');
@@ -742,6 +750,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 environment: restored && selectedBasis ? { ...snapshot.environment, content: { ...snapshot.environment.content,
                     bindings: selectedBasis.bindings, ownServer: selectedBasis.ownServer } } : snapshot.environment,
                 content: { ...receipt.content, sourceIntent: selected.content.sourceIntent,
+                services: selected.content.services,
                 images: selected.content.images, ownServer: selected.content.ownServer } };
             const prepared = await prepare({ ...request, materialization: restored ? { kind: 'restoration',
                 deploymentId: receipt.deployment.id, sourceDeploymentId: selected.deployment.id }
@@ -810,9 +819,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 // only the native owner derives the admitted physical candidate.
                 const activationProject = candidate ?? prepared.project;
                 const activationRender = candidate ? await candidate.render({ signal: snapshot.signal }) : rendered;
-                const migrationConfiguration = !restored && request.actionId !== 'deployments.rollback'
-                    ? selectedSnapshot.environment.content.ownServer : undefined;
-                const migration = migrationConfiguration?.migration;
+                const migration = !restored ? migrationConfiguration?.migration : undefined;
                 const firstRuntime = receipt.content.machines[0] === host.machineId;
                 // Native preflight is read-only and precedes publication/image
                 // acquisition. Other members consume the first member's result.
@@ -1089,6 +1096,16 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     });
                     incumbentStopped = undefined;
                     try {
+                        if (!restored && receipt.content.services && snapshot.environment.environment.purpose === 'preview') {
+                            const docker = await activationProject.readNativeDocker({ render: activationRender, signal: snapshot.signal });
+                            try {
+                                const previewCleanup = await readOwnServerPreviewCleanup({ environment: snapshot.environment,
+                                    services: receipt.content.services, render: activationRender, activation: project, machineId: host.machineId,
+                                    run: async args => ({ ...await docker.run(args, snapshot.signal), stderr: '' }) });
+                                if (previewCleanup && receipt.content.ownServer) await publishContent({ ...receipt.content,
+                                    ownServer: { ...receipt.content.ownServer, previewCleanup } });
+                            } finally { await docker.dispose(); }
+                        }
                         const handles = await produceEnvironmentProjectServices({ owner: prepared.runtime.projectManagedServices,
                             serverId: prepared.homeServerIdentityId, release: prepared.source, specIdentity: selected.deployment.id,
                             appliedServiceExports: selectedSnapshot.environment.content.ownServer?.serviceExports,
@@ -1208,7 +1225,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     details, ...(knownFailure.failureCause ? { failureCause: knownFailure.failureCause } : {}),
                     ...(typeof knownFailure.effectAttempted === 'boolean' ? { effectAttempted: knownFailure.effectAttempted } : {}) };
             }
-            return result;
+            const previewCleanup = settled?.receipt.content.ownServer?.previewCleanup;
+            return result.ok && result.state === 'succeeded' && previewCleanup ? { ...result, previewCleanup } : result;
         } catch (error) { return failure(failureCode(error, request.context.signal?.aborted === true), error); }
     }
     return Object.freeze({ review, execute, reviewMember, executeMember, retain, restore, backup });

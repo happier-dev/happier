@@ -42,7 +42,7 @@ import type { DeploymentArtifactDocumentV1, DeploymentDomainContentV1 } from '@h
 import { createNativeCaddyRoutes, createNativeCaddyAdminExchange } from '@/machines/reachability/nativeCaddyRoutes';
 import { materializeCaddyDomainRouteV1, type CaddyDomainRouteInput } from './caddyRouteMaterialization';
 import { selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork, selectDomainCaddyPlacements,
-    readDomainCaddyStartFirstLegs } from './domainRouteSelection';
+    readDomainCaddyStartFirstLegs, selectDomainIngressMembers } from './domainRouteSelection';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createDeploymentSourceMaterializationPort } from './exactCommitRelease';
@@ -518,10 +518,22 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
     expect(selectDomainCaddyPlacements({ ingress: { kind: 'cloudflareTunnel' }, members: [member, peer, { ...joining, state: 'active' }] }))
         .toEqual({ status: 'unavailable', reason: 'required_fact_unavailable', machineIds: ['a', 'b', 'joining'],
             details: { requiredFact: 'sharedTunnelOrigin' } });
+    const joiningReady = { ...joining, caddy: b };
+    const membershipMachines = [member, peer, joiningReady].map(({ machineId, installationId }) => ({ machineId, installationId }));
+    const enrolled = selectDomainCaddyPlacements({ ingress: { kind: 'cloudflareTunnel' },
+        members: selectDomainIngressMembers([member, peer, joiningReady], membershipMachines) });
+    expect(enrolled).toMatchObject({ status: 'ready', placements: [
+        { machineId: 'a' }, { machineId: 'b' }, { machineId: 'joining' },
+    ], tunnelOrigin: { members: [{ machineId: 'a' }, { machineId: 'b' }, { machineId: 'joining' }] } });
+    const drained = selectDomainCaddyPlacements({ ingress: { kind: 'cloudflareTunnel' },
+        members: selectDomainIngressMembers([member, peer, joiningReady], [membershipMachines[0]!, membershipMachines[2]!]) });
+    expect(drained).toMatchObject({ status: 'ready', placements: [{ machineId: 'a' }, { machineId: 'joining' }],
+        tunnelOrigin: { members: [{ machineId: 'a' }, { machineId: 'joining' }] } });
 });
 
-it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running public network failure'] as const)(
+it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running public network failure'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
+    const membership = scenario === 'membership join installed' || scenario === 'membership drain';
     const removingNativeOutput = scenario === 'Remove native parsed output invalid' || scenario === 'Remove malformed native observation';
     const nativeOutcomeUnknown = scenario === 'administrator native outcome unknown'
         || scenario === 'administrator native outcome unknown with fact';
@@ -547,14 +559,15 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
     link.machines = ['a', 'b'];
     link.members = [{ machineId: 'a', installationId: 'installed-a', state: 'active' },
         { machineId: 'b', installationId: 'installed-b', state: 'active' }];
-    if (scenario !== 'shared' && scenario !== 'misdirected discovery' && scenario !== 'missing tunnel origin') {
+    if (scenario !== 'shared' && scenario !== 'misdirected discovery' && scenario !== 'missing tunnel origin' && scenario !== 'membership drain') {
         if (!retainedSeed) delete environment.content.ingress;
         link.members = [link.members[0]!];
         link.machines = ['a'];
     }
     if (scenario === 'no active Domain members') link.members[0]!.state = 'joining';
+    if (scenario === 'membership join installed') link.members[0]!.state = 'joining';
     const occupiedPort = scenario === 'native Caddy port occupied' || scenario === 'native Caddy host port occupied';
-    const installedCaddy = scenario === 'direct installed Caddy admin write refused' || scenario === 'direct installed Caddy' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort || retainedSeed;
+    const installedCaddy = scenario === 'direct installed Caddy admin write refused' || scenario === 'direct installed Caddy' || scenario === 'membership join installed' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort || retainedSeed;
     if (installedCaddy) {
         link.state = 'deployed';
         link.activeDeploymentId = 'serving';
@@ -563,7 +576,7 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
         serverId: 'home', serverHttpBaseUrl: 'https://domain-origin.test', machineId: 'a',
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
         async acquirePluginRuntimeRegistryLease() { throw new Error('Uses the active deployed service'); } });
-    const prepared = scenario !== 'shared' && scenario !== 'misdirected discovery' && scenario !== 'missing tunnel origin' ? nativeRuntime.prepareDomainCaddy!({
+    const prepared = scenario !== 'shared' && scenario !== 'misdirected discovery' && scenario !== 'missing tunnel origin' && scenario !== 'membership drain' ? nativeRuntime.prepareDomainCaddy!({
         domain: { hostname: 'qa-domain-1101-r23b.localhost', target: { service: 'web', containerPort: 80 } },
         environment: environment.content, replicas: [{ containerName: 'deployed-web-1', networkNames: ['deployed_default'] }],
         privateNetworks: [], daemonGroup: 'happier', daemonGroupId: 1000,
@@ -642,7 +655,10 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
     const input = DeploymentActionInputSchemasV1['deployments.domains.add'].parse({ serverId: 'home',
         environmentId: environment.environment.id, domainId: 'domain', expectedRevision: environment.environment.revision,
         targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: 'domain-add',
-        contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 });
+        contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+        ...(membership ? { membershipDeploymentId: 'membership-receipt', membershipMachines: [
+            { machineId: 'a', installationId: 'installed-a' },
+        ] } : {}) });
     if (!('contentArtifactId' in input)) throw new Error('Expected prepared Domain input');
     const actionId = removingNativeOutput ? 'deployments.domains.remove' as const : 'deployments.domains.add' as const;
     const actionInput = removingNativeOutput ? DeploymentActionInputSchemasV1['deployments.domains.remove'].parse({
@@ -1319,7 +1335,7 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
                 expect(transitions).toMatchObject(networkConnectFailure ? [] : [{ observations: [{ state: 'active' }] }]);
                 expect(admissions[0]?.placements).toMatchObject([{ machineId: 'a', listener: 'privateOrigin', nativeServer: 'happier_private' }]);
             }
-        } else if (scenario === 'direct installed Caddy') {
+        } else if (scenario === 'direct installed Caddy' || scenario === 'membership join installed') {
             expect(result, `Native public TLS listener/publication required for Domain admission: ${JSON.stringify(result)}`)
                 .toMatchObject({ ok: true, domain: { state: 'active' } });
             expect(admissions).toHaveLength(1);
@@ -1330,6 +1346,13 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
                 expect.objectContaining({ machineId: 'a', listener: 'privateOrigin', nativeServer: 'happier_private' }),
                 expect.objectContaining({ machineId: 'a', listener: 'public', nativeServer: 'happier_public' }),
             ]));
+        } else if (scenario === 'membership drain') {
+            expect(result).toMatchObject({ ok: false, errorCode: 'native_route_unavailable' });
+            expect(admissions[0]).toMatchObject({ membershipDeploymentId: 'membership-receipt', membershipMachines: [
+                { machineId: 'a', installationId: 'installed-a' },
+            ], placements: [{ machineId: 'a', listener: 'privateOrigin' }] });
+            expect(children[0]?.topology?.members).toEqual([{ machineId: 'a', installationId: 'installed-a' }]);
+            expect(children[0]?.topology?.tunnelOrigin?.members).toMatchObject([{ machineId: 'a' }]);
         } else {
             expect(result).toMatchObject({ ok: false, errorCode: 'native_route_unavailable' });
             expect(admissions).toHaveLength(1);

@@ -1,5 +1,6 @@
 import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
+import { createHash } from 'node:crypto';
 import {
     DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentDomainDiscoverChildRpcV1Schema,
     isDeploymentDomainChildActionIdV1, isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1,
@@ -11,12 +12,14 @@ import {
     DeploymentDomainMachineTopologyV1Schema, type DeploymentDomainHeaderV1, type DeploymentDomainTopologyV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
-import { resolveDomainIngress, selectDomainCaddyPlacements } from './domainRouteSelection';
+import { resolveDomainIngress, selectDomainCaddyPlacements, selectDomainIngressMembers, selectDomainMembershipMachines } from './domainRouteSelection';
 import { DeploymentDomainPreparedContentInputV1Schema, type DeploymentDomainPlacementV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { readDeploymentDomainArtifactV1, type DeploymentDomainContentV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentDomainArtifactV1, getDeploymentTargetLinkLineageV1,
+    type DeploymentDomainContentV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
 import type { StoredCredentials } from '@/persistence';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ArtifactRequestAuthorizationHeaders, createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { prepareCloudflareDomainForHost, disableCloudflareDomainForHost, cloudflareDomainConnectorForTarget } from './cloudflareDomainPreparation';
@@ -61,7 +64,9 @@ async function discoverOwnServerDomainPlacement(request: Readonly<{
     const resolved = resolveDomainIngress(request.content, environment.content.ingress);
     if (resolved.status === 'unavailable') return failure(resolved.reason, resolved.details);
     const ingress = resolved.ingress;
-    const destinations = link.members.filter(member => member.state === 'active').map(member => ({
+    const membersForIngress = selectDomainIngressMembers(link.members,
+        'membershipMachines' in request.input ? request.input.membershipMachines : undefined);
+    const destinations = membersForIngress.map(member => ({
         machineId: member.machineId, installationId: member.installationId }));
     if (ingress?.kind === 'edgeCaddy' && !destinations.some(member => member.machineId === ingress.edgeMachineId)) {
         destinations.push({ machineId: ingress.edgeMachineId,
@@ -95,14 +100,14 @@ async function discoverOwnServerDomainPlacement(request: Readonly<{
             return failure('target_mismatch');
         machines.push(parsed.data);
     }
-    const members = link.members.flatMap(member => {
+    const members = membersForIngress.flatMap(member => {
         const observed = machines.find(machine => machine.machineId === member.machineId && machine.installationId === member.installationId);
         return observed ? [{ ...observed, state: member.state }] : [];
     });
     const edge = ingress?.kind === 'edgeCaddy' ? machines.find(machine => machine.machineId === ingress.edgeMachineId) : undefined;
     const selected = selectDomainCaddyPlacements({ ingress, members, ...(edge ? { edge } : {}) });
     if (selected.status !== 'ready') return failure(selected.reason, selected.details);
-    const topology: DeploymentDomainTopologyV1 = { members: link.members.filter(member => member.state === 'active').map(member => ({
+    const topology: DeploymentDomainTopologyV1 = { members: membersForIngress.map(member => ({
         machineId: member.machineId, installationId: member.installationId })), machines,
         ...(selected.tunnelOrigin ? { tunnelOrigin: selected.tunnelOrigin } : {}) };
     return { ok: true as const, placements: selected.placements, topology };
@@ -124,6 +129,39 @@ async function* readEnvironmentDomainsForHost(environmentId: string, context: Ac
     }
 }
 
+type DomainMembershipInput = Readonly<{
+    environmentId: string; targetLinkId: string; requestKey: string; machines?: readonly string[];
+}>;
+
+/** Membership changes demand the existing Domain Add owner, whose own review
+ * prepares any selected vendor children before their native effects. */
+export async function prepareOwnServerMembershipDomainReviewedChildren(
+    input: DomainMembershipInput, context: ActionExecutorContext,
+    host: DomainDiscoveryHost & Readonly<{ serverId: string; storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
+        open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null> }>,
+): ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>> {
+    const environment = await host.readEnvironment({ environmentId: input.environmentId, context });
+    const link = environment.targetLinks.find(item => item.targetLink.id === input.targetLinkId)?.targetLink;
+    if (!link) return failure('target_mismatch');
+    if (link.targetKind !== 'ownServer' || !input.machines && !link.members.some(member => member.state === 'joining')) return null;
+    const membershipMachines = selectDomainMembershipMachines(link.members, input.machines);
+    if (!membershipMachines.length) return null;
+    const lineage = getDeploymentTargetLinkLineageV1(link, environment.targetLinks.map(item => item.targetLink));
+    const children: HostReviewedChildrenPlanV1['children'][number][] = [];
+    for await (const domain of readEnvironmentDomainsForHost(input.environmentId, context, host)) {
+        if (!lineage.has(domain.targetLinkId)) continue;
+        const plan = await prepareOwnServerDomainReviewedChildren({ actionId: 'deployments.domains.add', context,
+            input: { serverId: host.serverId, environmentId: input.environmentId, domainId: domain.id,
+                targetLinkId: link.id, expectedDomainRevision: domain.revision, expectedTargetLinkRevision: link.revision,
+                expectedRevision: environment.environment.revision, requestKey: input.requestKey,
+                contentArtifactId: domain.contentArtifactId, contentHeaderVersion: domain.contentHeaderVersion,
+                contentBodyVersion: domain.contentBodyVersion } }, host);
+        if (plan && 'errorCode' in plan) return plan;
+        if (plan) children.push(...plan.children);
+    }
+    return children.length ? { children } : null;
+}
+
 /** Teardown reviews vendor effects as children of its existing single approval. */
 export async function prepareOwnServerTeardownDomainReviewedChildren(
     request: Omit<Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0], 'input'>
@@ -132,6 +170,14 @@ export async function prepareOwnServerTeardownDomainReviewedChildren(
         open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null> }>,
 ): ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>> {
     const input = request.input;
+    if (input.machines) {
+        const environment = await host.readEnvironment({ environmentId: input.environmentId, context: request.context });
+        const link = environment.targetLinks.find(item => item.targetLink.id === input.targetLinkId)?.targetLink;
+        if (!link) return failure('target_mismatch');
+        if (selectDomainMembershipMachines(link.members, input.machines).length) {
+            return prepareOwnServerMembershipDomainReviewedChildren(input, request.context, host);
+        }
+    }
     const children: HostReviewedChildrenPlanV1['children'][number][] = [];
     for await (const domain of readEnvironmentDomainsForHost(input.environmentId, request.context, host)) {
         const plan = await prepareOwnServerDomainReviewedChildren({ ...request, actionId: 'deployments.domains.remove',
@@ -384,10 +430,54 @@ export function createOwnServerDomainActions(host: Readonly<{
                 diagnostic.failureCause, diagnostic.effectAttempted, nativeScope), error: diagnostic.error };
         }
     };
+    async function reconcileMembership(input: DomainMembershipInput & Readonly<{ deploymentId: string }>,
+        admittedContext: ActionExecutorContext, admitted?: Readonly<{
+            environment: Awaited<ReturnType<typeof host.readEnvironment>>;
+            membershipMachines: ReturnType<typeof selectDomainMembershipMachines>;
+        }>): Promise<ActionExecuteFailure | null> {
+        // A template's reviewed deploy leaf spends the accepted root for these sibling Domain effects.
+        const originalAuthorization = readHostReviewedChildOriginalAuthorizationV1(admittedContext);
+        const context = originalAuthorization
+            ? { ...admittedContext, externalActionExecutionAuthorization: originalAuthorization } : admittedContext;
+        const environment = admitted?.environment ?? await host.readEnvironment({ environmentId: input.environmentId, context });
+        const link = environment.targetLinks.find(item => item.targetLink.id === input.targetLinkId)?.targetLink;
+        if (!link) return failure('target_mismatch');
+        const membershipMachines = admitted?.membershipMachines ?? selectDomainMembershipMachines(link.members, input.machines);
+        const lineage = getDeploymentTargetLinkLineageV1(link, environment.targetLinks.map(item => item.targetLink));
+        let revision = environment.environment.revision;
+        for await (const domain of readEnvironmentDomainsForHost(input.environmentId, context, host)) {
+            if (!lineage.has(domain.targetLinkId)) continue;
+            context.signal?.throwIfAborted();
+            const result = await execute('deployments.domains.add', { serverId: host.serverId,
+                environmentId: input.environmentId, domainId: domain.id, expectedDomainRevision: domain.revision,
+                expectedRevision: revision, targetLinkId: link.id, expectedTargetLinkRevision: link.revision,
+                contentArtifactId: domain.contentArtifactId, contentHeaderVersion: domain.contentHeaderVersion,
+                contentBodyVersion: domain.contentBodyVersion,
+                requestKey: createHash('sha256').update(JSON.stringify([input.requestKey, domain.id])).digest('hex'),
+                membershipDeploymentId: input.deploymentId, membershipMachines }, context);
+            if ('errorCode' in result) return result;
+            const settled = DeploymentActionOutputSchemasV1['deployments.domains.add'].safeParse(result);
+            if (!settled.success) return failure('invalid_action_output');
+            if (!settled.data.ok) return failure(settled.data.error);
+            if (settled.data.domain.state !== 'active') return failure('native_route_unavailable');
+            revision = settled.data.revision;
+        }
+        return null;
+    }
     return Object.assign((...args: Parameters<Execute>) => execute(args[0], args[1], args[2]), {
-        async retireEnvironment(input: Pick<DeploymentTeardownInputV1, 'environmentId' | 'expectedRevision' | 'requestKey'>,
+        reconcileMembership,
+        async retireEnvironment(input: Pick<DeploymentTeardownInputV1, 'environmentId' | 'expectedRevision' | 'requestKey'>
+            & Partial<Pick<DeploymentTeardownInputV1, 'targetLinkId' | 'machines'>> & Readonly<{ deploymentId?: string }>,
             context: ActionExecutorContext): Promise<ActionExecuteFailure | null> {
             const { environmentId, expectedRevision, requestKey } = input;
+            if (input.machines && input.targetLinkId && input.deploymentId) {
+                const environment = await host.readEnvironment({ environmentId, context });
+                const link = environment.targetLinks.find(item => item.targetLink.id === input.targetLinkId)?.targetLink;
+                if (!link) return failure('target_mismatch');
+                const membershipMachines = selectDomainMembershipMachines(link.members, input.machines);
+                if (membershipMachines.length) return reconcileMembership({
+                    ...input, targetLinkId: input.targetLinkId, deploymentId: input.deploymentId }, context, { environment, membershipMachines });
+            }
             for await (const domain of readEnvironmentDomainsForHost(environmentId, context, host)) {
                 let hostname: string | undefined;
                 let result: Awaited<ReturnType<Execute>>;

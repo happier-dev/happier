@@ -54,6 +54,13 @@ function nativeRunner(runtime: NativeRuntime, context: ActionExecutorContext) {
 
 /** Native workload and explicitly selected volume removal use the existing receipt and signed proof owner. */
 export function createOwnServerTeardownForHost(host: Host) {
+    const selectMembers = (input: Readonly<{ machines?: readonly string[] }>,
+        link: DeploymentEnvironmentDetailV1['targetLinks'][number]['targetLink']) =>
+        (input.machines ?? link.machines).map(machineId => {
+            const member = link.members.find(member => member.machineId === machineId);
+            if (!member) throw Object.assign(new Error('deployment_conflict'), { code: 'deployment_conflict' });
+            return member;
+        });
     const select = (environment: DeploymentEnvironmentDetailV1, targetLinkId: string, requiresNative = true) => {
         const row = environment.targetLinks.find(item => item.targetLink.id === targetLinkId);
         if ((requiresNative && !host.runtime.acquireTeardown) || !host.readBuildHistory) return unsupported('native_executor_unavailable',
@@ -63,20 +70,18 @@ export function createOwnServerTeardownForHost(host: Host) {
             'Remove the imported workload through its native owner before detaching its target link.');
         try {
             admitOwnServerDeploymentTargetLink(row.targetLink, host.machineId, environment.environment.controllerMachineId);
-            if (row.targetLink.members.length !== 1) throw Object.assign(new Error('unsupported'), { code: 'unsupported' });
             return row.targetLink;
         }
         catch (error) { return unsupported('target_placement_unsupported',
-            'Run teardown on the recorded controller Machine for an Environment with one native target Machine.', error,
+            'Run teardown on the recorded controller or a native target Machine.', error,
             `controllerMachineId=${environment.environment.controllerMachineId}`); }
     };
     const readVolumes = async (input: DeploymentTeardownRequestInputV1, context: ActionExecutorContext,
-        environment: DeploymentEnvironmentDetailV1): Promise<DeploymentTeardownResourceV1[] | ActionExecuteFailure> => {
+        environment: DeploymentEnvironmentDetailV1, localOnly = false): Promise<DeploymentTeardownResourceV1[] | ActionExecuteFailure> => {
         const targetLinkId = input.targetLinkId ?? environment.environment.runtimeTargetLinkId;
         const link = targetLinkId ? select(environment, targetLinkId, false) : null;
         if (!link) return failure('target_mismatch');
         if ('errorCode' in link) return link;
-        const member = link.members[0];
         const deployments = new Set<string>();
         let deployed = link.activeDeploymentId !== undefined;
         for await (const receipt of host.readBuildHistory!({ environmentId: input.environmentId,
@@ -86,25 +91,30 @@ export function createOwnServerTeardownForHost(host: Host) {
             deployments.add(receipt.deployment.id);
         }
         if (!deployed) return [];
-        if (member.machineId !== host.machineId) {
-            if (!host.sendChild) throw Object.assign(new Error('machine_unavailable'), { code: 'machine_unavailable' });
-            const response = await host.sendChild(DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare',
-                actionId: 'deployments.teardown', machineId: member.machineId, installationId: member.installationId, input: { serverId: input.serverId,
-                    environmentId: input.environmentId, targetLinkId: link.id, reason: input.reason },
-                expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision }), context);
-            const failed = ActionExecuteFailureSchema.safeParse(response);
-            if (failed.success) return failed.data;
-            return DeploymentTeardownPreviewV1Schema.parse(response).volumes.map(volume => ({ id: volume.name,
-                kind: 'data' as const, machineId: volume.machineId, ownership: 'owned' as const, disposition: 'retain' as const }));
+        const resources: DeploymentTeardownResourceV1[] = [];
+        for (const member of selectMembers(input, link).filter(member => !localOnly || member.machineId === host.machineId)) {
+            if (member.machineId !== host.machineId) {
+                if (!host.sendChild) throw Object.assign(new Error('machine_unavailable'), { code: 'machine_unavailable' });
+                const response = await host.sendChild(DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare',
+                    actionId: 'deployments.teardown', machineId: member.machineId, installationId: member.installationId, input: { serverId: input.serverId,
+                        environmentId: input.environmentId, targetLinkId: link.id, reason: input.reason },
+                    expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision }), context);
+                const failed = ActionExecuteFailureSchema.safeParse(response);
+                if (failed.success) return failed.data;
+                resources.push(...DeploymentTeardownPreviewV1Schema.parse(response).volumes.map(volume => ({ id: volume.name,
+                    kind: 'data' as const, machineId: volume.machineId, ownership: 'owned' as const, disposition: 'retain' as const })));
+                continue;
+            }
+            if (!host.runtime.acquireTeardownReview) throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
+            const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
+                serverId: host.serverId, environmentId: input.environmentId });
+            const projects = new Set([identity.projectName,
+                ...[...deployments].map(id => resolveNativeComposeCandidateProjectName(identity.projectName, id))]);
+            const runtime = await host.runtime.acquireTeardownReview({ ...member, request: { input, context } }, async () => {});
+            try { resources.push(...await readOwnServerTeardownVolumes({ projects, machineId: member.machineId, run: nativeRunner(runtime, context) })); }
+            finally { await runtime.release(); }
         }
-        if (!host.runtime.acquireTeardownReview) throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
-        const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
-            serverId: host.serverId, environmentId: input.environmentId });
-        const projects = new Set([identity.projectName,
-            ...[...deployments].map(id => resolveNativeComposeCandidateProjectName(identity.projectName, id))]);
-        const runtime = await host.runtime.acquireTeardownReview({ ...member, request: { input, context } }, async () => {});
-        try { return await readOwnServerTeardownVolumes({ projects, machineId: member.machineId, run: nativeRunner(runtime, context) }); }
-        finally { await runtime.release(); }
+        return resources;
     };
     const acquireBoundary = async (request: Extract<DeploymentReceiptDispatchV1, { actionId: 'deployments.teardown' }>,
         environment: DeploymentEnvironmentDetailV1, link: DeploymentEnvironmentDetailV1['targetLinks'][number]['targetLink']) => {
@@ -120,7 +130,9 @@ export function createOwnServerTeardownForHost(host: Host) {
             mayHaveWorkload = true;
             projects.add(resolveNativeComposeCandidateProjectName(identity.projectName, receipt.deployment.id));
         }
-        const runtime = await host.runtime.acquireTeardown!({ request, ...link.members[0] }, async () => {});
+        const member = link.members.find(member => member.machineId === host.machineId);
+        if (!member) throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+        const runtime = await host.runtime.acquireTeardown!({ request, ...member }, async () => {});
         try {
             const run = nativeRunner(runtime, request.context);
             const boundary: DeploymentTeardownBoundary = {
@@ -206,6 +218,53 @@ export function createOwnServerTeardownForHost(host: Host) {
             return { boundary, release: () => runtime.release() };
         } catch (error) { await runtime.release(); throw error; }
     };
+    async function executeNative(job: Extract<DeploymentChildRpcV1, { actionId: 'deployments.teardown' }>, context: ActionExecutorContext) {
+        try {
+            if (job.kind === 'prepare') {
+                const environment = await host.readEnvironment({ environmentId: job.input.environmentId, context });
+                const link = select(environment, job.input.targetLinkId);
+                if ('errorCode' in link) return link;
+                if (environment.environment.revision !== job.expectedRevision || link.revision !== job.expectedTargetLinkRevision
+                    || job.machineId !== host.machineId || !link.members.some(member => member.machineId === job.machineId
+                        && member.installationId === job.installationId)) return failure('deployment_conflict');
+                const resources = await readVolumes(job.input, context, environment, true);
+                if ('errorCode' in resources) return resources;
+                return DeploymentTeardownPreviewV1Schema.parse({ ok: true, kind: 'preview', volumes: resources.map(resource => ({
+                    name: resource.id, machineId: resource.machineId })) });
+            }
+            const receipt = await host.readReceipt({ environmentId: job.input.environmentId,
+                deploymentId: job.deploymentId, context });
+            const environment = await host.readEnvironment({ environmentId: job.input.environmentId, context });
+            const link = select(environment, job.input.targetLinkId);
+            if ('errorCode' in link) return link;
+            const intent = receipt.content.teardown;
+            if (job.machineId !== host.machineId || !link.members.some(member => member.machineId === job.machineId
+                && member.installationId === job.installationId)
+                || receipt.deployment.operation !== 'teardown' || receipt.deployment.actionOperationId !== job.actionOperationId
+                || receipt.deployment.environmentId !== job.input.environmentId || receipt.deployment.targetLinkId !== job.input.targetLinkId
+                || receipt.deployment.requestKey !== job.input.requestKey || !intent || intent.reason !== job.input.reason
+                || !intent.machines.some(member => member.machineId === job.machineId && member.installationId === job.installationId)) {
+                return failure('deployment_conflict');
+            }
+            if (context.signal?.aborted || receipt.deployment.cancelRequestedAtMs !== undefined
+                || receipt.deployment.state === 'cancelled') return failure('cancelled');
+            const request = { actionId: job.actionId, input: job.input, context,
+                receipt: { ok: true as const, environmentId: receipt.deployment.environmentId,
+                    revision: environment.environment.revision, deploymentId: receipt.deployment.id,
+                    deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state } };
+            const resources = selectDeploymentTeardownStepResources({ resources: intent.resources, step: job.step,
+                machineId: job.machineId, allMachines: intent.machines.length === link.machines.length });
+            if (!resources.length) return { kind: 'proved' as const, resources: [] };
+            const native = await acquireBoundary(request, environment, link);
+            try { return await native.boundary[job.mode]({ environmentId: job.input.environmentId,
+                targetLinkId: job.input.targetLinkId, deploymentId: job.deploymentId, actionOperationId: job.actionOperationId,
+                machineId: job.machineId, installationId: job.installationId, step: job.step, resources, context }); }
+            finally { await native.release(); }
+        } catch (error) {
+            return { ok: false as const, ...normalizeActionExecutorThrownError(error, `deployment.teardown.${job.kind === 'prepare' ? 'preview' : job.mode}`),
+                ...(job.kind === 'prepare' ? { effectAttempted: false } : {}) };
+        }
+    }
     return {
         async preview(input: DeploymentTeardownRequestInputV1, context: ActionExecutorContext) {
             try {
@@ -224,17 +283,20 @@ export function createOwnServerTeardownForHost(host: Host) {
             input: DeploymentTeardownInputV1, context: ActionExecutorContext, retainedIntent = false) {
             const link = select(environment, targetLinkId);
             if ('errorCode' in link) return link;
-            const resources = [...inventory(environment.environment.id, link.members[0].machineId)];
+            const members = selectMembers(input, link);
+            const resources = members.flatMap(member => inventory(environment.environment.id, member.machineId));
+            if (!isDeepStrictEqual(content.teardown?.machines, members.map(({ machineId, installationId }) => ({ machineId, installationId }))))
+                return failure('deployment_conflict');
             const data = content.teardown?.resources.filter(resource => resource.kind === 'data') ?? [];
             if (input.volumes?.some(volume => !data.some(resource => resource.id === volume.name))) return failure('deployment_conflict');
             if (data.length) {
                 const owned = retainedIntent ? data : await readVolumes({ serverId: input.serverId, environmentId: input.environmentId,
-                    targetLinkId, reason: input.reason }, context, environment);
+                    targetLinkId, reason: input.reason, ...(input.machines ? { machines: input.machines } : {}) }, context, environment);
                 if ('errorCode' in owned) return owned;
                 const selected = new Map(input.volumes?.map(volume => [volume.name, volume.disposition]));
                 for (const resource of data) {
-                    if (resource.machineId !== link.members[0].machineId || resource.ownership !== 'owned'
-                        || !owned.some(volume => volume.id === resource.id)) return unsupported('inventory_mismatch', 'Refresh the native volume review.');
+                    if (!members.some(member => member.machineId === resource.machineId) || resource.ownership !== 'owned'
+                        || !owned.some(volume => volume.id === resource.id && volume.machineId === resource.machineId)) return unsupported('inventory_mismatch', 'Refresh the native volume review.');
                     if (resource.disposition !== (selected.get(resource.id) === 'delete' ? 'remove' : 'retain')) return failure('deployment_conflict');
                 }
             }
@@ -254,6 +316,7 @@ export function createOwnServerTeardownForHost(host: Host) {
                 const input = 'expectedRevision' in request ? request : { ...request,
                     requestKey: request.requestKey ?? randomUUID(), targetLinkId: link.id,
                     expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision };
+                const members = selectMembers(input, link);
                 const prior = await host.findReceipt(input, context);
                 if (prior && (prior.deployment.operation !== 'teardown' || prior.content.teardown?.reason !== input.reason
                     || prior.content.teardown.targetLinkRevision !== input.expectedTargetLinkRevision)) return failure('deployment_conflict');
@@ -287,17 +350,17 @@ export function createOwnServerTeardownForHost(host: Host) {
                 }
                 const volumes = prior ? prior.content.teardown?.resources.filter(resource => resource.kind === 'data') ?? []
                     : input.volumes?.length ? await readVolumes({ serverId: input.serverId, environmentId: input.environmentId,
-                    targetLinkId: link.id, reason: input.reason }, context, environment) : [];
+                    targetLinkId: link.id, reason: input.reason, ...(input.machines ? { machines: input.machines } : {}) }, context, environment) : [];
                 if ('errorCode' in volumes) return volumes;
                 const selected = new Map(input.volumes?.map(volume => [volume.name, volume.disposition]));
                 if (input.volumes?.some(volume => !volumes.some(resource => resource.id === volume.name))) return failure('deployment_conflict');
-                const resources = [...inventory(input.environmentId, link.members[0].machineId),
+                const resources = [...members.flatMap(member => inventory(input.environmentId, member.machineId)),
                     ...volumes.map(resource => ({ ...resource, disposition: selected.get(resource.id) === 'delete' ? 'remove' as const : 'retain' as const }))];
                 if (prior && !isDeepStrictEqual(prior.content.teardown?.resources, resources)) return failure('deployment_conflict');
                 const content = prior?.content ?? DeploymentOwnServerContentV1Schema.parse({ sourceIntent,
                     machines: link.machines, buildMachineId: environment.environment.buildMachineId,
                     onFailure: 'keepPartial', images: [], machineResults: [], steps: [], teardown: { reason: input.reason,
-                        targetLinkRevision: link.revision, machines: link.members.map(({ machineId, installationId }) => ({ machineId, installationId })),
+                        targetLinkRevision: link.revision, machines: members.map(({ machineId, installationId }) => ({ machineId, installationId })),
                         resources, proofs: [] } });
                 const reference = prior ? { contentArtifactId: prior.deployment.contentArtifactId,
                     contentHeaderVersion: prior.deployment.contentHeaderVersion, contentBodyVersion: prior.deployment.contentBodyVersion }
@@ -307,76 +370,35 @@ export function createOwnServerTeardownForHost(host: Host) {
                     expectedTargetLinkRevision: input.expectedTargetLinkRevision, candidate: reference }),
                     preview: normalizeStrictJsonValue({ environmentId: input.environmentId, targetLinkId: input.targetLinkId,
                         summary: 'Stop and remove this Environment’s containers and owned networks. Only explicitly selected named data volumes are deleted; other volumes and images are kept.',
-                        machines: link.machines, resources: content.teardown?.resources ?? [] }) };
+                        machines: members.map(member => member.machineId), resources: content.teardown?.resources ?? [] }) };
             } catch (error) { return {
                 ...normalizeActionExecutorThrownError(error, 'deployment.teardown.prepare'),
                 ...failure(context.signal?.aborted ? 'cancelled'
                     : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable'),
                 effectAttempted: false }; }
         },
-        async executeNative(job: Extract<DeploymentChildRpcV1, { actionId: 'deployments.teardown' }>, context: ActionExecutorContext) {
-            try {
-                if (job.kind === 'prepare') {
-                    const environment = await host.readEnvironment({ environmentId: job.input.environmentId, context });
-                    const link = select(environment, job.input.targetLinkId);
-                    if ('errorCode' in link) return link;
-                    if (environment.environment.revision !== job.expectedRevision || link.revision !== job.expectedTargetLinkRevision
-                        || link.members[0].machineId !== host.machineId || link.members[0].installationId !== job.installationId) return failure('deployment_conflict');
-                    const resources = await readVolumes(job.input, context, environment);
-                    if ('errorCode' in resources) return resources;
-                    return DeploymentTeardownPreviewV1Schema.parse({ ok: true, kind: 'preview', volumes: resources.map(resource => ({
-                        name: resource.id, machineId: resource.machineId })) });
-                }
-                const receipt = await host.readReceipt({ environmentId: job.input.environmentId,
-                    deploymentId: job.deploymentId, context });
-                const environment = await host.readEnvironment({ environmentId: job.input.environmentId, context });
-                const link = select(environment, job.input.targetLinkId);
-                if ('errorCode' in link) return link;
-                const intent = receipt.content.teardown;
-                if (job.machineId !== host.machineId || link.members[0].machineId !== job.machineId
-                    || link.members[0].installationId !== job.installationId
-                    || receipt.deployment.operation !== 'teardown' || receipt.deployment.actionOperationId !== job.actionOperationId
-                    || receipt.deployment.environmentId !== job.input.environmentId || receipt.deployment.targetLinkId !== job.input.targetLinkId
-                    || receipt.deployment.requestKey !== job.input.requestKey || !intent || intent.reason !== job.input.reason
-                    || !intent.machines.some(member => member.machineId === job.machineId && member.installationId === job.installationId)) {
-                    return failure('deployment_conflict');
-                }
-                if (context.signal?.aborted || receipt.deployment.cancelRequestedAtMs !== undefined
-                    || receipt.deployment.state === 'cancelled') return failure('cancelled');
-                const request = { actionId: job.actionId, input: job.input, context,
-                    receipt: { ok: true as const, environmentId: receipt.deployment.environmentId,
-                        revision: environment.environment.revision, deploymentId: receipt.deployment.id,
-                        deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state } };
-                const resources = selectDeploymentTeardownStepResources({ resources: intent.resources, step: job.step,
-                    machineId: job.machineId, allMachines: intent.machines.length === link.machines.length });
-                if (!resources.length) return { kind: 'proved' as const, resources: [] };
-                const native = await acquireBoundary(request, environment, link);
-                try { return await native.boundary[job.mode]({ environmentId: job.input.environmentId,
-                    targetLinkId: job.input.targetLinkId, deploymentId: job.deploymentId, actionOperationId: job.actionOperationId,
-                    machineId: job.machineId, installationId: job.installationId, step: job.step, resources, context }); }
-                finally { await native.release(); }
-            } catch (error) {
-                return { ok: false as const, ...normalizeActionExecutorThrownError(error, `deployment.teardown.${job.kind === 'prepare' ? 'preview' : job.mode}`),
-                    ...(job.kind === 'prepare' ? { effectAttempted: false } : {}) };
-            }
-        },
+        executeNative,
         async execute(request: DeploymentReceiptDispatchV1) {
             if (request.actionId !== 'deployments.teardown') return failure('unsupported_action');
             const environment = await host.readEnvironment({ environmentId: request.input.environmentId, context: request.context });
             const link = select(environment, request.input.targetLinkId);
             if ('errorCode' in link) return link;
-            if (link.members[0].machineId === host.machineId) {
+            if (link.members.length === 1 && link.members[0].machineId === host.machineId) {
                 const native = await acquireBoundary(request, environment, link);
                 try { return await createDeploymentTeardownExecutor({ ...host, boundary: native.boundary })(request); }
                 finally { await native.release(); }
             }
             const dispatch = async (mode: 'observe' | 'execute', operation: Parameters<DeploymentTeardownBoundary['observe']>[0]) => {
                 if (!operation.resources.length) return { kind: 'proved' as const, resources: [] };
-                if (!host.sendChild) throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
-                const result = await host.sendChild(DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'teardown',
+                const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'teardown',
                     actionId: request.actionId, input: request.input, deploymentId: operation.deploymentId,
                     actionOperationId: operation.actionOperationId, machineId: operation.machineId,
-                    installationId: operation.installationId, step: operation.step, mode }), request.context);
+                    installationId: operation.installationId, step: operation.step, mode });
+                if (job.actionId !== 'deployments.teardown') throw new Error('Expected teardown child');
+                if (operation.machineId !== host.machineId && !host.sendChild)
+                    throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
+                const result = operation.machineId === host.machineId ? await executeNative(job, request.context)
+                    : await host.sendChild!(job, request.context);
                 const refusal = ActionExecuteFailureSchema.safeParse(result);
                 if (refusal.success) throw refusal.data;
                 return DeploymentTeardownObservationSchema.parse(result);

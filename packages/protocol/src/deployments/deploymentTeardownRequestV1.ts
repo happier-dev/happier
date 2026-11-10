@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
-import { DeploymentTeardownReasonV1Schema } from './deploymentActionsV1.js';
+import { DeploymentTeardownReasonV1Schema, DeploymentTeardownInputV1Schema } from './deploymentActionsV1.js';
 import { DeploymentTeardownVolumesV1Schema } from './deploymentTeardownVolumesV1.js';
 
 /** The controller selects the current runtime link unless the person names one. */
@@ -13,6 +13,7 @@ export const DeploymentTeardownRequestInputV1Schema = lazyZodSchema(() => z.stri
   reason: DeploymentTeardownReasonV1Schema,
   removeEnvironment: z.optional(z.literal(true)),
   volumes: z.optional(DeploymentTeardownVolumesV1Schema),
+  machines: DeploymentTeardownInputV1Schema.shape.machines,
   mode: z.optional(z.literal('preview')),
 }));
 export type DeploymentTeardownRequestInputV1 = z.infer<typeof DeploymentTeardownRequestInputV1Schema>;

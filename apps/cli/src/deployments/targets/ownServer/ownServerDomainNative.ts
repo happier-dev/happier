@@ -30,7 +30,7 @@ import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/mac
 import { createNativeCaddyRoutes } from '@/machines/reachability/nativeCaddyRoutes';
 import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { readDomainCaddyStartFirstLegs, resolveDomainIngress, selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork } from './domainRouteSelection';
+import { readDomainCaddyStartFirstLegs, resolveDomainIngress, selectDomainIngressMembers, selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork } from './domainRouteSelection';
 import type { CaddyDomainRouteInput } from './caddyRouteMaterialization';
 import { createNativeCaddyStartFirstRoutes } from '@/machines/reachability/nativeCaddyStartFirst';
 import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentRuntime } from './ownServerDeploymentTarget';
@@ -182,7 +182,8 @@ export function createOwnServerDomainNative(host: Readonly<{
             const link = environment.targetLinks.find(item => item.targetLink.id === job.input.targetLinkId)?.targetLink;
             if (!link || link.targetKind !== 'ownServer') return refuse('target_mismatch');
             environmentContent = environment.content;
-            members = link.members.filter(member => member.state === 'active').map(member => ({
+            members = selectDomainIngressMembers(link.members,
+                'membershipMachines' in job.input ? job.input.membershipMachines : undefined).map(member => ({
                 machineId: member.machineId, installationId: member.installationId, state: 'active' }));
         } else if (!withoutWorkload) {
             // Accepted work consumes its exact admitted private inputs, never a

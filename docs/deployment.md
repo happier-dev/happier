@@ -76,6 +76,24 @@ retained receipt inventory, including volumes already removed by that operation.
 Older strict-schema daemons reject the new preview or explicit volume operands;
 clients retain the review on that failure and never retry as an implicit deletion.
 
+A native deploy can restrict its operation to an explicit `services` set without
+changing the exact source definition. Preparation discovers images for that set;
+review rejects dependencies outside it, and migrations and service publications
+for excluded services do not run. Choosing a set requires the existing definition Manage role. A later
+deploy without that operand uses the source's ordinary selectors.
+
+Preview PostgreSQL provision retains cleanup choices only when that set matches
+the child's generated PostgreSQL inventory. Canonical template volume metadata
+identifies the data targets; effective native storage review refuses a repository
+merge that replaces those targets with host binds, external volumes or names
+outside the child's Compose project. Other repository mounts keep their ordinary
+semantics. The native owner intersects actual activated container mounts with those reviewed named mount targets and
+Compose-labelled owned volumes. It records the exact Machine and volume names in
+the receipt and successful deploy result as `previewCleanup`. Application,
+external, anonymous and unrelated volumes supply no deletion choice. The existing
+teardown Action consumes the retained explicit choices after copying and app
+deployment; ordinary restricted deploys supply no automatic cleanup authority.
+
 Teardown mint and Domain Remove child admission keep the Environment's recorded
 controller Machine authoritative. A request on another Machine returns
 `credential_scope_denied` with reason `controller_placement_mismatch`, the
@@ -1397,11 +1415,26 @@ The existing link writer publishes the returned child branch identity.
 Existing PR children are reused on synchronization. Production bindings, backup
 settings and ingress are not copied into the child.
 
+An own-server PostgreSQL selection records the original source backup capture
+and an explicit destination backup choice. Child creation prepares the selected
+template with fresh Saved Secrets and bindings. Its Compose augmentation travels
+with the exact PR checkout, preserving the repository build context. The Workflow
+first deploys only the child database, then runs the existing cross-Environment
+restore prepare/confirm Actions. A provisioned database receives a safety backup
+under the child's configuration before import. Source backup credentials stay
+source-bound; the copy executes on the Machine that already holds that grant.
+The app deploy runs only after verified restoration. A later PR event also checks
+the original Run's immutable copy outcome before starting the app. An incomplete
+copy requires review or closing and reopening the preview; synchronization does
+not silently bypass it. This first native path uses one runtime Machine.
+
 The child's private content records its creation Workflow Run. On close, the
 caller reads that Run's authenticated branch captures and invokes ordinary data
 teardown before removing the runtime and Environment. Disabling new previews
-keeps an existing lifecycle listener available for this cleanup. Own-server
-database copies remain a separate restore-lifecycle integration. This is
+keeps an existing lifecycle listener available for this cleanup. Native database
+provision retains the exact observed PostgreSQL volume deletion operands in the
+same Run. Close passes those operands to ordinary teardown; other volumes retain
+their existing default. This is
 development source behavior; real GitHub delivery and managed-provider effects
 still require the composed live journey on the reloaded development stack.
 

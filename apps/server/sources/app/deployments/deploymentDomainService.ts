@@ -20,7 +20,7 @@ import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { readProjectSourceCustodyInTx } from '@/app/projects/sources/projectSourceService';
 import { deploymentFailure, admitDeploymentMachinesInTx, type DeploymentAuthentication } from './deploymentAdmission';
 import { projectDeploymentListRow } from './deploymentListProjection';
-import { deploymentIntentDigest, loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx,
+import { deploymentIntentDigest, loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, lockDeploymentEnvironmentInTx,
     type AdmittedDeploymentEnvironment } from './deploymentEnvironmentService';
 import { deploymentContentReference, admitDeploymentStoredContentInTx, updateDeploymentStoredContentInTx } from './deploymentStoredContent';
 import { publishDeploymentChangesInTx } from './deploymentPublication';
@@ -29,6 +29,7 @@ import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/source
 import type { EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentChildAdmission } from './deploymentChildAuthorization';
 import type { VerifiedExternalActionExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
+import { readDeploymentMembershipAdmissionInTx } from './deploymentMembershipService';
 
 type DeploymentDomainRow = NonNullable<Awaited<ReturnType<Tx['deploymentDomain']['findUnique']>>>;
 type AcceptedDeploymentRead = NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['read'];
@@ -304,11 +305,16 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
     admittedEffectActionId?: string,
 ) {
     await lockDeploymentEnvironmentInTx(tx, input.environmentId);
-    const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
+    const membership = input.membershipDeploymentId && executionBinding
+        ? await readDeploymentMembershipAdmissionInTx(tx, executionBinding, input) : null;
+    if (input.membershipDeploymentId && !membership) return deploymentFailure('deployment_access_denied');
+    const loaded = membership ? await loadDeploymentEnvironmentCustodyInTx(tx, input)
+        : await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
     if (!loaded.ok) return loaded;
-    if (!loaded.admission.canManage || loaded.row.deletedAt) return deploymentFailure('deployment_access_denied');
+    if ('admission' in loaded && !loaded.admission.canManage || loaded.row.deletedAt) return deploymentFailure('deployment_access_denied');
+    const owner = 'admission' in loaded ? loaded.admission.owner : loaded.owner;
     if (executionBinding && ((admittedEffectActionId ?? executionBinding.actionId) !== 'deployments.domains.add' || executionBinding.accountId !== actorAccountId
-        || executionBinding.machineId !== loaded.row.controllerMachineId || executionBinding.requestId !== input.requestId
+        || !membership && executionBinding.machineId !== loaded.row.controllerMachineId || executionBinding.requestId !== input.requestId
         || executionBinding.serverIdentityId !== input.serverId || !executionBinding.requestEnvelopeDigest)) return deploymentFailure('deployment_access_denied');
     const now = await readTransactionDatabaseTime(tx);
     const repeatKey = `deployments.domains.add:${actorAccountId}:${input.environmentId}:${input.requestKey}`;
@@ -326,21 +332,26 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
     if (!link || link.revision !== input.expectedTargetLinkRevision || link.sourceKind !== 'host' || link.targetKind !== 'ownServer') {
         return deploymentFailure('deployment_conflict');
     }
-    if (input.placements.some(item => !link.machines.some(member => member.machineId === item.machineId && member.installationId === item.installationId)
+    const desiredMembers = membership?.members ?? link.machines;
+    if (input.placements.some(item => !desiredMembers.some(member => member.machineId === item.machineId && member.installationId === item.installationId)
         && item.machineId !== loaded.row.edgeMachineId)
-        || link.machines.some(member => !input.placements.some(item => item.machineId === member.machineId && item.installationId === member.installationId))
+        || desiredMembers.some(member => !input.placements.some(item => item.machineId === member.machineId && item.installationId === member.installationId))
         || loaded.row.edgeMachineId && !input.placements.some(item => item.machineId === loaded.row.edgeMachineId)) {
         return deploymentFailure('deployment_conflict');
     }
-    const machineFailure = await admitDeploymentMachinesInTx(tx, loaded.admission.owner,
+    const machineFailure = membership ? null : await admitDeploymentMachinesInTx(tx, owner,
         input.placements.map(item => ({ ...item, role: 'target' as const })));
     if (machineFailure) return machineFailure;
-    const contentFailure = await admitDeploymentStoredContentInTx(tx, actorAccountId, loaded.admission.owner, input, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1);
+    const contentFailure = membership ? null : await admitDeploymentStoredContentInTx(tx, actorAccountId, owner, input, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1);
     if (contentFailure) return contentFailure;
     const keys = new Map<string, string>();
     for (const ids of portableQueryChunks({ values: [...new Set(input.placements.map(item => item.machineId))], bindingsPerValue: 1 })) {
-        const machines = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: { id: true, installationPublicKey: true } });
-        for (const machine of machines) if (machine.installationPublicKey) keys.set(machine.id, encodeBase64(machine.installationPublicKey, 'base64url'));
+        const machines = await tx.machine.findMany({ where: { id: { in: [...ids] }, revokedAt: null, replacedByMachineId: null },
+            select: { id: true, installationId: true, installationPublicKey: true } });
+        for (const machine of machines) if (machine.installationPublicKey && input.placements.some(item =>
+            item.machineId === machine.id && item.installationId === machine.installationId)) {
+            keys.set(machine.id, encodeBase64(machine.installationPublicKey, 'base64url'));
+        }
     }
     if (input.placements.some(item => !keys.has(item.machineId))) return deploymentFailure('deployment_access_denied');
     const oldCaptures = previous ? readCaptures(previous) : [];
@@ -367,7 +378,7 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
     const retained: Captures = oldCaptures.filter(old => !desired.some(item => sameResource(old, item))).map(old => ({ ...old, desired: false,
         ...(execution ? { execution } : {}),
         placement: { ...old.placement, accountId: actorAccountId, actionOperationId: input.actionOperationId, requestId: input.requestId } }));
-    if (previous?.state === 'active' && retained.length === 0 && desired.length === oldCaptures.length) {
+    if (!membership && previous?.state === 'active' && retained.length === 0 && desired.length === oldCaptures.length) {
         await saveRepeatKey(tx, repeatKey, digest, defaultRepeatKeyExpiresAt(now));
         return domainResult(previous, loaded.row.revision);
     }
@@ -379,7 +390,7 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
         ...deploymentContentReference(input), capturedPlacements } });
     await tx.deploymentEnvironment.update({ where: { id: loaded.row.id }, data: { revision: { increment: 1 } } });
     await saveRepeatKey(tx, repeatKey, digest, defaultRepeatKeyExpiresAt(now));
-    await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, loaded.row.revision + 1);
+    await publishDeploymentChangesInTx(tx, 'admission' in loaded ? loaded.admission : loaded, loaded.row.id, loaded.row.revision + 1);
     return domainResult(row, loaded.row.revision + 1);
 }
 

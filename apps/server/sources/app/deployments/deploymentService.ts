@@ -25,6 +25,7 @@ import { readDeploymentTeardownSubjectsInTx } from './deploymentTeardownSubjects
 import { admitDeploymentTeardownEnvironmentRemovalInTx, removeAdmittedDeploymentEnvironmentInTx } from './deploymentDispositionService';
 import { projectDeploymentReceiptActivityV1 } from '@happier-dev/deployment-protocol/v1';
 import { resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
+import { deploymentTeardownMembershipAdmissionSchema, haveDeploymentMembershipRoutesInTx } from './deploymentMembershipService';
 
 type Receipt = NonNullable<Awaited<ReturnType<Tx['deployment']['findUnique']>>>;
 function retainedDomainTeardownFailure() {
@@ -133,6 +134,8 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
         || (operation !== 'teardown' && loaded.row.runtimeTargetLinkId !== input.targetLinkId)) return deploymentFailure('deployment_conflict');
     if (requiresBuilder && !loaded.row.buildMachineId) return deploymentFailure('deployment_conflict');
     const teardownMachines = 'reason' in input && input.machines ? input.machines : link.machines.map(member => member.machineId);
+    const selectiveTeardown = operation === 'teardown' && isOwnServerDeploymentTarget(link)
+        && loaded.row.runtimeTargetLinkId === link.id && teardownMachines.length < link.machines.length;
     if (operation === 'teardown' && teardownMachines.some(machineId => !link.machines.some(member => member.machineId === machineId))) {
         return deploymentFailure('deployment_conflict');
     }
@@ -163,7 +166,7 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
     const contentFailure = await admitDeploymentStoredContentInTx(tx, actorAccountId, loaded.admission.owner, input,
         DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1);
     if (contentFailure) return contentFailure;
-    if (operation === 'teardown') {
+    if (operation === 'teardown' && !selectiveTeardown) {
         const domains = await prepareDeploymentTeardownDomainsInTx(tx, actorAccountId, input.actionOperationId, loaded, executionBinding);
         if (!domains.ok) return domains.error === 'unsupported_action' ? retainedDomainTeardownFailure() : domains;
     }
@@ -207,7 +210,11 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
         requestedByAccountId: actorAccountId, actionOperationId: input.actionOperationId,
         ...(acceptedExecution ? deploymentAcceptedExecutionColumns(acceptedExecution) : {}),
         acceptedRequestEnvelopeDigest: acceptedExecution ? executionBinding?.requestEnvelopeDigest ?? null : null,
-        ...(removeEnvironment ? { teardownProof: { removeEnvironment: true } } : {}),
+        ...(selectiveTeardown || removeEnvironment ? { teardownProof: {
+            ...(selectiveTeardown ? { admittedMachines: link.machines.filter(member => teardownMachines.includes(member.machineId))
+                .map(member => ({ machineId: member.machineId, installationId: member.installationId })) } : {}),
+            ...(removeEnvironment ? { removeEnvironment: true } : {}),
+        } } : {}),
         predecessorDeploymentId: link.activeDeploymentId, rollbackOfDeploymentId,
         ...(promotedFromDeploymentId ? { promotedFromDeploymentId } : {}), ...deploymentContentReference(input),
     } });
@@ -283,23 +290,31 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     }
     if (row.revision !== input.expectedRevision || (!resumedTeardown && (!canTransitionDeploymentV1(DeploymentStateV1Schema.parse(row.state), input.state)
         || isDeploymentSettledV1(DeploymentStateV1Schema.parse(row.state))))) return deploymentFailure('deployment_conflict');
+    const admittedTeardownSelection = deploymentTeardownMembershipAdmissionSchema.safeParse(row.teardownProof);
+    const teardownSubjects = input.teardownProof
+        ? await readDeploymentTeardownSubjectsInTx(tx, link, acceptedExecution, loaded.row.runtimeTargetLinkId) : null;
+    const completeTeardown = input.teardownProof !== undefined && input.teardownProof.machines.length === teardownSubjects?.length;
     if (row.operation === 'teardown') {
         if (input.expectedTargetLinkRevision !== undefined || input.state === 'running_unverified' || (input.state === 'succeeded' && !input.teardownProof)) return deploymentFailure('deployment_conflict');
         if (input.state === 'running' || input.teardownProof) {
             const newer = await tx.deployment.findFirst({ where: { targetLinkId: link.id, id: { not: row.id },
                 OR: [{ requestedAt: { gt: row.requestedAt } }, { requestedAt: row.requestedAt, id: { gt: row.id } }] }, select: { id: true } });
             if (newer) return deploymentFailure('deployment_conflict');
-            const inventory = await readDeploymentDomainInventoryInTx(tx, actorAccountId, {
+            const inventory = admittedTeardownSelection.success && !completeTeardown ? null : await readDeploymentDomainInventoryInTx(tx, actorAccountId, {
                 serverId: input.serverId, environmentId: loaded.row.id, expectedRevision: loaded.row.revision,
             }, authentication, loaded);
-            if (!inventory.ok) return inventory;
+            if (inventory && !inventory.ok) return inventory;
             // Starting/resuming may execute this receipt's admitted removals.
             // Completion still requires every Domain's signed removal settlement.
-            if (inventory.domains.length > 0 && (input.teardownProof || inventory.domains.some(domain =>
+            if (inventory?.ok && inventory.domains.length > 0 && (input.teardownProof || inventory.domains.some(domain =>
                 domain.state !== 'removing' || domain.operationAddress?.operationId !== row.actionOperationId
                 || domain.operationAddress.machineId !== acceptedExecution?.controller.machineId
                 || domain.operationAddress.serverId !== input.serverId))) return input.teardownProof
                     ? deploymentFailure('deployment_conflict') : retainedDomainTeardownFailure();
+            if (admittedTeardownSelection.success && input.teardownProof && !await haveDeploymentMembershipRoutesInTx(tx, {
+                environmentId: row.environmentId, targetLinkId: link.id,
+                members: admittedTeardownSelection.data.admittedMachines, mode: 'drain',
+            })) return deploymentFailure('deployment_conflict');
         }
     } else if (input.teardownProof || ((input.state === 'succeeded' || input.state === 'running_unverified') && input.expectedTargetLinkRevision === undefined)) return deploymentFailure('deployment_conflict');
     if (resumedTeardown) {
@@ -308,16 +323,22 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
             href: `/deployments/environments/${encodeURIComponent(row.environmentId)}/deployments/${encodeURIComponent(busy.id)}` };
     }
     if (input.expectedTargetLinkRevision !== undefined && input.expectedTargetLinkRevision !== link.revision) return deploymentFailure('deployment_conflict');
-    const teardownSubjects = input.teardownProof
-        ? await readDeploymentTeardownSubjectsInTx(tx, link, acceptedExecution, loaded.row.runtimeTargetLinkId) : null;
-    const completeTeardown = input.teardownProof !== undefined && input.teardownProof.machines.length === teardownSubjects?.length;
     if (input.teardownProof && (input.teardownProof.removeEnvironment && !removeEnvironment
         || removeEnvironment && !completeTeardown)) return deploymentFailure('deployment_conflict');
     if (input.teardownProof && teardownSubjects) {
         const removal = input.teardownProof;
+        if (admittedTeardownSelection.success && (removal.machines.length !== admittedTeardownSelection.data.admittedMachines.length
+            || admittedTeardownSelection.data.admittedMachines.some(member => !removal.machines.some(selected =>
+                member.machineId === selected.machineId && member.installationId === selected.installationId)))) {
+            return deploymentFailure('deployment_conflict');
+        }
         if (removal.targetLinkRevision !== link.revision || removal.machines.some(member => !teardownSubjects.some(current =>
             current.machineId === member.machineId && current.installationId === member.installationId))) return deploymentFailure('deployment_conflict');
     }
+    const joining = link.machines.filter(member => member.state === 'joining');
+    if (input.expectedTargetLinkRevision !== undefined && input.state === 'succeeded' && joining.length > 0
+        && !await haveDeploymentMembershipRoutesInTx(tx, { environmentId: row.environmentId,
+            targetLinkId: link.id, members: joining, mode: 'join' })) return deploymentFailure('deployment_conflict');
     if (input.contentUpdate) {
         const updated = await updateDeploymentStoredContentInTx(tx, actorAccountId, loaded, nextContent, input.contentUpdate, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1);
         if (!updated.ok) return updated;
@@ -335,9 +356,8 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     const accountIds = await resolveProjectSourceAudienceInTx(tx, [loaded.source]);
     if (input.expectedTargetLinkRevision !== undefined) {
         await tx.deploymentTargetLink.update({ where: { id: link.id }, data: { activeDeploymentId: row.id, state: 'deployed', revision: { increment: 1 } } });
-        // A first single-Machine runtime has no separate serving-ingress admission.
-        // Multi-Machine joins require the route owner's proof, beyond uniform code identity.
-        if (!link.activeDeploymentId && link.machines.length === 1) {
+        // The signed uniform receipt and Domain owner jointly prove joining readiness.
+        if (input.state === 'succeeded' && joining.length > 0) {
             await tx.deploymentTargetLinkMachine.updateMany({ where: { targetLinkId: link.id, state: 'joining' }, data: { state: 'active' } });
         }
         await publishDeploymentChangesInTx(tx, loaded, loaded.row.id, loaded.row.revision, undefined, false, accountIds);

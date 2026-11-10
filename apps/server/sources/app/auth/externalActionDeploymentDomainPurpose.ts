@@ -6,7 +6,7 @@ import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentDomainRemoveAdmiss
 import type { ExternalActionExecutionAuthorizationBindingV1, ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
     matchesDeploymentDomainPreparedInputV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentMembershipActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, type EnvironmentSecretLaunchAdmissionInputV1 } from '@happier-dev/deployment-protocol';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -26,18 +26,20 @@ export function readExternalActionDeploymentDomainPurpose(binding: ExternalActio
     const teardownRemoval = binding.actionId === 'deployments.teardown'
         && isDeploymentDomainRemoveActionIdV1(effectActionId)
         && deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, effectActionId) === effectActionId;
-    if ((!isDeploymentDomainChildActionIdV1(binding.actionId) || effectActionId !== binding.actionId) && !reviewedCreate && !teardownRemoval
+    const membershipAdd = isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
+        && isDeploymentDomainAddActionIdV1(effectActionId);
+    if ((!isDeploymentDomainChildActionIdV1(binding.actionId) || effectActionId !== binding.actionId) && !reviewedCreate && !teardownRemoval && !membershipAdd
         || proof.method.toUpperCase() !== 'POST'
         || proof.routeInput !== undefined && !sameStrictJsonValue(proof.routeInput, proof.body)) return null;
     const projection = reviewedCreate ? proof.reviewedChild?.deploymentNativeAdmission : binding.deploymentNativeAdmission;
     const admitted = isDeploymentDomainNativeAdmissionV1(projection) ? projection : null;
-    if (admitted && admitted.actionId !== effectActionId || !admitted && !reviewedCreate && !teardownRemoval) return null;
+    if (admitted && admitted.actionId !== effectActionId || !admitted && !reviewedCreate && !teardownRemoval && !membershipAdd) return null;
     const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
-    if (isDeploymentDomainAddActionIdV1(effectActionId) && admitted && secret.success
+    if (isDeploymentDomainAddActionIdV1(effectActionId) && (admitted || membershipAdd) && secret.success
         && secret.data.materialization.kind === 'domain' && secret.data.materialization.use === undefined
         && secret.data.serverId === binding.serverIdentityId
         && secret.data.machineId === binding.machineId && secret.data.installationId === binding.installationId
-        && secret.data.environmentId === admitted.environmentId && secret.data.materialization.domainId === admitted.domainId
+        && (admitted ? secret.data.environmentId === admitted.environmentId && secret.data.materialization.domainId === admitted.domainId : membershipAdd)
         && (binding.environmentId === undefined || binding.environmentId === secret.data.environmentId)
         && secret.data.targetLinkId === secret.data.materialization.capture.placement.targetLinkId
         && proof.path === `/v1/deployments/environments/${encodeURIComponent(secret.data.environmentId)}/secret-launch-admission`) {
@@ -63,7 +65,7 @@ export function readExternalActionDeploymentDomainPurpose(binding: ExternalActio
     };
     const transition = DeploymentDomainTransitionInputV1Schema.safeParse(proof.body);
     if (transition.success && transition.data.serverId === binding.serverIdentityId
-        && (admitted ? transition.data.domainId === admitted.domainId && transition.data.environmentId === admitted.environmentId : reviewedCreate || teardownRemoval)
+        && (admitted ? transition.data.domainId === admitted.domainId && transition.data.environmentId === admitted.environmentId : reviewedCreate || teardownRemoval || membershipAdd)
         && (binding.environmentId === undefined || binding.environmentId === transition.data.environmentId)
         && proof.path === `/v1/deployments/environments/${encodeURIComponent(transition.data.environmentId)}/domains/${encodeURIComponent(transition.data.domainId)}/transitions`) {
         return { kind: 'transition', input: transition.data };
@@ -71,15 +73,16 @@ export function readExternalActionDeploymentDomainPurpose(binding: ExternalActio
     if (effectActionId === 'deployments.domains.add') {
         const prepared = DeploymentDomainPreparedContentInputV1Schema.safeParse(proof.body);
         if (prepared.success && prepared.data.serverId === binding.serverIdentityId
-            && (admitted ? prepared.data.domainId === admitted.domainId && prepared.data.environmentId === admitted.environmentId : reviewedCreate)
+            && (admitted ? prepared.data.domainId === admitted.domainId && prepared.data.environmentId === admitted.environmentId : reviewedCreate || membershipAdd)
             && (binding.environmentId === undefined || binding.environmentId === prepared.data.environmentId)
             && proof.path === `/v1/deployments/environments/${encodeURIComponent(prepared.data.environmentId)}/domains/${encodeURIComponent(prepared.data.domainId)}/prepared-content`) {
             return { kind: 'prepared-content', input: prepared.data };
         }
-        if (reviewedCreate && admitted?.authoredMetadataDigest === undefined) return null;
         const input = DeploymentDomainAddAdmissionInputV1Schema.safeParse(proof.body);
+        const membership = membershipAdd && input.success && input.data.membershipDeploymentId !== undefined;
+        if (reviewedCreate && admitted?.authoredMetadataDigest === undefined && !membership) return null;
         return input.success && input.data.serverId === binding.serverIdentityId && input.data.requestId === binding.requestId
-            && matchesOriginalInput(input.data)
+            && (membership || matchesOriginalInput(input.data))
             && (binding.environmentId === undefined || binding.environmentId === input.data.environmentId)
             && proof.path === `/v1/deployments/environments/${encodeURIComponent(input.data.environmentId)}/domains`
             ? { kind: 'admission', input: input.data } : null;

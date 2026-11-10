@@ -37,7 +37,8 @@ import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { readDeploymentChildResult } from '../../deploymentChild';
 import { prepareRollbackForHost } from '../../prepareRollbackForHost';
 import { createOwnServerDeploymentTargetForHost, type OwnServerDeploymentTargetForHost,
-    type OwnServerDeploymentTargetHostInput, type OwnServerDeploymentRequest, type OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
+    type OwnServerDeploymentTargetHostInput, type OwnServerDeploymentRequest, type OwnServerDeploymentReceipt,
+    type OwnServerDeploymentMemberRouteEnrollmentForHost } from './ownServerDeploymentTarget';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
@@ -841,19 +842,16 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: input.state };
         },
         runtime: { async acquire() { throw new Error('Remote members must not acquire controller native custody'); } },
-        ...(enrollJoining ? { async enrollMemberRoutes(_request: OwnServerDeploymentRequest, input: {
-            link: typeof link; member: { machineId: string; installationId: string }; selectedDeploymentId: string;
-        }) {
+        ...(enrollJoining ? { async enrollMemberRoutes(_request: OwnServerDeploymentRequest, input: OwnServerDeploymentMemberRouteEnrollmentForHost) {
             expect(input.link.id).toBe(link.id);
-            expect(input.member).toMatchObject({ machineId: 'machine-c', installationId: 'installation-c' });
-            expect(input.selectedDeploymentId).toBe('uniform-v1');
-            expect(receipt.content.machineResults.find(row => row.machineId === 'machine-c')).toMatchObject({
-                currentDeploymentId: 'uniform-v1', restoration: 'succeeded', health: 'healthy' });
-            if (mode === 'joiningMultiple') expect(receipt.content.machineResults.find(row => row.machineId === 'machine-d')).toMatchObject({
-                currentDeploymentId: 'uniform-v1', restoration: 'succeeded', health: 'healthy' });
+            for (const joining of input.link.members.filter(member => member.state === 'joining')) {
+                expect(receipt.content.machineResults.find(row => row.machineId === joining.machineId
+                    && row.installationId === joining.installationId)).toMatchObject({
+                    currentDeploymentId: 'uniform-v1', restoration: 'succeeded', health: 'healthy' });
+            }
             expect(buildDispatches).toBe(0);
             expect(link.members[2].state).toBe('joining');
-            dispatched.push('enroll:machine-c');
+            dispatched.push('enroll');
             return mode === 'joiningRouteRefused' ? { ok: false as const, errorCode: 'native_route_unavailable', error: 'native_route_unavailable' }
                 : { ok: true as const, environmentId: environment.environment.id, revision: environment.environment.revision,
                     deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: 'running' as const };
@@ -862,8 +860,8 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
             buildDispatches += 1;
             expect(receipt.deployment.state).toBe('running');
             expect(dispatched.filter(phase => !phase.startsWith('observe:'))).toEqual(enrollJoining
-                ? mode === 'joiningMultiple' ? ['restore:machine-c', 'restore:machine-d', 'enroll:machine-c']
-                    : ['restore:machine-c', 'enroll:machine-c'] : []);
+                ? mode === 'joiningMultiple' ? ['restore:machine-c', 'restore:machine-d', 'enroll']
+                    : ['restore:machine-c', 'enroll'] : []);
             receipt.content.images = builtImages;
             const builderId = receipt.content.buildMachineId;
             const builderInstallationId = builderId === 'builder-c' ? 'installation-c' : 'installation-a';
@@ -916,9 +914,9 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
             ...(successful ? { state: 'succeeded' } : { errorCode: mode === 'joiningUnhealthy'
                 ? 'deployment_health_failed' : 'native_route_unavailable' }) });
         expect(dispatched[0]).toBe('restore:machine-c');
-        expect(dispatched).toContainEqual(mode === 'joiningUnhealthy' ? 'restore:machine-c' : 'enroll:machine-c');
-        if (mode === 'joiningMultiple') expect(dispatched.slice(0, 3)).toEqual(['restore:machine-c', 'restore:machine-d', 'enroll:machine-c']);
-        expect(dispatched.filter(phase => phase.startsWith('enroll:'))).toHaveLength(mode === 'joiningUnhealthy' ? 0 : 1);
+        expect(dispatched).toContainEqual(mode === 'joiningUnhealthy' ? 'restore:machine-c' : 'enroll');
+        if (mode === 'joiningMultiple') expect(dispatched.slice(0, 3)).toEqual(['restore:machine-c', 'restore:machine-d', 'enroll']);
+        expect(dispatched.filter(phase => phase === 'enroll')).toHaveLength(mode === 'joiningUnhealthy' ? 0 : 1);
         expect(dispatched.filter(phase => phase.startsWith('activate:'))).toHaveLength(successful ? link.members.length : 0);
         expect(buildDispatches).toBe(successful ? 1 : 0);
         expect(receipt.deployment.state).toBe(successful ? 'succeeded' : 'failed');

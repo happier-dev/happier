@@ -45,17 +45,22 @@ describe('teardown operation custody', () => {
         expect(removed).toBe(accepted);
     });
 
-    it('replays completion after Home advances the target link without repeating native effects', async () => {
+    it.each([false, true])('replays completed teardown without native effects (subset=%s)', async subset => {
         const environment = createDeploymentEnvironmentDetailV1();
         const link = environment.targetLinks[0].targetLink;
+        if (subset) {
+            link.members.push({ machineId: 'remaining-machine', installationId: 'remaining-installation', state: 'active' });
+            link.machines.push('remaining-machine');
+        }
+        const machines = subset ? [link.members[0]] : link.members;
         const admittedRevision = link.revision;
-        link.revision++;
+        if (!subset) link.revision++;
         const sample = createDeploymentReceiptDetailV1();
         const receipt = createDeploymentReceiptDetailV1({ deployment: { ...sample.deployment,
             operation: 'teardown', state: 'succeeded', environmentId: environment.environment.id,
             targetLinkId: link.id }, content: { ...sample.content,
             teardown: { reason: 'manual', targetLinkRevision: admittedRevision,
-                machines: link.members.map(({ machineId, installationId }) => ({ machineId, installationId })), resources: [], proofs: [] } } });
+                machines: machines.map(({ machineId, installationId }) => ({ machineId, installationId })), resources: [], proofs: [] } } });
         const execute = createDeploymentTeardownExecutor({ serverId: 'home', machineId: link.machines[0],
             readEnvironment: async () => environment, readReceipt: async () => receipt,
             writeTransition: async () => { throw new Error('Completion replay must not write'); },
@@ -64,6 +69,7 @@ describe('teardown operation custody', () => {
         expect(await execute({ actionId: 'deployments.teardown', input: { serverId: 'home',
             environmentId: environment.environment.id, targetLinkId: link.id, expectedRevision: environment.environment.revision,
             expectedTargetLinkRevision: admittedRevision, requestKey: receipt.deployment.requestKey, reason: 'manual',
+            ...(subset ? { machines: machines.map(member => member.machineId) } : {}),
             contentArtifactId: receipt.deployment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 },
             receipt: { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: 'succeeded' },

@@ -21,6 +21,7 @@ import { readAcceptedDeploymentDomainInTx, hasCurrentDeploymentDomainCaptureInTx
     type DeploymentDomainJobAdmission } from './deploymentDomainService';
 import { readTemplateDeploymentEnvironmentIdInTx, readAdmittedCreateDeploymentEnvironmentCustodyInTx,
     readDeploymentPreparationEnvironmentIdInTx } from './deploymentPreparationAuthorization';
+import { readDeploymentMembershipAdmissionInTx } from './deploymentMembershipService';
 
 export type DeploymentChildAdmission = Readonly<{
     binding: ExternalActionExecutionAuthorizationBindingV1; routing: DeploymentChildRoutingV1;
@@ -46,6 +47,14 @@ export async function readDeploymentChildAdmissionInTx(tx: Tx, binding: External
         const domainJob = await readAcceptedDeploymentDomainInTx(tx, binding, {
             ...routing.input, expectedDomainRevision: routing.expectedDomainRevision, actionOperationId: routing.actionOperationId, capture: routing.capture });
         return domainJob ? { binding, routing, domainJob } : null;
+    }
+    if (routing.kind === 'domainDiscover' && routing.actionId === 'deployments.domains.add' && routing.input.membershipDeploymentId) {
+        const admitted = await readDeploymentMembershipAdmissionInTx(tx, binding, routing.input);
+        return admitted && (admitted.members.some(member => member.machineId === routing.machineId
+            && member.installationId === routing.installationId)
+            || admitted.link.environmentId === routing.input.environmentId && await tx.deploymentEnvironment.findFirst({ where: {
+                id: routing.input.environmentId, edgeMachineId: routing.machineId }, select: { id: true } }))
+            ? { binding, routing } : null;
     }
     const current = await isCurrentDeploymentChildRoutingInTx(tx, binding, routing, authentication);
     if (typeof current !== 'boolean') return current;

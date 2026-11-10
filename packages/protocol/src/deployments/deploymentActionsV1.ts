@@ -41,7 +41,7 @@ import { ArtifactQuotaExceededV1Schema } from '../artifacts/artifactActionsV1.js
 import { isDeploymentChildEffectActionIdV1, type DeploymentTransportActionIdV1 } from './deploymentActionIdsV1.js';
 import { DeploymentEnvironmentRefV1Schema } from './deploymentEnvironmentRefV1.js';
 import { DeploymentDeployIntentInputV1Schema } from './deploymentDeployIntentV1.js';
-import { DeploymentOnFailureV1Schema } from './storedAppInputV1.js';
+import { DeploymentOnFailureV1Schema, DeploymentServiceSubsetV1Schema } from './storedAppInputV1.js';
 import { DeploymentPromoteIntentInputV1Schema } from './deploymentPromoteIntentV1.js';
 export { DeploymentPromoteIntentInputV1Schema, type DeploymentPromoteIntentInputV1 } from './deploymentPromoteIntentV1.js';
 import { DeploymentEnvironmentCopyFromV1Schema, DeploymentEnvironmentCopyReviewV1Schema } from './deploymentEnvironmentCopyV1.js';
@@ -331,6 +331,7 @@ export const DeploymentDeployInputV1Schema = lazyZodSchema(() => z.strictObject(
   ...deploymentIntent, ...DeploymentArtifactContentReferenceV1Schema.shape,
   whenBusy: z.optional(z.enum(['refuse', 'supersede'])),
   onFailure: z.optional(DeploymentOnFailureV1Schema),
+  services: z.optional(DeploymentServiceSubsetV1Schema),
   pendingDeploy: z.optional(DeploymentPendingDeployV1Schema),
 }).check(z.refine(input => input.pendingDeploy === undefined || input.whenBusy === 'supersede',
   { message: 'Retaining a pending intent requires explicit supersession.' }),
@@ -525,6 +526,8 @@ export const DeploymentEnvironmentCreateResultV1Schema = lazyZodSchema(() => z.u
   z.strictObject({ ...result, projectSourceId: z.optional(DeploymentIdentifierV1Schema),
     runtimeTargetLinkId: z.optional(DeploymentIdentifierV1Schema),
     previewDataTargets: z.optional(DeploymentPreviewDataTargetsV1Schema),
+    previewNativeData: z.optional(z.array(z.strictObject({ service: DeploymentIdentifierV1Schema,
+      database: DeploymentIdentifierV1Schema }))),
   }), DeploymentActionFailureV1Schema,
 ]));
 export const DeploymentPreviewEnrollmentV1Schema = lazyZodSchema(() => z.union([

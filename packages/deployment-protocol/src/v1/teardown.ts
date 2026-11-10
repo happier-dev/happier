@@ -24,7 +24,7 @@ export const DeploymentTeardownContentV1Schema = z.strictObject({
     machines: z.array(DeploymentTargetLinkMachineV1Schema).check(z.minLength(1)),
     resources: z.array(DeploymentTeardownResourceV1Schema), proofs: z.array(DeploymentTeardownStepProofV1Schema),
 }).check(z.refine(content => new Set(content.machines.map(member => member.machineId)).size === content.machines.length
-    && new Set(content.resources.map(resource => resource.id)).size === content.resources.length
+    && new Set(content.resources.map(resource => JSON.stringify([resource.machineId, resource.id]))).size === content.resources.length
     && new Set(content.proofs.map(proof => JSON.stringify([proof.machineId, proof.step]))).size === content.proofs.length
     && content.resources.every(resource => resource.machineId === undefined || content.machines.some(member => member.machineId === resource.machineId))
     && content.proofs.every(proof => content.machines.some(member => member.machineId === proof.machineId

@@ -1162,7 +1162,8 @@ function isRegistryAppUpdateReadEffect(binding: ExternalActionExecutionAuthoriza
 /** The installed service/deployment owner derives its Environment from current custody. */
 function isDeploymentReadPreparation(binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string): boolean {
     const rootActionId = binding.actionId;
-    if (rootActionId === 'deployments.teardown' && isDeploymentDomainMetadataReadActionIdV1(effectActionId)) return true;
+    if (isDeploymentMembershipActionIdV1(rootActionId, binding.deploymentPreparationAdmission)
+        && isDeploymentDomainMetadataReadActionIdV1(effectActionId)) return true;
     if (isDeploymentObservationReadActionIdV1(rootActionId)) return effectActionId === 'deployments.environments.get'
         || effectActionId === 'deployments.receipts.get';
     if (isDeploymentEnvironmentMetadataReadActionIdV1(rootActionId)) return effectActionId === 'deployments.environments.get';
@@ -1242,6 +1243,8 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
             === effectActionId;
     const createPreparationEffect = isDeploymentCreateHttpEffect(binding, effectActionId);
     const targetRetentionPurpose = readDeploymentTargetRetentionHttpPurpose(binding, effectActionId, proof);
+    const preparationRead = await readDeploymentPreparationHttpReadPurpose(db, binding, effectActionId, proof,
+        actionId => isAccountActionHttpOperation(actionId, proof));
     const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId);
     const reviewedSessionAgentReadinessChild = readGrantedSessionAgentReadinessChild(binding, proof.reviewedChild) === effectActionId;
     const reviewedMachineSetupChild = binding.admittedMachineRole === 'manage'
@@ -1285,7 +1288,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild,
-        linkReviewedSetupRead, candidatePublication, sibling,
+        linkReviewedSetupRead, candidatePublication, preparationRead, sibling,
         nativeTransition: readDeploymentNativeTransition(binding, effectActionId, proof),
         domainPurpose };
 }
@@ -1482,9 +1485,9 @@ async function verifyCommon(
             ? { interruptedSettlement: true as const } : {}),
     } : undefined;
 
-    const acceptedPreparationRead = readDeploymentPreparationHttpReadPurpose(binding, effectActionId.data, proof,
-        actionId => isAccountActionHttpOperation(actionId, proof));
-    if (binding.actionId === 'deployments.teardown' && isDeploymentDomainMetadataReadActionIdV1(effectActionId.data)
+    const acceptedPreparationRead = signedChildPurpose.preparationRead;
+    if (isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
+        && isDeploymentDomainMetadataReadActionIdV1(effectActionId.data)
         && !acceptedPreparationRead) return refuseExternalActionExecutionRequest('deployment_metadata_environment', proof);
     const acceptedDeployment = (deploymentContinuation
         || deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined)
@@ -2525,6 +2528,8 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): Promise<boolean> {
     const root = verified.binding.actionId;
     if (isExternalActionConnectedAccountInventoryHttpPurpose(verified.binding, verified.effectActionId, proof)) return true;
+    const preparationRead = verified.signedChildPurpose.preparationRead;
+    if (preparationRead && isDeploymentDomainMetadataReadActionIdV1(preparationRead.actionId)) return true;
     if (isExternalActionConnectedSubscriptionPriceHttpPurpose(verified.binding, verified.effectActionId, proof)) return true;
     // Environment names live in private headers. Listing opens only that
     // projection; the Artifact owner retains requester per-record access.
@@ -3213,6 +3218,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         if (!isAdmittedRootRelay && !readsExecutionMachine) return refuseExternalActionExecutionRequest('deployment_restart_purpose', proof);
     } else if (isDeploymentReadActionIdV1(verified.binding.actionId)) {
         if (!await isDeploymentNativeReadHttpPurpose(verified, proof, isAdmittedRootRelay || readsExecutionMachine)) return refuseExternalActionExecutionRequest('deployment_native_read_purpose', proof);
+    } else if (verified.signedChildPurpose.preparationRead
+        && isDeploymentDomainMetadataReadActionIdV1(verified.signedChildPurpose.preparationRead.actionId)) {
+        // The read owner already bound this membership transport to its admitted Home and Environment.
     } else if ((verified.binding.actionId === 'deployments.templates.instantiate' || verified.binding.actionId === 'deployments.environments.create')
         && verified.signedChildPurpose.nativeTransition) {
         // verifyCommon has already admitted this exact installed receipt continuation.
