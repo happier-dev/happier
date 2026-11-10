@@ -20,6 +20,7 @@ import {
 import { computeNewSessionComposerPanelMaxHeight } from '@/components/sessions/agentInput/inputMaxHeight';
 import { NewSessionProviderLaunchError } from '@/components/sessions/new/components/NewSessionProviderLaunchError';
 import { NewSessionRequesterFolderHint } from '@/components/sessions/new/components/NewSessionRequesterFolderHint';
+import { NewSessionCreationReviewLine } from '@/components/sessions/new/components/NewSessionCreationReviewLine';
 import { NewSessionLaunchApprovalNotice } from '@/components/sessions/new/components/NewSessionLaunchApprovalNotice';
 import { useComposerTextSelector } from '@/components/sessions/agentInput/composerTextStore';
 import { isNewSessionComposerEditable } from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
@@ -173,6 +174,7 @@ export function NewSessionComposerCard(input: Readonly<{
                     />
                     <NewSessionLaunchApprovalNotice approval={props.launchApproval} />
                     <NewSessionRequesterFolderHint isolation={props.requesterIsolation} />
+                    <NewSessionCreationReviewLine summary={props.creationReviewSummary} />
                     <PluginContextualResourceStoreProvider>
                         {props.composerDocument?.beforeComposer}
                         {props.composerTopContent}

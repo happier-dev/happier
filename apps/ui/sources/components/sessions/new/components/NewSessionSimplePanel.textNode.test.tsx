@@ -463,6 +463,53 @@ describe('NewSessionSimplePanel', () => {
         })).toBeTruthy();
     });
 
+    it('shows the selected Team credential source in the Send review above the composer, with no extra step', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        const handleCreateSession = vi.fn();
+        const panel = (summary: string | null) => <NewSessionSimplePanel
+            popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+            headerHeight={44}
+            safeAreaTop={0}
+            safeAreaBottom={0}
+            newSessionTopPadding={0}
+            newSessionSidePadding={0}
+            newSessionBottomPadding={0}
+            containerStyle={{}}
+            promptStore={createNewSessionPromptStore('')}
+            setSessionPrompt={() => {}}
+            handleCreateSession={handleCreateSession}
+            canCreate={true}
+            isCreating={false}
+            emptyAutocompleteKinds={[]}
+            emptyAutocompleteSuggestions={async () => []}
+            agentType="claude"
+            handleAgentClick={() => {}}
+            permissionMode="default"
+            handlePermissionModeChange={() => {}}
+            modelMode="default"
+            setModelMode={() => {}}
+            modelOptions={[]}
+            machineName={undefined}
+            selectedPath=""
+            showResumePicker={false}
+            resumeSessionId={null}
+            isResumeSupportChecking={false}
+            useProfiles={false}
+            selectedProfileId={null}
+            connectionStatus={undefined}
+            creationReviewSummary={summary}
+        />;
+        const summary = 'Start a session using Harbor Team’s Claude account';
+        const screen = await renderScreen(panel(summary));
+        expect(screen.findAllHostsByTestId('new-session-creation-review')).toHaveLength(1);
+        expect(screen.getTextContent()).toContain(summary);
+        expect(handleCreateSession).not.toHaveBeenCalled();
+
+        screen.tree.unmount();
+        const unselected = await renderScreen(panel(null));
+        expect(unselected.findAllHostsByTestId('new-session-creation-review')).toHaveLength(0);
+    });
+
     it('does not force the composer shell to full-height on wide web layouts', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 

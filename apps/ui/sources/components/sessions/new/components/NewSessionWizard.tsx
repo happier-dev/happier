@@ -92,6 +92,7 @@ import {
 import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 import { NewSessionProviderLaunchError } from '@/components/sessions/new/components/NewSessionProviderLaunchError';
 import { NewSessionRequesterFolderHint } from '@/components/sessions/new/components/NewSessionRequesterFolderHint';
+import { NewSessionCreationReviewLine } from '@/components/sessions/new/components/NewSessionCreationReviewLine';
 import { NewSessionLaunchApprovalNotice, type NewSessionLaunchApprovalNoticeState } from '@/components/sessions/new/components/NewSessionLaunchApprovalNotice';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import {
@@ -731,6 +732,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                     />
                                     <NewSessionLaunchApprovalNotice approval={props.footer.launchApproval} />
                                     <NewSessionRequesterFolderHint isolation={props.footer.requesterIsolation} />
+                                    <NewSessionCreationReviewLine summary={props.footer.creationReviewSummary} />
                                     {/*
                                       * Resolved upstream by
                                       * `resolveNewSessionLaunchPresentation`. The Wizard
