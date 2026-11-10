@@ -405,10 +405,12 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
   // past the screen edge, D9), where the web keeps the stretched width.
   const previewWidth = columnWidth - 2 * (VISUAL_RING_GAP_PX + VISUAL_RING_WIDTH_PX);
   const aspectRatio = props.previewAspectRatio ?? VISUAL_FILL_PREVIEW_ASPECT_RATIO;
+  // Measured, the fill style (with its aspectRatio) is left out entirely: a later `aspectRatio: undefined` does not
+  // clear it on native.
+  const measuredPreview = fill && gridWidth > 0 && previewWidth > 0;
   const previewAspect: ViewStyle | null = !fill ? null
-    : gridWidth > 0 && previewWidth > 0
+    : measuredPreview
       ? {
-        aspectRatio: undefined,
         minHeight: 0,
         height: props.previewAspectRatio ? previewWidth / aspectRatio : Math.max(VISUAL_PREVIEW_HEIGHT_PX, previewWidth / aspectRatio),
       }
@@ -447,7 +449,7 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
           >
             {/* The ring sits on an outer frame with a gap so it reads as a selection, not a border. */}
             <View style={[styles.visualRing, selected ? styles.visualRingSelected : null]}>
-              <View style={[styles.visualPreview, fill ? styles.visualPreviewFill : null, previewAspect, option.previewEdge === 'dashed' ? styles.visualPreviewDashed : null]} pointerEvents="none">
+              <View style={[styles.visualPreview, fill && !measuredPreview ? styles.visualPreviewFill : null, previewAspect, option.previewEdge === 'dashed' ? styles.visualPreviewDashed : null]} pointerEvents="none">
                 {option.preview ?? null}
               </View>
             </View>
