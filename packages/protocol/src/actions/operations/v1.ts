@@ -2,7 +2,7 @@ import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { HomeApplicationOriginV1Schema } from '../../auth/accountDirectory.js';
 import { DeploymentReceiptSettlementFailureDetailsV1Schema, readDeploymentReceiptFailureCodeV1 } from '../../deployments/deploymentReceiptResultV1.js';
 import { DeploymentExecutionFailureDetailsV1Schema } from '../../deployments/deploymentReceiptEventsV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { MachineSudoPasswordPromptV1Schema, MachineElevationFailureV1Schema } from '../../machines/adminAccessV1.js';
 import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVitalsSampleV1.js';
 import { MachineAvailabilityDiagnosticV1Schema } from '../../machines/machineAccessV1.js';

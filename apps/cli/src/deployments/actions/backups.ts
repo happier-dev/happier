@@ -1,5 +1,6 @@
 import type { ActionExecutorContext, ActionExecuteFailure, ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { isRecord } from '@happier-dev/protocol/common/records';
+import { isDeepStrictEqual } from 'node:util';
 import {
     DeploymentBackupRestoreResultV1Schema, DeploymentBackupActionResultSchemasV1,
     type DeploymentBackupActionIdV1, type DeploymentBackupActionInputV1,
@@ -87,8 +88,9 @@ export function createDeploymentBackupActionForHost(host: Readonly<{
                 return DeploymentBackupActionResultSchemasV1[actionId].parse({ kind: 'history',
                     environmentId: input.environmentId, configRevision: input.configRevision, ...recorded.backups }) as DeploymentBackupActionResultV1<TId>;
             }
-            const captures = recorded.captures.flatMap(({ snapshot, manifests }) => manifests
-                .map(manifest => ({ backupOperationId: snapshot.operationId, manifest })));
+            const captures = recorded.captures.flatMap(({ snapshot, manifests, restoreCaptures }) => manifests
+                .map(manifest => ({ backupOperationId: snapshot.operationId, manifest,
+                    capture: restoreCaptures?.find(item => isDeepStrictEqual(item.source, manifest)) })));
             if (actionId === DEPLOYMENT_BACKUP_INVENTORY_ACTION_ID_V1) {
                 const result = await host.backup({ actionId: 'deployments.backups.inventory', input, context, verificationEvidence: captures });
                 return DeploymentBackupActionResultSchemasV1[actionId].parse(result) as DeploymentBackupActionResultV1<TId>;
@@ -102,7 +104,8 @@ export function createDeploymentBackupActionForHost(host: Readonly<{
                 if (!selected || !('level' in input)) return failure('backup_required', 'capture');
                 const result = await host.backup({ actionId: 'deployments.backups.verify', input: { ...input,
                     backupOperationId: selected.backupOperationId, snapshotId: selected.manifest.snapshot.snapshotId,
-                    level: input.level }, context, manifest: selected.manifest });
+                    level: input.level }, context, manifest: selected.manifest,
+                    ...(selected.capture ? { capture: selected.capture } : {}) });
                 return DeploymentBackupActionResultSchemasV1[actionId].parse(result) as DeploymentBackupActionResultV1<TId>;
             }
             const proof = recorded.verifications.find(item => item.evidence.result === 'verified'
@@ -129,7 +132,7 @@ export function createDeploymentBackupActionForHost(host: Readonly<{
                 if (!isRecord(evidence)) continue;
                 const native = OwnServerRestorePreparationForHostSchema.safeParse(evidence.native);
                 if (!native.success) continue;
-                protectedSnapshotIds.add(native.data.prepared.source.snapshot.snapshotId);
+                if (native.data.prepared.source.kind !== 'upload') protectedSnapshotIds.add(native.data.prepared.source.snapshot.snapshotId);
                 for (const manifest of native.data.prepared.safetyBackup?.manifests ?? []) {
                     protectedSnapshotIds.add(manifest.snapshot.snapshotId);
                 }

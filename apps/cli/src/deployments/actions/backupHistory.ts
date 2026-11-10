@@ -18,7 +18,7 @@ export function projectDeploymentBackupHistory(operations: readonly DeploymentBa
         if (snapshot.actionId !== DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 || snapshot.state !== 'succeeded') return [];
         const result = DeploymentBackupRunResultV1Schema.safeParse(snapshot.result);
         return result.success && result.data.operationId === snapshot.operationId
-            ? [{ snapshot, manifests: result.data.manifests }] : [];
+            ? [{ snapshot, manifests: result.data.manifests, restoreCaptures: result.data.restoreCaptures }] : [];
     });
     const verifications = completed.flatMap(({ snapshot, input: authoredInput }) => {
         if (snapshot.actionId !== DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1 || !('backupOperationId' in authoredInput)
