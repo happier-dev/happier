@@ -207,6 +207,33 @@ async function completedPreMigrationReceipt(options: Parameters<typeof nativeBou
 }
 
 describe('pre-migration receipt capture and ID-only restore admission', () => {
+  it('copies an original capture to its admitted destination without relabeling source custody', async () => {
+    const { receipt, result } = await completedPreMigrationReceipt();
+    const copiedDestination = { ...destination, environmentId: 'copy-environment', service: 'copy-db', database: 'copy database',
+      databaseExists: false, hasMeaningfulData: false, writerServices: [] };
+    const copy = { source: { environmentId, service: destination.service, adapter: destination.adapter, database: destination.database },
+      destination: { environmentId: copiedDestination.environmentId, service: copiedDestination.service,
+        adapter: copiedDestination.adapter, database: copiedDestination.database } };
+    const input = { environmentId: copiedDestination.environmentId, restoreBackupId: snapshotId,
+      receipt, destination: copiedDestination };
+    expect(owners.resolveDeploymentRestoreCaptureV1(input)).toEqual({ kind: 'refused', code: 'stale_input' });
+    expect(owners.resolveDeploymentRestoreCaptureV1({ ...input, ...{ copy } })).toEqual({ kind: 'resolved',
+      capture: { source: result.manifests[0], sourceFormat: 'postgresCustom', configuration,
+        repository: { repository: access.repository, s3: access.s3 }, destination: copiedDestination } });
+    expect(owners.resolveDeploymentRestoreCaptureV1({ environmentId: copiedDestination.environmentId,
+      restoreBackupId: snapshotId, destination: copiedDestination, copy, manifest: result.manifests[0]!,
+      configuration: DeploymentBackupConfigurationV1Schema.parse(configuration),
+      repository: { repository: access.repository, s3: access.s3 } }))
+      .toEqual({ kind: 'refused', code: 'backup_required' });
+    for (const changed of [
+      { ...copy, source: { ...copy.source, environmentId: 'foreign' } },
+      { ...copy, source: { ...copy.source, database: 'foreign' } },
+      { ...copy, destination: { ...copy.destination, service: 'foreign' } },
+      { ...copy, destination: { ...copy.destination, environmentId: environmentId } },
+    ]) expect(owners.resolveDeploymentRestoreCaptureV1({ ...input, ...{ copy: changed } }))
+      .toEqual({ kind: 'refused', code: 'stale_input' });
+  });
+
   it('round-trips the completed backup through the receipt and resolves its exact capture once without IO', async () => {
     const { receipt, result } = await completedPreMigrationReceipt();
     const capture = receipt.content.ownServer?.preMigrationBackup;

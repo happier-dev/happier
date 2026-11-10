@@ -108,6 +108,37 @@ async function confirm(native: ReturnType<typeof boundary>, receipt: DeploymentR
 }
 
 describe('exact PostgreSQL restore semantic owner', () => {
+    it.each([false, true])('copies a produced capture using only destination native effects (import failure: %s)', async streamFails => {
+        const backup = safetyBackup();
+        const produced = await owners.runDeploymentBackupV1({ ...backup,
+            restoreTarget: { environmentId: backup.environmentId, service: 'db', adapter: 'postgres-v1', database: 'app' } });
+        const capture = produced.restoreCaptures?.[0];
+        if (!capture) throw new Error('Expected the original backup producer capture');
+        const copyDestination = { ...destination, environmentId: 'copy-target', service: 'copy-db', writerServices: ['preview-web'] };
+        const resolved = owners.resolveDeploymentRestoreCaptureV1({ environmentId: copyDestination.environmentId,
+            restoreBackupId: capture.source.snapshot.snapshotId, capture, destination: copyDestination,
+            copy: { source: { environmentId: capture.source.environmentId, ...capture.target }, destination: copyDestination } });
+        expect(resolved.kind).toBe('resolved');
+        if (resolved.kind !== 'resolved') throw new Error('Expected admitted copy mapping');
+        const native = boundary({ source: capture.source, streamFails });
+        // Only native IO is substituted. A source service command would fail this
+        // boundary before it could stop writers or rename production databases.
+        const execute: DeploymentRestorePrepareInputV1['execute'] = async request => {
+            if (request.kind === 'service' || request.kind === 'integrity' || request.kind === 'health')
+                expect(request.service).toBe(copyDestination.service);
+            if (request.kind === 'restoreStream') expect(request.consumer.service).toBe(copyDestination.service);
+            if (request.kind === 'writers') expect(request.services).toEqual(['preview-web']);
+            return native.execute(request);
+        };
+        const prepared = await prepare(native, { ...resolved.capture, execute });
+        const result = await confirm(native, prepared, { ...resolved.capture, execute });
+        expect(result.kind).toBe(streamFails ? 'recoveryRequired' : 'restored');
+        expect(result.source).toEqual(capture.source);
+        expect(result.destination).toEqual(copyDestination);
+        expect(native.writersRunning).toBe(true);
+        expect(native.names).toEqual(streamFails ? ['app', 'restore_stage'] : ['app', 'restore_old']);
+    });
+
     it('restores an exact retained scheduled manifest through the existing safety and confirmation lifecycle', async () => {
         const backup = safetyBackup();
         const captured = await owners.runDeploymentBackupV1({ ...backup,

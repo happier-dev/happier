@@ -9,7 +9,7 @@ import { prepareDeploymentRestoreV1, confirmDeploymentRestoreV1, runDeploymentBa
     type DeploymentRestorePrepareReceiptV1, type DeploymentRestoreResultV1,
     type DeploymentRestoreNativeRequestV1, type DeploymentRestoreNativeResultV1,
     type DeploymentBackupRunInputV1, type DeploymentBackupRunResultV1, type DeploymentRestoreResolvedCaptureV1,
-    type ResticAccessV1, type DeploymentRestoreDestinationV1 } from '@happier-dev/deployments';
+    type ResticAccessV1, type DeploymentRestoreDestinationV1, type DeploymentRestoreCopyMappingV1 } from '@happier-dev/deployments';
 import type { OwnServerDeploymentReceipt, OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import type { OwnServerDatabaseUsernameForHost } from './backupDestination';
 import { createNativeComposeLifecycle, executeAdmittedServiceCommand, admitServiceCommandStreamForHost,
@@ -274,6 +274,7 @@ export async function runOwnServerNativePreMigrationBackup(input: OwnServerNativ
 export type OwnServerNativeRestoreByIdCapture = Omit<OwnServerNativeRestorePrepareCapture, 'source' | 'sourceFormat'> & Readonly<{
     receipt: DeploymentReceiptDetailV1;
     restoreBackupId: string;
+    copy?: DeploymentRestoreCopyMappingV1;
 }>;
 
 export type OwnServerNativeRestorePrepareReceipt = DeploymentRestorePrepareReceiptV1 & Readonly<{
@@ -295,7 +296,8 @@ export type OwnServerNativeRestoreInputFactory = (capture: DeploymentRestoreReso
 
 async function resolveNativeRestore(factory: OwnServerNativeRestoreInputFactory, admitted: OwnServerNativeRestoreByIdCapture) {
     const resolved = resolveDeploymentRestoreCaptureV1({ environmentId: admitted.destination.environmentId,
-        restoreBackupId: admitted.restoreBackupId, receipt: admitted.receipt, destination: admitted.destination });
+        restoreBackupId: admitted.restoreBackupId, receipt: admitted.receipt, destination: admitted.destination,
+        ...(admitted.copy ? { copy: admitted.copy } : {}) });
     if (resolved.kind === 'refused') throw new PluginError({ code: resolved.code, message: 'The restore backup capture is unavailable' });
     const capture: OwnServerNativeRestorePrepareCapture = { operationId: admitted.operationId, source: resolved.capture.source,
         sourceFormat: resolved.capture.sourceFormat, destination: resolved.capture.destination, safetyBackup: admitted.safetyBackup };
