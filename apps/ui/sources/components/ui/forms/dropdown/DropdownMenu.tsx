@@ -11,6 +11,7 @@ import type { SelectableRowVariant } from '@/components/ui/lists/SelectableRow';
 import { SelectableMenuResults, type SelectableMenuResultsHandle } from '@/components/ui/forms/dropdown/SelectableMenuResults';
 import type { MenuItemSource, SelectableMenuItemSource, SelectableMenuCategoryDecorations, SelectableMenuItem, SelectableMenuSwatch } from '@/components/ui/forms/dropdown/selectableMenuTypes';
 import { useSelectableMenu, CREATE_ITEM_ID } from '@/components/ui/forms/dropdown/useSelectableMenu';
+import { openedFromKeyboard } from '@/components/ui/forms/dropdown/dropdownKeyboardOpen';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
 import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
@@ -33,18 +34,6 @@ const DROPDOWN_ACTION_FRAME_FALLBACK_MS = 100;
 
 /** A menu that is not tied to its trigger's width reads as a menu, not a sheet: this is its widest. */
 export const DROPDOWN_MENU_MAX_WIDTH_PX = 320;
-
-/** Whether the control that opened the menu holds keyboard focus (the browser's own `:focus-visible` judgement). */
-function openedFromKeyboard(): boolean {
-    const active = typeof document === 'undefined' ? null : document.activeElement;
-    if (active === null || typeof active.matches !== 'function') return false;
-    try {
-        return active.matches(':focus-visible');
-    } catch {
-        // A browser without the selector cannot tell; the first key still reveals the highlight.
-        return false;
-    }
-}
 
 export type DropdownMenuItem = Readonly<{
     id: string;
@@ -700,7 +689,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
             setHighlightVisible(false);
             return;
         }
-        if (Platform.OS === 'web' && openedFromKeyboard()) setHighlightVisible(true);
+        if (Platform.OS === 'web' && openedFromKeyboard(typeof document === 'undefined' ? null : document.activeElement)) setHighlightVisible(true);
     }, [props.open]);
     const handleResultsSelectionChange = React.useCallback((index: number) => {
         setHighlightVisible(true);
