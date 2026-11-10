@@ -75,3 +75,26 @@ describe('Add machine opened from a composer: native Back', () => {
     await screen.unmount();
   });
 });
+
+describe('Back to a docked composer (native, nested settings stack)', () => {
+  it('hands the draft back to the host and leaves the nested stack through its parent, not inside it', async () => {
+    const { leaveToDockedComposer } = await import('./MachineAddDraftScreen');
+    const order: string[] = [];
+    const parentBack = vi.fn(() => order.push('parent.goBack'));
+    const back = vi.fn();
+    leaveToDockedComposer({
+      applyToHost: () => order.push('applyToHost'),
+      navigation: { getParent: () => ({ canGoBack: () => true, goBack: parentBack }) },
+      back,
+    });
+    expect(order).toEqual(['applyToHost', 'parent.goBack']);
+    expect(back).not.toHaveBeenCalled();
+  });
+
+  it('falls back to its own Back when there is no parent to leave through', async () => {
+    const { leaveToDockedComposer } = await import('./MachineAddDraftScreen');
+    const back = vi.fn();
+    leaveToDockedComposer({ applyToHost: vi.fn(), navigation: { getParent: () => undefined }, back });
+    expect(back).toHaveBeenCalledOnce();
+  });
+});

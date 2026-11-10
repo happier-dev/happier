@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { useNavigation } from 'expo-router';
 import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
-import { buildNewSessionPickerSubflowHref, completeNewSessionPickerReturn, hasNewSessionPickerContinuation, pickNewSessionRouteParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerSubflowHref, completeNewSessionPickerReturn, hasNewSessionPickerContinuation, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 import { useIsFocused, useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
@@ -53,6 +53,22 @@ export function useNativeBackReturnsToComposer(navigation: BeforeRemoveNavigatio
             onReturnRef.current();
         });
     }, [navigation, enabled]);
+}
+
+/**
+ * A docked composer is no route in the nested settings stack this flow is pushed in: popping inside that stack lands
+ * on Settings › Machines. So Back hands the (unchanged) draft back to the host and leaves the whole nested stack
+ * through its parent, to the screen the composer is docked on, as the web's history does.
+ */
+export function leaveToDockedComposer(input: Readonly<{
+    applyToHost: () => void;
+    navigation: Readonly<{ getParent?(): { canGoBack?(): boolean; goBack?(): void } | undefined }>;
+    back: () => void;
+}>): void {
+    input.applyToHost();
+    const parent = input.navigation.getParent?.();
+    if (parent?.canGoBack?.()) parent.goBack?.();
+    else input.back();
 }
 
 export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen() {
@@ -113,7 +129,17 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     // Native: the stack's own Back (header, swipe) would pop to the settings page this flow was pushed over. Opened
     // from a composer, Back returns to that composer as Leave does; the return's own removal passes through. A
     // pushed way keeps its Back to the ways, and the web's history already returns to the composer.
-    useNativeBackReturnsToComposer(navigation, returning && !pushedWay, returnToComposer);
+    const dockedHostDraft = typeof params.newSessionHostDraftId === 'string' && params.newSessionHostDraftId.length > 0;
+    const nativeBackReturn = React.useCallback(() => {
+        if (!dockedHostDraft) { returnToComposer(); return; }
+        leaveToDockedComposer({
+            applyToHost: () => { setNewSessionPickerReturnParams({ navigation, router, returnToHost,
+                currentParams: pickNewSessionRouteParams(params), routeParams: {} }); },
+            navigation,
+            back: () => { router.back(); },
+        });
+    }, [dockedHostDraft, navigation, params, returnToComposer, returnToHost, router]);
+    useNativeBackReturnsToComposer(navigation, returning && !pushedWay, nativeBackReturn);
     const startSession = React.useCallback((machine: Readonly<{ machineId: string; serverId: string }>) => {
         if (returning) { returnToComposer(machine); return; }
         const lifetime = captureActiveServerAccountScopeLifetime();
