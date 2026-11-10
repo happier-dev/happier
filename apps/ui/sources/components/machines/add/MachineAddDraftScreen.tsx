@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { useNavigation } from 'expo-router';
 import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { buildNewSessionPickerSubflowHref, completeNewSessionPickerReturn, hasNewSessionPickerContinuation, pickNewSessionRouteParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
@@ -34,6 +35,26 @@ import { completeMachineAddWatch } from './machineAddTaskLifetime';
  * "Add a machine" (the typed host names the draft row, never the page; a phone's pushed way takes that way's name), with the same form as Home's "Add a machine" block. A machine that joins
  * replaces the draft; Discard stops watching (a machine that joins later still shows up in the list).
  */
+type BeforeRemoveNavigation = Readonly<{
+    addListener(type: 'beforeRemove', listener: (event: { preventDefault(): void }) => void): () => void;
+}>;
+
+/** While `enabled` on native, the stack's own Back runs `onReturn` once instead of popping; later removals pass. */
+export function useNativeBackReturnsToComposer(navigation: BeforeRemoveNavigation, enabled: boolean, onReturn: () => void): void {
+    const onReturnRef = React.useRef(onReturn);
+    onReturnRef.current = onReturn;
+    React.useEffect(() => {
+        if (Platform.OS === 'web' || !enabled) return;
+        let returned = false;
+        return navigation.addListener('beforeRemove', (event) => {
+            if (returned) return;
+            returned = true;
+            event.preventDefault();
+            onReturnRef.current();
+        });
+    }, [navigation, enabled]);
+}
+
 export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen() {
     const router = useRouter();
     const navigation = useNavigation();
@@ -89,6 +110,10 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     const discard = React.useCallback(async () => {
         if (separateCreateHome || await flow.discard()) leave();
     }, [flow.discard, leave, separateCreateHome]);
+    // Native: the stack's own Back (header, swipe) would pop to the settings page this flow was pushed over. Opened
+    // from a composer, Back returns to that composer as Leave does; the return's own removal passes through. A
+    // pushed way keeps its Back to the ways, and the web's history already returns to the composer.
+    useNativeBackReturnsToComposer(navigation, returning && !pushedWay, returnToComposer);
     const startSession = React.useCallback((machine: Readonly<{ machineId: string; serverId: string }>) => {
         if (returning) { returnToComposer(machine); return; }
         const lifetime = captureActiveServerAccountScopeLifetime();
