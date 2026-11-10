@@ -13,6 +13,7 @@ import { openAutomationTemplateStoredV1 } from '@happier-dev/protocol/automation
 import { convertLegacyAutomationRecipeToInlineWorkflowV1 } from '@happier-dev/protocol/automations/automationLegacyWorkflowV1';
 import { WorkflowAcceptedSnapshotV1Schema, WorkflowResolvedInputsV1Schema, type WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { materializeWorkflowAcceptedSnapshotV1, workflowRequiresMachineStartCapacityV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import type { WorkflowTargetUnavailableReasonV1 } from '@happier-dev/protocol/workflows/workflowTargetUnavailableReasonV1';
 import { readWorkflowInvocationMembersV1, readWorkflowInvocationRootV1 } from '@happier-dev/protocol/workflows';
 import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
 import { deriveWorkflowDestinationsV1 } from '@happier-dev/protocol/workflows/workflowDestinationsV1';
@@ -1365,6 +1366,7 @@ export type WorkflowTriggerAdmissionRefusal = Readonly<{
   state: 'failed' | 'skipped';
   reason: string;
   blockId?: string;
+  targetUnavailableReason?: WorkflowTargetUnavailableReasonV1;
   /** No accepted snapshot or coordinator effects were committed by this claim. */
   admission: 'refused';
 }>;
@@ -1679,7 +1681,11 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         // Nested definitions are still required source reads before acceptance.
         return refuseSourceRead('materialization', error);
       }
-      if (!created.ok) return refuse('materialization', created.error.code, created.error.blockId);
+      if (!created.ok) return {
+        ...refuse('materialization', created.error.code, created.error.blockId),
+        ...(created.error.code === 'target_unavailable' && 'reason' in created.error
+          ? { targetUnavailableReason: created.error.reason } : {}),
+      };
       if (deploymentOccurrence.kind === 'available') {
         try {
           const controller = await params.resolveControllerContext({ runId: claim.runId, accepted: created.snapshot,

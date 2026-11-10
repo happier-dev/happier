@@ -3754,12 +3754,13 @@ describe('production workflow coordinator', () => {
       accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
       automationCause: { kind: 'manual', invokedAt: 1 }, causeWorkDepth: 0,
       definitionEnvelope: JSON.stringify({ t: 'plain', v: {
-        inlineDefinition: { version: 1, inputs: [], defaults: {
+        inlineDefinition: { version: 1, inputs: [], defaults: { engine: {
           agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
-        }, blocks: [onlyStep] },
+        } }, blocks: [onlyStep] },
         workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
       } }),
-    })).resolves.toEqual({ state: 'failed', reason: 'target_unavailable', blockId: 'work', admission: 'refused' });
+    })).resolves.toEqual({ state: 'failed', reason: 'target_unavailable', blockId: 'work', admission: 'refused',
+      targetUnavailableReason: 'selection_unavailable' });
     expect(execute).not.toHaveBeenCalled();
   });
 

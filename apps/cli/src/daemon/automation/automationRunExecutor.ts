@@ -342,12 +342,15 @@ export async function executeClaimedRun(params: {
           signal: executionController.signal,
         });
         if ('admission' in result && result.admission === 'refused') {
+          const refusalMessage = result.targetUnavailableReason === 'agent_not_installed'
+            ? 'Selected Agent is not installed on this Machine (agent_not_installed)'
+            : `Workflow trigger admission refused: ${result.targetUnavailableReason ?? result.reason}`;
           await failV3ClaimedRunBeforeStart({
             machineId, claimed, claimClient, signal: executionController.signal, isCurrent,
             resolveAutomationAccountEncryption: params.resolveAutomationAccountEncryption,
             errorCode: result.reason,
             ...(result.state === 'skipped' ? { terminalState: 'skipped' as const } : {}),
-            errorMessage: `Workflow trigger admission refused: ${result.reason}${result.blockId === undefined ? '' : ` (block ${result.blockId})`}`,
+            errorMessage: `${refusalMessage}${result.blockId === undefined ? '' : ` (block ${result.blockId})`}`,
           });
         }
         return;
