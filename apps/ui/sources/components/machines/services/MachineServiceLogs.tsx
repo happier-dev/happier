@@ -183,6 +183,7 @@ export function MachineServiceLogs(
         <SurfaceStateCard
           testID="machine-service-logs-error"
           kind="error"
+          size="line"
           title={t('machineServices.logs.error.title')}
           reason={t('machineServices.logs.error.body', {
             machine: machineName,
@@ -266,7 +267,7 @@ export function MachineServiceLogs(
           revealedLine={viewer.viewState?.revealedLine ?? null}
         />
       )}
-      {/* The section's description already says secret values are redacted; only a cut-off page adds a note. */}
+      {/* Only a cut-off page adds a note under the lines. */}
       {truncated ? (
         <Text style={styles.note} testID="machine-service-logs-truncated">
           {t('machineServices.logs.truncated')}
@@ -371,6 +372,7 @@ function UnavailableLogs(
     <SurfaceStateCard
       testID={`machine-service-logs-unavailable-${props.reason}`}
       kind={props.reason === 'denied' ? 'denied' : 'unavailable'}
+      size="line"
       title={t(`machineServices.logs.unavailable.${props.reason}`, {
         machine: props.machineName,
       })}

@@ -102,6 +102,10 @@ describe('Machine services presentation', () => {
     const unnamed = machineServiceIdentityLine(row('My production watch', { nativeInstance: instance }));
     expect(unnamed).not.toContain(instance.nativeResourceId);
     expect(unnamed).not.toContain('existing-production');
+    // The title already says the name; the identity line never repeats it ("Compose · web" under "web").
+    const compose = { adapter: { pluginId: 'happier.machine.services', localId: 'compose' }, nativeResourceId: 'web' };
+    expect(machineServiceIdentityLine(row('web', { nativeInstance: compose,
+      native: { phase: 'running', readiness: 'ready', displayName: 'web' } }))).toBe('Compose');
   });
 
   it('offers only the controls the row says the service supports for its current generation', () => {

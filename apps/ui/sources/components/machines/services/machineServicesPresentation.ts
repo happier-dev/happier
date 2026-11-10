@@ -83,12 +83,18 @@ export function machineServiceKind(
   return row.authority === 'project' && row.environmentId ? 'compose' : null;
 }
 
-/** What the service is, from its producer's kind and native display name ("systemd · caddy.service"). */
-export function machineServiceIdentityLine(row: Pick<MachineServiceRowV1, 'authority' | 'environmentId' | 'nativeInstance' | 'native'>): string | null {
+/**
+ * What the service is, from its producer's kind and native display name ("systemd · caddy.service"). A native name
+ * the title already shows is not repeated ("Compose", not "Compose · web" under "web").
+ */
+export function machineServiceIdentityLine(
+  row: Pick<MachineServiceRowV1, 'authority' | 'environmentId' | 'nativeInstance' | 'native' | 'name' | 'nameResolution'>,
+): string | null {
   const kind = machineServiceKind(row);
+  const nativeName = row.native?.displayName ?? null;
   const parts = [
     kind === null ? null : kind === 'systemd' || kind === 'compose' ? t(`machineServices.kind.${kind}`) : kind,
-    row.native?.displayName ?? null,
+    nativeName === machineServiceDisplayName(row) ? null : nativeName,
   ].filter((part): part is string => part !== null);
   return parts.length === 0 ? null : parts.join(' · ');
 }
