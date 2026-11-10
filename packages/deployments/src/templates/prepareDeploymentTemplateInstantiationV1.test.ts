@@ -26,6 +26,41 @@ function current(environment: Record<string, unknown> = {}) {
 }
 
 describe('stored template preparation', () => {
+    it('offers existing Environment services for connection even when selectors include all services', () => {
+        const existing = current();
+        if (existing.content.definition.kind !== 'stored') throw new Error('Expected stored fixture');
+        existing.content.definition.services = [];
+        const prepared = prepareDeploymentTemplateInstantiationV1({ template, templateRef, source, bindings: [binding], current: existing });
+        expect(prepared.connectToServices).toEqual(['app', 'cache']);
+    });
+
+    it('uses reviewed volume names in Compose mounts and retained backup metadata', () => {
+        const prepared = prepareDeploymentTemplateInstantiationV1({ template, templateRef, source,
+            bindings: [binding], volumeBindings: [{ templateVolumeId: 'data', source: 'application-data' }] });
+        const document = JSON.parse(prepared.document);
+        expect(document.services.db.volumes).toEqual(['application-data:/var/lib/postgresql/data']);
+        expect(document.volumes).toEqual({ 'application-data': {} });
+        expect(prepared.template.volumes).toEqual([expect.objectContaining({ id: 'application-data', target: '/var/lib/postgresql/data' })]);
+    });
+
+    it('preserves repository augmentation files across template additions and refuses conflicting replacements', () => {
+        const existing = current();
+        const publicFiles = [{ path: 'files/previous.conf', content: 'retained template configuration' }];
+        const repository = { ...existing, content: { ...existing.content,
+            definition: { kind: 'repository' as const, ref: 'main', compose: {
+                path: 'nested/compose.yaml', profiles: [], services: ['app'],
+                augmentation: { document: JSON.stringify(existing.source), publicFiles },
+            } } } };
+        const addition = { path: 'files/database.conf', content: 'database configuration' };
+        const selected = { ...template, compose: { ...template.compose, publicFiles: [addition] } };
+        const input = { template: selected, templateRef, source, current: repository, intent: 'add' as const, bindings: [binding] };
+        expect(prepareDeploymentTemplateInstantiationV1(input).publicFiles).toEqual([...publicFiles, addition]);
+        expect(() => prepareDeploymentTemplateInstantiationV1({ ...input,
+            template: { ...selected, compose: { ...selected.compose,
+                publicFiles: [{ ...publicFiles[0], content: 'unreviewed replacement' }] } },
+        })).toThrowError(expect.objectContaining({ code: 'template_resource_conflict' }));
+    });
+
     it('carries exact public files and merges upgrades without replacing hand edits', () => {
         const publicFiles = [{ path: 'files/app.conf', content: 'upstream=1' }];
         const selected = DeploymentTemplateV1Schema.parse({ ...template, compose: { ...template.compose, publicFiles } });
@@ -84,15 +119,57 @@ describe('stored template preparation', () => {
         expect(app.compose.document).not.toMatch(/\bports:/u);
     });
 
-    it('offers plain PostgreSQL, MySQL and Redis as valid data templates, each on its own service', async () => {
+    it('offers PostgreSQL, MySQL, MariaDB, MongoDB and Redis as valid data templates, each on its own service', async () => {
         const raw: unknown = JSON.parse(await readFile(new URL('../../../plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8'));
         if (!raw || typeof raw !== 'object' || !('apps' in raw) || !Array.isArray(raw.apps)) throw new Error('Expected packaged app catalog');
-        const data = raw.apps.map((entry: { app: unknown }) => DeploymentTemplateV1Schema.parse(entry.app).data);
-        expect(data.map(entry => entry?.engine)).toEqual(expect.arrayContaining(['postgres', 'mysql', 'redis']));
+        const data = raw.apps.flatMap((entry: { app: unknown }) => {
+            const data = DeploymentTemplateV1Schema.parse(entry.app).data;
+            return data ? [data] : [];
+        });
+        expect(data.map(entry => entry?.engine)).toEqual(expect.arrayContaining(['postgres', 'mysql', 'mariadb', 'mongo', 'redis']));
         // Add places a template beside an existing stored Compose, so no two templates claim one service name.
         const services = data.map(entry => entry?.service);
         expect(new Set(services).size).toBe(services.length);
     });
+
+    it.each([{ itemId: 'mariadb', engine: 'mariadb', port: 3306, connectionVariable: 'MARIADB_URL' },
+        { itemId: 'mongodb', engine: 'mongo', port: 27017, connectionVariable: 'DATABASE_URL' }])(
+        'prepares packaged $itemId beside an existing app with generated credentials and private connectivity', async ({ itemId, engine, port, connectionVariable }) => {
+            const raw: unknown = JSON.parse(await readFile(new URL('../../../plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8'));
+            if (!raw || typeof raw !== 'object' || !('apps' in raw) || !Array.isArray(raw.apps)) throw new Error('Expected packaged app catalog');
+            const selected: unknown = raw.apps.find((entry: unknown) => !!entry && typeof entry === 'object' && 'itemId' in entry && entry.itemId === itemId);
+            expect(selected).toBeDefined();
+            if (!selected || typeof selected !== 'object' || !('app' in selected)) throw new Error('Expected catalog data variant');
+            const app = DeploymentTemplateV1Schema.parse(selected.app);
+            const selectedSource: Record<string, unknown> = JSON.parse(app.compose.document);
+            const existing = current();
+            const prepared = prepareDeploymentTemplateInstantiationV1({ template: app, templateRef: { ...templateRef, itemId },
+                source: selectedSource, current: existing, intent: 'add', connectTo: { service: 'app' },
+                bindings: app.generatedSecrets.map(secret => ({ purpose: 'variable', name: secret.key, phase: 'runtime',
+                    source: { kind: 'generated', key: secret.key } })),
+            });
+            const stored = DeploymentEnvironmentContentV1Schema.parse({ ...existing.content, bindings: prepared.bindings,
+                definition: { ...existing.content.definition, kind: 'stored', document: prepared.document, profiles: prepared.profiles,
+                    services: prepared.services, primaryService: prepared.primaryService },
+                template: { ...prepared.template, definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` } },
+            });
+            const document = JSON.parse(prepared.document);
+            expect(stored.template?.data).toEqual([expect.objectContaining({ engine, service: itemId, port })]);
+            expect(document.services.app.image).toBe('app:1');
+            expect(document.services.cache).toEqual(existing.source.services.cache);
+            expect(document.services[itemId].ports).toBeUndefined();
+            expect(document.services[itemId].volumes).not.toHaveLength(0);
+            expect(document.services[itemId].healthcheck.test).not.toHaveLength(0);
+            expect(prepared.generatedSecrets).not.toHaveLength(0);
+            expect(app.variables.filter(variable => variable.secret).every(variable => variable.default === undefined)).toBe(true);
+            expect(prepared.template.volumes).toEqual(app.volumes);
+            // These engines cannot claim logical protection before the native adapters exist.
+            expect(app.data?.logicalBackup).toBeUndefined();
+            expect(app.volumes.every(volume => volume.persistent && !volume.backup)).toBe(true);
+            expect(document.services.app.environment[connectionVariable]).toContain(`@${itemId}:${port}/`);
+            if (engine === 'mongo') expect(document.services.app.environment[connectionVariable]).toContain('authSource=admin');
+        },
+    );
 
     it('retains both database inventories when MySQL is added after PostgreSQL', () => {
         const health = [{ service: 'db', participates: false }];
@@ -115,6 +192,7 @@ describe('stored template preparation', () => {
         expect(stored.template?.data).toEqual([template.data, mysql.data]);
         expect(stored.template?.services).toEqual(['db', 'mysql']);
         expect(stored.template?.health).toEqual(health);
+        expect(stored.template?.volumes).toEqual(template.volumes);
     });
 
     it('adds a repeated database with independent service, volume, generated login and connection exports', () => {
@@ -124,6 +202,7 @@ describe('stored template preparation', () => {
         const selected = DeploymentTemplateV1Schema.parse({ ...template, generatedSecrets: [{ key: 'DB_PASSWORD',
             purpose: 'database-password', label: 'Password', profile: { kind: 'base64url-32-bytes' } }] });
         const first = prepareDeploymentTemplateInstantiationV1({ template: selected, templateRef, source: repeatedSource, bindings: [binding] });
+        expect(first.template.volumes).toEqual(selected.volumes);
         const content = DeploymentEnvironmentContentV1Schema.parse({ name: 'Databases', retainPreviousDeployments: 1,
             bindings: [binding], definition: { kind: 'stored', document: first.document, profiles: [], services: first.services,
                 contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
@@ -140,6 +219,8 @@ describe('stored template preparation', () => {
         expect(composed.services['db-2'].healthcheck).toEqual(repeatedSource.services.db.healthcheck);
         expect(composed.services['db-2'].volumes).toEqual(['data-2:/var/lib/postgresql/data']);
         expect(Object.keys(composed.volumes)).toEqual(['data', 'data-2']);
+        expect(second.template.volumes).toEqual([selected.volumes[0],
+            { ...selected.volumes[0], id: 'data-2', service: 'db-2' }]);
         expect(second.generatedSecrets).toEqual([{ name: 'DB_PASSWORD_2', phase: 'runtime', key: 'DB_PASSWORD_2',
             profile: { kind: 'base64url-32-bytes' } }]);
         expect(second.template.data?.map(data => ({ service: data.service, password: data.variables?.password })))
@@ -152,7 +233,11 @@ describe('stored template preparation', () => {
             current: existing, bindings: [binding] });
         expect(Object.keys(JSON.parse(upgrade.document).services)).toEqual(['db']);
         expect(upgrade.template.data).toEqual([template.data]);
+        expect(upgrade.template.volumes).toEqual(selected.volumes);
         expect(upgrade.generatedSecrets).toEqual([]);
+        const removedVolumeMetadata = prepareDeploymentTemplateInstantiationV1({ template: { ...selected, volumes: [] },
+            templateRef, source: repeatedSource, current: existing, bindings: [binding] });
+        expect(removedVolumeMetadata.template.volumes).toBeUndefined();
     });
 
     it('reviews declared capacity shortfalls without refusing the attempt or inventing unavailable disk observations', () => {

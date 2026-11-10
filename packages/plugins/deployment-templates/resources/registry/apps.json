@@ -368,6 +368,389 @@
           "password": "REDIS_PASSWORD"
         }
       }
+    },
+    {
+      "itemId": "pgweb",
+      "app": {
+        "schemaVersion": 1,
+        "title": "pgweb",
+        "description": "Browse PostgreSQL through a private console. Connect a database and add a private route before opening it. Console queries use the connected database account\u2019s permissions.",
+        "category": "database",
+        "documentationUrl": "https://github.com/sosedoff/pgweb/tree/v0.16.2",
+        "compose": {
+          "document": "services:\n  pgweb:\n    image: sosedoff/pgweb:0.16.2\n    environment:\n      PGWEB_DATABASE_URL: ${CONSOLE_DATABASE_URL}\n    restart: unless-stopped\n    healthcheck:\n      test: [CMD, curl, --fail, --silent, http://127.0.0.1:8081/]\n",
+          "profiles": [],
+          "services": [
+            "pgweb"
+          ],
+          "primaryService": "pgweb"
+        },
+        "variables": [
+          {
+            "key": "CONSOLE_DATABASE_URL",
+            "label": "PostgreSQL connection",
+            "help": "Choose the Saved Secret containing the connection URL for this console. The connected database account determines what the console can change.",
+            "required": true,
+            "valueKind": "string",
+            "secret": true,
+            "sites": [
+              {
+                "service": "pgweb",
+                "path": [
+                  "environment",
+                  "PGWEB_DATABASE_URL"
+                ]
+              }
+            ]
+          }
+        ],
+        "generatedSecrets": [],
+        "domains": [],
+        "volumes": [],
+        "health": [
+          {
+            "service": "pgweb",
+            "participates": true
+          }
+        ],
+        "exports": {
+          "PGWEB_CONSOLE": {
+            "service": "pgweb",
+            "port": 8081,
+            "scheme": "http",
+            "defaultExposure": "privateNetwork"
+          }
+        }
+      }
+    },
+    {
+      "itemId": "adminer",
+      "app": {
+        "schemaVersion": 1,
+        "title": "Adminer",
+        "description": "Manage PostgreSQL or MySQL through a private console. Add a private route, then sign in with the database account you want to use.",
+        "category": "database",
+        "documentationUrl": "https://hub.docker.com/_/adminer/",
+        "compose": {
+          "document": "services:\n  adminer:\n    image: adminer:5.5.1-standalone\n    environment:\n      ADMINER_DEFAULT_SERVER: ${CONSOLE_DATABASE_HOST}\n    restart: unless-stopped\n    healthcheck:\n      test: [CMD, php, -r, \"exit(@file_get_contents('http://127.0.0.1:8080/') === false ? 1 : 0);\"]\n",
+          "profiles": [],
+          "services": [
+            "adminer"
+          ],
+          "primaryService": "adminer"
+        },
+        "variables": [
+          {
+            "key": "CONSOLE_DATABASE_HOST",
+            "label": "Database host",
+            "help": "Use the database service name in this Environment, or select its host export. Sign in to Adminer with your chosen database account.",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "sites": [
+              {
+                "service": "adminer",
+                "path": [
+                  "environment",
+                  "ADMINER_DEFAULT_SERVER"
+                ]
+              }
+            ]
+          }
+        ],
+        "generatedSecrets": [],
+        "domains": [],
+        "volumes": [],
+        "health": [
+          {
+            "service": "adminer",
+            "participates": true
+          }
+        ],
+        "exports": {
+          "ADMINER_CONSOLE": {
+            "service": "adminer",
+            "port": 8080,
+            "scheme": "http",
+            "defaultExposure": "privateNetwork"
+          }
+        }
+      }
+    },
+    {
+      "itemId": "mariadb",
+      "app": {
+        "schemaVersion": 1,
+        "title": "MariaDB",
+        "description": "A MariaDB database with internal connectivity. Backups and restore are not supported in Happier yet.",
+        "category": "database",
+        "documentationUrl": "https://mariadb.com/docs/server",
+        "compose": {
+          "document": "{\"services\":{\"mariadb\":{\"image\":\"mariadb:11.8\",\"environment\":{\"MARIADB_USER\":\"${MARIADB_APP_USER}\",\"MARIADB_PASSWORD\":\"${MARIADB_APP_PASSWORD}\",\"MARIADB_DATABASE\":\"${MARIADB_APP_DATABASE}\",\"MARIADB_ROOT_PASSWORD\":\"${MARIADB_ROOT_PASSWORD}\"},\"volumes\":[\"mariadb-data:/var/lib/mysql\"],\"healthcheck\":{\"interval\":\"10s\",\"timeout\":\"5s\",\"retries\":5,\"test\":[\"CMD\",\"healthcheck.sh\",\"--connect\",\"--innodb_initialized\"]}}},\"volumes\":{\"mariadb-data\":{}}}",
+          "profiles": [],
+          "services": [
+            "mariadb"
+          ],
+          "primaryService": "mariadb"
+        },
+        "variables": [
+          {
+            "key": "MARIADB_APP_USER",
+            "label": "Database user",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "default": "happier",
+            "sites": [
+              {
+                "service": "mariadb",
+                "path": [
+                  "environment",
+                  "MARIADB_USER"
+                ]
+              }
+            ]
+          },
+          {
+            "key": "MARIADB_APP_DATABASE",
+            "label": "Database name",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "default": "app",
+            "sites": [
+              {
+                "service": "mariadb",
+                "path": [
+                  "environment",
+                  "MARIADB_DATABASE"
+                ]
+              }
+            ]
+          },
+          {
+            "key": "MARIADB_APP_PASSWORD",
+            "label": "Database password",
+            "required": true,
+            "valueKind": "string",
+            "secret": true,
+            "sites": [
+              {
+                "service": "mariadb",
+                "path": [
+                  "environment",
+                  "MARIADB_PASSWORD"
+                ]
+              }
+            ]
+          },
+          {
+            "key": "MARIADB_ROOT_PASSWORD",
+            "label": "Root password",
+            "required": true,
+            "valueKind": "string",
+            "secret": true,
+            "sites": [
+              {
+                "service": "mariadb",
+                "path": [
+                  "environment",
+                  "MARIADB_ROOT_PASSWORD"
+                ]
+              }
+            ]
+          }
+        ],
+        "generatedSecrets": [
+          {
+            "key": "MARIADB_APP_PASSWORD",
+            "purpose": "database-password",
+            "label": "Database password",
+            "profile": {
+              "kind": "base64url-32-bytes"
+            }
+          },
+          {
+            "key": "MARIADB_ROOT_PASSWORD",
+            "purpose": "database-root-password",
+            "label": "Root password",
+            "profile": {
+              "kind": "base64url-32-bytes"
+            }
+          }
+        ],
+        "domains": [],
+        "volumes": [
+          {
+            "id": "mariadb-data",
+            "service": "mariadb",
+            "target": "/var/lib/mysql",
+            "persistent": true,
+            "backup": false
+          }
+        ],
+        "health": [
+          {
+            "service": "mariadb",
+            "participates": true
+          }
+        ],
+        "data": {
+          "engine": "mariadb",
+          "version": "11.8",
+          "service": "mariadb",
+          "port": 3306,
+          "variables": {
+            "username": "MARIADB_APP_USER",
+            "password": "MARIADB_APP_PASSWORD",
+            "database": "MARIADB_APP_DATABASE"
+          }
+        },
+        "exports": {
+          "MARIADB_URL": {
+            "service": "mariadb",
+            "port": 3306,
+            "scheme": "mysql",
+            "defaultExposure": "internal",
+            "env": {
+              "MARIADB_URL": "mysql://${MARIADB_APP_USER}:${MARIADB_APP_PASSWORD}@mariadb:3306/${MARIADB_APP_DATABASE}"
+            }
+          }
+        },
+        "loginFields": {
+          "username": "MARIADB_APP_USER",
+          "password": "MARIADB_APP_PASSWORD"
+        }
+      }
+    },
+    {
+      "itemId": "mongodb",
+      "app": {
+        "schemaVersion": 1,
+        "title": "MongoDB",
+        "description": "A MongoDB database with a generated administrator login and internal connectivity. Backups and restore are not supported in Happier yet.",
+        "category": "database",
+        "documentationUrl": "https://www.mongodb.com/docs/v8.0/",
+        "compose": {
+          "document": "{\"services\":{\"mongodb\":{\"image\":\"mongo:8.0\",\"environment\":{\"MONGO_INITDB_ROOT_USERNAME\":\"${MONGO_USER}\",\"MONGO_INITDB_ROOT_PASSWORD\":\"${MONGO_PASSWORD}\",\"MONGO_INITDB_DATABASE\":\"${MONGO_DATABASE}\"},\"volumes\":[\"mongodb-data:/data/db\",\"mongodb-config:/data/configdb\"],\"healthcheck\":{\"test\":[\"CMD\",\"mongosh\",\"--quiet\",\"--eval\",\"quit(db.adminCommand({ ping: 1 }).ok ? 0 : 1)\"],\"interval\":\"10s\",\"timeout\":\"5s\",\"retries\":5}}},\"volumes\":{\"mongodb-data\":{},\"mongodb-config\":{}}}",
+          "profiles": [],
+          "services": [
+            "mongodb"
+          ],
+          "primaryService": "mongodb"
+        },
+        "variables": [
+          {
+            "key": "MONGO_USER",
+            "label": "Administrator username",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "default": "happier",
+            "sites": [
+              {
+                "service": "mongodb",
+                "path": [
+                  "environment",
+                  "MONGO_INITDB_ROOT_USERNAME"
+                ]
+              }
+            ]
+          },
+          {
+            "key": "MONGO_DATABASE",
+            "label": "Database name",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "default": "app",
+            "sites": [
+              {
+                "service": "mongodb",
+                "path": [
+                  "environment",
+                  "MONGO_INITDB_DATABASE"
+                ]
+              }
+            ]
+          },
+          {
+            "key": "MONGO_PASSWORD",
+            "label": "Administrator password",
+            "required": true,
+            "valueKind": "string",
+            "secret": true,
+            "sites": [
+              {
+                "service": "mongodb",
+                "path": [
+                  "environment",
+                  "MONGO_INITDB_ROOT_PASSWORD"
+                ]
+              }
+            ]
+          }
+        ],
+        "generatedSecrets": [
+          {
+            "key": "MONGO_PASSWORD",
+            "purpose": "database-password",
+            "label": "Administrator password",
+            "profile": {
+              "kind": "base64url-32-bytes"
+            }
+          }
+        ],
+        "domains": [],
+        "volumes": [
+          {
+            "id": "mongodb-data",
+            "service": "mongodb",
+            "target": "/data/db",
+            "persistent": true,
+            "backup": false
+          },
+          {
+            "id": "mongodb-config",
+            "service": "mongodb",
+            "target": "/data/configdb",
+            "persistent": true,
+            "backup": false
+          }
+        ],
+        "health": [
+          {
+            "service": "mongodb",
+            "participates": true
+          }
+        ],
+        "data": {
+          "engine": "mongo",
+          "version": "8.0",
+          "service": "mongodb",
+          "port": 27017,
+          "variables": {
+            "username": "MONGO_USER",
+            "password": "MONGO_PASSWORD",
+            "database": "MONGO_DATABASE"
+          }
+        },
+        "exports": {
+          "DATABASE_URL": {
+            "service": "mongodb",
+            "port": 27017,
+            "scheme": "mongodb",
+            "defaultExposure": "internal",
+            "env": {
+              "DATABASE_URL": "mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGO_DATABASE}?authSource=admin"
+            }
+          }
+        },
+        "loginFields": {
+          "username": "MONGO_USER",
+          "password": "MONGO_PASSWORD"
+        }
+      }
     }
   ]
 }
