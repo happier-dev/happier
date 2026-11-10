@@ -695,13 +695,14 @@ export function createCliMessageActionDeps(
         ...(signal ? { signal } : {}),
       });
       if (!result.ok && result.code === 'machine_admission_transport_unavailable'
-        && callerSurface === 'cli' && (!actionCaller || actionCaller.kind === 'host')
+        && (!actionCaller || actionCaller.kind === 'host')
         && hasStoredSessionCredentialProvenance(params.credentials)
         && !context?.externalActionCredential && !context?.externalActionExecutionAuthorization
         && !context?.rpcSessionAuthorization && !sessionInputSource) {
         // No input was issued: the standalone CLI has no authenticated Machine
-        // socket. Its host children use the same original-Account ingress as a
-        // top-level protected Send, preserving input identity and caller authority.
+        // socket. Its host children (including deferred approval outcomes whose
+        // modality is MCP) use the same original-Account ingress as a top-level
+        // protected Send, preserving input identity and caller authority.
         const [{ resolveSessionTransportContext }, { resolveSessionInputTargetMachineId, resolveProtectedSessionInputActionTarget }] = await Promise.all([import("@/session/services/resolveSessionTransportContext"), import("@/session/services/sessionInputAdmissionIdentity")]);
         const transport = await resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials, idOrPrefix: sessionId,
           ...(sendServerFeaturesSnapshot ? { serverFeaturesSnapshot: sendServerFeaturesSnapshot } : {}),
