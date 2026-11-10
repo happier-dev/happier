@@ -1341,6 +1341,7 @@ export class ApiMachineClient {
             ) {
                 this.machineControlRunningGeneration = transportGeneration;
                 this.lifecycleDependencies.onMachineControlReadinessChange?.(true);
+                this.observeStartupMachineAdminAccess();
                 this.qualifyStartupAgentIsolation();
                 // Connect precedes server-side asynchronous admission. Existing
                 // registration readiness proves its Machine listeners are mounted.
@@ -3147,6 +3148,19 @@ export class ApiMachineClient {
             },
             captureMetadataPort: () => this.captureMachineMetadataFieldPort(),
             observer: { ...options.observer, inspect: () => this.inspectMachineAdminAccess(options) },
+        });
+        this.observeStartupMachineAdminAccess();
+    }
+
+    private observeStartupMachineAdminAccess(): void {
+        const routes = this.machineAdminAccessRoutes;
+        if (!routes || !this.socket?.connected
+            || this.machineControlRunningGeneration !== this.activeTransportGeneration
+            || this.getMachineAdminAccessRights().freshness === 'current') return;
+        // Optional native facts settle independently of ordinary daemon readiness.
+        // The observer owns coalescing and publishes only changed facts.
+        void this.inspectMachineAdminAccess(routes).catch(() => {
+            logger.warn('[API MACHINE] Startup administrator observation publication unavailable');
         });
     }
 

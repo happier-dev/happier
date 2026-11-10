@@ -7669,6 +7669,15 @@ contracts, not a claim of release availability.
 
 ## Daemon architecture
 
+In current 0.3 development source, each Machine-control connection observes
+administrator power after its core RPCs are ready, including when the
+administrator routes attach later. The existing native observer publishes
+changed facts at `daemonState.adminAccess`; unchanged observations stay quiet.
+This read is independent of the saved None, Ask or Preauthorized choice and
+does not prompt, elevate or delay ordinary daemon readiness. Unsupported or
+unreadable native facts retain the observer's typed unknown/unavailable reason.
+Reconnect observes again; reading the pushed facts adds no polling.
+
 In current development source, startup reattachment and resume of an already
 running session reconcile the daemon's session access key and the session's
 machine routing metadata together. The recovered-session machine-control owner

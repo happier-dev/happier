@@ -12,6 +12,7 @@ import {
   FeaturesResponseSchema,
   MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
   SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+  presentMachineAuthorityV1,
 } from '@happier-dev/protocol';
 import { MachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -24,6 +25,7 @@ import { createMachineContentCodec } from './machine/machineStoredContent';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createDaemonAgentIsolationEffects } from '@/daemon/agentIsolation/createDaemonAgentIsolationEffects';
 import { createMachineAdminAccessObserver } from '@/machines/adminAccess/observeMachineAdminAccess';
+import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
 import type { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { startPeerMediationLoopback } from '@/daemon/peer/mediation/rpc/startLoopback';
 import { createManagedActivityInventory } from '@/daemon/lifecycle/managedActivity';
@@ -111,6 +113,107 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 describe('ApiMachineClient connect ordering', () => {
+  it.each([
+    { mode: 'plain', policy: undefined, late: false },
+    { mode: 'e2ee', policy: undefined, late: true },
+    { mode: 'plain', policy: { version: 1, mode: 'ask', administratorUsername: 'alice' }, late: false },
+    { mode: 'plain', policy: { version: 1, mode: 'preauthorized' }, late: false },
+  ] as const)('publishes native administrator facts on control readiness and reconnect ($mode, $policy, late=$late)', async ({ mode, policy, late }) => {
+    vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
+    const secret = new Uint8Array(32).fill(22);
+    const machine = { id: 'admin-observation', ...(mode === 'plain' ? { encryptionMode: 'plain' as const }
+      : { encryptionKey: secret, encryptionVariant: 'legacy' as const }),
+      metadata: { host: 'worker', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/happier',
+        happyHomeDir: '/home/happier/.happier', ...(policy ? { adminAccess: policy } : {}) },
+      metadataVersion: 1, daemonState: { status: 'offline' as const }, daemonStateVersion: 0 };
+    const codec = createMachineContentCodec(machine);
+    const states: ReturnType<typeof MachinePublishedDaemonStateV1Schema.parse>[] = [];
+    const socket = () => createApiSessionSocketStub({ disconnectReason: 'transport close', emitWithAck: (event, payload) => {
+      if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) return { v: 1, result: 'success', revision: 1 };
+      if (event === 'machine-update-state') {
+        const write = payload as { daemonState: string; expectedVersion: number }; // Socket boundary.
+        states.push(MachinePublishedDaemonStateV1Schema.parse(codec.decodeStored(write.daemonState)));
+        return { result: 'success', version: write.expectedVersion + 1, daemonState: write.daemonState };
+      }
+      return { result: 'success', version: 1 };
+    } });
+    const first = socket(), second = socket(), third = socket();
+    bindApiSessionSocketSequenceMock(ioMock, [first, second, third]);
+    const client = new ApiMachineClient('test-token', machine, { runtimeId: 'admin-runtime' });
+    const firstNativeRead = createDeferred<void>();
+    let identityReads = 0;
+    let rootAllowed = false;
+    const nativeCommands: string[] = [];
+    const routes = createDaemonMachineAdminAccessRoutes({ getMachineClient: () => client,
+      target: () => ({ serverId: 'connect-order-home', machineId: machine.id, installationId: 'installation', custodianAccountId: 'owner' }),
+      nativeDependencies: { platform: 'linux',
+        // Native commands and protected filesystem reads are the system boundaries.
+        execFile: async (file, args) => {
+          nativeCommands.push(file);
+          if (file === 'id') {
+            if (args[0] === '-u') { identityReads++; await firstNativeRead.promise; }
+            return { stdout: args[0] === '-u' ? '1001' : 'happier' };
+          }
+          if (file === 'sudo') {
+            if (!rootAllowed) throw Object.assign(new Error('Denied'), { code: 1 });
+            return { stdout: '' };
+          }
+          throw Object.assign(new Error('Native command unavailable'), { code: 'ENOENT' });
+        },
+        readTailscaledOperator: async () => ({ authorization: 'unavailable' }),
+        fileSystem: { lstat: async () => { throw Object.assign(new Error('Absent'), { code: 'ENOENT' }); },
+          readFile: async () => { throw Object.assign(new Error('Absent'), { code: 'ENOENT' }); } },
+      },
+    });
+    if (!late) client.registerMachineAdminAccessRoutes(routes);
+    expect(identityReads).toBe(0);
+    const manager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
+    registerRequiredMachineControlHandlers(manager);
+    const acknowledge = async (current: typeof first) => {
+      await vi.waitFor(() => expect(current.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTER, expect.anything()));
+      for (const [event, registration] of current.emit.mock.calls) {
+        if (event === SOCKET_RPC_EVENTS.REGISTER && registration && typeof registration === 'object'
+          && 'method' in registration && typeof registration.method === 'string') {
+          current.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: registration.method });
+        }
+      }
+    };
+    try {
+      client.connect();
+      await acknowledge(first);
+      // Optional native observation cannot hold ordinary daemon readiness.
+      await vi.waitFor(() => expect(client.isMachineControlRegistrationReady()).toBe(true));
+      if (late) client.registerMachineAdminAccessRoutes(routes);
+      await vi.waitFor(() => expect(identityReads).toBe(1));
+      firstNativeRead.resolve();
+      await vi.waitFor(() => expect(client.getMachineAdminAccessRights().freshness).toBe('current'));
+      expect(states.at(-1)?.adminAccess).toMatchObject({ daemonUid: 1001, daemonIdentity: 'nonRoot',
+        passwordlessSudoToRoot: 'denied', groupMembership: { state: 'current' } });
+      expect(presentMachineAuthorityV1(client.getMachineAdminAccessRights()).hostAuthority).toBe('ordinary');
+      expect(nativeCommands.every(file => ['id', 'sudo', 'getent', 'passwd'].includes(file))).toBe(true);
+      const settled = states.length;
+      // Repeated registration receipts and readers do not re-observe or republish.
+      await acknowledge(first);
+      client.registerMachineAdminAccessRoutes(routes);
+      for (let index = 0; index < 20; index++) client.getMachineAdminAccessRights();
+      expect(identityReads).toBe(1);
+      expect(states).toHaveLength(settled);
+      first.disconnect();
+      await vi.waitFor(() => expect(ioMock).toHaveBeenCalledTimes(2), { timeout: 10_000 });
+      await acknowledge(second);
+      await vi.waitFor(() => expect(identityReads).toBe(2));
+      await vi.waitFor(() => expect(client.getMachineAdminAccessRights().freshness).toBe('current'));
+      expect(states).toHaveLength(settled); // Unchanged native facts are not published again.
+      rootAllowed = true;
+      second.disconnect();
+      await vi.waitFor(() => expect(ioMock).toHaveBeenCalledTimes(3), { timeout: 10_000 });
+      await acknowledge(third);
+      await vi.waitFor(() => expect(identityReads).toBe(3));
+      await vi.waitFor(() => expect(presentMachineAuthorityV1(client.getMachineAdminAccessRights()).hostAuthority).toBe('administrator'));
+      expect(states).toHaveLength(settled + 1);
+    } finally { firstNativeRead.resolve(); await client.shutdown(); }
+  }, 30_000);
+
   it.skipIf(process.platform !== 'linux').each((['plain', 'e2ee'] as const).flatMap(mode =>
     [false, true, 'member', 'missing'].map(isolation => ({ mode, enabled: isolation !== false,
       member: isolation === 'member', missing: isolation === 'missing' }))))(
