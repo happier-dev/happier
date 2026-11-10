@@ -126,7 +126,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     let reservedCpuCores = 0;
     for (const slot of slots.values()) {
       reservedMemoryKiB += slot.floorKiB;
-      reservedCpuCores += slot.cpuCores ?? totalCpuCores;
+      reservedCpuCores += slot.cpuCores ?? 0;
     }
     return { reservedMemoryKiB, totalCpuCores, reservedCpuCores,
       unreservedCpuCores: Math.max(0, totalCpuCores - reservedCpuCores),
@@ -139,6 +139,13 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     return resolveAdmissionCpuCores(item.cpuCost ?? 'host',
       { totalCpuCores, workers, requestedCpuCores: item.requestedCpuCores });
   }
+  // Only explicit per-job core declarations are counted against fixed host
+  // capacity. 'host' and undeclared costs carry no measured core budget, so
+  // they are admitted on memory alone, as before CPU accounting; counting them
+  // as whole-host reservations serialized every heavyweight class per host.
+  function accountedCpuCores(item, workers) {
+    return (item.cpuCost ?? 'host') === 'host' ? 0 : cpuCost(item, workers);
+  }
   function validCpuRequest(request) {
     return (request.cpuCost === undefined || request.cpuCost === 'host' || request.cpuCost === 'workers'
       || (Number.isSafeInteger(request.cpuCost) && request.cpuCost > 0))
@@ -146,13 +153,13 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         || (Number.isSafeInteger(request.requestedCpuCores) && request.requestedCpuCores >= 0));
   }
   function minimumCpuCores(item) {
-    return item.floorOptions ? Math.min(...item.floorOptions.map(option => cpuCost(item, option.workers))) : cpuCost(item);
+    return item.floorOptions ? Math.min(...item.floorOptions.map(option => accountedCpuCores(item, option.workers))) : accountedCpuCores(item);
   }
   function headReservationCpuCores(head) {
     if (!head) return 0;
     let precedingCpuCores = 0;
     for (const slot of slots.values()) {
-      if (slot.arrivalOrder === undefined || compareArrival(slot, head) < 0) precedingCpuCores += slot.cpuCores ?? totalCpuCores;
+      if (slot.arrivalOrder === undefined || compareArrival(slot, head) < 0) precedingCpuCores += slot.cpuCores ?? 0;
     }
     return Math.max(0, minimumCpuCores(head) - precedingCpuCores);
   }
@@ -181,7 +188,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     // Publication-blocked demand has no memory reservation.
     return { ...sample, ...budget,
       unreservedCpuCores: Math.max(0, budget.unreservedCpuCores - headReservationCpuCores(head)),
-      queuedCpuCores: waiting.reduce((sum, item) => sum + (item.slot ? 0 : cpuCost(item, item.floorOptions?.[0]?.workers)), 0),
+      queuedCpuCores: waiting.reduce((sum, item) => sum + (item.slot ? 0 : accountedCpuCores(item, item.floorOptions?.[0]?.workers)), 0),
       unreservedMemoryKiB: Math.max(0, budget.unreservedMemoryKiB - headReservationKiB(head)),
       queuedMemoryKiB: waiting.reduce((sum, item) => sum + (item.slot ? 0 : item.floorKiB), 0),
       activeCount: slots.size, waitingCount: waiting.filter(item => !item.slot).length, sampleCount };
@@ -368,9 +375,9 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         continue;
       }
       const fitting = item.floorOptions?.find(option => option.floorKiB <= availableMemoryKiB
-        && cpuCost(item, option.workers) <= availableCpuCores);
+        && accountedCpuCores(item, option.workers) <= availableCpuCores);
       item.waitingForMemory = minimumFloorKiB > availableMemoryKiB;
-      if (item.floorOptions ? !fitting : item.floorKiB > availableMemoryKiB || cpuCost(item) > availableCpuCores) {
+      if (item.floorOptions ? !fitting : item.floorKiB > availableMemoryKiB || accountedCpuCores(item) > availableCpuCores) {
         if (item.noWait) refuse(item, item.waitingForMemory ? 'HSTACK_MEMORY_BUSY' : 'HSTACK_CPU_BUSY');
         else {
           // Publication preference cannot block admitted work while this
@@ -392,7 +399,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         continue;
       }
       const floorKiB = fitting?.floorKiB ?? item.floorKiB;
-      const cpuCores = cpuCost(item, fitting?.workers);
+      const cpuCores = accountedCpuCores(item, fitting?.workers);
+      const clientCpuCores = cpuCost(item, fitting?.workers);
       item.waitingForMemory = false;
       if (item.socket.destroyed) { removeWaiting(item); continue; }
       // Observe before publishing a reservation: a failed request must not
@@ -400,14 +408,14 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       const resources = readResources(item);
       if (!resources) continue;
       const address = slotAddress(root, item.pid, floorKiB, randomUUID(), cpuCores);
-      const slot = { address, pid: item.pid, floorKiB, cpuCores, workers: fitting?.workers, control: item.socket,
+      const slot = { address, pid: item.pid, floorKiB, cpuCores, clientCpuCores, workers: fitting?.workers, control: item.socket,
         arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder };
       slots.set(address, slot);
       availableMemoryKiB -= floorKiB;
       availableCpuCores -= cpuCores;
       item.slot = slot;
       item.resourceSnapshot = resources.snapshot;
-      send(item.socket, { kind: 'reserved', slotAddress: address, floorKiB, cpuCores, workers: slot.workers });
+      send(item.socket, { kind: 'reserved', slotAddress: address, floorKiB, cpuCores: clientCpuCores, workers: slot.workers });
     }
     refreshWatchers();
   }
@@ -437,7 +445,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         const valid = Number.isSafeInteger(request.floorKiB) && request.floorKiB > 0 && validCpuRequest(request);
         const available = status();
         const memoryFits = request.floorKiB <= available.unreservedMemoryKiB;
-        const cpuCores = cpuCost(request);
+        const cpuCores = accountedCpuCores(request);
         const admitted = valid && memoryFits && cpuCores <= available.unreservedCpuCores;
         send(socket, { kind: admitted ? 'admitted' : 'refused',
           ...(!admitted ? { reason: !valid ? 'HSTACK_INVALID_ADMISSION'
@@ -451,7 +459,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
           await connectSlot(item.slot);
           item.settled = true;
           removeWaiting(item);
-          send(socket, { kind: 'admitted', floorKiB: item.slot.floorKiB, cpuCores: item.slot.cpuCores, workers: item.slot.workers });
+          send(socket, { kind: 'admitted', floorKiB: item.slot.floorKiB, cpuCores: item.slot.clientCpuCores ?? item.slot.cpuCores, workers: item.slot.workers });
           refreshWatchers();
         } catch { refuse(item, 'HSTACK_SLOT_UNAVAILABLE'); await releaseDecision(); }
         return;

@@ -99,7 +99,7 @@ test('broker succession recovers CPU reservations from live slot sockets', linux
   assert.equal(replacement.status().reservedCpuCores, 1);
 });
 
-test('tsrs compilation retains its memory floor and reserves the host CPU', linux, async t => {
+test('tsrs compilation retains its memory floor and is admitted on memory alone', linux, async t => {
   const { HEAVYWEIGHT_COMMAND_RESOURCES } = await import('../dev_targets/command_resources.mjs');
   const floorKiB = HEAVYWEIGHT_COMMAND_RESOURCES['compilation-ui-tsrs']?.memoryKiB;
   assert.equal(floorKiB, 10 * 1024 * 1024);
@@ -120,12 +120,27 @@ test('tsrs compilation retains its memory floor and reserves the host CPU', linu
   await exact.next();
   exact.socket.destroy();
   assert.equal(broker.status().activeCount, 1);
-  assert.equal(broker.status().reservedCpuCores, 128);
+  assert.equal(broker.status().reservedCpuCores, 0);
   await held.release();
   await second.admit();
   assert.equal(broker.status().activeCount, 1);
   assert.equal(broker.status().waitingCount, 0);
   assert.equal(broker.status().reservedMemoryKiB, floorKiB);
+});
+
+test('host-class work is admitted on memory alone and still receives the host core count', linux, async t => {
+  // Reproduced 2026-11-10: whole-host CPU reservations for 'host' classes left an
+  // idle 128-core worker running one heavyweight job at a time.
+  const { root, broker } = await fixture(t, { cpuCores: 2, readMemory: () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }) });
+  const first = await acquire(root, 1, t, { className: 'source-bundle' });
+  const held = await first.admit();
+  const second = await acquire(root, 1, t, { className: 'source-bundle' });
+  const admitted = await second.admit();
+  assert.equal(broker.status().activeCount, 2);
+  assert.equal(broker.status().waitingCount, 0);
+  assert.equal(broker.status().reservedCpuCores, 0);
+  assert.equal(admitted.admitted.cpuCores, 2, 'clients keep their host-sized worker controls');
+  await held.release();
 });
 
 test('canonical validation floors admit concurrent focused work up to exact capacity', linux, async t => {
