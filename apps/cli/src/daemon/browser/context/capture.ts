@@ -1,5 +1,6 @@
 import { BrowserContextItemV1Schema, BrowserContextSnapshotV1Schema } from '@happier-dev/protocol/browser/context/v1';
 import { resolveBrowserContextPrivacyDenial } from '@happier-dev/protocol/browser/context/privacy';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { BrowserContextPrivacyState, BrowserContextItemV1, BrowserContextSnapshotAxNodeV1, BrowserContextSnapshotInteractiveElementV1, BrowserContextSnapshotV1, BrowserScreenshotMediaReferenceV1, BrowserTargetDisplayV1, BrowserViewTargetKindV1 } from '@happier-dev/protocol';
 
 import {
@@ -33,10 +34,17 @@ export type BrowserContextSourceUnavailableReason =
   | 'capture_failed'
   | 'sensitive_origin';
 
+type BrowserContextCaptureFailure = Readonly<{
+  errorCode: string;
+  failureCause: ActionFailureCauseV1;
+  retryable: boolean;
+}>;
+
 type BrowserContextSourceFailure = Readonly<{
   ok: false;
   reason: BrowserContextSourceUnavailableReason;
   disabledReason?: string;
+  failure?: BrowserContextCaptureFailure;
 }>;
 
 export type BrowserContextSourcePageResult =
@@ -130,7 +138,7 @@ export type BrowserContextSummaryCaptureRequest = BrowserContextCaptureRequest &
 
 export type BrowserContextCaptureResult =
   | Readonly<{ status: 'captured'; item: BrowserContextItemV1; profileId?: string }>
-  | Readonly<{ status: 'unavailable'; item: BrowserContextItemV1 }>
+  | Readonly<{ status: 'unavailable'; item: BrowserContextItemV1; failure?: BrowserContextCaptureFailure }>
   | Readonly<{ status: 'denied' }>;
 
 /** BA-2 combined-snapshot service result. The success payload is the standalone protocol snapshot. */
@@ -280,7 +288,7 @@ export function createBrowserContextCaptureService(input: Readonly<{
     request: BrowserContextCaptureRequest,
     kind: SidecarSummaryContextKind,
     failure: BrowserContextSourceFailure,
-  ): BrowserContextCaptureResult {
+  ): Extract<BrowserContextCaptureResult, { status: 'unavailable' }> {
     return {
       status: 'unavailable',
       item: buildSidecarContextUnavailableItem({
@@ -382,7 +390,14 @@ export function createBrowserContextCaptureService(input: Readonly<{
       if (await admissionDenial(request)) return { status: 'denied' };
       const capture = await input.source.captureSelectedElement(targetRef(request));
       if (!capture.ok) {
-        return unavailableSummary(request, 'browserDomSnapshotSummary', capture);
+        return {
+          ...unavailableSummary(request, 'browserDomSnapshotSummary', capture),
+          failure: capture.failure ?? {
+            errorCode: capture.reason === 'capture_failed' ? 'browser_context_capture_failed' : 'runtime_action_disabled',
+            failureCause: projectActionFailureCauseV1({ code: capture.reason }, 'browser.context.selected_element.capture'),
+            retryable: false,
+          },
+        };
       }
 
       if (await sourcePrivacyDenial(request)) return { status: 'denied' };

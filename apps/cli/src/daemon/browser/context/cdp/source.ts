@@ -1,6 +1,7 @@
 import { BROWSER_CONTEXT_SUMMARY_MAX_CHARS } from '@happier-dev/protocol/browser/context/v1';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-import type { BrowserContextCaptureScope, BrowserContextSource, BrowserContextSourceTargetRef } from '../capture';
+import type { BrowserContextCaptureScope, BrowserContextSource, BrowserContextSourceSelectedElementResult, BrowserContextSourceTargetRef } from '../capture';
 import type { SurfaceInputControl } from '../../../surfaces/inputControl';
 import type { SidecarSummaryContextKind } from '../../sidecar/context/capture';
 import { redactSidecarContextUrl } from '../../sidecar/diagnostics/redaction';
@@ -120,11 +121,23 @@ function readAccessibleName(describe: unknown): string | undefined {
     return undefined;
 }
 
-// Reads the daemon-injected picker selection. The picker writes a CSS selector path to a frozen
-// global; this expression returns it as a string (or undefined when nothing is selected). The
-// selector path is structural metadata only — it never carries field values.
+// Legacy selected-element capture reads a page-owned selector slot. Current pickers return
+// their selection directly, so an absent slot must settle as an actionable refusal.
 const SELECTED_ELEMENT_SELECTOR_EXPRESSION =
     "(() => { const s = window.__happierBrowserContextSelectedSelector; return typeof s === 'string' ? s : undefined; })()";
+
+function selectedElementFailure(
+    errorCode: 'browser_context_element_not_selected' | 'browser_context_selected_element_detached' | 'browser_context_capture_failed',
+    disabledReason: string,
+    phase: string,
+    error?: unknown,
+): Extract<BrowserContextSourceSelectedElementResult, { ok: false }> {
+    return { ...CAPTURE_FAILED, disabledReason, failure: {
+        errorCode,
+        failureCause: projectActionFailureCauseV1(error ?? { code: errorCode }, phase),
+        retryable: error !== undefined,
+    } };
+}
 
 // Reads the page favicon href from the document head. Metadata only.
 const FAVICON_EXPRESSION =
@@ -275,24 +288,38 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
             const handle = resolve(view);
             if (!handle) return ADAPTER_UNAVAILABLE;
 
+            let phase = 'browser.context.selected_element.selection';
             try {
-                const selectorPath = evaluateString(await evaluate(handle, SELECTED_ELEMENT_SELECTOR_EXPRESSION));
-                if (!selectorPath) return CAPTURE_FAILED;
+                const selection = record(await evaluate(handle, SELECTED_ELEMENT_SELECTOR_EXPRESSION));
+                const selectedValue = record(selection?.result);
+                if (selection?.exceptionDetails || (selectedValue?.type !== 'string' && selectedValue?.type !== 'undefined')) {
+                    return selectedElementFailure('browser_context_capture_failed',
+                        'The browser could not read the selected element.', phase);
+                }
+                const selectorPath = evaluateString(selection);
+                if (!selectorPath) return selectedElementFailure('browser_context_element_not_selected',
+                    'No selected element was supplied. Pick an element and pass its pickerResult to capture its context.', phase);
 
+                phase = 'browser.context.selected_element.document';
                 const document = await dispatch(handle, 'DOM.getDocument', { depth: 0 });
                 const rootNodeId = record(record(document)?.root)?.nodeId;
-                if (typeof rootNodeId !== 'number') return CAPTURE_FAILED;
+                if (typeof rootNodeId !== 'number') return selectedElementFailure('browser_context_capture_failed',
+                    'The browser did not return a document for element capture.', phase);
 
+                phase = 'browser.context.selected_element.resolve';
                 const queried = await dispatch(handle, 'DOM.querySelector', {
                     nodeId: rootNodeId,
                     selector: selectorPath,
                 });
                 const nodeId = record(queried)?.nodeId;
-                if (typeof nodeId !== 'number' || nodeId === 0) return CAPTURE_FAILED;
+                if (typeof nodeId !== 'number' || nodeId === 0) return selectedElementFailure('browser_context_selected_element_detached',
+                    'The selected browser element is no longer available. Pick it again.', phase);
 
+                phase = 'browser.context.selected_element.geometry';
                 const boxModel = await dispatch(handle, 'DOM.getBoxModel', { nodeId });
                 const rect = readBoxModelRect(boxModel);
 
+                phase = 'browser.context.selected_element.describe';
                 const described = await dispatch(handle, 'DOM.describeNode', { nodeId });
                 const accessibleName = readAccessibleName(described);
 
@@ -303,8 +330,9 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                     ...(rect ? { rect } : {}),
                     ...(accessibleName ? { accessibleName } : {}),
                 };
-            } catch {
-                return CAPTURE_FAILED;
+            } catch (error) {
+                return selectedElementFailure('browser_context_capture_failed',
+                    'The browser could not capture the selected element. Try capturing it again.', phase, error);
             }
         },
 

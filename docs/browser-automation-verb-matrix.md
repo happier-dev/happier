@@ -653,8 +653,9 @@ and annotation completion reconciles against the current context and upload
 policy rather than restoring an old editor state. This does not introduce an
 origin classifier: established privacy facts still use the Protocol export floor.
 
-Selected browser context is normalized once from `happierBrowserContext` into the Session's
-canonical structured input. Admission rejects stale selections, unavailable or owner-only context,
+In development source, the browser-context composer producer writes selected facts into the Session's
+canonical structured input; the Protocol admission reader still folds legacy `happierBrowserContext`
+metadata into that envelope. Admission rejects stale selections, unavailable or owner-only context,
 inline bytes and unsafe fields before persistence. The daemon still owns annotation grouping and
 redaction; the prompt renderer treats the selected content as escaped data, not instructions.
 Attaching an editor draft creates one composer card for the annotation group. The UI and daemon

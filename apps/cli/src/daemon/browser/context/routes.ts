@@ -3,6 +3,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { BrowserContextAttachmentV1, BrowserContextItemV1, BrowserContextSnapshotV1 } from '@happier-dev/protocol/browser/context/v1';
 import type { RuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import type { BrowserExistingProfile } from '../control/types';
+import { RpcError } from '@happier-dev/protocol/rpc/errors';
 
 import {
   createBrowserContextCaptureService,
@@ -157,6 +158,12 @@ function mapCaptureResult(
   }>,
 ): BrowserContextRouteResult {
   if (result.status === 'denied') return disabled('browser_context_denied');
+  if (result.status === 'unavailable' && result.failure) {
+    const failure = result.failure;
+    throw Object.assign(new RpcError(result.item.disabledReason ?? failure.errorCode, failure.errorCode, failure.failureCause), {
+      details: { retryable: failure.retryable },
+    });
+  }
   if (options?.record?.(result.item, result.status === 'captured' ? result.profileId : undefined) === false) {
     return disabled('browser_context_capture_failed');
   }

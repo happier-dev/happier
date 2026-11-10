@@ -662,4 +662,36 @@ describe('structured input mentions', () => {
             },
         });
     });
+
+    it.each(['left', 'right'] as const)('preserves browser source facts and opaque raw fields from the %s producer', (side) => {
+        const browserContext = { contexts: [{ elements: [{
+            componentName: 'Checkout', sourceLocation: { file: 'src/Checkout.tsx', line: 24, column: 8 },
+        }] }], attachments: [] };
+        const browserMeta = { happierStructuredInputV1: { v: 1, browserContext, extensionEvidence: { selected: true } } };
+        const composerMeta = { happierStructuredInputV1: { v: 1,
+            mentions: [{ kind: MENTION_KIND_V1.file, ref: 'file:src/index.ts', token: '@src/index.ts' }],
+            imageInputs: [{ kind: 'image', url: 'https://example.test/a.png' }],
+        } };
+
+        expect(mergeMessageMetaOverrides(
+            side === 'left' ? browserMeta : composerMeta,
+            side === 'left' ? composerMeta : browserMeta,
+        )).toEqual({ happierStructuredInputV1: {
+            ...browserMeta.happierStructuredInputV1,
+            ...composerMeta.happierStructuredInputV1,
+        } });
+    });
+
+    it('consumes the legacy image alias once while preserving raw fields across later merges', () => {
+        const legacyImage = { kind: 'image', url: 'https://example.test/legacy.png' };
+        const currentImage = { kind: 'image', url: 'https://example.test/current.png' };
+        const first = mergeMessageMetaOverrides({ happierStructuredInputV1: {
+            v: 1, attachments: [legacyImage], extensionEvidence: { selected: true },
+        } }, { happierStructuredInputV1: { v: 1, imageInputs: [currentImage] } });
+
+        expect(mergeMessageMetaOverrides(first, { happierStructuredInputV1: { v: 1, requestLabel: 'later' } })).toEqual({
+            happierStructuredInputV1: { v: 1, imageInputs: [legacyImage, currentImage],
+                extensionEvidence: { selected: true }, requestLabel: 'later' },
+        });
+    });
 });

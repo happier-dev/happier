@@ -48,6 +48,16 @@ describe('picked React element source', () => {
         const root = createRoot(container);
         const picker = createPicker();
         try {
+            // A cold document can be picked before React has attached its fibers. A later
+            // pick must read the producer again rather than retain that first absence.
+            container.innerHTML = '<button id="picked-source">Before hydration</button>';
+            picker.start();
+            container.querySelector('button')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            const cold = BrowserDiagnosticsElementPickerResultV1Schema.parse(picker.results[0]);
+            expect(cold.status).toBe('selected');
+            expect(cold.componentName).toBeUndefined();
+            expect(cold.sourceLocation).toBeUndefined();
+            picker.stop();
             await act(async () => root.render(jsxDEV(React19FixtureApp, {}, undefined, false)));
             const node = container.querySelector('#picked-source');
             expect(node).not.toBeNull();
@@ -64,7 +74,7 @@ describe('picked React element source', () => {
             picker.start();
             node!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
-            const result = BrowserDiagnosticsElementPickerResultV1Schema.parse(picker.results[0]);
+            const result = BrowserDiagnosticsElementPickerResultV1Schema.parse(picker.results[1]);
             expect(result).toMatchObject({ status: 'selected', componentName: 'React19FixtureSource' });
             expect(result.sourceLocation).toMatchObject({
                 file: expect.stringMatching(/\/browserPickedElement\.ts$/),

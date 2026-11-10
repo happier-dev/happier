@@ -199,8 +199,8 @@ describe('appendToSessionDraft', () => {
             drafts: readSessionAttachmentDrafts(attachmentScope), config, uploadFile, applyDraftPatch: () => {} });
         const meta = buildBrowserContextMessageMetaOverrides({ state: context.state, uploadedAttachments: uploaded });
         if (!meta.ok) throw new Error('Send metadata failed');
-        const { BrowserContextMessageMetaV1Schema } = await import('@happier-dev/protocol/browser/context/v1');
-        const payload = BrowserContextMessageMetaV1Schema.parse(meta.metaOverrides.happierBrowserContext).payload;
+        const { HappierStructuredInputV1Schema } = await import('@happier-dev/protocol/runtime/input/structuredInputV1');
+        const payload = HappierStructuredInputV1Schema.parse(meta.metaOverrides.happierStructuredInputV1).browserContext!;
         expect(payload.contexts[0]).toMatchObject({ marks: document, imageRef: { mediaId: uploaded[0]!.attachmentHandle.id,
             file: { path: uploaded[0]!.path } } });
         expect(payload.attachments[0]!.structuredBlock).toMatchObject({ marks: document,

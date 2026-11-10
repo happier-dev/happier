@@ -665,6 +665,46 @@ afterEach(async () => {
 });
 
 describe('BrowserSurfaceHost', () => {
+    it('routes frozen annotation point queries to the managed Machine and retains late source facts', async () => {
+        const { BrowserShell } = await import('../BrowserShell');
+        const { createBrowserContextState } = await import('@/sync/domains/browser/context');
+        const { applyBrowserControlEvent } = await import('@/sync/domains/browser/control');
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Expected Browser Account');
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, internal: { enabled: true }, viewTargets: { enabled: true },
+            diagnostics: { enabled: true }, context: { enabled: true },
+        } } });
+        let queries = 0;
+        browserActionHttp = async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            const machineResponse = createPlainMachineReadHttpResponseFixture(path, init, 'account-1');
+            if (machineResponse) return machineResponse;
+            if (path !== '/v1/actions/browser.diagnostics.elementPicker.start') return null;
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+            const request = BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS['browser.diagnostics.elementPicker.start'].parse(envelope.input);
+            queries += 1;
+            return Response.json({ v: 1, actionId: 'browser.diagnostics.elementPicker.start', requestId: envelope.requestId,
+                execution: { ok: true, result: { ...request, browserSessionId: undefined, action: undefined,
+                    diagnosticsInteractionEnabled: undefined, point: undefined, audited: true, status: 'selected',
+                    selectorPath: '#picked-source', rect: { x: 8, y: 8, width: 200, height: 24 },
+                    ...(queries > 1 ? { componentName: 'PickSource1110', sourceLocation: { file: 'fixture.js', line: 42, column: 7 } } : {}),
+                } } });
+        };
+        const initialBrowserState = applyBrowserControlEvent(createBrowserViewState(),
+            managedDiscoveryOpening({ browserSessionId: 'session_1', viewId: 'managed_1' }, 'web'));
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="session_1" platform="web"
+            initialBrowserState={initialBrowserState}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: true, contextEnabled: true }}
+            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: scope.serverId }}
+            browserContext={{ state: createBrowserContextState(), contextCapabilities: annotationContextCapabilities,
+                accountScope: scope, onStateChange: () => {} }} browserFeatureDecision={enabledBrowserDecision} />);
+        const query = screen.findByType(BrowserShell).props.browserContext.queryElementAtPoint;
+        expect(await query({ x: 30, y: 15 }, 0)).toMatchObject({ status: 'selected', selectorPath: '#picked-source' });
+        expect(await query({ x: 30, y: 15 }, 0)).toMatchObject({ status: 'selected', componentName: 'PickSource1110',
+            sourceLocation: { file: 'fixture.js', line: 42, column: 7 } });
+    });
+
     it('switches an embedded page through the menu and real open Action with its current URL', async () => {
         const { BrowserShell } = await import('../BrowserShell');
         const scope = getActiveServerAccountScope();

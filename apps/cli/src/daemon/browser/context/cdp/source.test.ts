@@ -4,6 +4,9 @@ import { createCdpBrowserContextSource } from './source';
 import { createSurfaceInputControl } from '../../../surfaces/inputControl';
 import { createBrowserContextRoutes } from '../routes';
 import { createBrowserContextCaptureService } from '../capture';
+import { createBrowserDaemonRuntimeActionExecutor } from '../../actions/runtimeActionExecutor';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutorBoundaryFixture } from '../../../../../../../packages/tests/src/testkit/actionExecutorBoundary';
 import type { BrowserSidecarCdpCommandScope } from '../../sidecar/controlAdapter';
 import type { BrowserContextCdpPageHandle } from './transport';
 import type { BrowserContextScreenshotMediaWriter } from './screenshotMedia';
@@ -426,6 +429,41 @@ describe('cdp browser context source', () => {
     });
 
     describe('captureSelectedElement', () => {
+        it.each([
+            { state: 'missing selection', code: 'browser_context_element_not_selected', phase: 'browser.context.selected_element.selection' },
+            { state: 'detached selection', code: 'browser_context_selected_element_detached', phase: 'browser.context.selected_element.resolve' },
+            { state: 'transport failure', code: 'browser_context_capture_failed', phase: 'browser.context.selected_element.selection' },
+            { state: 'evaluation failure', code: 'browser_context_capture_failed', phase: 'browser.context.selected_element.selection' },
+        ])('returns the producer refusal through the public Action for $state', async ({ state, code, phase }) => {
+            const { transport } = fakeTransport((method) => {
+                if (method === 'Runtime.evaluate') {
+                    if (state === 'transport failure') throw Object.assign(new Error('private page detail'), { code: 'ECONNRESET' });
+                    if (state === 'evaluation failure') return { result: { type: 'object', subtype: 'error' }, exceptionDetails: { text: 'private page detail' } };
+                    return state === 'missing selection' ? { result: { type: 'undefined' } }
+                        : { result: { type: 'string', value: '#detached' } };
+                }
+                if (method === 'DOM.getDocument') return { root: { nodeId: 1 } };
+                if (method === 'DOM.querySelector') return { nodeId: 0 };
+                return {};
+            });
+            const context = createBrowserContextRoutes({
+                ownerAccountId: 'owner',
+                source: createCdpBrowserContextSource({ transport, resolveView: () => HANDLE, screenshotMediaWriter: fakeMediaWriter() }),
+                resolveGate: () => ({ featureEnabled: true, policyAllowed: true, runtimeAvailable: true }),
+            });
+            const runtimeActionExecute = createBrowserDaemonRuntimeActionExecutor({ context,
+                featureGate: { isEnabled: () => true, refresh: async () => {} },
+            });
+            const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute }));
+            const result = await executor.execute('browser.context.captureSelectedElement', { ...VIEW, contextId: 'picked' },
+                { surface: 'mcp', authority: 'account_automation', bypassApprovals: true });
+            expect(result).toMatchObject({ ok: false, errorCode: code, details: { retryable: state === 'transport failure' }, failureCause: {
+                phase, errorCode: state === 'transport failure' ? 'ECONNRESET' : code,
+            } });
+            expect(JSON.stringify(result)).not.toContain('private page detail');
+            expect(await context.dispatch('browser.context.clear', { ...VIEW, contextId: 'picked' })).toEqual([]);
+        });
+
         it('resolves the picker selectorPath to a rect and accessible name via CDP', async () => {
             const { transport } = fakeTransport((method, params) => {
                 if (method === 'Runtime.evaluate') {

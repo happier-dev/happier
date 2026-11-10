@@ -1,6 +1,7 @@
 import { selectBrowserContextComposerAttachments, type BrowserContextState } from '@/sync/domains/browser/context';
 import type { BrowserContextMessagePayloadV1, BrowserContextAnnotationItemV2 } from '@happier-dev/protocol/browser/context/v1';
 import { buildBrowserContextAnnotationStructuredBlockV2 } from '@happier-dev/protocol/browser/context/annotationStructuredBlock';
+import { mergeMessageMetaOverrides } from '@/sync/domains/messages/mergeMessageMetaOverrides';
 
 export type BrowserAnnotationPicture = Pick<BrowserContextAnnotationItemV2, 'annotationId' | 'marks' | 'imageRef'>;
 type BrowserAnnotationUpload = Readonly<{ browserAnnotation?: BrowserAnnotationPicture }>;
@@ -23,8 +24,6 @@ export function reconcileBrowserContextPictures(payload: BrowserContextMessagePa
             structuredBlock: buildBrowserContextAnnotationStructuredBlockV2(item) } : attachment;
     }) };
 }
-
-export const BROWSER_CONTEXT_MESSAGE_META_KIND_V1 = 'browser_context.v1' as const;
 
 export type BrowserContextMessageMetaBuildResult =
     | Readonly<{
@@ -105,9 +104,9 @@ export function buildBrowserContextMessageMetaOverrides(args: Readonly<{
     return {
         ok: true,
         metaOverrides: {
-            happierBrowserContext: {
-                kind: BROWSER_CONTEXT_MESSAGE_META_KIND_V1,
-                payload: reconcileBrowserContextPictures({
+            happierStructuredInputV1: {
+                v: 1,
+                browserContext: reconcileBrowserContextPictures({
                     contexts,
                     attachments,
                 }, args.uploadedAttachments ?? []),
@@ -136,10 +135,7 @@ export function mergeBrowserContextMessageMetaOverrides(args: Readonly<{
 
     return {
         ok: true,
-        metaOverrides: {
-            ...(args.metaOverrides ?? {}),
-            ...browserContextMeta.metaOverrides,
-        },
+        metaOverrides: mergeMessageMetaOverrides(args.metaOverrides, browserContextMeta.metaOverrides),
     };
 }
 

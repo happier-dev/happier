@@ -1,7 +1,7 @@
 import type { BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
 import type { BrowserContextCapabilities } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
 import { describe, expect, it } from 'vitest';
-import { BrowserContextMessageMetaV1Schema } from '@happier-dev/protocol/browser/context/v1';
+import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 
 import {
     attachBrowserContextToComposer,
@@ -150,18 +150,18 @@ describe('buildBrowserContextMessageMetaOverrides', () => {
         const result = buildBrowserContextMessageMetaOverrides({ state: attached.state });
         if (!result.ok) throw new Error('annotation fixture failed to project');
 
-        const meta = BrowserContextMessageMetaV1Schema.parse(result.metaOverrides.happierBrowserContext);
-        expect(meta.payload.contexts).toHaveLength(1);
-        expect(meta.payload.contexts[0]).toMatchObject({ kind: 'browserAnnotation', imageRef, marks: document,
+        const payload = HappierStructuredInputV1Schema.parse(result.metaOverrides.happierStructuredInputV1).browserContext!;
+        expect(payload.contexts).toHaveLength(1);
+        expect(payload.contexts[0]).toMatchObject({ kind: 'browserAnnotation', imageRef, marks: document,
             elements: [{ markId: 'submit', selectorPath: '#submit', accessibleName: 'Submit', componentName: 'Checkout', sourceLocation }] });
-        expect(meta.payload.attachments[0]?.structuredBlock).toMatchObject({ kind: 'browser.annotation.v2', imageRef, marks: document });
-        expect(meta.payload.contexts[0]).not.toHaveProperty('media');
-        expect(meta.payload.contexts[0]).not.toHaveProperty('comment');
-        expect(meta.payload.attachments[0]?.structuredBlock).not.toHaveProperty('comment');
-        expect(JSON.stringify(meta)).not.toContain('private');
+        expect(payload.attachments[0]?.structuredBlock).toMatchObject({ kind: 'browser.annotation.v2', imageRef, marks: document });
+        expect(payload.contexts[0]).not.toHaveProperty('media');
+        expect(payload.contexts[0]).not.toHaveProperty('comment');
+        expect(payload.attachments[0]?.structuredBlock).not.toHaveProperty('comment');
+        expect(JSON.stringify(payload)).not.toContain('private');
     });
 
-    it('builds a separate browser-context metadata envelope without replacing existing message meta owners', () => {
+    it('builds browser context in the canonical structured-input envelope', () => {
         const result = buildBrowserContextMessageMetaOverrides({
             state: createAttachedContextState(),
         });
@@ -169,9 +169,9 @@ describe('buildBrowserContextMessageMetaOverrides', () => {
         expect(result).toEqual({
             ok: true,
             metaOverrides: {
-                happierBrowserContext: {
-                    kind: 'browser_context.v1',
-                    payload: {
+                happierStructuredInputV1: {
+                    v: 1,
+                    browserContext: {
                         contexts: [expect.objectContaining({
                             kind: 'browserPageReference',
                             targetId: 'preview_1',
@@ -197,9 +197,9 @@ describe('buildBrowserContextMessageMetaOverrides', () => {
         expect(result).toEqual({
             ok: true,
             metaOverrides: {
-                happierBrowserContext: {
-                    kind: 'browser_context.v1',
-                    payload: {
+                happierStructuredInputV1: {
+                    v: 1,
+                    browserContext: {
                         contexts: [expect.objectContaining({
                             kind: 'browserPageReference',
                             targetId: 'preview_1',
@@ -292,9 +292,9 @@ describe('buildBrowserContextMessageMetaOverrides', () => {
                 happier: expect.objectContaining({
                     kind: 'participant_message.v1',
                 }),
-                happierBrowserContext: expect.objectContaining({
-                    kind: 'browser_context.v1',
-                    payload: expect.objectContaining({
+                happierStructuredInputV1: expect.objectContaining({
+                    v: 1,
+                    browserContext: expect.objectContaining({
                         contexts: [expect.objectContaining({
                             kind: 'browserPageReference',
                             url: 'https://preview.localhost.test/dashboard',

@@ -8,6 +8,13 @@ import { createBrowserContextState } from '@/sync/domains/browser/context/state'
 import { startBrowserAnnotationDraft } from '@/sync/domains/browser/context/annotationDraft';
 import type { BrowserContextCapabilities } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
 import { useBrowserAnnotationController } from './useBrowserAnnotationController';
+import { createBrowserAnnotatorElementTool } from './browserAnnotatorElementTool';
+import { createBrowserAnnotationElementPicker } from '@/sync/domains/browser/context/elementPickerAnnotationBridge';
+import { createImageAnnotator } from '@/components/ui/media/annotation/annotatorStore';
+import { commitBrowserAnnotationDraft } from '@/sync/domains/browser/context/annotationDraft';
+import { attachBrowserContextToComposer } from '@/sync/domains/browser/context/state';
+import { mergeBrowserContextMessageMetaOverrides } from '@/sync/domains/session/input/browserContext';
+import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 
 afterEach(standardCleanup);
 const capabilities: BrowserContextCapabilities = { enabled: true, available: true,
@@ -27,6 +34,55 @@ const view: BrowserControlViewState = {
 };
 
 describe('browser annotation frozen host projection', () => {
+    it('carries an asynchronous Element pick through the canvas, frozen draft, Attach and Send envelope', async () => {
+        const source = { uri: 'data:image/png;base64,fixture', width: 800, height: 600, scale: 2 };
+        const initial = startBrowserAnnotationDraft(createBrowserContextState(), { ...view, nowMs: 1, source,
+            capture: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 800, height: 600, sizeBytes: 1 } });
+        const sourceLocation = { file: 'fixture.js', line: 42, column: 7 };
+        const hook = await renderHook(() => {
+            const [state, setState] = React.useState(initial);
+            const controller = useBrowserAnnotationController({ activeView: view, activeViewNavigationKey: 'view_1:3',
+                browserContext: { state, contextCapabilities: capabilities, onStateChange: setState,
+                    // The public point Action is the process boundary; facts come from its response.
+                    queryElementAtPoint: async () => ({ v: 1, pickerRequestId: 'point_1', viewId: view.viewId,
+                        navigationGeneration: 3, tier: 'injectedPage', audited: true, status: 'selected',
+                        selectorPath: '#pay', componentName: 'PayButton', sourceLocation,
+                        rect: { x: 10, y: 20, width: 100, height: 40 } }),
+                } });
+            return { state, controller };
+        });
+        const controller = hook.getCurrent()!.controller;
+        const tool = createBrowserAnnotatorElementTool({ source, recordElement: controller.recordElement,
+            createPicker: onHover => createBrowserAnnotationElementPicker({
+                query: controller.queryElementAtPoint!, scale: source.scale, onHover,
+            }) });
+        const stop = tool.activate(() => {});
+        const annotator = createImageAnnotator({ source, initial: controller.draft!.document,
+            tools: { element: tool }, onDocumentChange: controller.changeDocument });
+        try {
+            await act(async () => { await annotator.pickElement({ x: 40, y: 60 }); });
+            const state = hook.getCurrent()!.state;
+            const mark = annotator.store.getState().document.marks[0];
+            expect(mark).toMatchObject({ kind: 'element', label: 'PayButton', rect: { x: 20, y: 40, width: 200, height: 80 } });
+            const committed = commitBrowserAnnotationDraft({ ...view, state, adapterKind: 'externalUrl', capturedAtMs: 2,
+                imageRef: { mediaId: 'flattened_1', mediaKind: 'image', width: 800, height: 600, sizeBytes: 1 } });
+            if (committed.status !== 'committed') throw new Error('Expected committed annotation');
+            const attached = attachBrowserContextToComposer(committed.state, { attachmentId: 'attached_1', contextId: committed.itemIds[0] });
+            if (attached.status !== 'attached') throw new Error('Expected attached annotation');
+            const imageInput = { id: 'annotation-image', kind: 'localImage',
+                path: '.happier/uploads/messages/message_1/annotation.png', mimeType: 'image/png' } as const;
+            const result = mergeBrowserContextMessageMetaOverrides({ state: attached.state,
+                metaOverrides: { happierStructuredInputV1: { v: 1, imageInputs: [imageInput] } } });
+            if (!result.ok) throw new Error('Expected Send metadata');
+            // Stored/Pending delivery reads the admitted envelope, including when an image is already selected.
+            const admitted = readAdmittedHappierStructuredInputV1FromMeta(result.metaOverrides);
+            if (admitted.status !== 'admitted') throw new Error('Expected admitted Send envelope');
+            expect(admitted.structuredInput.imageInputs).toEqual([imageInput]);
+            expect(admitted.structuredInput.browserContext?.contexts[0]).toMatchObject({ kind: 'browserAnnotation',
+                elements: [{ markId: mark.id, selectorPath: '#pay', componentName: 'PayButton', sourceLocation }] });
+        } finally { stop(); }
+    });
+
     it('edits the shared document, records facts without adding marks, and queries the frozen generation', async () => {
         const query = vi.fn(async () => null); // Diagnostics transport boundary.
         const publications = vi.fn();

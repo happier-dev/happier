@@ -578,11 +578,11 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
             viewId: focusedView.viewId, navigationGeneration: navigationGeneration ?? focusedView.navigationGeneration,
             tier: focusedView.adapterKind === 'chromiumSidecar' ? 'cdp' : 'injectedPage',
             action: 'start', point, diagnosticsInteractionEnabled: true,
-        }, { defaultSessionId: props.pluginBrowserActionContext?.sessionId });
+        }, { defaultSessionId: props.pluginBrowserActionContext?.sessionId, externalActionTarget: browserActionTarget });
         if (!response.ok) return null;
         const result = BrowserDiagnosticsElementPickerResultV1Schema.safeParse(response.result);
         return result.success ? result.data : null;
-    }, [focusedView, mountedDiagnosticsActions.execute, props.pluginBrowserActionContext?.sessionId]);
+    }, [focusedView, mountedDiagnosticsActions.execute, props.pluginBrowserActionContext?.sessionId, browserActionTarget]);
     const browserContextForShell = React.useMemo(() => {
         if (!policy.contextEnabled || !productModels?.browserContext) {
             return null;
