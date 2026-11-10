@@ -129,7 +129,8 @@ export function describeUpdatesGroupRow(
 function isQuietMachineGroup(group: UpdatesGroup): boolean {
     return group.items.every((item) => {
         if (item.state === 'running' || item.state === 'failed' || item.state === 'ready' || item.state === 'checking') return false;
-        if ((item.state === 'unknown' || item.state === 'unchecked') && item.action.kind === 'manual') return false;
+        if ((item.state === 'unknown' || item.state === 'unchecked')
+            && (item.action.kind === 'manual' || item.subject.kind === 'happier-cli')) return false;
         if ((item.state === 'available' || item.state === 'required') && !item.skipped) {
             // An update Happier runs, or a newer version the person installs themselves, is something to do.
             if (item.action.kind === 'run') return false;
@@ -167,13 +168,13 @@ export function partitionUpdatesPageGroups(groups: readonly UpdatesGroup[]): Rea
 /**
  * Within one machine's section: tools whose newer version could not be checked, with nothing the
  * person can do about it, share one cause. Two or more of them fold into one row that opens to the
- * list; anything actionable (retry, a manual command) and a single unchecked tool stay rows.
+ * list; the Happier CLI, anything actionable (retry, a manual command) and a single unchecked tool stay rows.
  */
 export function partitionUncheckedItems(items: readonly UpdateItem[]): Readonly<{
     rows: readonly UpdateItem[];
     unchecked: readonly UpdateItem[];
 }> {
-    const unchecked = items.filter((item) => item.state === 'unknown' && item.action.kind === 'none');
+    const unchecked = items.filter((item) => item.subject.kind !== 'happier-cli' && item.state === 'unknown' && item.action.kind === 'none');
     if (unchecked.length < 2) return { rows: items, unchecked: [] };
     return { rows: items.filter((item) => !unchecked.includes(item)), unchecked };
 }

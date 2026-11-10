@@ -9,7 +9,8 @@ import type { MachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapab
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
-import { describeUpdatesGroupRow, partitionUpdatesPageGroups } from '@/components/updates/describeUpdatesGroupRow';
+import { describeUpdatesGroupRow, partitionUncheckedItems, partitionUpdatesPageGroups } from '@/components/updates/describeUpdatesGroupRow';
+import { describeUpdateItem } from '@/components/updates/describeUpdateItem';
 
 import { buildMachineUpdateGroups, readUpdatableInstallables } from './buildMachineUpdateGroups';
 import { buildUpdatesSummary } from './items/buildUpdatesSummary';
@@ -37,6 +38,30 @@ const NO_RUNS = new Map();
 
 describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () => {
     beforeEach(clearMachineRequestReachabilityForTest);
+
+    it('keeps a managed guest CLI visible with its missing release reason instead of Nothing to update', () => {
+        const guest = machine('d4bfcc61', { platform: 'linux', happyCliVersion: '0.2.10', cliUpdate: {
+            currentVersion: '0.2.10', latestVersion: null, channel: 'stable', installSource: 'managed',
+            updateCommand: 'happier self update', canUpdateRemotely: true, lastUpdate: null,
+        } });
+        const params = { accountScope: { serverId: 'home-a', accountId: 'updates-account' }, machines: [guest],
+            thisMachineId: null, thisComputerItem: null, runs: NO_RUNS,
+            machineAgents: new Map([[guest.id, ['claude', 'codex'].map(agentId => projectMachineAgent({
+                agentId, title: agentId, facts: null, checking: false, stale: false, connectedServices: [], job: null,
+            }))]]), snapshots: new Map(), installables: [] };
+        const built = buildMachineUpdateGroups(params);
+        const item = built.groups[0]!.items[0]!;
+        expect(item).toMatchObject({ subject: { kind: 'happier-cli' }, currentVersion: '0.2.10',
+            managedBy: 'happier', state: 'unknown', action: { kind: 'none' }, failure: { kind: 'latestUnknown' } });
+        expect(partitionUpdatesPageGroups(built.groups)).toMatchObject({ sections: built.groups, quiet: [] });
+        expect(partitionUncheckedItems(built.groups[0]!.items).rows).toContain(item);
+        expect(describeUpdateItem(item)).toMatchObject({ actionLabel: null });
+        expect(describeUpdateItem(item).subtitle).toContain('updates.row.latestUnknown');
+        const answered = buildMachineUpdateGroups({ ...params, machines: [machine(guest.id, {
+            ...guest.metadata!, cliUpdate: { ...guest.metadata!.cliUpdate!, latestVersion: '0.2.20' },
+        })] });
+        expect(answered.groups[0]!.items[0]).toMatchObject({ state: 'available', action: { kind: 'run', verb: 'update' } });
+    });
 
     it('retains unknown update facts before the Account scope is available without claiming offline or admitting updates', () => {
         const scope = { serverId: 'home-a', accountId: 'updates-account' };

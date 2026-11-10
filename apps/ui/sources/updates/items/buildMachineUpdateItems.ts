@@ -104,7 +104,13 @@ function resolveRow(item: UpdateItem, params: Readonly<{
     if (state === 'available' && params.canRun) {
         return { ...item, state, action: { kind: 'run', verb: 'update' } };
     }
-    return { ...item, state };
+    return {
+        ...item,
+        state,
+        failure: state === 'unknown' && item.subject.kind === 'happier-cli' && !item.latestVersion
+            ? { kind: 'latestUnknown' }
+            : item.failure,
+    };
 }
 
 export function buildThisComputerCliUpdateItem(params: Readonly<{
