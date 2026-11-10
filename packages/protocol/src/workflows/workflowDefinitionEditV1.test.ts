@@ -57,6 +57,23 @@ describe('typed workflow definition edits', () => {
     expect(original).not.toHaveProperty('roles');
     expect(WorkflowDefinitionEditOpV1Schema.safeParse({ kind: 'upsert_role', role: { ...role, unknown: true } }).success).toBe(false);
   });
+  it('remaps copied Action object fields while preserving origin Session and literal values', () => {
+    const block = WorkflowBlockSchema.parse({ kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: {
+      payload: { kind: 'object', fields: {
+        session: { kind: 'origin_session_id' },
+        selected: { kind: 'input', name: 'target', path: ['id'] },
+        previous: { kind: 'result', producer: { blockId: 'notify', scope: { kind: 'current' } }, path: ['answer'] },
+        literal: { kind: 'literal', value: { name: 'target' } },
+      } },
+    } });
+    const copied = copyWorkflowBlocks([block], new Set(['notify']), new Map([['target', 'target2']]));
+    expect(copied.blocks[0]).toMatchObject({ id: 'notify-2', input: { payload: { kind: 'object', fields: {
+      session: { kind: 'origin_session_id' },
+      selected: { kind: 'input', name: 'target2', path: ['id'] },
+      previous: { kind: 'result', producer: { blockId: 'notify-2', scope: { kind: 'current' } }, path: ['answer'] },
+      literal: { kind: 'literal', value: { name: 'target' } },
+    } } } });
+  });
   it('remaps copied Session conversation inputs and preserves their bound Action value paths', () => {
     const block = WorkflowBlockSchema.parse({ kind: 'step', id: 'verify', document: { text: 'Verify', references: [], attachments: [] },
       execution: { conversation: { kind: 'input', name: 'reviewSession' } },

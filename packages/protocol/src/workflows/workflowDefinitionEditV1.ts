@@ -360,7 +360,9 @@ export function rewriteWorkflowBlockReferences(block: WorkflowBlock, rewrite: Wo
     case 'action': return {
       ...block, ...guarded,
       input: Object.fromEntries(Object.entries(block.input).map(([key, value]) => [key,
-        value.kind === 'list' ? { ...value, items: value.items.map((item) => item.kind === 'origin_session_id' ? item : reference(item)) }
+        value.kind === 'object' ? { ...value, fields: Object.fromEntries(Object.entries(value.fields).map(([field, item]) => [field,
+          item.kind === 'origin_session_id' ? item : reference(item)])) }
+          : value.kind === 'list' ? { ...value, items: value.items.map((item) => item.kind === 'origin_session_id' ? item : reference(item)) }
           : value.kind === 'origin_session_id' ? value : reference(value)])),
     };
     case 'workflow': return { ...block, ...guarded, input: Object.fromEntries(Object.entries(block.input).map(([key, value]) => [key, reference(value)])) };
