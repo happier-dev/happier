@@ -1,18 +1,35 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { AgentRuntime, AgentSessionCatalogControl, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
-import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
+import { classifyJsonRpcSubmissionFailure } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import type { AgentRuntime, AgentSessionCatalogControl, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext,
+  AgentSessionHostServices, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { AgentRuntimeJsonValueSchema, createExecutionRunHostBackendFromConversationRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { ACTIVITY_SESSION_SYSTEM_RECORD_KINDS, SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE,
   buildWorkflowRunSystemRecordLocalId, createWorkflowActivityPublisher, SessionWorkflowRunSnapshotV1Schema,
   type SessionWorkflowRunSnapshotV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
-import { createMuseCatalog } from './catalog.js';
+import { createMuseCatalog, type MuseCatalog } from './catalog.js';
 import { MUSE_AGENT } from './definition.js';
 import { createMuseEventProjection, readMuseRecord } from './events.js';
 import { openMuseMsp, type MuseMsp } from './msp.js';
 import { createMuseInteractions } from './interactions.js';
+import { resolveMuseTurnInput } from './inputs.js';
 
-async function openMuseConversation(request: AgentSessionOpenRequest, context: AgentSessionRuntimeContext): Promise<AgentSessionRuntime> {
-  if (request.kind !== 'create') throw new PluginError({ code: 'unsupported', message: 'Native Muse continuation is unavailable on this launch path.' });
-  if (request.startupInstructions) throw new PluginError({ code: 'agent_session_startup_instructions_unsupported', retryable: false });
+async function openMuseConversation<SessionId extends string | undefined>(
+  request: AgentSessionOpenRequest | AgentExecutionRunOpenRequest,
+  context: AgentSessionRuntimeContext | AgentExecutionRunRuntimeContextV1,
+  sessionId: SessionId,
+) {
+  const sessionServices = 'executionRun' in context ? undefined : context.session.services;
+  const scopeServices = 'executionRun' in context ? context.executionRun.services : context.session.services;
+  const resumeId = request.kind === 'resume'
+    ? 'checkpointId' in request ? request.checkpointId : request.providerSessionId : undefined;
+  if (request.kind === 'fork') throw new PluginError({ code: 'unsupported', message: 'Native Muse fork is unavailable on this launch path.' });
+  if ('startupInstructions' in request && request.startupInstructions) throw new PluginError({ code: 'agent_session_startup_instructions_unsupported', retryable: false });
+  if ('modelSelection' in request && request.modelSelection?.providerConnectionId !== undefined
+    && request.modelSelection.providerConnectionId !== null) {
+    throw new PluginError({ code: 'unsupported', message: 'This native Muse model binding is unavailable.' });
+  }
+  const requestedModelId = request.configuration?.model.value
+    ?? ('modelSelection' in request ? request.modelSelection?.modelId : undefined);
   if (request.skills?.items.length || Object.keys(request.mcpServers ?? {}).length) {
     throw new PluginError({ code: 'unsupported', message: 'The selected native Muse skills or MCP input shape is unavailable on this launch path.' });
   }
@@ -25,7 +42,7 @@ async function openMuseConversation(request: AgentSessionOpenRequest, context: A
   const workflowAddress = (runId: string) => ({ owner: 'host' as const,
     namespace: SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE, kind: ACTIVITY_SESSION_SYSTEM_RECORD_KINDS[0],
     localId: buildWorkflowRunSystemRecordLocalId(runId) });
-  const workflowPublisher = createWorkflowActivityPublisher({ backendId: MUSE_AGENT.id, agentId: MUSE_AGENT.id,
+  const workflowPublisher = sessionServices ? createWorkflowActivityPublisher({ backendId: MUSE_AGENT.id, agentId: MUSE_AGENT.id,
     async readCommittedRunSnapshot(runId) {
       const record = await context.services.sessions.current?.readSystemRecord({ address: workflowAddress(runId) });
       return record ? SessionWorkflowRunSnapshotV1Schema.parse(record.content) : null;
@@ -35,13 +52,27 @@ async function openMuseConversation(request: AgentSessionOpenRequest, context: A
       if (!current) throw new PluginError({ code: 'unsupported', message: 'Session workflow records are unavailable.' });
       await current.upsertSystemRecord({ address: workflowAddress(snapshot.runId), content: AgentRuntimeJsonValueSchema.parse(snapshot) });
     },
-    async writeHeadlines(bundle) { await context.session.services.workflowActivity.publishHeadlines(AgentRuntimeJsonValueSchema.parse(bundle)); },
-  });
-  const projection = createMuseEventProjection({ sessionId: request.sessionId,
-    async onChild(observation) { await context.session.services.subagents.observe(observation); },
+    async writeHeadlines(bundle) { await sessionServices.workflowActivity.publishHeadlines(AgentRuntimeJsonValueSchema.parse(bundle)); },
+  }) : undefined;
+  let activity: 'active' | 'idle' | 'unknown' = 'unknown';
+  const readiness = new Set<Readonly<{ resolve(): void; reject(error: unknown): void }>>();
+  const retireReadiness = () => {
+    const error = new PluginError({ code: 'PLUGIN_EXEC_FAILED', message: 'Native Muse input is unavailable because the runtime ended.' });
+    for (const waiter of readiness) waiter.reject(error);
+    readiness.clear();
+  };
+  const projection = createMuseEventProjection({ sessionId,
+    onActivity(state) {
+      activity = state;
+      if (state === 'idle') {
+        for (const waiter of readiness) waiter.resolve();
+        readiness.clear();
+      }
+    },
+    async onChild(observation) { await sessionServices?.subagents.observe(observation); },
     async onWorkflow(snapshot) {
       workflowSnapshots.set(snapshot.runId, snapshot);
-      await workflowPublisher.publish({ snapshots: workflowSnapshots, changedRunIds: [snapshot.runId] });
+      await workflowPublisher?.publish({ snapshots: workflowSnapshots, changedRunIds: [snapshot.runId] });
     },
   });
   let closing = false;
@@ -49,6 +80,7 @@ async function openMuseConversation(request: AgentSessionOpenRequest, context: A
   const end = (cause: 'processExited' | 'connectionLost' | 'protocolError') => {
     if (closing || ended) return;
     ended = true;
+    retireReadiness();
     projection.publish({ kind: 'runtime-ended', cause, retryable: true });
   };
   const interactions = createMuseInteractions({ context,
@@ -66,22 +98,26 @@ async function openMuseConversation(request: AgentSessionOpenRequest, context: A
       } });
     },
   });
+  let catalogSource: MuseCatalog | undefined;
+  let catalogSessionId: string | undefined;
   const msp: MuseMsp = await openMuseMsp({ exec: context.services.exec,
     launch: { executable: { kind: 'systemTool', id: 'muse-cli' }, cwd: request.cwd, env: request.launchEnvironment?.values },
-    signal: context.signal, nativeLaunch: context.session.services.nativeLaunch,
+    signal: context.signal, nativeLaunch: scopeServices.nativeLaunch,
     initialize: { capabilities: { experimentalApi: true } },
     onRequest: interactions.onRequest,
     async onNotification(message) {
       if (!interactions.observe(message)) await projection.observe(message);
+      if (catalogSessionId) catalogSource?.observeConfiguration(message, catalogSessionId);
       if (message.method === 'session/closed') end('connectionLost');
     },
   }).catch(error => { interactions.dispose(); projection.dispose(); throw error; });
-  const catalog = createMuseCatalog(msp.client);
-  let modelsBinding: ReturnType<typeof context.session.services.models.bind> | undefined;
+  const catalog = catalogSource = createMuseCatalog(msp.client);
+  let modelsBinding: ReturnType<AgentSessionHostServices['models']['bind']> | undefined;
+  let inputBinding: ReturnType<AgentSessionHostServices['activeInput']['bind']> | undefined;
   void msp.wait().then(() => end('processExited'), () => end('protocolError'));
   try {
-    modelsBinding = context.session.services.models.bind(catalog);
-    const selectedId = request.configuration?.model.value;
+    modelsBinding = sessionServices?.models.bind(catalog);
+    const selectedId = request.kind === 'create' ? requestedModelId : undefined;
     let selected: ReturnType<typeof catalog.resolveModelSelection> = { status: 'nativeDefault' };
     if (selectedId) {
       await catalog.refresh({ signal: context.signal });
@@ -89,53 +125,221 @@ async function openMuseConversation(request: AgentSessionOpenRequest, context: A
       if (selected.status === 'unavailable') throw new PluginError({ code: 'model_selection_required', retryable: false,
         message: 'The selected Muse model is unavailable in the native catalog.' });
     }
-    const opened = readMuseRecord(await msp.command('session/start', { workspaceRoot: request.cwd,
-      approvalMode: 'promptUnmatched', permissionProfile: ':ask-me',
-      ...(selected.status === 'selected' ? { providerId: selected.providerId, modelId: selected.modelId } : {}),
-    }, { signal: context.signal }));
+    const opened = readMuseRecord(await (request.kind === 'resume'
+      ? msp.command('session/resume', { sessionId: resumeId!, excludeItems: false }, { signal: context.signal })
+      : msp.command('session/start', { workspaceRoot: request.cwd,
+        approvalMode: 'promptUnmatched', permissionProfile: ':ask-me',
+        ...(selected.status === 'selected' ? { providerId: selected.providerId, modelId: selected.modelId } : {}),
+      }, { signal: context.signal })));
     const native = readMuseRecord(opened.session);
     if (typeof native.sessionId !== 'string') throw new PluginError({ code: 'PLUGIN_EXEC_PROTOCOL_ERROR', message: 'Muse did not return a native Session identity.' });
+    if (request.kind === 'resume' && native.sessionId !== resumeId) {
+      throw new PluginError({ code: 'PLUGIN_EXEC_PROTOCOL_ERROR', message: 'Muse returned a different native Session identity during resume.' });
+    }
     const nativeSessionId = native.sessionId;
+    catalogSessionId = nativeSessionId;
     projection.observeSession(opened.session);
+    inputBinding = sessionServices?.activeInput.bind({
+      isTurnInFlight: () => activity === 'active',
+      waitForInputReady() {
+        if (closing || ended) return Promise.reject(new PluginError({ code: 'PLUGIN_EXEC_FAILED' }));
+        if (activity === 'idle') return Promise.resolve();
+        return new Promise<void>((resolve, reject) => readiness.add({ resolve, reject }));
+      },
+      canSteer: () => projection.readOwningTurn() !== undefined,
+      onPromptQueued() {},
+      applyPermissionIntentDuringTurn: () => ({ status: 'unsupported' }),
+      clearTerminalComposer: () => ({ ok: false, status: 'unsupported' }),
+      interruptPendingInputAndRun() { throw new PluginError({ code: 'unsupported' }); },
+    });
     if (typeof native.providerId === 'string' && typeof native.modelId === 'string') {
       catalog.applyCurrentModel({ providerId: native.providerId, modelId: native.modelId });
     }
+    if (request.kind === 'resume') {
+      const history = readMuseRecord(opened.history);
+      if (history.mode !== 'inline' || !Array.isArray(history.items)) {
+        throw new PluginError({ code: 'unsupported', message: 'Native Muse resume requires history paging unavailable on this launch path.' });
+      }
+      await projection.replayItems(history.items);
+      let pending: ReturnType<typeof readMuseRecord>;
+      try {
+        pending = readMuseRecord(await msp.client.request('approval/listPending', { sessionId: nativeSessionId }, { signal: context.signal }));
+      } catch {
+        throw new PluginError({ code: 'PLUGIN_EXEC_FAILED', message: 'Native Muse pending interaction recovery is unavailable.' });
+      }
+      if (!Array.isArray(pending.approvals) || !Array.isArray(pending.userInputs)) {
+        throw new PluginError({ code: 'PLUGIN_EXEC_PROTOCOL_ERROR', message: 'Muse did not return pending interaction recovery state.' });
+      }
+      for (const params of pending.approvals) interactions.observe({ method: 'approval/requested', params });
+      for (const params of pending.userInputs) interactions.observe({ method: 'userInput/requested', params });
+    }
+    const applyModelConfiguration = async (modelId: string | undefined, effort: string | undefined,
+      options?: { signal?: AbortSignal }): Promise<Awaited<ReturnType<NonNullable<AgentSessionRuntime['updateConfiguration']>>>> => {
+      const unsupported = { status: 'unsupported' as const,
+        diagnostic: { code: 'unsupported', severity: 'error' as const } };
+      if (!modelId && effort === undefined) return { status: 'applied', changed: [] };
+      let method = 'model/list';
+      try {
+        if (catalog.read().models === null) await catalog.refresh({ sessionId: nativeSessionId,
+          signal: options?.signal ?? context.signal });
+        const selected = catalog.resolveModelSelection(modelId ?? catalog.read().currentModelId ?? undefined);
+        if (selected.status !== 'selected') return { status: 'rejected',
+          diagnostic: { code: 'model_selection_required', severity: 'error' } };
+        const offered = catalog.read().models?.find(model => model.id === selected.id)?.modelOptions
+          ?.find(option => option.id === 'reasoning_effort');
+        if (effort !== undefined && !offered?.options?.some(option => option.value === effort)) return unsupported;
+        const changed: string[] = [];
+        if (selected.id !== catalog.read().currentModelId) {
+          method = 'session/setModel';
+          const result = readMuseRecord(await msp.command(method, { sessionId: nativeSessionId,
+            model: { providerId: selected.providerId, modelId: selected.modelId } },
+          { signal: options?.signal ?? context.signal }));
+          if (result.status !== 'accepted') return { status: 'unavailable',
+            diagnostic: { code: 'PLUGIN_EXEC_PROTOCOL_ERROR', severity: 'error' } };
+          catalog.applyCurrentModel(selected);
+          changed.push('model');
+        }
+        if (effort !== undefined && catalog.readCurrentReasoningEffort() !== effort) {
+          method = 'session/setReasoningEffort';
+          const result = readMuseRecord(await msp.command(method, { sessionId: nativeSessionId, reasoningEffort: effort },
+            { signal: options?.signal ?? context.signal }));
+          if (result.status !== 'accepted') return { status: 'unavailable',
+            diagnostic: { code: 'PLUGIN_EXEC_PROTOCOL_ERROR', severity: 'error' } };
+          catalog.applyCurrentReasoningEffort(effort);
+          changed.push('options.reasoning_effort');
+        }
+        return { status: 'applied', changed };
+      } catch (error) {
+        const failure = classifyJsonRpcSubmissionFailure(error, { method, effectObserved: false });
+        return { status: failure.kind === 'rejected_before_effect' ? 'rejected' : 'unavailable',
+          diagnostic: { code: failure.kind === 'rejected_before_effect' ? 'provider_request_rejected' : 'PLUGIN_EXEC_FAILED',
+            severity: 'error', ...(failure.kind === 'rejected_before_effect' ? { details: { ...failure.details } } : {}) } };
+      }
+    };
+    const updateConfiguration: NonNullable<AgentSessionRuntime['updateConfiguration']> = async (configuration, options) => {
+      const unsupported = { status: 'unsupported' as const,
+        diagnostic: { code: 'unsupported', severity: 'error' as const } };
+      if (configuration.mode.value || (configuration.permissionIntent.value && configuration.permissionIntent.value !== 'default')
+        || configuration.workspaceWrites === 'deny' || configuration.allowedTools !== undefined
+        || configuration.unlistedTools !== undefined || configuration.providerBinding !== undefined
+        || configuration.mcpToolPolicy !== undefined
+        || Object.keys(configuration.options).some(id => id !== 'reasoning_effort')) return unsupported;
+      const effort = configuration.options.reasoning_effort?.value;
+      if (effort !== undefined && typeof effort !== 'string') return unsupported;
+      return applyModelConfiguration(configuration.model.value ?? undefined, effort, options);
+    };
+    if (request.configuration?.options.reasoning_effort || (request.kind === 'resume' && requestedModelId)) {
+      const result = request.configuration
+        ? await updateConfiguration({ ...request.configuration,
+          model: { ...request.configuration.model, value: requestedModelId ?? request.configuration.model.value } },
+        { signal: context.signal })
+        : await applyModelConfiguration(requestedModelId, undefined, { signal: context.signal });
+      if (result.status !== 'applied') throw new PluginError({
+        code: 'diagnostic' in result ? result.diagnostic.code : 'unsupported', retryable: false,
+        message: 'The selected native Muse launch configuration could not be applied.',
+      });
+    }
     return {
+      runtimeCapabilities: { sessionCapabilities: MUSE_AGENT.core.sessionCapabilities },
       runtimeDescriptorV1: { v: 1, agentId: MUSE_AGENT.id, agent: { providerSessionId: nativeSessionId,
         ...(typeof native.path === 'string' ? { sessionFile: native.path } : {}) } },
       watch: projection.watch,
+      updateConfiguration,
       async send(input, options) {
-        if (input.input.structuredInput) return { status: 'unsupported', retryable: false,
+        let nativeInput: Awaited<ReturnType<typeof resolveMuseTurnInput>>;
+        try {
+          nativeInput = await resolveMuseTurnInput(input.input, { msp, nativeSessionId,
+            inputFiles: sessionServices?.inputFiles, signal: options?.signal });
+        } catch {
+          return { status: 'unavailable', retryable: true,
+            diagnostic: { code: 'PLUGIN_EXEC_FAILED', severity: 'error' } };
+        }
+        if (!nativeInput) return { status: 'unsupported', retryable: false,
           diagnostic: { code: 'unsupported', severity: 'error', message: 'This native Muse input shape is unavailable.' } };
-        if (input.delivery.kind === 'steer') return { status: 'unsupported', retryable: false,
-          diagnostic: { code: 'unsupported', severity: 'error', message: 'Native steering is unavailable on this launch path.' } };
+        const method = input.delivery.kind === 'steer' ? 'turn/steer' : 'turn/start';
+        const expectedTurnId = input.delivery.kind === 'steer' ? projection.readOwningTurn(input.delivery.turnId) : undefined;
+        if (input.delivery.kind === 'steer' && !expectedTurnId) return { status: 'rejected', retryable: false,
+          diagnostic: { code: 'unsupported', severity: 'error', message: 'The native Muse turn is no longer running.' } };
         let commandId: string | undefined;
         try {
-          const result = await msp.command('turn/start', { sessionId: nativeSessionId,
-            input: [{ type: 'text', text: input.input.text }] }, { signal: options?.signal,
+          const result = await msp.command(method, { sessionId: nativeSessionId,
+            ...(expectedTurnId ? { expectedTurnId } : {}),
+            input: nativeInput }, { signal: options?.signal,
             onCommandId(id) { commandId = id; projection.admit(input, id); },
           });
           if (commandId) projection.accept(commandId, result);
           return { status: 'admitted' };
         } catch (error) {
-          projection.publish({ kind: 'input-custody-unknown', inputIds: input.inputIds,
-            issue: { code: error instanceof PluginError ? error.code : 'PLUGIN_EXEC_FAILED', severity: 'error' } });
-          throw error;
+          // A correlated native start already established custody, even when
+          // its JSON-RPC acknowledgement is subsequently refused or lost.
+          const accepted = commandId === undefined ? false : projection.retireCommand(commandId);
+          if (accepted) return { status: 'admitted' };
+          const failure = classifyJsonRpcSubmissionFailure(error, { method, effectObserved: false });
+          if (failure.kind === 'rejected_before_effect') {
+            const diagnostic = { code: 'provider_request_rejected', severity: 'error' as const,
+              details: { ...failure.details } };
+            projection.publish({ kind: 'input-rejected', inputIds: input.inputIds, diagnostic, retryable: false });
+            return { status: 'rejected', diagnostic, retryable: false };
+          }
+          const diagnostic = { code: 'native_send_outcome_unknown', severity: 'error' as const };
+          if (accepted !== undefined) projection.publish({ kind: 'input-custody-unknown', inputIds: input.inputIds, issue: diagnostic });
+          return { status: 'unavailable', diagnostic, retryable: true };
+        }
+      },
+      async cancel(request, options) {
+        const turnId = projection.readOwningTurn(request.turnId);
+        if (!turnId) return { status: 'notRunning' };
+        try {
+          const result = readMuseRecord(await msp.command('turn/interrupt', { sessionId: nativeSessionId, turnId },
+            { signal: options?.signal }));
+          if (result.status === 'accepted') return { status: 'requested', turnId: request.turnId };
+          return { status: 'unavailable', diagnostic: { code: 'PLUGIN_EXEC_PROTOCOL_ERROR', severity: 'error' } };
+        } catch (error) {
+          const failure = classifyJsonRpcSubmissionFailure(error, { method: 'turn/interrupt', effectObserved: false });
+          return { status: 'unavailable', diagnostic: {
+            code: failure.kind === 'rejected_before_effect' ? 'provider_request_rejected' : 'PLUGIN_EXEC_FAILED',
+            severity: 'error', ...(failure.kind === 'rejected_before_effect' ? { details: { ...failure.details } } : {}),
+          } };
+        }
+      },
+      async compact(request, options) {
+        if (request.trigger !== 'manual' || request.instructions) return { status: 'unsupported', retryable: false,
+          diagnostic: { code: 'unsupported', severity: 'error' } };
+        const expected = projection.expectCompaction(request);
+        if (!expected) return { status: 'unavailable', retryable: true,
+          diagnostic: { code: 'PLUGIN_EXEC_FAILED', severity: 'error', message: 'Native Muse compaction is already pending.' } };
+        try {
+          const result = readMuseRecord(await msp.command('session/compact', { sessionId: nativeSessionId }, { signal: options?.signal }));
+          if (result.status === 'accepted') return { status: 'admitted' };
+          const effectObserved = expected.retire();
+          if (effectObserved) return { status: 'admitted' };
+          return { status: result.status === 'noop' ? 'rejected' : 'unavailable', retryable: false,
+            diagnostic: { code: result.status === 'noop' ? 'provider_request_rejected' : 'PLUGIN_EXEC_PROTOCOL_ERROR',
+              severity: 'error', details: { method: 'session/compact', nativeStatus: result.status ?? null } } };
+        } catch (error) {
+          const effectObserved = expected.retire();
+          if (effectObserved) return { status: 'admitted' };
+          const failure = classifyJsonRpcSubmissionFailure(error, { method: 'session/compact', effectObserved });
+          return failure.kind === 'rejected_before_effect'
+            ? { status: 'rejected', retryable: false, diagnostic: { code: 'provider_request_rejected', severity: 'error', details: { ...failure.details } } }
+            : { status: 'unavailable', retryable: true, diagnostic: { code: 'PLUGIN_EXEC_FAILED', severity: 'error' } };
         }
       },
       async dispose() {
         if (closing) return;
         closing = true;
+        retireReadiness();
         interactions.dispose();
         try { await msp.dispose(); }
-        finally { await modelsBinding?.dispose(); projection.dispose(); }
+        finally { await inputBinding?.dispose(); await modelsBinding?.dispose(); projection.dispose(); }
       },
-    };
+    } satisfies Omit<AgentSessionRuntime, 'watch'> & { watch: typeof projection.watch };
   } catch (error) {
     closing = true;
+    retireReadiness();
     interactions.dispose();
     try { await msp.dispose(); }
-    finally { await modelsBinding?.dispose(); projection.dispose(); }
+    finally { await inputBinding?.dispose(); await modelsBinding?.dispose(); projection.dispose(); }
     throw error;
   }
 }
@@ -159,5 +363,17 @@ export function createMuseAgentRuntime(): AgentRuntime & { sessions: NonNullable
       } finally { await msp.dispose(); }
     },
   };
-  return { sessions: { open: openMuseConversation, catalog } };
+  return { sessions: {
+    open: (request, context) => openMuseConversation(request, context, request.sessionId),
+    catalog,
+    executionRunContextV1: {
+      async open(request, context) {
+        if (request.kind === 'fork') throw new PluginError({ code: 'unsupported', message: 'Native Muse Run fork is unavailable.' });
+        return await createExecutionRunHostBackendFromConversationRuntime({ request,
+          openConversation: () => openMuseConversation(request, context, undefined) });
+      },
+      openConversation: (request, context) => openMuseConversation(request, context, undefined),
+    },
+  } };
 }
+export { museExternalSessionsContribution } from './externalSessions.js';

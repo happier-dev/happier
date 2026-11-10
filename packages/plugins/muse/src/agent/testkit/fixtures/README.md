@@ -23,3 +23,7 @@ The decision playback scenarios select complete single-turn slices: `advanced` r
 `resume-compact.json` is the exact sanitized original 14-row research recording of native resume and compaction item completion. It contains no model/effort setter capture; those operations must use their own primary evidence.
 
 Companion summaries describe research observations; retained physical log and export paths mentioned there are not transcript-reading fallbacks. Playback performs no credential reads or model calls.
+# Isolated file input
+
+`isolated-echo-file.json` records Muse 1.4.14 with a harmless temporary `probe.txt` selected through native `@probe.txt` text. Built-in echo and empty isolated credential/config/data homes were used; this is file-input characterization, not external model or account evidence. Native UUIDs and temporary roots are sanitized consistently.
+
