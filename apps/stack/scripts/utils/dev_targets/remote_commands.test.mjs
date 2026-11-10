@@ -364,6 +364,25 @@ esac
   t.diagnostic(`contract admissions=1; nested waits=0; floorKiB=${parentFloor}; import reader released at all three boundaries`);
 });
 
+test('extended DB preparation retains Git authority while direct tracked writers remain primary-only', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-db-placement-' });
+  await writeFile(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - apps/*\n');
+  const server = fixture.path('apps/server');
+  await mkdir(server, { recursive: true });
+  await writeFile(join(server, 'package.json'), JSON.stringify({ name: '@happier-dev/server', scripts: {
+    'migrate:mysql:deploy': 'git status',
+    'test:mysql-voice-identity-upgrade-contract': 'node test.mjs',
+    'test:db-contract': 'node test.mjs',
+  } }));
+  const options = { repoRoot: fixture.root, cwd: fixture.root };
+  const runner = await commandPolicy.resolvePackageCommandPolicy(['node',
+    'packages/tests/scripts/run-extended-db-docker.mjs', '--db', 'mysql', '--mode', 'contract'], options);
+  assert.equal(runner.placement, 'primary-only', 'a real Git child cannot move with disposable DB work');
+  const writer = await commandPolicy.resolvePackageCommandPolicy(['node',
+    'apps/server/scripts/runTsx.mjs', 'apps/server/scripts/schemaSync.ts'], options);
+  assert.equal(writer.placement, 'primary-only', 'direct source generation still publishes to the authority');
+});
+
 test('extended DB coordinators reserve the canonical command plan peak for their whole run', async t => {
   const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
   const { buildExtendedDbCommandPlan } = await import('../../../../../packages/tests/scripts/extended-db-docker.plan.mjs');
@@ -381,9 +400,11 @@ test('extended DB coordinators reserve the canonical command plan peak for their
     assert.equal(policy.kind, 'source-test');
     assert.equal(policy.workspaceLock, '', 'the coordinator retains no publication lease across its steps');
     assert.ok(policy.requiredTools.split(/\s+/u).includes('docker'));
+    assert.equal(policy.placement, 'worker-eligible', `${db}/${mode} prepares generated inputs on its Docker worker`);
     assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB(policy.heavyClass), peak,
       `${mode} must cover its canonical migrations, preparation and test commands`);
     const alias = await commandPolicy.resolvePackageCommandPolicy(['pnpm', 'run', script.replace('postgres', db)], { repoRoot, cwd: repoRoot });
+    assert.equal(alias.placement, 'worker-eligible', `${script} must retain Docker worker placement`);
     assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB(alias.heavyClass), peak,
       `${script} must preserve its coordinator's peak`);
     t.diagnostic(`${db}/${mode}: peak=${policy.heavyClass} (${peak} KiB); alias=${alias.heavyClass}`);

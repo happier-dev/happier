@@ -1216,6 +1216,23 @@ test('AUTO excludes stale or unavailable pinned Bun before compile payloads and 
   assert.equal(explicit.stdout, 'remote:starved\n', 'an exact matching compiler does not require another Bun on PATH');
 });
 
+test('AUTO Docker demand selects the capable worker rather than the lower-load worker', { skip: process.platform === 'win32' }, async t => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  await executable(join(fixture.binDir, 'probe-command'), '#!/bin/sh\nexit 0\n');
+  const ssh = join(fixture.binDir, 'ssh');
+  // SSH is the capability boundary: the lower-load host has no Docker
+  // executable. Preserve the real policy, probe construction and selection.
+  await executable(ssh, (await readFile(ssh, 'utf8')).replace('  *getconf*)',
+    `  *getconf*)\n    case "$*" in *starved-host*"command -v 'docker'"*) exit 127 ;; esac`));
+  const ordinary = spawnSync('/bin/sh', [launcher, '--', 'probe-command'], fixture.invocation);
+  assert.equal(ordinary.status, 0, ordinary.stderr);
+  assert.equal(ordinary.stdout, 'remote:starved\n');
+  const declared = spawnSync('/bin/sh', [launcher, '--', launcher,
+    '--heavyweight-admission', '--class=validation', '--required-tools=docker', '--', 'probe-command'], fixture.invocation);
+  assert.equal(declared.status, 0, declared.stderr);
+  assert.equal(declared.stdout, 'remote:roomy\n');
+});
+
 test('AUTO declared Go test prerequisites do not inspect runtime distribution evidence', { skip: process.platform === 'win32' }, async t => {
   const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
   await executable(join(fixture.binDir, 'probe-command'), '#!/bin/sh\nexit 0\n');

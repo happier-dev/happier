@@ -992,7 +992,7 @@ async function resolveShellPrefixPlacementClass(commandArgs, options) {
  * Light generators retain their command policy. A new compiler entry point
  * must be classified there, rather than hidden behind a light generator.
  */
-async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.cwd(), env = process.env, repoRoot = COMMAND_REPO_ROOT, scriptName = 'build', scriptArguments = [], visitingScripts } = {}) {
+async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.cwd(), env = process.env, repoRoot = COMMAND_REPO_ROOT, scriptName = 'build', scriptArguments = [], visitingScripts, preparingValidation = false } = {}) {
   let admissionClass = '';
   let knownAdmissionClass = '';
   let placementHeavyClass = '';
@@ -1088,7 +1088,7 @@ async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.
     visiting.delete(identity);
     return payloadPolicy;
   };
-  const payloadPolicy = await visit(scriptName, resolve(cwd), packageJson, scriptArguments);
+  const payloadPolicy = await visit(scriptName, resolve(cwd), packageJson, scriptArguments, preparingValidation);
   return { placement, commandClass, admissionClass, knownAdmissionClass, placementHeavyClass, selfPublisher: selfPublisher && sawPublisher,
     requiredTools: [...requiredTools].join(' '), payloadPolicy };
 }
@@ -1194,7 +1194,10 @@ export async function resolvePackageCommandPolicy(commandArgs, options = {}) {
     // but no publication leases; nested public commands reuse the actual owner.
     for (const step of steps) {
       const child = await resolvePackageCommandPolicy([step.command, ...step.args], {
-        ...options, repoRoot, cwd: repoRoot, packageDir: undefined, env: { ...(options.env ?? process.env), ...step.env },
+        // Generated schemas are preparation inputs on this disposable worker,
+        // just as they are for other validation graphs. Git authority remains.
+        ...options, repoRoot, cwd: repoRoot, packageDir: undefined, preparingValidation: true,
+        env: { ...(options.env ?? process.env), ...step.env },
       });
       policy.heavyClass = largestHeavyweightClass(policy.heavyClass, child.heavyClass, child.placementHeavyClass);
       for (const tool of child.requiredTools.split(/\s+/u).filter(Boolean)) requiredTools.add(tool);
