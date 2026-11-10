@@ -75,7 +75,7 @@ export function useWorkflowComposerStart(params: Readonly<{
         if (runId !== undefined) pendingRunIdRef.current = runId;
         const submittedDraft = selected.mainInputName === null ? null : inputs?.[selected.mainInputName];
         const prepared: WorkflowRunNowRequest = {
-            source: entry.source.kind === 'catalog' || visibleTeamId === undefined ? entry.source : { ...entry.source, visibleTeamId },
+            source: entry.source.kind === 'catalog' || entry.source.kind === 'repo_file' || visibleTeamId === undefined ? entry.source : { ...entry.source, visibleTeamId },
             reviewedDefinition: entry.definition,
             metadata: { title: entry.title },
             ...(inputs === undefined ? {} : { inputs: { ...inputs } }),

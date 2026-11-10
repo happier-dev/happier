@@ -183,7 +183,7 @@ describe('workflowProblemPresentation', () => {
             const presentation = resolveWorkflowProblemPresentation(actionError(code));
 
             expect(presentation.code).toBe(code);
-            expect(presentation.message).toMatch(/^(workflows|errors|session)\./);
+            expect(presentation.message).toMatch(/^(workflows|errors|session|settingsActions)\./);
             // The text boundary returns keys; reused localized keys may contain
             // their cause identifier, but a raw code is never the presentation.
             expect(presentation.message).not.toBe(code);

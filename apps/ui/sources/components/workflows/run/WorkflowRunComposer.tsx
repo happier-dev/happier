@@ -391,7 +391,7 @@ export function WorkflowRunComposer(
   });
   const visibleTeamId =
     retainedSource !== undefined
-      ? retainedSource.kind === 'catalog'
+      ? retainedSource.kind === 'catalog' || retainedSource.kind === 'repo_file'
         ? null
         : (retainedSource.visibleTeamId ?? null)
       : visibility.resolution.ok
