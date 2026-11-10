@@ -18,6 +18,7 @@ import {
     getAccountEncryptionModeCacheRevision,
     readAccountEncryptionModeReadiness,
     subscribeAccountEncryptionModeCacheInvalidation,
+    type AccountEncryptionModeReadinessUnavailable,
 } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
@@ -401,7 +402,8 @@ export function createPluginSurfaceContext(input: Readonly<{
 
 export type PluginSurfaceAccountEncryptionModeReadiness =
     | Readonly<{ status: 'loading' }>
-    | Readonly<{ status: 'unavailable' }>
+    | Readonly<{ status: 'unavailable'; retrying?: false }>
+    | AccountEncryptionModeReadinessUnavailable
     | Readonly<{ status: 'ready'; mode: SurfaceContext['accountEncryptionMode'] }>;
 
 const ACCOUNT_MODE_LOADING = Object.freeze({ status: 'loading' as const });
@@ -492,11 +494,20 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
                 return await account.resolveAccountMode(readAbort.signal);
             } finally { account.dispose(); }
         };
-        const modeRead = resolveMode ? resolveMode(readAbort.signal)
-            : credentials ? fetchAccountEncryptionMode(credentials).then(({ mode }) => mode)
-                : readAccountEncryptionModeReadiness(readCapturedMode, () => !readAbort.signal.aborted
-                    && accountLifetime.isCurrent() && isCurrentRef.current()
-                    && cacheRevision === getAccountEncryptionModeCacheRevision(accountLifetime.scope.serverId));
+        const onUnavailable = (result: AccountEncryptionModeReadinessUnavailable) => {
+            if (requestRevisionRef.current === requestRevision && !readAbort.signal.aborted
+                && accountLifetime.isCurrent() && isCurrentRef.current()) {
+                setResolved({ accountLifetime, credentialScopeKey, resolveMode, cacheRevision, result });
+            }
+        };
+        const modeRead = credentials && !resolveMode
+            ? fetchAccountEncryptionMode(credentials, { onUnavailable }).then(({ mode }) => mode)
+            : readAccountEncryptionModeReadiness(
+                () => resolveMode ? resolveMode(readAbort.signal) : readCapturedMode(),
+                () => !readAbort.signal.aborted && accountLifetime.isCurrent() && isCurrentRef.current()
+                    && cacheRevision === getAccountEncryptionModeCacheRevision(accountLifetime.scope.serverId),
+                onUnavailable,
+            );
         void modeRead.then(
             (mode) => {
                 if (

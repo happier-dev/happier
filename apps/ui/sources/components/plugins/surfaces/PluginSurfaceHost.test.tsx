@@ -2912,6 +2912,7 @@ function withMountedTargetPackage(
     input: Readonly<{
         displayName: string;
         version: string;
+        declaresContributionPoints?: boolean;
     }>,
 ): PluginUiProjectionModel {
     const { mountedTarget } = targetFixture;
@@ -2945,6 +2946,10 @@ function withMountedTargetPackage(
                 enabled: true,
                 source: { kind: 'bundled', locator: mountedTarget.pluginId },
                 immutableGenerationId: `artifact-for:${mountedTarget.occurrenceId}`,
+                ...(input.declaresContributionPoints === undefined ? {} : {
+                    sourceCustody: mountedTarget.sourceCustody,
+                    declaresContributionPoints: input.declaresContributionPoints,
+                }),
                 brand: { state: 'missing' },
             },
         },
@@ -2996,6 +3001,7 @@ function withExactGeneratedMountedTarget(input: Readonly<{
     projectionGeneration: number;
     displayName: string;
     version: string;
+    declaresContributionPoints?: boolean;
 }>): Readonly<{
     projection: PluginUiProjectionModel;
     targetFixture: ReturnType<typeof primeExactTargetedContributions>;
@@ -3010,6 +3016,7 @@ function withExactGeneratedMountedTarget(input: Readonly<{
         projection: withMountedTargetPackage(input.projection, targetFixture, {
             displayName: input.displayName,
             version: input.version,
+            declaresContributionPoints: input.declaresContributionPoints,
         }),
     });
 }
@@ -8545,6 +8552,7 @@ describe('PluginSurfacePlacementHost', () => {
             projection: generatedReactNativeProjection, pluginId: 'acme.browser',
             occurrenceId: 'browser-availability-generation-44', projectionGeneration: 44,
             displayName: 'Browser Inspector', version: '3.2.1',
+            declaresContributionPoints: false,
         }).projection;
         const host = (largeTitle = false) => <NavigationLargeTitleProvider largeTitle={largeTitle}><PluginSurfacePlacementHost
             placement={generatedReactNativePlacement({ occurrenceId: 'browser-availability-generation-44' })}
@@ -8552,7 +8560,7 @@ describe('PluginSurfacePlacementHost', () => {
             pluginUiProjection={projection} platform="web" /></NavigationLargeTitleProvider>;
         const screen = await renderScreen(host());
         try {
-            await vi.waitFor(() => expect(screen.findByTestId('availability-draft')).not.toBeNull());
+            await vi.waitFor(() => expect(screen.findByTestId('availability-draft'), surfaceFixtureDiagnostics(screen, 'acme.browser')).not.toBeNull());
             await act(async () => { screen.findByTestId('availability-draft')!.props.onChangeText('Keep this recipe'); });
             expect(screen.findByTestId('availability-draft')?.props.value).toBe('Keep this recipe');
             const mountId = screen.findByTestId('availability-draft')?.props.nativeID;
@@ -8570,12 +8578,11 @@ describe('PluginSurfacePlacementHost', () => {
             await act(async () => { invalidateAccountEncryptionModeCache(); });
             await vi.waitFor(() => expect(failedModeReads).toBeGreaterThan(0));
             await vi.waitFor(() => expect(screen.findByTestId(
-                'plugin-surface-unavailable-diagnostic-account_encryption_mode_pending',
+                'plugin-surface-unavailable-diagnostic-account_encryption_mode_unavailable',
             )).not.toBeNull());
             expect(screen.findByTestId('availability-draft')?.props.value).toBe('Keep this recipe');
             expect(mounts).toEqual(['mount']);
             modeAvailable = true;
-            await act(async () => { invalidateAccountEncryptionModeCache(); });
             await vi.waitFor(() => expect(screen.findByTestId('plugin-surface-unavailable')).toBeNull());
             expect(screen.findByTestId('availability-draft')?.props.value).toBe('Keep this recipe');
             expect(mounts).toEqual(['mount']);
@@ -8657,6 +8664,40 @@ describe('PluginSurfacePlacementHost', () => {
         } finally { rows.release(); await second.unmount(); await first.unmount(); }
     });
 
+    it('shows unavailable instead of a loading skeleton after a failed cold Account mode read', async () => {
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        reactNativeSurfaceRuntime.enabled = true;
+        reactNativeSurfaceRuntime.module = { renderSurface: defineUiSurface(() => React.createElement('Text', {
+            testID: 'offline-recovered-surface',
+        }, 'Recovered')) };
+        let offline = false;
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, path => {
+            if (offline && path === '/v1/account/encryption/currentness') {
+                return Response.json({ error: 'unavailable' }, { status: 503 });
+            }
+            return undefined;
+        }, { serverIdentityId: 'srv_server_1' });
+        offline = true;
+        (await import('@/sync/api/account/apiAccountEncryptionMode')).invalidateAccountEncryptionModeCache();
+        const projection = withExactGeneratedMountedTarget({
+            projection: generatedReactNativeProjection, pluginId: 'acme.browser',
+            occurrenceId: 'browser-offline-generation-44', projectionGeneration: 44,
+            displayName: 'Browser Inspector', version: '3.2.1',
+            declaresContributionPoints: false,
+        }).projection;
+        const screen = await renderScreen(<PluginSurfacePlacementHost
+            placement={generatedReactNativePlacement({ occurrenceId: 'browser-offline-generation-44' })}
+            resourceBrowserTarget={target} machineId="machine_1" serverId="server_1"
+            pluginUiProjection={projection} platform="web" />);
+        try {
+            await vi.waitFor(() => expect(screen.findByTestId(
+                'plugin-surface-unavailable-diagnostic-account_encryption_mode_unavailable',
+            )).not.toBeNull());
+            expect(screen.findByTestId('plugin-surface-unavailable-loading-skeleton')).toBeNull();
+            expect(screen.findByTestId('offline-recovered-surface')).toBeNull();
+        } finally { await screen.unmount(); }
+    });
+
     it('withholds a generated mount and Host API context until the current Account mode resolves', async () => {
         reactNativeSurfaceProps.length = 0;
         let resolveAccountEncryptionMode!: (value: AccountEncryptionModeResult) => void;
@@ -8679,6 +8720,7 @@ describe('PluginSurfacePlacementHost', () => {
             projectionGeneration: 44,
             displayName: 'Browser Inspector',
             version: '3.2.1',
+            declaresContributionPoints: false,
         }).projection;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const screen = await renderScreen(

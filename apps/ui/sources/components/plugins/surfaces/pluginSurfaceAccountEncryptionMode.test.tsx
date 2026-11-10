@@ -343,7 +343,8 @@ describe('usePluginSurfaceAccountEncryptionMode', () => {
         try {
             await waitForHomeGovernance(() => expect(home.requestsFor(modePath).length).toBeGreaterThan(0));
             await flushHookEffects();
-            expect(hook.getCurrent()).toEqual({ status: 'loading' });
+            expect(hook.getCurrent()).toMatchObject({ status: 'unavailable', retrying: true,
+                reason: { code: 'account-encryption-mode-unavailable' } });
             home.answer(serverId, modePath, { body: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) });
             await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ status: 'ready', mode: 'plain' }));
         } finally { await hook.unmount(); }
@@ -362,10 +363,10 @@ describe('usePluginSurfaceAccountEncryptionMode', () => {
         expect(hook.getCurrent()).toEqual({ status: 'loading' });
         await waitForHomeGovernance(() => expect(home.requestsFor(modePath)).toHaveLength(1));
         await act(async () => pending.resolve());
-        await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ status: 'unavailable' }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ status: 'unavailable' }));
         const reads = home.requestsFor(modePath).length;
         for (let index = 0; index < 20; index += 1) await hook.rerender();
-        expect(hook.getCurrent()).toEqual({ status: 'unavailable' });
+        expect(hook.getCurrent()).toMatchObject({ status: 'unavailable' });
         expect(home.requestsFor(modePath)).toHaveLength(reads);
         await hook.unmount();
     });

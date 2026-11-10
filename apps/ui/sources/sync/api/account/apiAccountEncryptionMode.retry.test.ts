@@ -22,6 +22,29 @@ function buildTokenWithSub(sub: string): string {
 }
 
 describe('apiAccountEncryptionMode retry modes', () => {
+    it('exposes the failed read while readiness keeps retrying and recovers without invalidation', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(Math, 'random').mockReturnValue(0);
+        const failure = new TypeError('Failed to fetch');
+        const request = vi.fn().mockRejectedValueOnce(failure).mockRejectedValueOnce(failure)
+            .mockResolvedValue(Response.json({ mode: 'plain', updatedAt: 1 }));
+        const unavailable = vi.fn();
+        const reading = accountEncryptionMode.readAccountEncryptionModeReadiness(
+            () => accountEncryptionMode.fetchAccountEncryptionMode({ token: buildTokenWithSub('offline') }, {
+                retry: 'none', request,
+            }),
+            () => true,
+            unavailable,
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        expect(unavailable).toHaveBeenCalledWith({ status: 'unavailable', reason: failure, retrying: true });
+        expect(request).toHaveBeenCalledTimes(1);
+        await vi.runAllTimersAsync();
+        await expect(reading).resolves.toEqual({ mode: 'plain', updatedAt: 1 });
+        expect(unavailable).toHaveBeenCalledTimes(1);
+        expect(request).toHaveBeenCalledTimes(3);
+    });
+
     afterEach(async () => {
         accountEncryptionMode.invalidateAccountEncryptionModeCache();
         const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
@@ -89,13 +112,25 @@ describe('apiAccountEncryptionMode retry modes', () => {
         });
         const { fetchAccountEncryptionMode } = await import('./apiAccountEncryptionMode');
         const credentials: AuthCredentials = { token: buildTokenWithSub('mode-recovery') };
-        const first = fetchAccountEncryptionMode(credentials);
-        const second = fetchAccountEncryptionMode(credentials);
-        const settled = Promise.all([first, second]).then(value => ({ value }), error => ({ error }));
+        const firstFailure = vi.fn();
+        const secondFailure = vi.fn();
+        const lateFailure = vi.fn();
+        const first = fetchAccountEncryptionMode(credentials, { onUnavailable: firstFailure });
+        const second = fetchAccountEncryptionMode(credentials, { onUnavailable: secondFailure });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(firstFailure).toHaveBeenCalledWith(expect.objectContaining({ status: 'unavailable', retrying: true }));
+        expect(secondFailure).toHaveBeenCalledWith(expect.objectContaining({ status: 'unavailable', retrying: true }));
+        const late = fetchAccountEncryptionMode(credentials, { onUnavailable: lateFailure });
+        expect(lateFailure).toHaveBeenCalledTimes(1);
+        const settled = Promise.all([first, second, late]).then(value => ({ value }), error => ({ error }));
         await vi.runAllTimersAsync();
         expect(await settled).toEqual({ value: [
-            { mode: 'plain', updatedAt: 1 }, { mode: 'plain', updatedAt: 1 },
+            { mode: 'plain', updatedAt: 1 }, { mode: 'plain', updatedAt: 1 }, { mode: 'plain', updatedAt: 1 },
         ] });
+        expect(firstFailure).toHaveBeenCalledTimes(1);
+        expect(secondFailure).toHaveBeenCalledTimes(1);
+        expect(lateFailure).toHaveBeenCalledTimes(1);
+        expect(runtimeFetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/account/encryption'))).toHaveLength(10);
     });
 
     it.each(['invalidation', 'Home replacement'] as const)('retires a pending mode retry on %s without sending credentials again', async (retirement) => {

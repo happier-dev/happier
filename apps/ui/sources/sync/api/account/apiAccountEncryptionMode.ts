@@ -48,6 +48,12 @@ export class AccountEncryptionCurrentnessReadinessError extends HappyError {
 }
 
 const accountEncryptionModeReads = createScopedResolutionSingleFlight<AccountEncryptionModeResult>();
+// Failure presentation belongs to the same pending read, including late
+// borrowers. Entries disappear at settlement and retain no Account mode.
+const accountEncryptionModeReadFailures = new Map<string, {
+    state?: AccountEncryptionModeReadinessUnavailable;
+    listeners: Set<(state: AccountEncryptionModeReadinessUnavailable) => void>;
+}>();
 const accountEncryptionIdentityReads = createScopedResolutionSingleFlight<AccountEncryptionIdentity>();
 type AccountEncryptionInvalidation = Readonly<{ reason?: 'scope-reset' | 'transport-withdrawal'; serverId?: string | null }>;
 type AccountEncryptionHomeBinding = Readonly<{ profileId: string; portableIdentity: string | null }>;
@@ -504,6 +510,7 @@ export async function fetchAccountEncryptionMode(
     credentials: AuthCredentials,
     opts: Readonly<{
         retry?: 'default' | 'none';
+        onUnavailable?: (state: AccountEncryptionModeReadinessUnavailable) => void;
         /** Preserve the captured request's observation binding while cancelling this reader. */
         signal?: AbortSignal;
         /**
@@ -528,7 +535,7 @@ export async function fetchAccountEncryptionMode(
         };
         try {
             return !opts.request && !opts.signal && opts.retry !== 'none'
-                ? await readSharedAccountEncryptionMode(credentials, read)
+                ? await readSharedAccountEncryptionMode(credentials, read, opts.onUnavailable)
                 : await read();
         } catch (error) {
             throwIfAborted(opts.signal);
@@ -606,13 +613,20 @@ export async function fetchAccountEncryptionMode(
         return await run();
     }
 
-    return await readSharedAccountEncryptionMode(credentials, run);
+    return await readSharedAccountEncryptionMode(credentials, run, opts.onUnavailable);
 }
+
+export type AccountEncryptionModeReadinessUnavailable = Readonly<{
+    status: 'unavailable';
+    reason: unknown;
+    retrying: true;
+}>;
 
 /** One readiness retry owner for focused and exact-Home mounted Account reads. */
 export async function readAccountEncryptionModeReadiness<T extends AccountEncryptionMode | AccountEncryptionModeResult>(
     run: () => Promise<T>,
     isCurrent: () => boolean,
+    onUnavailable?: (state: AccountEncryptionModeReadinessUnavailable) => void,
 ): Promise<T> {
     const assertCurrent = () => {
         if (!isCurrent()) {
@@ -621,12 +635,19 @@ export async function readAccountEncryptionModeReadiness<T extends AccountEncryp
             });
         }
     };
+    let failureReported = false;
     const value = await backoffForever(async () => {
         assertCurrent();
         try {
             return await run();
         } catch (error) {
             assertCurrent();
+            // A retry is ongoing work, not an unanswered initial read. Publish
+            // the first failure once; retries keep that settled presentation.
+            if (!failureReported) {
+                failureReported = true;
+                onUnavailable?.({ status: 'unavailable', reason: error, retrying: true });
+            }
             throw error;
         }
     });
@@ -638,6 +659,7 @@ export async function readAccountEncryptionModeReadiness<T extends AccountEncryp
 async function readSharedAccountEncryptionMode(
     credentials: AuthCredentials,
     run: () => Promise<AccountEncryptionModeResult>,
+    onUnavailable?: (state: AccountEncryptionModeReadinessUnavailable) => void,
 ): Promise<AccountEncryptionModeResult> {
     const target = getActiveServerSnapshot();
     const cacheKey = getAccountEncryptionModeScopeKey(credentials, target);
@@ -648,9 +670,28 @@ async function readSharedAccountEncryptionMode(
     // before it can send captured credentials to a successor Home or Account.
     const isCurrent = () => revision === getAccountEncryptionModeCacheRevision(target.serverId)
         && cacheKey === getAccountEncryptionModeScopeKey(credentials);
-    return await accountEncryptionModeReads.run(`${cacheKey}\u0000${revision}`,
-        () => readAccountEncryptionModeReadiness(run, isCurrent),
-        { scope: home?.profileId ?? target.serverId });
+    const key = `${cacheKey}\u0000${revision}`;
+    let failures = accountEncryptionModeReadFailures.get(key);
+    if (!failures) {
+        failures = { listeners: new Set() };
+        accountEncryptionModeReadFailures.set(key, failures);
+    }
+    const publication = failures;
+    if (onUnavailable) {
+        publication.listeners.add(onUnavailable);
+        if (publication.state) onUnavailable(publication.state);
+    }
+    try {
+        return await accountEncryptionModeReads.run(key,
+            () => readAccountEncryptionModeReadiness(run, isCurrent, state => {
+                publication.state = state;
+                for (const listener of publication.listeners) listener(state);
+            }),
+            { scope: home?.profileId ?? target.serverId });
+    } finally {
+        if (onUnavailable) publication.listeners.delete(onUnavailable);
+        if (accountEncryptionModeReadFailures.get(key) === publication) accountEncryptionModeReadFailures.delete(key);
+    }
 }
 
 /**

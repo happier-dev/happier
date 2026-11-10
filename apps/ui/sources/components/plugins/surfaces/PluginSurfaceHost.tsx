@@ -3568,9 +3568,11 @@ function PluginSurfaceHostMount(props: Readonly<(
     // controller lifetime; it does not replace current Account/Action admission.
     if (accountLocalInteractionEnabled && !accountEncryptionMode) {
         return accountEncryptionModeReadiness.status === 'loading'
+            || accountEncryptionModeReadiness.status === 'unavailable' && accountEncryptionModeReadiness.retrying
             ? <PluginSurfacePresentation lifetime={controller}
                 notice={(retained) => retained
-                    ? <PluginSurfaceLoadingMarker reason="account_encryption_mode_pending" />
+                    ? <PluginSurfaceLoadingMarker reason={accountEncryptionModeReadiness.status === 'loading'
+                        ? 'account_encryption_mode_pending' : 'account_encryption_mode_unavailable'} />
                     : renderAccountEncryptionModeReadiness()} />
             : renderAccountEncryptionModeReadiness();
     }
