@@ -169,6 +169,7 @@ describe('configured action execution through the shared Session owner', () => {
     });
 
     it('starts a saved fixed no-folder preference through the configured entry launch owner', async () => {
+        const collections = createTestkitCorpusCollections().collections;
         const agentTarget: AgentExecutionTargetV1 = { kind: 'agent', identity: { pluginId: 'happier.example.agent', localId: 'example' } };
         const targetKey = buildAgentTargetKeyV2(agentTarget);
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess({ sessionId: 'saved-no-folder' })],
@@ -178,6 +179,9 @@ describe('configured action execution through the shared Session owner', () => {
             context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
             executeAction: async (id: string, value: JsonValue) => {
                 if (triageBoundaryActionId(id) === 'actions/read-v1') return { ...catalog, actions: [{ ...action, profileId: 'saved-profile' }] };
+                if (triageBoundaryActionId(id) === 'sessions/start-entry-v1') return startTriageEntrySession(
+                    TriageStartEntrySessionInputV1Schema.parse(value), { execute: invoker.execute,
+                        linkSession: createTestkitEntrySessionLinkWriter(collections) });
                 if (triageBoundaryActionId(id) === 'sessions/link-entry-v1') return { v: 1, status: 'linked' };
                 if (id === 'sessions.spawn.profiles.list') return { items: [{ id: 'saved-profile', name: 'Saved defaults',
                     preferredAgentTargetKey: targetKey, placement: { fixed: { serverId: 'server-a', machineId: 'machine-a' },
@@ -188,9 +192,12 @@ describe('configured action execution through the shared Session owner', () => {
             },
         };
         // Only host RPC is replaced; catalog/profile reads and all launch owners stay real.
-        const input = parseEntryExecutionInput({ v: 1, actionId: action.actionId, destination: 'single', entries: [
-            { entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId },
-        ] });
+        const selected = { entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId };
+        const input = parseHandoffInput({ v: 1, handoff: {
+            task: 'fix', configuredActionId: action.actionId, context: { kind: 'entry', entry: selected },
+            evidence: [{ kind: 'entry', entry: selected }],
+            sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured',
+        } });
         const result = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
             input.handoff, { entries: [entry], signal: new AbortController().signal });
         expect(result.handoff, JSON.stringify(result)).toMatchObject({ kind: 'sendResult', session: { serverId: 'server-a', sessionId: 'saved-no-folder' } });

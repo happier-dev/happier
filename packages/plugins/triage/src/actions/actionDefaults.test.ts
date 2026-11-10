@@ -8,6 +8,7 @@ import { runTriageConfiguredHandoffV1 } from '../sessions/configuredActionRun.js
 import { TriageSessionHandoffInputV1Schema, TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import type { PluginUiNewSessionSeedV1 } from '@happier-dev/plugin-sdk/ui';
 import type { JsonValue, PluginContributionRef } from '@happier-dev/plugin-sdk';
+import { testkitEntryRef, testkitLocator } from '../corpus/testkit/observations.test-support.js';
 
 // Host Actions and Account KV are genuine plugin/host persistence boundaries.
 // The catalog parser, mutation policy and default-save orchestration remain real.
@@ -121,18 +122,21 @@ describe('Save as this action’s default', () => {
                     if (!target || typeof target !== 'object' || !('artifactId' in target)) return { status: 'unknownInvocation' };
                     return { status: 'resolved', text: f.documents.get(String(target.artifactId))?.markdown };
                 }
-                if (id === 'deployments.receipts.get') return { ok: true, deployment: { id: 'receipt', environmentId: 'environment' } };
                 if (id === 'localServices.launcher.snapshot') return { v: 1, machineId: 'machine', updatedAt: 1, targets: [] };
                 if (id === 'projects.list') return { items: [], truncated: false };
                 throw new Error(`Unexpected next-launch Action ${JSON.stringify(id)}`);
             },
         };
-        const subject = { kind: 'deploymentReceipt', serverId: 'home', environmentId: 'environment', deploymentId: 'receipt' } as const;
+        const entry = { key: 'saved-default-entry', entryRef: testkitEntryRef(),
+            display: { locator: testkitLocator(), scopeLabel: 'example/repository' },
+            sourceInstance: { source: testkitEntryRef().source, sourceInstanceId: '11111111-1111-4111-8111-111111111111' },
+            presentation: { label: 'Repair the issue' }, workflowSubject: 'issue' as const };
+        const selected = { entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId };
         const handoff = TriageSessionHandoffInputV1Schema.parse({ task: 'fix', configuredActionId: 'fix',
-            context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }],
+            context: { kind: 'entry', entry: selected }, evidence: [{ kind: 'entry', entry: selected }],
             sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'configured' });
         const launched = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
-            handoff, { entries: [], signal: new AbortController().signal });
+            handoff, { entries: [entry], signal: new AbortController().signal });
         expect(launched.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
         expect(seeds).toEqual([expect.objectContaining({ prompt: 'Explain the repair.', profileId: first.profileId,
             directoryIntent: { kind: 'managed' },
