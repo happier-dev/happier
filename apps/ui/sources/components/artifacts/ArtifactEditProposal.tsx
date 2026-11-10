@@ -47,7 +47,7 @@ import { showArtifactHistorySheet } from './ArtifactHistorySheet';
 import { docProposalChangesOutsideSelection, readDocProposalSelection } from './docProposalSelection';
 import {
   admitDocEditOperation, docEditOperationKey, holdDocEditApproval, readDocEditOperation, releaseDocEditOperation, settleDocEditUndo,
-  useDocEditOperation, type DocEditOperationKind,
+  useDocEditOperation, useDocEditRestoredVersion, type DocEditOperationKind,
 } from './docEditOperation';
 
 type Revision = Readonly<{ headerVersion: number; bodyVersion: number }>;
@@ -244,6 +244,10 @@ function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.React
   const operationKey = proposalRef ? docEditOperationKey(client.scope, proposalRef.messageId) : null;
   const operation = useDocEditOperation(operationKey);
   const approvalOperation = operation?.approvalId ? operation : null;
+  const restoredBodyVersion = useDocEditRestoredVersion(client, artifactId, base.bodyVersion,
+    disposition.state === 'accepted' && !(operation && 'restoredRevision' in operation)
+      ? disposition.acceptedRevision.bodyVersion : null, currentRevision?.bodyVersion);
+
   const undo: UndoOutcome | null = operation && 'restoredRevision' in operation
     ? { state: 'done', revision: operation.restoredRevision } : undoFailure;
   const settleUndo = React.useCallback((outcome: UndoOutcome) => {
@@ -379,9 +383,10 @@ function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.React
       const who = decider(disposition.decidedBy.accountId);
       const n = disposition.acceptedRevision.bodyVersion;
       const lines: HappierDocEditProposalLine[] = [];
-      if (undo?.state === 'done') lines.push({
+      const undoneVersion = restoredBodyVersion ?? (undo?.state === 'done' ? undo.revision.bodyVersion : null);
+      if (undoneVersion !== null) lines.push({
         testID: `${testID}.undone`, mark: 'undone',
-        text: t('artifacts.browser.proposal.undone', { n: undo.revision.bodyVersion }),
+        text: t('artifacts.browser.proposal.undone', { n: undoneVersion }),
       });
       if (approvalOperation?.kind === 'undo') {
         const { approvalId } = approvalOperation;
@@ -393,7 +398,7 @@ function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.React
       // Undo restores over the accepted revision only: a Doc that has moved on since says so from the first
       // mount, not after a refused press.
       const acceptedCurrency = revisionCurrency(currentRevision, disposition.acceptedRevision);
-      const undoStale = undo?.state === 'conflict' || (acceptedCurrency === 'movedOn' && undo === null);
+      const undoStale = restoredBodyVersion === null && (undo?.state === 'conflict' || (acceptedCurrency === 'movedOn' && undo === null));
       if (undoStale) lines.push({
         testID: `${testID}.undoConflict`, mark: 'reason', tone: 'neutral',
         text: t('artifacts.browser.proposal.undoConflict'),

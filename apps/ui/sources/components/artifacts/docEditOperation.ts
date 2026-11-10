@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import type { ArtifactActionsClient } from './artifactActionsClient';
+
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 
@@ -64,4 +66,28 @@ export function useDocEditOperation(key: string | null): DocEditOperation | null
 export function resetDocEditOperationsForTests(): void {
   held.clear();
   notify();
+}
+
+/** A restore immediately after acceptance is durable evidence that this edit was undone.
+ * Later restores of the same source version do not identify this proposal's Undo. */
+export function useDocEditRestoredVersion(client: ArtifactActionsClient, artifactId: string,
+  baseBodyVersion: number, acceptedBodyVersion: number | null, currentBodyVersion: number | undefined): number | null {
+  const [restored, setRestored] = React.useState<Readonly<{
+    client: ArtifactActionsClient; artifactId: string; acceptedBodyVersion: number; bodyVersion: number;
+  }> | null>(null);
+  const known = restored?.client === client && restored.artifactId === artifactId
+    && restored.acceptedBodyVersion === acceptedBodyVersion ? restored.bodyVersion : null;
+  React.useEffect(() => {
+    if (known !== null || acceptedBodyVersion === null || currentBodyVersion === undefined
+      || currentBodyVersion <= acceptedBodyVersion) return;
+    let live = true;
+    void client.listRevisions(artifactId).then(outcome => {
+      if (!live || !outcome.ok) return;
+      const revision = outcome.value.revisions.find(row => row.bodyVersion === acceptedBodyVersion + 1
+        && row.provenance?.restoredFromBodyVersion === baseBodyVersion);
+      if (revision) setRestored({ client, artifactId, acceptedBodyVersion, bodyVersion: revision.bodyVersion });
+    });
+    return () => { live = false; };
+  }, [acceptedBodyVersion, artifactId, baseBodyVersion, client, currentBodyVersion, known]);
+  return known;
 }

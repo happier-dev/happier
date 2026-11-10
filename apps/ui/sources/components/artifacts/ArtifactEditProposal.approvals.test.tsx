@@ -151,8 +151,10 @@ async function addHome(approvalRequired = true): Promise<string> {
     },
   });
   harness.answer(serverId, 'GET /v1/artifacts/doc-1/revisions', {
-    body: {
+    select: () => ({ body: {
       revisions: [
+        ...(artifacts.read('doc-1')?.bodyVersion === 16 ? [{ bodyVersion: 16,
+          body: artifacts.read('doc-1')!.body, provenance: artifacts.read('doc-1')!.provenance, createdAt: 6, sizeBytes: 10 }] : []),
         {
           bodyVersion: 14,
           body: encodePlainArtifactStoredContent({ body: 'Two rows.!' }),
@@ -161,13 +163,14 @@ async function addHome(approvalRequired = true): Promise<string> {
         },
       ],
       retentionCount: 10,
-    },
+    } }),
   });
   harness.answer(serverId, 'POST /v1/artifacts/doc-1/revisions/14/restore', {
-    select: async () => {
+    select: async (input) => {
+      const write = input as { body: string; provenance?: string };
       const current = artifacts.read('doc-1');
       if (!current) throw new Error('Expected the accepted Doc before restoring it');
-      artifacts.replaceStoredRow({ ...current, bodyVersion: 16, body: encodePlainArtifactStoredContent({ body: 'Two rows.!' }) });
+      artifacts.replaceStoredRow({ ...current, bodyVersion: 16, body: write.body, provenance: write.provenance });
       return { status: 200, body: { success: true, headerVersion: 3, bodyVersion: 16 } };
     },
   });
@@ -266,8 +269,10 @@ describe('ArtifactEditProposal approval-gated operations', () => {
     await first.unmount();
     // A fresh Doc read now observes version 16 rather than the accepted version 15. That advance
     // came from this Undo; it must not become a conflicting edit when the thread is reopened.
+    resetDocEditOperationsForTests(); // A full page load loses every process-local Undo acknowledgement.
     const second = await mountReceipt(serverId, 'preadmitted');
-    expect(second.findByTestId('proposal.undone')).not.toBeNull();
+    await waitForHomeGovernance(() => expect(second.findByTestId('proposal.undone')).not.toBeNull());
+    expect(second.getTextContent()).toContain('artifacts.browser.proposal.undone');
     expect(second.findByTestId('proposal.undoConflict')).toBeNull();
     expect(second.findByTestId('proposal.undo')).toBeNull();
     expect(harness.requestsFor('/v1/artifacts/doc-1/revisions/14/restore')).toHaveLength(1);

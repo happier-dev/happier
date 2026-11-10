@@ -561,6 +561,60 @@ describe('ArtifactEditProposal', () => {
     expect(screen.findByTestId('proposal.accept')).not.toBeNull();
   });
 
+  it('reads the restored version after Undo and a cold page load, even after another edit', async () => {
+    const accepted = { headerVersion: 3, bodyVersion: 15 };
+    const restored = { headerVersion: 4, bodyVersion: 16 };
+    let current = accepted;
+    const revisions: Array<{ bodyVersion: number; body: string; createdAt: number; sizeBytes: number;
+      provenance?: { savedBy: { kind: 'person'; accountId: string }; restoredFromBodyVersion: number } }> = [];
+    const door = frontDoor({
+      'doc.read': () => docRead(current)(),
+      'artifact.revisions.restore': () => {
+        current = restored;
+        revisions.push({ bodyVersion: 16, body: proposal.before, createdAt: 6, sizeBytes: 10,
+          provenance: { savedBy: { kind: 'person', accountId: 'alice' }, restoredFromBodyVersion: 14 } });
+        return { ok: true, result: { artifactId: 'runbook', revision: restored } };
+      },
+      'artifact.revisions.list': () => ({ ok: true, result: { artifactId: 'runbook', revisions, retentionCount: 10 } }),
+    });
+    const disposition = { state: 'accepted' as const, acceptedRevision: accepted, decidedBy: { accountId: 'alice', atMs: 5 } };
+    const first = await render(door.client, disposition);
+    await act(async () => { await first.pressByTestIdAsync('proposal.undo'); });
+    expect(first.findByTestId('proposal.undone')).not.toBeNull();
+    await first.unmount();
+    resetDocEditOperationsForTests();
+    current = { headerVersion: 5, bodyVersion: 17 };
+    const cold = await render(door.client, disposition);
+    expect(cold.findByTestId('proposal.undone')).not.toBeNull();
+    expect(cold.getTextContent()).toContain(t('artifacts.browser.proposal.undone', { n: 16 }));
+    expect(cold.findByTestId('proposal.undoConflict')).toBeNull();
+    expect(cold.findByTestId('proposal.undo')).toBeNull();
+  });
+
+  it('shares one history read for visible receipts and does not mistake a later restore for their Undo', async () => {
+    const accepted = { headerVersion: 3, bodyVersion: 15 };
+    const current = { headerVersion: 5, bodyVersion: 17 };
+    const door = frontDoor({ 'artifact.revisions.list': () => ({ ok: true, result: {
+      artifactId: 'runbook', retentionCount: 10, revisions: [
+        { bodyVersion: 16, body: 'Different edit', createdAt: 6, sizeBytes: 14 },
+        { bodyVersion: 17, body: proposal.before, createdAt: 7, sizeBytes: 10,
+          provenance: { savedBy: { kind: 'person', accountId: 'alice' }, restoredFromBodyVersion: 14 } },
+      ],
+    } }) });
+    const read = admittedDocRead('runbook', current);
+    const screen = await renderScreen(<>{Array.from({ length: 40 }, (_, index) =>
+      <ArtifactEditProposal key={index} testID={`receipt-${index}`} client={door.client}
+        proposalRef={{ ...proposalRef, messageId: `receipt-${index}` }} proposal={proposal} docRead={read}
+        disposition={{ state: 'accepted', acceptedRevision: accepted, decidedBy: { accountId: 'alice', atMs: 5 } }}
+        viewerAccountId="alice" resolveAccountLabel={() => 'Ana'} />)}</>);
+    await flushHookEffects();
+    expect(door.calls.filter(call => call.actionId === 'artifact.revisions.list')).toHaveLength(1);
+    for (let index = 0; index < 40; index++) {
+      expect(screen.findByTestId(`receipt-${index}.undone`)).toBeNull();
+      expect(screen.findByTestId(`receipt-${index}.undoConflict`)).not.toBeNull();
+    }
+  });
+
   it('undoes an accepted edit as a restore against the accepted revision, and refuses after a later edit', async () => {
     const accepted = { headerVersion: 3, bodyVersion: 15 };
     const door = frontDoor({

@@ -101,6 +101,16 @@ export function createArtifactActionsClient(scope: ServerAccountScope,
             ? { approvalId: pending.data.artifactId } as const
             : readOutcome(actionId, result);
     };
+    // Visible receipts for the same Doc share its in-flight history read. Settled results are not cached.
+    const revisionReads = new Map<string, ReturnType<typeof listRevisions>>();
+    function listRevisions(artifactId: string): Promise<ArtifactActionOutcome<SurfaceActionResult<'artifact.revisions.list'>>> {
+        const pending = revisionReads.get(artifactId);
+        if (pending) return pending;
+        const read = run('artifact.revisions.list', { artifactId });
+        revisionReads.set(artifactId, read);
+        void read.finally(() => { revisionReads.delete(artifactId); });
+        return read;
+    }
     /** Seed the existing private Discussion draft from the source's captured Home; one draft per passage. */
     const startPassageComment = (passage: DocPassageRefV1) => {
         const draftId = uuidv5(JSON.stringify(['happier.doc-passage-comment-draft.v1', passage.ref.serverId,
@@ -152,7 +162,7 @@ export function createArtifactActionsClient(scope: ServerAccountScope,
         setAccessGrant: (input: ArtifactAccessGrantSetInputV1, operation?: ArtifactActionOperation) => runMutation('artifact.access.grants.set', input, operation),
         updateArtifact: (input: ArtifactActionInputV1<'artifact.update'>, operation?: ArtifactActionOperation) => runMutation('artifact.update', input, operation),
         storageUsage: () => run('artifact.storage.usage', {}),
-        listRevisions: (artifactId: string) => run('artifact.revisions.list', { artifactId }),
+        listRevisions,
         /** Who the document is shared with (its grant roster), for the page's audience line. */
         listAccessGrants: (artifactId: string) => run('artifact.access.grants.list', { artifactId }),
         restoreRevision: (input: Readonly<{ artifactId: string; bodyVersion: number; expectedRevision: Readonly<{ headerVersion: number; bodyVersion: number }> }>, operation?: ArtifactActionOperation) =>

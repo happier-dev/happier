@@ -6776,9 +6776,14 @@ uses that same approval, mounted Home/Inbox and delivery path; `invokeAction`
 remains for contributed plugin Actions. A malformed native or legacy text Action
 is refused before execution with a plain spoken explanation, without validator
 field names or diagnostics.
-Brief needs-you totals come from the Inbox's canonical needs-you projection;
-missing individual details are reported as incomplete coverage rather than
-reducing that total. An admitted Brief request leaves its spoken answer with the
+In 0.3 development, Brief needs-you membership and totals come from the current
+sidebar's retained Needs-you shelf, including its scope and filters, rather than
+the Account Inbox's attention history. An unavailable shelf is unknown, never
+zero. Missing individual details are reported as incomplete coverage rather
+than reducing that total. Spoken groups contain only disclosed, authored names;
+the snapshot supplies the exact remaining count for “and N more” instead of
+inventing unnamed requests or reasons. Failures and ready work remain known
+projected Inbox entries. An admitted Brief request leaves its spoken answer with the
 mounted Brief delivery owner, including while Home demand-mounts Inbox, so the
 calling Action turn does not race it with another model answer.
 The privacy-projected Brief snapshot and its answering instructions travel as
@@ -10126,9 +10131,15 @@ the loaded cross-client journey remain integration-boundary validation; these
 contracts are not a released availability claim.
 
 The proposal card and accepted notice share the existing UI Doc edit operation
-owner. A successful Undo retains its acknowledged restored revision there, so
-the card and a reopened thread show the same completed result. This UI result is
-process-local; it adds no persisted proposal state or background Doc read.
+owner for in-flight operations and immediate Undo acknowledgements. After a cold
+page load, an accepted receipt reads retained Doc revision history: the revision
+immediately after acceptance must record restoration of the proposal's base body
+version. That durable fact restores the card's Undone state and version, even
+when subsequent edits exist. A later unrelated restore does not establish Undo.
+Concurrent history reads for the same Doc share one in-flight request through
+the Artifact Action client; settled history is not cached. No persisted proposal
+state is added. If retention has removed the restore revision, the receipt cannot
+recover that acknowledgement and retains its existing history guidance.
 
 ## Request attribution and readiness (0.3 development)
 
