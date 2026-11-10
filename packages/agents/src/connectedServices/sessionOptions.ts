@@ -68,7 +68,7 @@ export type ConnectedServicesAccountGroupOption = Readonly<{
   status: 'ready' | 'exhausted' | 'needs_members';
 }>;
 
-export type ConnectedServicesAccountGroupOptionsByServiceId = Readonly<Record<string, ConnectedServicesAccountGroupOption[]>>;
+export type ConnectedServicesAccountGroupOptionsByServiceId = Readonly<Record<string, readonly ConnectedServicesAccountGroupOption[]>>;
 
 export type ConnectedServiceSessionBindingIntent = Readonly<{
   source: 'native' | 'connected';

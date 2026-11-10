@@ -43,7 +43,7 @@ export function InvestigationPlacementChooser(
     (candidate) => candidate.reachable,
   );
   const [picked, setPicked] = React.useState(firstReachable);
-  const [agent, setAgent] = React.useState(agents[0]?.targetKey ?? null);
+  const [agent, setAgent] = React.useState<string | null>(agents[0]?.targetKey ?? null);
   const candidate = picked >= 0 ? candidates[picked] : undefined;
   const ready =
     (candidates.length === 0 || candidate !== undefined) &&

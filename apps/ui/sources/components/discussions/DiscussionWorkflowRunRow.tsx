@@ -258,7 +258,8 @@ function DiscussionWorkflowRunHeader(props: DiscussionWorkflowRunProps & Readonl
     router.push(createWorkflowRunRoute(runId, serverId) as Href);
   }, [router, runId, serverId]);
   const line = useRunLine(props);
-  const presentation = React.useMemo(() => ({ verb: line.verb, details: line.details, meta: null, purpose: null }), [line]);
+  const presentation = React.useMemo(() => ({ verb: line.verb, details: line.details,
+    meta: null, purpose: null, workflowName: null, trigger: null }), [line]);
   return (
     <View style={[styles.outer, column]} testID={`discussion-workflow-run:${runId}`}>
       <View style={styles.container}>

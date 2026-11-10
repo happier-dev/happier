@@ -369,7 +369,7 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
                 // started yet in this Run — not the collection's empty copy.
                 ListEmptyComponent={props.loaded ? (
                     <Text testID={`${testIDPrefix}-empty`} style={styles.empty}>
-                        {t('workflows.recovery.executionNotStarted')}
+                        {t('workflows.problem.executionNotStarted')}
                     </Text>
                 ) : (
                     <Text testID={`${testIDPrefix}-loading`} style={styles.empty}>
