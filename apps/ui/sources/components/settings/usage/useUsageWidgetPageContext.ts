@@ -240,7 +240,12 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
         : invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('layout', id))?.command), [invoke]);
     const selectPeriod = React.useCallback((id: UsagePeriod) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('period', id))?.command), [invoke]);
     const selectCostBasis = React.useCallback((id: UsageWidgetPageScope['costBasis'], _context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('cost', id))?.command, invocation), [invoke]);
-    const selectFilter = React.useCallback((field: string, id: string, _context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('filter', field, id))?.command, invocation), [invoke]);
+    // A foreground multi-select has already admitted its command and withholds the page's
+    // descriptors. Apply its intent through the same state owner with that caller;
+    // asking for the hidden page command again would silently refuse the selection.
+    const selectFilter = React.useCallback((field: string, id: string, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => invocation
+        ? Promise.resolve(latest.current.filterCommands?.find(row => row.field === field && row.id === id)?.invoke(context) ?? false)
+        : invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('filter', field, id))?.command), [invoke]);
     const retryRead = React.useCallback(() => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('retry', 'read'))?.command), [invoke]);
     const retryLayouts = React.useCallback(() => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('retry', 'layouts'))?.command), [invoke]);
     const historyOperation = historyRead?.operation;

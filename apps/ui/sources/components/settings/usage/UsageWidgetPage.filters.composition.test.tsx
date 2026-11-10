@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
@@ -44,6 +45,9 @@ import * as usageAnalytics from '@/sync/api/account/usageAnalytics';
 import { UsageCostFactsWidget } from './widgets/UsageCostFactsWidget';
 import { UsageRhythmWidget } from './widgets/UsageRhythmWidget';
 import { UsageFilterBar } from './UsageFilterBar';
+import { UsageProjectLedgerWidget } from './widgets/UsageProjectLedgerWidget';
+import { HappierDataRows } from '@happier-dev/plugin-ui/presentation';
+import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 import { t } from '@/text';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -143,6 +147,102 @@ afterEach(async () => {
 });
 
 describe('mounted Usage page scope commands', () => {
+    it.each(['agents', 'named', 'unnamed', 'unnamed-omitted'] as const)('selects Agents and folded Projects after route feedback and updates the Work ledger (%s)', async selection => {
+        const fixture = usageQaAccountingFixture();
+        const unnamed = ['a'.repeat(64), 'b'.repeat(64)];
+        const projects = ['named-project', ...unnamed, 'other-project', null];
+        const contributions = projects.map((projectKey, index) => ({ ...fixture.contributions![0]!,
+            id: `selection-${index}`, projectKey, agentId: index === 3 ? 'codex' : 'claude',
+            observedAtMs: Date.now(), sessionId: null, turnId: null }));
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-route-filter-selection.test', accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') {
+                    const query = UsageAnalyticsQueryRequestSchema.parse(request.body);
+                    // The HTTP contract indexes absent Project keys as "unknown" (usageQueryFilters).
+                    const rows = contributions.filter(row => (!query.filters?.projectKeys?.length || query.filters.projectKeys.includes(row.projectKey ?? 'unknown'))
+                        && (!query.filters?.agentIds?.length || query.filters.agentIds.includes(row.agentId)));
+                    return Response.json({ v: 1, totals, contributions: rows, breakdowns: {
+                        agent: [...new Set(rows.map(row => row.agentId))].map(key => ({ key, ...totals })),
+                        // A compact inventory may omit a bucket still present in the Work population.
+                        project: [...new Set(rows.map(row => row.projectKey))].flatMap(projectKey =>
+                            projectKey === null && selection === 'unnamed-omitted' ? [] : [{ key: projectKey ?? 'unknown', ...totals,
+                                ...(projectKey === null ? { label: 'Unknown project' } : !unnamed.includes(projectKey)
+                                    ? { label: projectKey === 'named-project' ? 'Named project' : 'Other project' } : {}) }]),
+                    }, engineTimeline: [{ bucketStartMs: 1000, bucketEndMs: 2000,
+                        leaders: [...new Set(rows.map(row => row.agentId))].map(key => ({ key, ...totals })) }] });
+                }
+                return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        function Page() {
+            const [params, setParams] = React.useState<Record<string, string | undefined>>({ layoutId: 'work', period: '7days' });
+            const initialFilters = React.useMemo(() => resolveUsagePageInitialFilters(params), [params]);
+            const onFiltersChange = React.useCallback((filters: Parameters<typeof buildUsageRouteParams>[0]) => {
+                const { layoutId: _layoutId, ...owned } = buildUsageRouteParams(filters);
+                setParams(current => ({ ...current, ...owned }));
+            }, []);
+            return <UsageWidgetPage initialFilters={initialFilters} onFiltersChange={onFiltersChange} />;
+        }
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <CurrentContextPort /><Page />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const chip = (field: string) => screen.findAllByType(SelectionListFilterChip).find(node => node.props.filter.id === field)!.props.filter;
+        const ledger = () => screen.findByType(UsageProjectLedgerWidget).findAllByType(HappierDataRows)[0]!.props.rows;
+        await waitForHomeGovernance(() => expect(ledger()).toHaveLength(3));
+        // A period selection echoes through the real route/state owner before any scope selection.
+        await act(async () => { await screen.findByType(UsageFilterBar).props.onPeriodChange('30days'); });
+        await flushHookEffects({ cycles: 40 });
+        await waitForHomeGovernance(() => expect(chip('agents').options.some((row: { id: string }) => row.id === 'claude')).toBe(true));
+        const unnamedRow = ledger().find((row: readonly unknown[]) => row[0] === t('usage.board.work.unknownProject'));
+        expect(unnamedRow).toBeDefined();
+        for (const [field, label, count, keys] of [
+            ['agents', 'Claude', 2, ['claude']],
+            ['projects', 'Named project', 1, ['named-project']],
+            ['projects', t('usage.board.work.unknownProject'), 1, [...unnamed, 'unknown']],
+        ] as const) {
+            if ((field === 'agents' ? 'agents' : label === t('usage.board.work.unknownProject') ? 'unnamed' : 'named') !== selection.replace('-omitted', '')) continue;
+            const option = chip(field).options.find((row: { id: string; label: string }) => field === 'agents' ? row.id === 'claude' : row.label === label)!;
+            expect(option, JSON.stringify(chip(field).options.map(({ id, label }: { id: string; label: string }) => ({ id, label })))).toBeDefined();
+            await screen.pressByTestIdAsync(chip(field).testID);
+            await flushHookEffects({ cycles: 10 });
+            expect(reader!.readCurrentUiContext()!.commands.some(command => command.title === `${chip(field).label}: ${option.label}`),
+                'The foreground menu withholds the page descriptor').toBe(false);
+            if (selection === 'agents') {
+                const scope = { serverId: server.id, accountId: 'account-a' };
+                const settings = getStorage().getState().settings;
+                await act(async () => getStorage().getState().applySettingsForScope(scope, { ...settings,
+                    actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+                        actions: { 'ui.current_context.command.invoke': { disabledSurfaces: ['ui'] } } }),
+                }, 2));
+                await screen.pressByTestIdAsync(`${chip(field).testID}:${option.id}`);
+                await flushHookEffects({ cycles: 10 });
+                expect(chip(field).active, 'The menu still requires ordinary Action admission').toBe(false);
+                expect(ledger()).toHaveLength(3);
+                await act(async () => getStorage().getState().applySettingsForScope(scope, settings, 3));
+            }
+            await screen.pressByTestIdAsync(`${chip(field).testID}:${option.id}`);
+            await flushHookEffects({ cycles: 40 });
+            expect(chip(field).valueLabel).toBe(option.label);
+            expect(chip(field).selectedIds.has(option.id)).toBe(true);
+            await waitForHomeGovernance(() => expect(ledger()).toHaveLength(count));
+            if (selection.startsWith('unnamed')) expect(ledger()[0], 'Selecting the folded group preserves its entire unfiltered row total').toEqual(unnamedRow);
+            expect(screen.findByType(UsageFilterBar).props.page.scope[field]).toEqual([...keys]);
+            const all = chip(field).options[0]!;
+            await screen.pressByTestIdAsync(`${chip(field).testID}:${all.id}`);
+            await screen.pressByTestIdAsync(chip(field).testID);
+            await flushHookEffects({ cycles: 40 });
+            await waitForHomeGovernance(() => expect(ledger()).toHaveLength(3));
+        }
+    });
     it.each([{ selection: 'period' }, { selection: 'filter' }] as const)('retains native $selection callers through actual page layout admission', async ({ selection }) => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-origin-layout.test', accountId: 'account-a' }],
             route: request => {
@@ -697,6 +797,13 @@ describe('mounted Usage page scope commands', () => {
         });
         await vi.waitFor(() => expect(bodies()).toEqual(ids.map(id => `${id}.body`)));
         expect(screen.root.findAllByType(WidgetSurface)[0], 'scrolling away keeps the loaded body mounted').toBe(firstBody);
+        // Retained is not demand: a body scrolled out of the viewport withdraws presentation, so live demand
+        // (Machine summaries, Live watches) inside it releases while its content stays mounted.
+        const presentedFirst = () => {
+            const owning = screen.root.findAllByType(PluginSurfaceFocusEligibilityProvider).filter(node => node.findAllByType(WidgetSurface).includes(firstBody));
+            return owning.at(-1)?.props.presentationActive;
+        };
+        await vi.waitFor(() => expect(presentedFirst(), 'an offscreen retained body is not presented').toBe(false));
         await flushHookEffects({ cycles: 20 });
         expect(firstContent() === loadedContent, 'scrolling away preserves the loaded inner body').toBe(true);
         expect(firstContent().props.slice.accounting?.totals.tokens.total).toBe(15);
@@ -708,6 +815,7 @@ describe('mounted Usage page scope commands', () => {
         });
         await vi.waitFor(() => expect(bodies()).toEqual(ids.map(id => `${id}.body`)));
         expect(screen.root.findAllByType(WidgetSurface)[0], 'scrolling back retains the same body').toBe(firstBody);
+        await vi.waitFor(() => expect(presentedFirst(), 'a returned body is presented again').toBe(true));
         await flushHookEffects({ cycles: 20 });
         expect(firstContent() === loadedContent, 'scroll return preserves the loaded inner body').toBe(true);
         expect(firstContent().props.slice.accounting?.totals.tokens.total).toBe(15);

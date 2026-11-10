@@ -231,10 +231,10 @@ function groupBranches(allocations: UsageWorkProjection['branchAllocations'], ba
     projectKeys: [...row.projects].sort((a, b) => (a ?? '').localeCompare(b ?? '')) })).sort(byAmount);
 }
 
-/** One displayed group for unnamed Projects; named identities retain their canonical anchor. */
+/** One displayed group for unnamed Projects, including accounting's absent-Project operand. */
 export function usageProjectDisplayKey(key: string | null, namedProjectKeys?: Pick<ReadonlySet<string>, 'has'>,
   anchorOf?: (key: string) => string): string | null {
-  const project = key === null || !anchorOf ? key : anchorOf(key);
+  const project = key === null || key === 'unknown' ? null : anchorOf ? anchorOf(key) : key;
   return project === null || namedProjectKeys && !namedProjectKeys.has(project) ? null : project;
 }
 

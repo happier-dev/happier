@@ -239,7 +239,7 @@ it('R140 folds unnamed Project choices like the ledger and selects their origina
         await act(async () => { expect(hook.getCurrent().filter.select(group.id)).toBe(true); });
         expect(hook.getCurrent().page.scope.projects).toEqual([named[0]]);
         await act(async () => { expect(hook.getCurrent().filter.select(group.id)).toBe(true); });
-        expect(hook.getCurrent().page.scope.projects).toEqual([named[0]!, ...unnamed].sort());
+        expect(hook.getCurrent().page.scope.projects).toEqual([named[0]!, ...unnamed, 'unknown'].sort());
         expect(hook.getCurrent().filter.selected).toEqual(expect.arrayContaining([named[0], group.id]));
         expect(fetch, 'Grouping Project names does not demand rich accounting rows').not.toHaveBeenCalled();
     } finally { await hook.unmount(); fetch.mockRestore(); storage.setState(previous, true); }

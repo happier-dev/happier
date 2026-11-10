@@ -107,7 +107,9 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
                 const groups = new Map<string, Set<string>>();
                 for (const key of labels.keys()) {
                     const id = groupId(key);
-                    const members = groups.get(id) ?? new Set<string>();
+                    // The ledger's null display group includes usage with no Project recorded.
+                    // Select its existing HTTP operand even when the ranked inventory omits it.
+                    const members = groups.get(id) ?? new Set<string>(id === UNNAMED_PROJECT_OPTION ? ['unknown'] : []);
                     members.add(projectAnchorOf.resolve(key));
                     groups.set(id, members);
                 }
