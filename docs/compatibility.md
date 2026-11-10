@@ -7631,6 +7631,16 @@ predecessor adapter is introduced.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 runtime usage observations share the closed payload schema in
+`runtime/agentUsageObservedPayloadV1.ts`, independent of Session and finite-Run
+envelopes. A witnessed `accounting.nativeSessionId` permits an observation with
+no measurements. Absent tokens, cost and counter semantics stay absent; this
+does not authorize deriving counted totals or attributing child spend to a parent.
+Existing measured observations retain their strict shapes. Matching development
+readers consume the leaf together, without a legacy adapter or new wire epoch.
+This runtime admission does not establish ingest support: the current numeric
+Usage ledger still requires a separate owner-approved unknown-measurement change.
+
 Unreleased 0.3 native Agent model snapshots and ACP model controls add optional
 `catalogConfidence`, using the existing Provider catalog confidence vocabulary.
 The shared publication owner consumes this presentation provenance to withhold

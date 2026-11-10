@@ -10600,6 +10600,11 @@
       "types": "./dist/runtime/agentSessionV1.d.ts",
       "default": "./dist/runtime/agentSessionV1.js"
     },
+    "./runtime/agentUsageObservedPayloadV1": {
+      "happier-source": "./src/runtime/agentUsageObservedPayloadV1.ts",
+      "types": "./dist/runtime/agentUsageObservedPayloadV1.d.ts",
+      "default": "./dist/runtime/agentUsageObservedPayloadV1.js"
+    },
     "./runtime/authRefresh": {
       "happier-source": "./src/runtime/authRefresh.ts",
       "types": "./dist/runtime/authRefresh.d.ts",

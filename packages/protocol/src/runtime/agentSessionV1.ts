@@ -12,7 +12,7 @@ import { SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX } from '../sessions/runtime/a
 import { StrictJsonValueSchema, type JsonValue as StrictJsonValue } from '../json/strictJsonValue.js';
 import { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from './eventKindsV1.js';
 import { AgentRuntimeDiagnosticDataV1Schema } from './agentRuntimeDiagnosticV1.js';
-import { UsagePromptCacheSchema, UsageRequestAttributionSchema } from '../usage/usageAnalyticsContracts.js';
+import { AgentUsageObservedPayloadV1Schema } from './agentUsageObservedPayloadV1.js';
 import { TranscriptPeerSenderV1Schema } from '../sessions/messages/transcriptPeerSenderV1.js';
 import { ProbedCatalogOptionSchema } from '../capabilities/probedCatalogOption.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
@@ -33,8 +33,6 @@ export type AgentSessionIdleCompactionPreferenceV1 = z.infer<typeof AgentSession
 const HOST_ID_MAX = LIMITS.hostIndexedIdMaxCodeUnits;
 const INPUT_IDS_MAX = LIMITS.inputIdsMaxItems;
 const NAME_MAX = LIMITS.toolNameMaxCodeUnits;
-const MODEL_ID_MAX = LIMITS.modelIdMaxCodeUnits;
-const SOURCE_MAX = LIMITS.usageSourceMaxCodeUnits;
 const PATH_MAX = LIMITS.filePathMaxCodeUnits;
 const DESCRIPTION_MAX = LIMITS.descriptionMaxCodeUnits;
 const COMPACT_INSTRUCTIONS_MAX = LIMITS.compactInstructionsMaxCodeUnits;
@@ -127,68 +125,6 @@ const TurnEventBaseShape = {
 };
 
 const InputIdsSchema = lazyZodSchema(() => z.tuple([InputIdSchema], InputIdSchema).check(z.refine((ids) => ids.length <= INPUT_IDS_MAX, 'Input id tuple limit exceeded'), z.refine((ids) => new Set(ids).size === ids.length, 'Input ids must be duplicate-free')));
-
-const UsageTokensSchema = lazyZodSchema(() => z.strictObject({
-  input: SafeIntegerSchema,
-  output: SafeIntegerSchema,
-  reasoning: SafeIntegerSchema,
-  cacheRead: SafeIntegerSchema,
-  cacheWrite: SafeIntegerSchema,
-  total: SafeIntegerSchema,
-}));
-
-const UsageCostBreakdownKeysSchema = lazyZodSchema(() => z.array(
-  exactString(LIMITS.usage.breakdownKeyMaxCodeUnits),
-).check(z.maxLength(LIMITS.usage.breakdownMaxEntries)));
-
-const UsageCostSchema = lazyZodSchema(() => z.strictObject({
-  reportedUsd: z.number().check(z.nonnegative()),
-  estimatedUsd: z.number().check(z.nonnegative()),
-  invoiceUsd: z.optional(z.number().check(z.nonnegative())),
-  billingContext: z.optional(z.enum([
-    'api_usage',
-    'subscription_included',
-    'subscription_with_possible_overage',
-    'unknown',
-  ])),
-  costSource: z.optional(z.enum([
-    'provider_reported',
-    'provider_reported_api_equivalent',
-    'pricing_estimate',
-    'invoice',
-    'none',
-  ])),
-  currency: exactString(LIMITS.usage.currencyMaxCodeUnits),
-  // Exact-money Symbol provenance is internal; runtime JSON contains string keys only.
-  breakdown: z.optional(z.catchall(z.object({}), z.number().check(z.nonnegative()))
-    .check(z.refine((value) => UsageCostBreakdownKeysSchema.safeParse(Object.keys(value)).success,
-      'Usage breakdown keys or entry count exceed their bounds'))),
-  effectiveUsd: z.optional(z.number().check(z.nonnegative())),
-}));
-
-const ContextUsageSchema = lazyZodSchema(() => z.strictObject({
-  v: z.literal(1),
-  modelId: z.nullable(exactString(MODEL_ID_MAX)),
-  usedTokens: SafeIntegerSchema,
-  windowTokens: z.nullable(SafeIntegerSchema),
-  totalProcessedTokens: z.nullable(SafeIntegerSchema),
-  baselineTokens: z.nullable(SafeIntegerSchema),
-  isAutoCompactEnabled: z.nullable(z.boolean()),
-  categories: z.nullable(z.array(z.strictObject({
-    key: exactString(LIMITS.usage.contextCategoryKeyMaxCodeUnits),
-    label: z.nullable(z.string().check(maxCodeUnits(LIMITS.usage.contextCategoryLabelMaxCodeUnits))),
-    tokens: SafeIntegerSchema,
-  })).check(z.maxLength(LIMITS.usage.contextCategoriesMaxItems))),
-  observedAtMs: SafeIntegerSchema,
-  source: z.enum(['provider_live', 'provider_turn', 'derived_estimate']),
-}));
-
-const UsageMeasurementShape = {
-  promptCache: z.optional(UsagePromptCacheSchema),
-  tokens: z.optional(UsageTokensSchema),
-  cost: z.optional(UsageCostSchema),
-  context: z.optional(ContextUsageSchema),
-};
 
 const InputCustodySchemas = [
   lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(EventBaseSchema, {
@@ -393,23 +329,7 @@ const OutputSchemas = [
     newContent: z.optional(z.string()),
     sidechainId: z.optional(HostIdSchema),
   })),
-  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(EventBaseSchema, {
-    kind: z.literal('usage-observed'),
-    observationId: ProviderIdSchema,
-    attribution: zMini.optional(UsageRequestAttributionSchema),
-    turnId: z.optional(HostIdSchema),
-    source: exactString(SOURCE_MAX),
-    scope: z.enum(['turn_delta', 'session_cumulative', 'session_final']),
-    modelId: z.optional(exactString(MODEL_ID_MAX)),
-    accounting: z.optional(z.strictObject({
-      nativeSessionId: zMini.optional(ProviderIdSchema),
-      inferenceId: zMini.optional(ProviderIdSchema),
-      inputIncludesCache: z.optional(z.boolean()),
-      outputIncludesReasoning: z.optional(z.boolean()),
-      historyComplete: z.optional(z.boolean()),
-    })),
-    ...UsageMeasurementShape,
-  })).check(z.refine((value) => value.tokens !== undefined || value.cost !== undefined || value.context !== undefined || value.promptCache !== undefined, 'At least one usage measurement is required'))),
+  lazyZodSchema(() => z.safeExtend(AgentUsageObservedPayloadV1Schema, EventBaseSchema.shape)),
   lazyZodSchema(() => z.strictObject({
     ...TurnEventBaseShape,
     kind: z.literal('turn-rollback-boundary'),
