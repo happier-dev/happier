@@ -29,6 +29,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
+import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { TeamPeopleSections } from '@/components/settings/teams/members/TeamPeopleSections';
@@ -115,6 +116,8 @@ export const FriendsView = React.memo(function FriendsView() {
         <PhonePageBackLine control={phoneBack} page />
         <ItemList testID="people-page">
             <NavigationBackChromeProvider control={phone ? null : inheritedBack}>
+                {/* On a phone the page's name is its large title on the head line, as on Settings and every main screen. */}
+                <NavigationLargeTitleProvider largeTitle={phone}>
                 <PageHeader
                     title={t('tabs.friends')}
                     description={t('friends.peopleDescription')}
@@ -132,6 +135,7 @@ export const FriendsView = React.memo(function FriendsView() {
                         </>
                     )}
                 />
+                </NavigationLargeTitleProvider>
             </NavigationBackChromeProvider>
             {searchOpen ? (
                 <CompactSearchField

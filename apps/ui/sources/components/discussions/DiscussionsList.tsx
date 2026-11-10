@@ -11,7 +11,8 @@ import { useCollectionSpaceFilter } from '@/components/ui/lists/collection/useCo
 import { useCollectionSpaceHeader } from '@/components/ui/lists/collection/useCollectionSpaceHeader';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { CollectionConditionBindings } from '@happier-dev/plugin-ui/components';
-import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
+import { useIsFocused, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/serverSettingsRouteParams';
 import { registerDiscussionListScopeActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 
 import { DiscussionRow, DiscussionRowSkeleton } from '@/components/discussions/DiscussionRow';
@@ -54,7 +55,6 @@ import {
 import { useSessionConversationsAvailability } from '@/components/sessions/conversations/useSessionConversationsAvailability';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
-import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useSessionDisplayNameProjections, useSetting } from '@/sync/domains/state/storage';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -63,6 +63,8 @@ const SKELETON_ROWS = [0, 1, 2] as const;
 
 const styles = StyleSheet.create((theme) => ({
     root: { flex: 1, minHeight: 0, minWidth: 0 },
+    // A whole-list state stands in the list's place, centred in the column's body.
+    wholeState: { flex: 1, minHeight: 0, justifyContent: 'center' },
     list: { flex: 1, minHeight: 0 },
     listContent: { flexGrow: 1, paddingBottom: theme.space.s8 },
     // With the host's sections after it, the list is one section of a flow: it never grows to push them down.
@@ -194,9 +196,6 @@ export function DiscussionsList(props: Readonly<{
     const bindings = useServerCredentialAccountScopeBindings(requestedServerIds);
     const binding = React.useMemo(() => [...bindings.values()][0] ?? null, [bindings]);
     const available = useSessionConversationsAvailability(props.address.serverId);
-    // One Back for the page in every state: the list's line, or above a whole-page state in its place.
-    const pageBack = usePhoneDestinationBack('discussions-column:back');
-    const ownPageBack = props.surface === 'page' ? pageBack : null;
     const unavailableReason = !available
         ? t('session.collaboration.discussion.featureUnavailable')
         : !binding
@@ -204,19 +203,51 @@ export function DiscussionsList(props: Readonly<{
             : !areServerAccountScopesEqual(binding.scope, props.scope)
                 ? t('session.collaboration.discussion.scopeMismatch')
                 : null;
-    if (unavailableReason || !binding) return <>
-        <PhonePageBackLine control={ownPageBack} page={props.surface === 'page'} />
-        <DiscussionsListPaneState footer={props.footer}><SurfaceStateCard
-            testID="session-conversations-unavailable"
-            kind="unavailable"
-            title={t('session.collaboration.discussion.unavailable')}
+    if (unavailableReason || !binding) {
+        const state = <DiscussionsListUnavailableState
             reason={unavailableReason ?? t('session.collaboration.discussion.bindingUnavailable')}
-        /></DiscussionsListPaneState>
-    </>;
+            featureOff={!available}
+            // Signed out of this Home: the next step is signing in again, through the Home recovery route.
+            recoveryServerId={available && !binding ? props.address.serverId : null}
+        />;
+        // A column (the main screen, or beside a page) keeps its title row and head line over the state, as the
+        // ready list does; nothing can be created while the list cannot be read, so it offers no "+".
+        if (props.presentation === 'column') return (
+            <CollectionList
+                testID="discussions-column"
+                surface={props.surface ?? 'plane'}
+                phonePage={props.surface === 'page' ? DISCUSSIONS_PHONE_PAGE : null}
+                title={t('session.collaboration.discussion.title')}
+                scrollContent={<View style={styles.wholeState}>{state}</View>}
+            />
+        );
+        return <DiscussionsListPaneState footer={props.footer}>{state}</DiscussionsListPaneState>;
+    }
     return <DiscussionsListReady address={props.address} scope={props.scope} anchor={props.anchor} accountLifetime={binding} presentation={props.presentation ?? 'pane'} surface={props.surface ?? 'plane'} footer={props.footer ?? null} />;
 }
 
 const DISCUSSIONS_PHONE_PAGE = Object.freeze({ backTestID: 'discussions-column:back' });
+
+/**
+ * The whole list cannot be read (conversations off on this Home, signed out of it, another account's scope): one
+ * list-level state with its reason and, where there is one, the next step.
+ */
+function DiscussionsListUnavailableState(props: Readonly<{ reason: string; featureOff: boolean; recoveryServerId: string | null }>) {
+    const router = useRouter();
+    const pathname = usePathname();
+    const { recoveryServerId } = props;
+    const action = React.useMemo(() => recoveryServerId === null ? undefined : {
+        label: t('connect.restoreAccount'),
+        onPress: () => router.push(buildHomeRecoveryHref({ profileRef: recoveryServerId, returnTo: pathname }) as never),
+    }, [pathname, recoveryServerId, router]);
+    return <SurfaceStateCard
+        testID="session-conversations-unavailable"
+        kind={props.featureOff ? 'unavailable' : 'error'}
+        title={t('session.collaboration.discussion.listUnavailable')}
+        reason={props.reason}
+        {...(action ? { action } : {})}
+    />;
+}
 
 /** A whole-list state in the pane: the state, and the host's footer still in reach below it. */
 function DiscussionsListPaneState(props: Readonly<{ footer?: React.ReactElement | null; children: React.ReactElement }>) {

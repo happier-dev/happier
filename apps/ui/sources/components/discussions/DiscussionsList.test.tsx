@@ -530,10 +530,23 @@ describe('DiscussionsList and its Session anchor consumer', () => {
             resetServerFeaturesClientForTests();
             const { screen } = await renderConversations(options);
             await vi.waitFor(() => expect(screen.findByTestId('session-conversations-unavailable')).not.toBeNull(), { timeout: 1000 });
-            expect(screen.getTextContent(), name).toContain(t('session.collaboration.discussion.unavailable'));
+            // The list says the list is unavailable, never one conversation's state.
+            expect(screen.getTextContent(), name).toContain(t('session.collaboration.discussion.listUnavailable'));
+            expect(screen.getTextContent(), name).not.toContain(t('session.collaboration.discussion.unavailable'));
             expect(screen.getTextContent(), name).toContain(t(expectedReason));
             expect(screen.findByTestId('session-discussion-activity-list'), name).toBeNull();
         }
+    });
+
+    it('keeps the main screen\'s title row over the unavailable list and leads a signed-out Home to sign in again', async () => {
+        const { screen } = await renderConversations({ homeList: true, column: true, credentialAvailable: false });
+        await vi.waitFor(() => expect(screen.findByTestId('session-conversations-unavailable')).not.toBeNull(), { timeout: 1000 });
+        // The same column and title as the ready list; nothing can be created while the list cannot be read.
+        expect(screen.findByTestId('discussions-column')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('session.collaboration.discussion.title'));
+        expect(screen.findByTestId('session-discussion-new:header')).toBeNull();
+        await screen.pressByTestIdAsync('session-conversations-unavailable-action');
+        expect(navigation.push).toHaveBeenCalled();
     });
 
     it('explains an encryption-mode mismatch as a pane state with a read retry, never an endless preparation', async () => {

@@ -43,6 +43,7 @@ participants: { title: "Participants", loading: "Checking who’s here…", more
         emptyActive: 'No active conversations yet.', emptyArchived: 'No archived conversations.',
         loading: 'Loading conversations…', loadError: 'Conversations could not be loaded.', retry: 'Try again', checking: 'Checking for updates…', deliveryUnknown: 'Delivery unknown — check before retrying.',
         locked: 'You can read this conversation, but you cannot post to it.', offline: 'You’re offline. Reconnect to continue.', unavailable: 'This conversation is unavailable.',
+        listUnavailable: 'Discussions aren’t available.',
         featureUnavailable: 'Conversations are not enabled on this Home.',
         bindingUnavailable: 'Sign in to this Home again to see conversations.',
         scopeMismatch: 'These conversations belong to a different account on this Home.',

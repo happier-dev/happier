@@ -10,6 +10,7 @@ import { Stack, usePathname, useRouter } from '@/components/appShell/workspace/d
 import { useIsAppDestinationRootPath } from '@/components/appShell/destinations/useCompactAppDestinations';
 import { CollectionSearchToggle } from '@/components/ui/lists/collection/CollectionList';
 import { PhonePageBackLine } from '@/components/ui/layout/usePageBackControl';
+import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import {
   RegistryShelf,
   resolveRegistryShelfUnavailable,
@@ -505,7 +506,12 @@ export const StoreDiscoverView = React.memo(function StoreDiscoverView(props: Re
     ...(page.featured ? [page.featured.item] : []), ...page.suggestions,
     ...page.sections.flatMap(section => section.items),
   ], [page]);
+  // A phone main screen: the shared head line stands above the page's scroller (inside it, iOS would add the
+  // status bar's inset a second time), and the title is the page's large title on that line, as on Settings.
+  const phoneMainScreen = !columnVisible && props.mainScreen === true;
   return (
+    <View style={styles.page}>
+    {phoneMainScreen ? <PhonePageBackLine control={null} page /> : null}
     <DiscoverFrame title={t('capabilities.store.discover.title')} testID="store.discover"
       identityItems={identityItems} presented={props.presented}>
         {columnVisible ? (
@@ -516,17 +522,18 @@ export const StoreDiscoverView = React.memo(function StoreDiscoverView(props: Re
           />
         ) : props.mainScreen ? (
           <>
-            {/* A phone's Store is a main screen: the shared head line, then its title row with the search behind the magnifier. */}
-            <PhonePageBackLine control={null} page />
-            <PageHeader
-              testID="store.discover.header"
-              title={t('settingsPlugins.surfaces.storeTitle')}
-              alwaysShowTitle
-              actionsPlacement="page"
-              actionsLayout="inline"
-              actions={<CollectionSearchToggle testID="store.discover.searchToggle" open={searchOpen}
-                onPress={toggleSearch} accessibilityLabel={t('capabilities.store.discover.searchShort')} />}
-            />
+            {/* A phone's Store is a main screen: its title row with the search behind the magnifier. */}
+            <NavigationLargeTitleProvider largeTitle>
+              <PageHeader
+                testID="store.discover.header"
+                title={t('settingsPlugins.surfaces.storeTitle')}
+                alwaysShowTitle
+                actionsPlacement="page"
+                actionsLayout="inline"
+                actions={<CollectionSearchToggle testID="store.discover.searchToggle" open={searchOpen}
+                  onPress={toggleSearch} accessibilityLabel={t('capabilities.store.discover.searchShort')} />}
+              />
+            </NavigationLargeTitleProvider>
             <View style={styles.inset}><StoreProjectScopeChip /></View>
           </>
         ) : <View style={styles.inset}><StoreProjectScopeChip /></View>}
@@ -537,6 +544,7 @@ export const StoreDiscoverView = React.memo(function StoreDiscoverView(props: Re
         {columnVisible ? null : <PhoneInstalledRow onOpen={nav.openInstalled} onOpenUpdates={nav.openUpdates} onOpenKind={nav.openKind} />}
         <DiscoverBody curation={props.curation} page={page} nav={nav} presented={props.presented === true} />
     </DiscoverFrame>
+    </View>
   );
 });
 
@@ -884,6 +892,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     gap: theme.space.s4,
   },
+  page: { flex: 1, minHeight: 0 },
   search: { marginBottom: theme.space.s8 },
   // A phone's scope chip sits on the page gutter beside nothing, hugging its label (as in a page header).
   // A source's state line sits where every Store page puts it: on the page edge, its Try again right after the words.
