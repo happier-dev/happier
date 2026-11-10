@@ -1,0 +1,165 @@
+---
+title: Deploy an app on your Machine
+description: Create an Environment, deploy an app, add an address, and back up and restore its database.
+---
+
+Run an app on a Machine you control, then manage its deployment and database from Happier.
+An **Environment** is one place a Project runs, such as staging or production.
+It brings together what to run, the Machine that runs it, its variables, addresses,
+and deployment history.
+
+<Callout title="Development only · 0.3">
+This walkthrough describes unreleased 0.3 development components. It is not a
+stable-release guide. Your Home must enable deployments, your deployment feature
+preference must be on, and your app and Machine
+daemon must support these development flows. If the deployment controls are
+unavailable, check with your Home operator before proceeding.
+</Callout>
+
+## What you need
+
+- A signed-in Happier app and an online Machine connected to the same Home.
+- Permission to manage the Project and deploy on the selected Machine.
+- Docker Engine, Compose, and Buildx available to the daemon user on that Machine,
+  including permission to access Docker. Buildx is needed even for image-only deployments.
+- For a public address: a hostname you control and an ingress route. Direct public
+  ingress needs ports 80 and 443 available to Happier's Caddy proxy; Tunnel ingress
+  is the alternative when another proxy owns those ports.
+- For the backup steps: a deployed PostgreSQL database, S3-compatible backup storage,
+  and Saved Secrets for its access key ID, secret access key, and repository password.
+  Keep the repository password available for recovery.
+
+The backup and restore example below is PostgreSQL. Do not assume another
+database has the same support merely because it appears in the Store.
+MySQL backup and restore are not supported yet.
+
+## 1. Set up the Machine
+
+Follow [onboarding](/getting-started/onboarding) to connect the computer to your
+Home. In the desktop app, use **Setup wizard** → **Set up this computer** for the
+local computer, or **Add machine over SSH** from the Machines settings screen
+for another computer.
+
+Wait until the Machine is online before choosing it for deployment. On the
+Machine, check that the daemon user can run `docker compose version` and
+`docker buildx version`. If deployment preparation offers a Machine setup review,
+read and apply the proposed setup before continuing.
+
+## 2. Create and deploy an Environment
+
+For a first deployment, open **Store**, choose an app, and review its installation.
+Choose the Machine and either an existing Project or a new Project, then confirm
+the reviewed installation. This creates an Environment and attempts its deployment.
+Open the resulting Environment to see what completed.
+
+If you already have a definition, open **Apps** in the Store and choose
+**Paste a Compose file** or **Run an image**, then choose its Project.
+Supply the Compose document, or the image name and its container
+port, then name the Environment and choose its Machine. Review creation before
+confirming it, and use **Deploy** to review and run the deployment.
+
+For a repository-backed Project, open its **Deployments** tab and choose
+**Add environment**. Select the Machine, branch or ref, and Compose file path
+(`compose.yaml` is the initial path). Save and confirm creation, then review
+**Deploy**. The Project must first be saved as a Source; follow the page's prompt
+if it is not.
+
+Check **History** for the deployment result. The **Overview** shows services and
+health; use **Logs** to inspect build or runtime output. **Variables** holds
+values, Saved Secret bindings, and references used by the Environment. Changes
+to variables apply on the next deployment.
+
+<Callout title="A partial installation can keep a working deployment">
+A Store installation can create the Environment and deploy the app while its
+Domain step fails. Read the completed steps and choose **Open environment**.
+Resolve the address problem there instead of creating another copy of the app.
+</Callout>
+
+## 3. Add a Domain
+
+Open the Environment's **Domains** tab and choose **Add domain**. Enter the
+hostname, select the service that should receive traffic, and enter that service's
+**Container port**. Set a path only if the address should route a particular path.
+Review the ingress choice and submit the change. Complete any approval the app requests.
+
+Direct public routing needs DNS pointing at the serving Machine and reachable
+ports 80/443. If Caddy cannot bind a public port, free the port only when you own
+the competing proxy and can safely stop it, or configure Tunnel ingress. The
+Cloudflare tunnel controls let you choose the connection, zone, and tunnel;
+the connector must be available on the Environment's Machines.
+
+Use **Check again** to inspect the recorded Domain checks. Confirm the address
+from outside the Machine before treating it as public.
+
+<Callout title="Public-address validation is still incomplete">
+Development testing verified the occupied-port refusal and its recovery message.
+It did not complete a successful public-address or Tunnel setup. A successful
+app deploy alone does not establish that its Domain is reachable.
+</Callout>
+
+## 4. Add PostgreSQL and configure backups
+
+If the Environment does not yet have a database, choose **Add a database** in
+**Data**, select PostgreSQL, and review **Add**. Adding a Store database deploys
+it immediately. For a repository-defined Environment, edit the repository's
+Compose file to add the database, then deploy that change instead.
+
+Open the database's **Backups** controls and choose **Set up backups** to open
+the Environment's backup settings, then **Set up**. Choose backup
+storage; if none is available, use **Open Store** to add it first. Enter its
+**Endpoint**, **Bucket**, **Folder in the bucket**, and **Region**, and select the
+database service to copy. Save, then choose the Saved Secrets for **Access key ID**,
+**Secret access key**, and **Repository password**. Supply a **Session token** only
+if your storage requires one.
+
+Use **Test** to check the destination, then run **Back up now** and wait for its
+completed result. Open **Verify backup**, select the new snapshot, and use
+**Manifest read-back** to read back its manifest and payload. Verification does
+not restore the database. Check the recent backup history before relying on it.
+
+<Callout title="Storage evidence">
+The development backup → daemon restart → restore journey passed with PostgreSQL
+and MinIO S3-compatible storage. A separate real S3 Test probe remains withheld;
+this is not a claim of live AWS S3 certification. Test your chosen destination
+and perform a restore rehearsal before relying on it for important data.
+</Callout>
+
+## 5. Restore the database
+
+Restoring replaces the database's current data. Choose a time when the app can
+be interrupted, and make sure the selected backup is the one you intend to use.
+
+1. Open **Restore a backup** and select an available restore point. A snapshot
+   marked as unavailable cannot be restored from this screen.
+2. Choose **Check backup**. Happier checks the selected backup and saves the
+   current data as a safety backup when there is data to save.
+3. Read the database and safety-backup details, then choose **Replace data**
+   only when ready. This is the confirmation that permits data replacement.
+4. Wait for the safety, stop, restore, start, and health steps to settle. Confirm
+   the restored data in the app or database, rather than relying only on its health status.
+
+In the tested development journey, a fresh backup remained selectable after the
+executing daemon restarted, and restore returned the original PostgreSQL rows.
+This does not establish recovery from lost backup records or damaged storage.
+
+## When something needs attention
+
+- **The Machine is offline:** reconnect its daemon. Scheduled jobs and health
+  alerts depend on the Environment's controller Machine being online.
+- **Docker or Buildx is unavailable:** install the missing tool on the Machine
+  named by the preparation result and make it available to its daemon user.
+- **A Domain step fails:** inspect its details and current route. Check public
+  port ownership before retrying; a failed address step can leave the app deployed.
+- **Test says another backup is using the destination:** wait for that operation
+  to finish, then retry Test. Do not run Test alongside the backup or restore.
+- **A backup cannot be selected:** read the reason. A repository snapshot without
+  its required capture record is not a usable restore point in this flow.
+- **Restore reports an unknown outcome or recovery needed:** inspect the result
+  and actual database state before repeating the operation. Preserve the safety
+  backup and use the displayed recovery instructions.
+
+## Related
+
+- [Onboarding](/getting-started/onboarding) — connect a Machine to your Home.
+- [Connected services](/accounts/connected-services) — manage service connections.
+- [Self-hosting](/self-hosting) — operate the Happier server itself.

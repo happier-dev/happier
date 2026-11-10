@@ -3,6 +3,9 @@ title: Managed services
 description: Supervise plugin-owned local services through context.services.managedServices.
 ---
 
+To deploy an app as a user, follow [Deploy an app on your Machine](/extras/deploy-an-app)
+(0.3 development). This page covers the plugin-author service API.
+
 Use `context.services.managedServices.supervise(...)` from a daemon runtime for plugin-owned loopback services. It is not callable from a browser, React Native, or other client realm. For managed-spawn mode, declare the consumed managed dependencies and executable access in the cold manifest first. External-attach mode uses its declared endpoint and applicable host-access policy without inventing a launch dependency.
 
 A managed model Provider uses this same exact-handle lifecycle from its runtime
