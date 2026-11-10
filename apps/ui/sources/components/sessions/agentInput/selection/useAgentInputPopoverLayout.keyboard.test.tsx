@@ -8,7 +8,11 @@ import { renderScreen } from '@/dev/testkit';
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const keyboard = vi.hoisted(() => ({ dismiss: vi.fn() }));
+const keyboard = vi.hoisted(() => ({
+  // React Native's own dismissal only blurs a registered `TextInput`; the composer's native editor is not one.
+  rnDismiss: vi.fn(),
+  native: null as { KeyboardController: { dismiss: { mock: { calls: unknown[] }; mockClear: () => void } } } | null,
+}));
 
 // iOS and its keyboard are the system boundary; the composer popover layout policy stays real.
 vi.mock('react-native', async () => {
@@ -18,7 +22,7 @@ vi.mock('react-native', async () => {
     { platformOS: 'ios' },
     {
       Keyboard: {
-        dismiss: keyboard.dismiss,
+        dismiss: keyboard.rnDismiss,
         addListener: () => ({ remove: () => {} }),
         removeAllListeners: () => {},
       },
@@ -31,6 +35,16 @@ vi.mock('react-native', async () => {
     },
   );
 });
+
+// The keyboard controller resigns the platform's focused input, the composer's native editor included.
+vi.mock('react-native-keyboard-controller', async () => {
+  const { createKeyboardControllerModuleMock } = await import('@/dev/testkit/mocks/keyboardController');
+  const mock = await createKeyboardControllerModuleMock();
+  keyboard.native = mock as never;
+  return mock;
+});
+
+const nativeDismissCalls = () => keyboard.native?.KeyboardController.dismiss.mock.calls.length ?? 0;
 
 const { useAgentInputPopoverLayout } =
   await import('./useAgentInputPopoverLayout');
@@ -81,7 +95,8 @@ function composerKeyboard(initialHeight: number) {
 }
 
 async function openPicker(anchor: 'chip' | 'caret') {
-  keyboard.dismiss.mockClear();
+  keyboard.rnDismiss.mockClear();
+  keyboard.native?.KeyboardController.dismiss.mockClear();
   const composer = composerKeyboard(336);
   const latest: { layout: Layout | null; setOpen: (open: boolean) => void } = {
     layout: null,
@@ -105,9 +120,11 @@ async function openPicker(anchor: 'chip' | 'caret') {
 // UI refinements ruling 2026-11-10 (NATIVE-SWEEP L12): with the keyboard up, the engine picker covered the field
 // being written and was cut to a sliver. Opening a chip picker dismisses the keyboard; the slash/@ menu keeps it.
 describe('composer popover layout and the keyboard on iOS', () => {
+  // PHONE-POPOVERS-1109: the dismissal went through React Native's `Keyboard.dismiss()`, which never reached the
+  // composer's native editor, so the engine picker opened with the keyboard still up.
   it('dismisses the keyboard when a chip picker opens, and does not hold the composer up where it was', async () => {
     const { composer, latest } = await openPicker('chip');
-    expect(keyboard.dismiss).toHaveBeenCalledTimes(1);
+    expect(nativeDismissCalls()).toBe(1);
     expect(composer.state.lifts).toBe(0);
     composer.hide();
     expect(latest.layout?.keyboardBottomInset).toBe(0);
@@ -115,7 +132,8 @@ describe('composer popover layout and the keyboard on iOS', () => {
 
   it('keeps the keyboard, and the composer lifted, for the slash/@ menu written at the caret', async () => {
     const { composer } = await openPicker('caret');
-    expect(keyboard.dismiss).not.toHaveBeenCalled();
+    expect(nativeDismissCalls()).toBe(0);
+    expect(keyboard.rnDismiss).not.toHaveBeenCalled();
     expect(composer.state.lifts).toBe(1);
   });
 });

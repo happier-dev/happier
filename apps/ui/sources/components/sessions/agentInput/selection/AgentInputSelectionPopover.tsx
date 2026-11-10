@@ -32,6 +32,8 @@ export type AgentInputSelectionPopoverProps = Readonly<{
          * + menu row's picker it returns to the menu. Absent outside a submenu, where both mean close.
          */
         dismiss?: () => void;
+        /** The popover pushes the submenus opened inside it in place (a phone): it has no hover intent. */
+        pushesSubmenus?: boolean;
     }>) => React.ReactNode;
 }>;
 
@@ -113,10 +115,11 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
             containerStyle={{ paddingHorizontal: 0 }}
             keyboardBottomInset={popoverLayout.keyboardBottomInset}
         >
-            {({ maxHeight, presentation }) => {
+            {({ maxHeight, presentation, pushesSubmenus }) => {
                 const content = props.children({
                     maxHeight,
                     presentation: presentation === 'sheet' ? 'sheet' : 'popover',
+                    ...(pushesSubmenus ? { pushesSubmenus: true } : {}),
                     ...(submenu ? { dismiss: requestPopoverClose } : {}),
                 });
                 return (

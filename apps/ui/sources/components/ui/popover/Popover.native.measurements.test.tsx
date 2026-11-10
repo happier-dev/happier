@@ -1,5 +1,5 @@
 import React from 'react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
@@ -18,6 +18,11 @@ installPopoverCommonModuleMocks({
         });
     },
 });
+
+// The popover module graph is large: load it once, outside each test's own time.
+beforeAll(async () => {
+    await Promise.all([import('./Popover'), import('./OverlayPortal'), import('./PopoverPortalTarget')]);
+}, 300_000);
 
 let restorePopoverGlobals: (() => void) | undefined;
 beforeEach(() => {
@@ -262,5 +267,54 @@ describe('Popover (native measurements)', () => {
         const style = flattenStyle(contentView?.props?.style);
         // Correct visual anchor bottom: (600 - 200) + 40 = 440.
         expectVisualTop(style, 440);
+    });
+    // Native QA 11-09 (R2): a View options panel taller than the room under its ⋯ rose over the trigger row.
+    // The measured box carries the shadow outset on both edges; only the surface itself has to fit.
+    it('keeps a full-height panel under its trigger, never over it, when its box carries the shadow outset', async () => {
+        const { Popover } = await import('./Popover');
+        const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = {
+            measureInWindow: (cb: any) => cb(0, 0, 1000, 600),
+            measure: (cb: any) => cb(0, 0, 1000, 600, 0, 0),
+        } as any;
+        const anchorNode = {
+            measureInWindow: (cb: any) => cb(900, 100, 40, 40),
+            measureLayout: (_relativeTo: any, onSuccess: any) => onSuccess(900, 100, 40, 40),
+        } as any;
+        const portalTarget = { rootRef: { current: portalRootNode }, layout: { width: 1000, height: 600 } } as const;
+        let renderedMaxHeight = 0;
+
+        const screen = await renderScreen(
+            <PopoverPortalTargetContextProvider value={portalTarget}>
+                <OverlayPortalProvider>
+                    <Popover open anchorRef={{ current: anchorNode } as any} portal={{ native: true }} placement="bottom" gap={0} onRequestClose={() => {}}>
+                        {({ maxHeight }) => {
+                            renderedMaxHeight = maxHeight;
+                            return React.createElement('PopoverChild');
+                        }}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+        await act(async () => {
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
+        });
+        expect(renderedMaxHeight).toBe(460);
+
+        const contentView = findPopoverContentView(screen);
+        const style = flattenStyle(contentView?.props?.style);
+        const outset = readNumericStyle(style, 'paddingTop');
+        // The content fills the room under the trigger; the box adds the outset above and below it.
+        await act(async () => {
+            contentView?.props?.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 1000, height: renderedMaxHeight + outset * 2 } } });
+        });
+        await act(async () => {
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
+        });
+
+        expectVisualTop(flattenStyle(findPopoverContentView(screen)?.props?.style), 140);
     });
 });

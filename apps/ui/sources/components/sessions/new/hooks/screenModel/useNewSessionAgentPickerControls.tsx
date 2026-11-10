@@ -22,6 +22,7 @@ import {
 } from '@/sync/domains/models/favoriteModelSelections';
 import { buildNewSessionAgentPickerOptions } from './buildNewSessionAgentPickerOptions';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
+import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
 import { MachineAgentSetupPane } from '@/components/machines/agents/MachineAgentSetupPane';
 import { useMachineAgentRowActions } from '@/components/machines/agents/useMachineAgentRowActions';
 import {
@@ -61,6 +62,8 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     selectedMachineId: string | null;
     /** The composer machine's display name (rail group headings: "Not on devbox yet"). */
     selectedMachineName?: string | null;
+    /** The composer machine's inventory status (`useMachineAgents`): an offline machine is said once in the pane. */
+    machineAgentsStatus?: MachineAgentsSnapshot['status'];
     /** The agent on the composer's machine, from the one inventory owner (`useMachineAgents`). */
     getBackendEntryMachineAgent?: (entry: ResolvedBackendCatalogEntry) => MachineAgent | null;
     capabilityServerId: string;
@@ -260,6 +263,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         ...(params.getBackendEntryMachineAgent && params.selectedMachineId ? {
             getBackendEntryMachineAgent: params.getBackendEntryMachineAgent,
             selectedMachineName: params.selectedMachineName ?? null,
+            machineAgentsStatus: params.machineAgentsStatus,
             installMachineAgent: (agent: MachineAgent) => runMachineAgentAction(agent, { kind: 'install' }),
             renderMachineAgentSetup: (_entry: ResolvedBackendCatalogEntry, agent: MachineAgent) => (
                 <MachineAgentSetupPane
@@ -273,6 +277,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     }), [
         params.getBackendEntryMachineAgent,
         params.selectedMachineName,
+        params.machineAgentsStatus,
         runMachineAgentAction,
         getEngineSelectionForTargetKey,
         handleSelectFavoriteModelOptionValue,

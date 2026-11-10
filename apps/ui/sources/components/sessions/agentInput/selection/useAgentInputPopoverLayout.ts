@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Keyboard, Platform, useWindowDimensions } from 'react-native';
+import { Platform, useWindowDimensions } from 'react-native';
 
 import {
     MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS,
@@ -9,6 +9,8 @@ import { POPOVER_PREFERRED_ROOM_PX } from '@/components/ui/popover/popoverPrefer
 import { useComposerKeyboardLayout } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardContext';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
+import { dismissKeyboard } from '@/components/ui/keyboardAvoidance/dismissKeyboard';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { DESKTOP_MAIN_CONTENT_DRAG_HEIGHT_PX } from '@/components/navigation/shell/desktopChrome/desktopChromeMetrics';
 import { SUBMENU_POPOVER_GAP_PX } from '@/components/ui/forms/dropdown/useSubmenuHoverIntent';
 import { AgentInputActionMenuSubmenuContext } from './agentInputActionMenuSubmenu';
@@ -90,6 +92,8 @@ export function useAgentInputPopoverLayout(input: Readonly<{
     const submenu = React.useContext(AgentInputActionMenuSubmenuContext) !== null;
     const retainedNativeKeyboardHeightRef = React.useRef(0);
     const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+    const safeAreaTop = useChromeSafeAreaInsets().top;
+    const phone = isMobileLayoutWidth(windowWidth);
     const normalizedKeyboardHeight = Number.isFinite(keyboardHeight)
         ? Math.max(0, keyboardHeight)
         : 0;
@@ -107,7 +111,7 @@ export function useAgentInputPopoverLayout(input: Readonly<{
     // is written at the caret, so it keeps the keyboard and the composer's lift.
     const dismissesKeyboard = Platform.OS !== 'web' && input.anchor !== 'caret' && !submenu;
     React.useEffect(() => {
-        if (input.open && dismissesKeyboard) Keyboard.dismiss();
+        if (input.open && dismissesKeyboard) dismissKeyboard();
     }, [dismissesKeyboard, input.open]);
 
     React.useEffect(() => {
@@ -138,19 +142,22 @@ export function useAgentInputPopoverLayout(input: Readonly<{
     // One margin on every side: a tall popover stops short of the window's top and bottom edges as
     // it does of the sides (for a top/bottom placement the vertical inset only bounds its height).
     const edgePadding = React.useMemo(() => {
-        const inset = Platform.OS === 'web' && isMobileLayoutWidth(windowWidth)
+        const inset = Platform.OS === 'web' && phone
             ? MOBILE_AGENT_INPUT_POPOVER_EDGE_PADDING
             : DEFAULT_AGENT_INPUT_POPOVER_EDGE_PADDING;
-        // A desktop-width web window keeps its title strip (tabs, window controls) clear above.
-        const top = Platform.OS === 'web' && !isMobileLayoutWidth(windowWidth)
+        // A desktop-width web window keeps its title strip (tabs, window controls) clear above; elsewhere the
+        // popover may reach the top safe area (the status bar) and never runs under it.
+        const top = Platform.OS === 'web' && !phone
             ? Math.max(inset, DESKTOP_MAIN_CONTENT_DRAG_HEIGHT_PX)
-            : inset;
+            : Math.max(inset, safeAreaTop);
         return top === inset ? { horizontal: inset, vertical: inset } : { horizontal: inset, vertical: inset, top };
-    }, [windowWidth]);
+    }, [phone, safeAreaTop]);
 
     const maxHeightCap = React.useMemo(() => {
         if (Platform.OS === 'web' || effectiveKeyboardHeight <= 0) {
-            return input.maxHeightCap;
+            // A native phone's chip picker may grow up to the top safe area (owner 2026-11-10, PHONE-POPOVERS): the
+            // window bounds it, not the caller's desktop-sized cap.
+            return Platform.OS !== 'web' && phone ? undefined : input.maxHeightCap;
         }
 
         const visibleHeight = Math.max(0, windowHeight - effectiveKeyboardHeight);
@@ -161,7 +168,7 @@ export function useAgentInputPopoverLayout(input: Readonly<{
         const requestedCap = input.maxHeightCap ?? DEFAULT_POPOVER_MAX_HEIGHT;
         const shallowViewportCap = Math.floor(visibleHeight * NATIVE_KEYBOARD_VISIBLE_POPOVER_FRACTION);
         return Math.min(requestedCap, shallowViewportCap);
-    }, [effectiveKeyboardHeight, input.maxHeightCap, windowHeight]);
+    }, [effectiveKeyboardHeight, input.maxHeightCap, phone, windowHeight]);
 
     React.useEffect(() => {
         if (Platform.OS === 'web') return undefined;

@@ -270,15 +270,19 @@ export function AgentInputOverlayLayer(props: Readonly<{
             key: 'actionMenu',
             open: props.showActionMenu && props.hasActionMenuPopoverSections,
             anchorRef: props.actionMenuAnchorRef,
-            content: (
-                <AgentInputActionMenuPopoverContent
-                    actionMenuActions={actionMenuSubmenu.actions}
+            // A menu that pushes its row pickers (a phone panel or sheet) opens them by press only, as the shared
+            // dropdown does. With hover intent, the menu hidden under a pushed picker read the mouse as leaving and
+            // closed it (PATTERNS-1110; the sheet-only gate was lost when phone menus became panels).
+            content: ({ presentation, pushesSubmenus }) => {
+                const pushes = pushesSubmenus === true || presentation === 'sheet';
+                return <AgentInputActionMenuPopoverContent
+                    actionMenuActions={pushes ? actionMenuSubmenu.pressActions : actionMenuSubmenu.actions}
                     onCustomizeComposer={props.onCustomizeComposer}
-                    onPointerLeave={actionMenuSubmenu.onMenuPointerLeave}
+                    onPointerLeave={pushes ? undefined : actionMenuSubmenu.onMenuPointerLeave}
                 >
                     {rowPickers}
-                </AgentInputActionMenuPopoverContent>
-            ),
+                </AgentInputActionMenuPopoverContent>;
+            },
             onRequestClose: props.onActionMenuRequestClose,
             // Tall enough for the lab's whole menu (add actions, every control placed In +, Customize) without scrolling.
             maxHeightCap: 560,

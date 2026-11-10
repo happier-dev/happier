@@ -1,7 +1,8 @@
 import * as React from 'react';
 import type { NewSessionLaunchApprovalNoticeState } from '@/components/sessions/new/components/NewSessionLaunchApprovalNotice';
 import type { ViewStyle } from 'react-native';
-import { Keyboard, Platform, Pressable, StyleSheet as RNStyleSheet, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, StyleSheet as RNStyleSheet, View, useWindowDimensions } from 'react-native';
+import { dismissKeyboard } from '@/components/ui/keyboardAvoidance/dismissKeyboard';
 import { useNavigation, useRouter } from 'expo-router';
 import Animated, { type SharedValue } from 'react-native-reanimated';
 import { OVERLAY_SCRIM_BOTTOM_EXTENSION } from '@/components/ui/overlays/OverlayScrim';
@@ -20,7 +21,6 @@ import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockp
 import { useFloatingComposerEntrance } from './useFloatingComposerEntrance';
 import { useNewSessionFloatingComposer } from '@/components/sessions/new/navigation/useNewSessionFloatingComposer';
 import {
-    NEW_SESSION_CLOSE_ROW_HEIGHT,
     NewSessionComposerCloseButton,
     NewSessionComposerKeyboardDismissButton,
 } from '@/components/sessions/new/components/NewSessionComposerCloseButton';
@@ -279,10 +279,10 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
 
     const handleDismissKeyboard = React.useCallback(() => {
         blurActiveElementOnWeb();
-        Keyboard.dismiss();
+        dismissKeyboard();
     }, []);
 
-    // Dismissal is deliberately NOT `Keyboard.dismiss()` + a fade. Dismissing the keyboard here
+    // Dismissal is deliberately NOT `dismissKeyboard()` + a fade. Dismissing the keyboard here
     // retracts it over its own ~250ms, and the keyboard seat drags the whole composer — including
     // the scrim — down with it. Translating three stacked masked blur layers forces an offscreen
     // re-composite every frame, and that is what tore the frost into horizontal bands on the way
@@ -301,7 +301,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
             safeRouterBack({ router, navigation, fallbackHref: '/' });
             // AFTER the pop, never before: retracting the keyboard while this screen is still
             // mounted drags the composer — and the scrim's blur layers — down its curve.
-            Keyboard.dismiss();
+            dismissKeyboard();
         };
         entrance.leave(leave);
     }, [entrance.leave, navigation, router]);
@@ -330,11 +330,10 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
 
     const composerReservedHeight = props.newSessionBottomPadding
         + (shouldBottomAnchor
-            // The floating composer is bottom-anchored but still runs under the status bar and keeps
-            // a capsule-high status row (leave, keyboard) above its input. Neither is subtracted
-            // anywhere else, so without reserving them a long draft grows up through the status bar
-            // and carries the only visible dismiss control off screen with it.
-            ? (isFloatingComposer ? props.safeAreaTop + NEW_SESSION_CLOSE_ROW_HEIGHT : 0)
+            // The floating composer is bottom-anchored but still runs under the status bar: without
+            // reserving it a long draft grows up through it. Its status row (leave, keyboard) is the
+            // composer's own, measured and kept inside this room by `AgentInput`.
+            ? (isFloatingComposer ? props.safeAreaTop : 0)
             : props.safeAreaTop + props.newSessionTopPadding);
     // A centred desktop composer closes from its frosted ground and Escape; its way out belongs to the
     // bottom-anchored (touch) composition, as the quiet icons of the status row the card already draws.

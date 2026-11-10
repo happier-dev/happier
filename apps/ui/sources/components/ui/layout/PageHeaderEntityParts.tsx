@@ -7,7 +7,6 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { Icon } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { t } from '@/text';
 import type { PopoverAnchor } from '@/components/ui/popover/_types';
@@ -89,11 +88,10 @@ export const PageHeaderMenu = React.memo(function PageHeaderMenu(props: Readonly
         ...(action.subtitle ? { subtitle: action.subtitle } : {}),
         ...(action.category ? { category: action.category } : {}),
         ...(action.checked === undefined ? {} : { checked: action.checked }),
+        // The menu draws the check of a checked row.
         ...(action.loading
             ? { rightElement: <ActivitySpinner size="small" color={theme.colors.text.secondary} /> }
-            : action.checked
-                ? { rightElement: <Icon name="check" size={16} color={theme.colors.text.secondary} /> }
-                : {}),
+            : {}),
         ...(action.children && action.children.length > 0
             ? { submenu: { items: action.children.map((child) => toItem(child)), showCategoryTitles: false } }
             : {}),

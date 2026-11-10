@@ -6280,6 +6280,7 @@ const de: MachineAgentsTranslation = {
     showFewer: 'Weniger anzeigen',
     emptyInstalled: 'Noch kein Coding-Agent auf diesem Gerät. Wähle unten einen; Happier installiert ihn und meldet dich an.',
     offlineNote: ({ machine }) => `${machine} ist offline. Das hat es zuletzt gemeldet.`,
+    checkingAgents: 'Agenten werden geprüft…',
     firstTitle: 'Richte deinen ersten Agenten ein',
     firstLead: ({ machine }) => `${machine} ist verbunden, hat aber noch keinen Coding-Agenten. Wähle einen; Happier installiert ihn und meldet dich an.`,
     firstMore: ({ count }) => (count === 1 ? `Oder wähle aus 1 weiteren Agenten.` : `Oder wähle aus ${count} weiteren Agenten.`),
@@ -9078,6 +9079,7 @@ const de: typeof en = {
             heldInMore: 'Unter Mehr, solange „Immer wischen“ an ist',
             keepOnBar: 'Auf der Leiste behalten',
             removeFromBar: 'Von der Leiste entfernen',
+            pinnedSection: 'Angeheftet',
             openFiles: 'Dateien öffnen',
         },
         allTabs: {

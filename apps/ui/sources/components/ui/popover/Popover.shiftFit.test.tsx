@@ -90,9 +90,11 @@ async function renderPanel(
   // The content reports its laid-out size (the measurement boundary), as a mounted surface does.
   const contentView = findPopoverContentView(screen, 'AddPanel');
   expect(contentView).toBeTruthy();
+  // A native portal box carries the shadow outset above and below the surface; its layout includes both.
+  const outset = Number(flattenStyle(contentView?.props?.style).paddingTop ?? 0);
   await act(async () => {
     contentView?.props?.onLayout?.({
-      nativeEvent: { layout: { x: 0, y: 0, width: 900, height: over.contentHeight ?? seen.at(-1) ?? 600 } },
+      nativeEvent: { layout: { x: 0, y: 0, width: 900, height: (over.contentHeight ?? seen.at(-1) ?? 600) + outset * 2 } },
     });
     await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
   });

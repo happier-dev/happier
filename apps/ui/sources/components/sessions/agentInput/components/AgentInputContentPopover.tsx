@@ -26,6 +26,8 @@ export type AgentInputContentPopoverRenderArgs = Readonly<{
      * of this popover: it draws page rows and leaves focus alone.
      */
     inline?: boolean;
+    /** Submenus opened inside this popover push in place (a phone): the content has no hover intent. */
+    pushesSubmenus?: boolean;
 }>;
 
 export type AgentInputPopoverContent =
@@ -125,7 +127,7 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
             sheetSubtitle={props.header?.description}
             onRequestClose={props.onRequestClose}
         >
-            {({ maxHeight, presentation }) => {
+            {({ maxHeight, presentation, pushesSubmenus }) => {
                 // A phone sheet's band already shows the title and purpose.
                 const header = presentation === 'sheet' || props.header?.placement === 'label' ? undefined : props.header;
                 const contentMaxHeight = header ? Math.max(0, maxHeight - headerHeight) : maxHeight;
@@ -157,6 +159,7 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
                         requestClose: props.onRequestClose,
                         maxHeight: contentMaxHeight,
                         presentation,
+                        ...(pushesSubmenus ? { pushesSubmenus: true } : {}),
                     })}
                 </AgentInputPopoverSurface>
                 );

@@ -6288,6 +6288,7 @@ const pt: MachineAgentsTranslation = {
     showFewer: 'Mostrar menos',
     emptyInstalled: 'Ainda não há agente nesta máquina. Escolha um abaixo; o Happier instala e faz seu login.',
     offlineNote: ({ machine }) => `${machine} está offline. Isto foi o último que ela informou.`,
+    checkingAgents: 'Verificando agentes…',
     firstTitle: 'Configure seu primeiro agente',
     firstLead: ({ machine }) => `${machine} está conectado, mas ainda não tem agente. Escolha um; o Happier instala e faz seu login.`,
     firstMore: ({ count }) => (count === 1 ? `Ou escolha entre mais 1 agente.` : `Ou escolha entre mais ${count} agentes.`),
@@ -9087,6 +9088,7 @@ const pt: typeof en = {
             heldInMore: 'Em Mais enquanto “Sempre deslizar” está ativado',
             keepOnBar: 'Manter na barra',
             removeFromBar: 'Remover da barra',
+            pinnedSection: 'Fixados',
             openFiles: 'Abrir arquivos',
         },
         allTabs: {

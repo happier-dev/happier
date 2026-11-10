@@ -192,11 +192,9 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
     ): ReadonlyArray<DropdownMenuItem> => items.map((item) => ({
         ...item,
         category,
+        // The menu draws the check of a checked row.
         checked: item.id === selectedId,
-        rightElement: item.id === selectedId
-            ? <Icon name="check" size={16} color={actionIconColor} />
-            : undefined,
-    })), [actionIconColor]);
+    })), []);
     // Lab `clfilter:view`: what the list shows (Projects or Recent), where Needs you and Working sit, what
     // each row shows; then Filter… and the settings page. Every item is the Settings → Sessions setting.
     const identityItems = React.useMemo(() => resolveSessionListIdentityItems(), []);
@@ -224,7 +222,6 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
                 title: t('settingsSession.sessionList.rowContextTitle'),
                 category: rowsCategory,
                 checked: sessionListRowContextV1 !== false,
-                rightElement: sessionListRowContextV1 !== false ? <Icon name="check" size={16} color={actionIconColor} /> : undefined,
             },
             {
                 id: `statusWords:${sessionListStatusWords === true ? 'false' : 'true'}`,
@@ -232,7 +229,6 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
                 title: t('settingsSession.sessionList.statusWordsTitle'),
                 category: rowsCategory,
                 checked: sessionListStatusWords === true,
-                rightElement: sessionListStatusWords === true ? <Icon name="check" size={16} color={actionIconColor} /> : undefined,
             },
             {
                 id: 'menu:density',
@@ -401,7 +397,7 @@ export const SessionsListHeader = React.memo(function SessionsListHeader() {
 
     return (
         <View style={styles.listHeaderSection}>
-            <RecoveryKeyReminderBanner host="list" />
+            <RecoveryKeyReminderBanner header="none" />
         </View>
     );
 });

@@ -1,3 +1,4 @@
+import type * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/text', async () => {
@@ -164,5 +165,61 @@ describe('buildNewSessionAgentPickerOptions', () => {
         const byLabel = new Map(result.agentPickerOptions?.map((option) => [option.label, option]));
         expect(byLabel.get('claude')?.subtitle).toBeUndefined();
         expect(byLabel.get('codex')?.subtitle).toBe('profiles.machineLogin.status.notLoggedIn');
+    });
+
+    it('says once, in the open Agent pane, that the machine is offline instead of leaving every greyed Agent unexplained', () => {
+        const entry = (id: 'claude' | 'codex') => createEntry({
+            backendId: id, kind: 'builtInAgent', title: id, providerId: id, catalogAgentId: id, builtInAgentId: id,
+            capabilities: { session: { supported: true } },
+        });
+        const claude = entry('claude');
+        const codex = entry('codex');
+        const refreshAgents = vi.fn();
+        const build = (machineAgentsStatus: 'offline' | 'ready' | 'loading' | 'idle' | 'error') => buildNewSessionAgentPickerOptions({
+            useProfiles: false,
+            projectionCurrent: true,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            resolvedBackendEntries: [claude, codex],
+            getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: () => machineAgentsStatus === 'ready',
+            getBackendEntryUnavailabilityReason: (candidate) => machineAgentsStatus === 'ready'
+                ? null : `agent-not-ready:${candidate.agentId as 'claude' | 'codex'}`,
+            getBackendEntryMachineAgent: () => null,
+            selectedMachineName: 'Leeroys-MacBook-Pro',
+            machineAgentsStatus,
+            getEngineSelectionForTargetKey: () => ({ modelId: 'default', sessionModeId: null, configOverrides: {} }),
+            selectEngineSelection: vi.fn(),
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            selectedBackendTargetKey: claude.backendTargetKey,
+            selectedModelId: 'default',
+            refreshProbe: { phase: 'idle', onRefresh: refreshAgents },
+        });
+        type PaneProps = { modelSummary?: string; refreshProbe?: { failed?: boolean; refreshErrorMessage?: string; onRefresh?: () => void } | null };
+        const pane = (option: NonNullable<ReturnType<typeof build>['agentPickerOptions']>[number] | undefined) => (
+            option?.renderDetailContent?.({ onRequestClose: () => {} }) as React.ReactElement<PaneProps> | undefined
+        )?.props;
+        const paneLine = (option: Parameters<typeof pane>[0]) => pane(option)?.modelSummary;
+
+        // Not reported yet: the agents are being checked; the greyed strip says so once.
+        for (const status of ['loading', 'idle'] as const) {
+            expect((build(status).agentPickerOptions ?? []).map(paneLine))
+                .toEqual(['machineAgents.checkingAgents', 'machineAgents.checkingAgents']);
+        }
+        // The read failed: the pane's one failure line, whose Retry is the inventory owner's own refresh.
+        const failed = pane(build('error').agentPickerOptions?.[0]);
+        expect(failed?.modelSummary).toBeUndefined();
+        expect(failed?.refreshProbe).toEqual(expect.objectContaining({ failed: true, refreshErrorMessage: 'machineAgents.unknown' }));
+        failed?.refreshProbe?.onRefresh?.();
+        expect(refreshAgents).toHaveBeenCalledTimes(1);
+
+        const offline = build('offline').agentPickerOptions ?? [];
+        // No row repeats it; the pane under the strip says it once, whichever Agent is open.
+        expect(offline.map((option) => option.subtitle)).toEqual([undefined, undefined]);
+        expect(offline.map(paneLine)).toEqual(['machineAgents.offlineNote', 'machineAgents.offlineNote']);
+        // A reachable machine is quiet.
+        expect((build('ready').agentPickerOptions ?? []).map(paneLine)).toEqual([undefined, undefined]);
     });
 });

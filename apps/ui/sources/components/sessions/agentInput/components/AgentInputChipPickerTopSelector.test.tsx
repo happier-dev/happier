@@ -84,21 +84,26 @@ describe('AgentInputChipPickerTopSelector', () => {
 
         expect(codexButton).toBeTruthy();
         expect(claudeButton).toBeTruthy();
-        expect(codexButton?.findAll((node) => String(node.type) === 'Text').map(node => node.props.children)).toContain('Codex');
-        expect(claudeButton?.findAll((node) => String(node.type) === 'Text').map(node => node.props.children)).toContain('Claude');
-        expect(screen.findByTestId('agent-input-chip-picker.top-selector-option:contributed-agent')?.findAll((node) => String(node.type) === 'Text').map(node => node.props.children)).toContain('A contributed coding Agent');
-        // The compact rail has no checkmark at all, so the selected row's name is the only
+        // The strip is the Agents' marks alone (0.2's strip): no visible name beside a mark, so the
+        // name lives in the button's accessible name, and every Agent keeps one.
+        const contributedButton = screen.findByTestId('agent-input-chip-picker.top-selector-option:contributed-agent');
+        for (const button of [codexButton, claudeButton, contributedButton]) {
+            expect(button?.findAll((node) => String(node.type) === 'Text')).toEqual([]);
+        }
+        // The compact strip has no checkmark at all, so the selected mark's name is the only
         // place its state can live — `accessibilityState.selected` is dropped on a button role.
+        expect(codexButton?.props.accessibilityLabel).toContain('Codex');
         expect(codexButton?.props.accessibilityLabel).not.toBe('Codex');
         expect(claudeButton?.props.accessibilityLabel).toBe('Claude');
+        expect(contributedButton?.props.accessibilityLabel).toBe('A contributed coding Agent');
 
         const codexStyle = flattenStyle(codexButton?.props.style({ pressed: false }));
         const claudeStyle = flattenStyle(claudeButton?.props.style({ pressed: false }));
         const tabTarget = Math.max(HAPPIER_PAGE_METRICS.controlHeightPx, HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
         expect(codexStyle.minWidth).toBe(tabTarget);
         expect(codexStyle.minHeight).toBe(tabTarget);
-        // Content-sized tabs retain their full name and never shrink past the scroll end.
-        expect(codexStyle.width).toBeUndefined();
+        // A mark-only option is a square that never shrinks past the scroll end.
+        expect(codexStyle.width).toBe(codexStyle.height);
         expect(codexStyle.flexShrink).toBe(0);
         expect(codexStyle.height).toBe(codexStyle.minHeight);
         expect(codexStyle.backgroundColor).toEqual(expect.any(String));

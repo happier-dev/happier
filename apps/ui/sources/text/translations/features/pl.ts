@@ -6306,6 +6306,7 @@ const pl: MachineAgentsTranslation = {
     showFewer: 'Pokaż mniej',
     emptyInstalled: 'Na tej maszynie nie ma jeszcze agenta. Wybierz poniżej — Happier go zainstaluje i zaloguje cię.',
     offlineNote: ({ machine }) => `${machine} jest offline. Tak wyglądał ostatni raport.`,
+    checkingAgents: 'Sprawdzanie agentów…',
     firstTitle: 'Skonfiguruj pierwszego agenta',
     firstLead: ({ machine }) => `${machine} jest połączona, ale nie ma jeszcze agenta. Wybierz jednego — Happier go zainstaluje i zaloguje cię.`,
     firstMore: ({ count }) => (count === 1 ? `Albo wybierz z 1 innego agenta.` : `Albo wybierz spośród ${count} innych agentów.`),
@@ -9103,6 +9104,7 @@ const pl: typeof en = {
             heldInMore: 'W Więcej, gdy „Zawsze przesuwaj” jest włączone',
             keepOnBar: 'Zostaw na pasku',
             removeFromBar: 'Usuń z paska',
+            pinnedSection: 'Przypięte',
             openFiles: 'Otwórz pliki',
         },
         allTabs: {

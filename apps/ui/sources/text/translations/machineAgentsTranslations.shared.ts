@@ -84,6 +84,10 @@ export type MachineAgentsTranslation = Readonly<{
     phoneLead: (params: Readonly<{ agent: string; machine: string }>) => string;
     panelSignedInAs: (params: Readonly<{ account: string }>) => string;
     panelChecked: string;
+    signInUnavailable: string;
+    signInChanged: string;
+    signInCancelled: string;
+    signInServiceUnsupported: string;
 
     sectionTitle: string;
     sectionDescription: string;
@@ -93,6 +97,7 @@ export type MachineAgentsTranslation = Readonly<{
     showFewer: string;
     emptyInstalled: string;
     offlineNote: (params: Readonly<{ machine: string }>) => string;
+    checkingAgents: string;
 
     firstTitle: string;
     firstLead: (params: Readonly<{ machine: string }>) => string;
@@ -211,6 +216,10 @@ export const en: MachineAgentsTranslation = {
     phoneLead: ({ agent, machine }) => `${agent} is asking you to sign in. Open the page here, finish, and ${machine} picks it up.`,
     panelSignedInAs: ({ account }) => `Signed in as ${account}.`,
     panelChecked: 'Happier checked it a moment ago.',
+    signInUnavailable: "Sign-in could not be checked. Reconnect to this machine, then check again.",
+    signInChanged: "This sign-in terminal changed. Close it and open sign-in again.",
+    signInCancelled: "Sign-in was cancelled. You can open it again when ready.",
+    signInServiceUnsupported: "This service cannot sign in to this agent. Choose another sign-in method.",
 
     sectionTitle: 'Agents',
     sectionDescription: 'The coding agents on this machine and how each one signs in.',
@@ -220,6 +229,7 @@ export const en: MachineAgentsTranslation = {
     showFewer: 'Show fewer',
     emptyInstalled: 'No coding agent on this machine yet. Pick one below; Happier installs it and signs you in.',
     offlineNote: ({ machine }) => `${machine} is offline. This is what it last reported.`,
+    checkingAgents: 'Checking agents…',
 
     firstTitle: 'Set up your first agent',
     firstLead: ({ machine }) => `${machine} is connected, but has no coding agent yet. Pick one; Happier installs it and signs you in.`,

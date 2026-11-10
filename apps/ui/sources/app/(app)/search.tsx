@@ -4,6 +4,7 @@ import { useCurrentRouteParams } from '@/components/appShell/workspace/currentRo
 import { Platform } from 'react-native';
 
 import { UniversalSearchController } from '@/components/appShell/search/UniversalSearchController';
+import { RouteModalPortalScope } from '@/components/navigation/RouteModalPortalScope';
 import { useUniversalSearchRuntime } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 import { resolveUniversalSearchRouteInitialScope } from '@/components/appShell/search/universalSearchScope';
 import { TERMINAL_JUMP_ROUTE_PARAM } from '@/components/sessions/terminal/jump/terminalJumpTarget';
@@ -39,7 +40,10 @@ function UniversalSearchNativeRoute(): React.ReactElement {
         if (router.canGoBack()) router.back();
         else router.replace('/' as never);
     }, [router]);
+    // A modal route hosts its own popovers (the docked field's "This Home" chooser): portaled into the shell
+    // beneath this transparent overlay, they were measured across two screens and opened far from their chip.
     return (
+        <RouteModalPortalScope>
         <UniversalSearchController
             commands={commands}
             symbols={symbols}
@@ -52,6 +56,7 @@ function UniversalSearchNativeRoute(): React.ReactElement {
             presentation="route"
             onRequestClose={close}
         />
+        </RouteModalPortalScope>
     );
 }
 

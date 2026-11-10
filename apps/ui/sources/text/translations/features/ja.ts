@@ -6283,6 +6283,7 @@ const ja: MachineAgentsTranslation = {
     showFewer: '表示を減らす',
     emptyInstalled: 'このマシンにはまだエージェントがありません。下から選ぶと、Happier がインストールしてサインインします。',
     offlineNote: ({ machine }) => `${machine} はオフラインです。最後に報告された内容です。`,
+    checkingAgents: 'エージェントを確認中…',
     firstTitle: '最初のエージェントを設定',
     firstLead: ({ machine }) => `${machine} は接続済みですが、まだエージェントがありません。選ぶと Happier がインストールしてサインインします。`,
     firstMore: ({ count }) => (count === 1 ? `ほかに 1 つのエージェントから選べます。` : `ほかに ${count} のエージェントから選べます。`),
@@ -9080,6 +9081,7 @@ const ja: typeof en = {
             heldInMore: '「常にスワイプ」がオンの間は「その他」に表示',
             keepOnBar: 'バーに残す',
             removeFromBar: 'バーから外す',
+            pinnedSection: 'ピン留め',
             openFiles: 'ファイルを開く',
         },
         allTabs: {

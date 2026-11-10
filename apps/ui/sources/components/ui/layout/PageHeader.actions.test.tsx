@@ -65,3 +65,14 @@ it('draws the page\'s declared primary action at the same height', async () => {
 
   expect(drawnHeights(screen.findByTestId('declared-primary')!)).toContain(HAPPIER_PAGE_METRICS.controlHeightPx);
 });
+
+// The menu draws a checked row's check; a header menu that passed its own glyph as well showed two.
+it('leaves a checked header menu row\'s check to the menu', async () => {
+  const { PageHeaderMenu } = await import('@/components/ui/layout/PageHeaderEntityParts');
+  screen = await renderScreen(
+    <PageHeaderMenu actions={[{ id: 'pause', title: 'Don\'t pause', checked: true, onSelect: () => {} }]} />,
+  );
+  const menu = screen.root.findAll((node) => Array.isArray(node.props.items) && typeof node.props.onSelect === 'function')[0]!;
+  expect(menu.props.items).toEqual([expect.objectContaining({ id: 'pause', checked: true })]);
+  expect(menu.props.items[0].rightElement).toBeUndefined();
+});

@@ -93,7 +93,6 @@ export function buildWorkspaceScmBranchPopoverItems(input: Readonly<{
                 left: glyph('git-branch'),
                 disabled: worktree.isCurrent === true,
                 checked: worktree.isCurrent === true,
-                right: worktree.isCurrent ? glyph('check') : null,
             });
 
             if (input.canCreateWorktrees && worktree.isCurrent !== true && worktree.isMain !== true) {
@@ -149,14 +148,10 @@ export function buildWorkspaceScmBranchPopoverItems(input: Readonly<{
                 left: glyph('git-branch'),
                 checked: true,
                 accessibilityLabel: [currentEntry.name, ...facts].join(', '),
-                right: (
-                    <>
-                        {input.current && input.current.ahead > 0 ? (
-                            <Icon name="arrow-up" size={12} color={input.checkIconColor} accessibilityLabel={t('sessionGitBranches.ahead', { count: formatExactCount(input.current.ahead) })} />
-                        ) : null}
-                        {glyph('check')}
-                    </>
-                ),
+                // The menu draws the check beside this designation.
+                right: input.current && input.current.ahead > 0 ? (
+                    <Icon name="arrow-up" size={12} color={input.checkIconColor} accessibilityLabel={t('sessionGitBranches.ahead', { count: formatExactCount(input.current.ahead) })} />
+                ) : null,
             });
         }
         for (const branch of input.branches) {

@@ -68,4 +68,27 @@ describe('buildWorkspaceScmBranchPopoverItems (Git lab BR)', () => {
             subtitle: 'sessionGitBranches.keepAsideNothing',
         });
     });
+    // The menu draws a checked row's check beside its designation; a row that drew its own showed two.
+    it('leaves the check of the current branch and worktree to the menu, keeping the ahead mark', async () => {
+        const React = await import('react');
+        const { Icon } = await import('@/components/ui/icons/Icon');
+        const { buildWorkspaceScmBranchPopoverItems } = await import('./buildWorkspaceScmBranchPopoverItems');
+        const { branchItems, worktreeItems } = buildWorkspaceScmBranchPopoverItems({
+            ...base,
+            canLaunchWorktreeSession: true,
+            current: { changedCount: 0, ahead: 2 },
+            worktreeRows: [{ path: '/repo', branch: 'v0.3', isCurrent: true, isMain: true }],
+        } as any);
+        const glyphs = (node: unknown): string[] => {
+            if (!React.isValidElement(node)) return [];
+            const props = node.props as { name?: string; children?: unknown };
+            return [
+                ...(node.type === Icon && props.name ? [props.name] : []),
+                ...React.Children.toArray(props.children as React.ReactNode).flatMap(glyphs),
+            ];
+        };
+        const checked = [...branchItems, ...worktreeItems].filter((item) => item.checked === true);
+        expect(checked.map((item) => item.id)).toEqual(['branch:v0.3', 'worktree:open:/repo']);
+        expect(checked.map((item) => glyphs(item.right))).toEqual([['arrow-up'], []]);
+    });
 });

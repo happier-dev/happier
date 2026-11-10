@@ -6278,6 +6278,7 @@ const zhHant: MachineAgentsTranslation = {
     showFewer: '收合',
     emptyInstalled: '此機器上還沒有程式設計代理。在下方選擇一個，Happier 會為你安裝並登入。',
     offlineNote: ({ machine }) => `${machine} 已離線。以下是它最後回報的內容。`,
+    checkingAgents: '正在檢查代理…',
     firstTitle: '設定你的第一個代理',
     firstLead: ({ machine }) => `${machine} 已連線，但還沒有程式設計代理。選一個，Happier 會為你安裝並登入。`,
     firstMore: ({ count }) => (count === 1 ? `或從另外 1 個代理中選擇。` : `或從另外 ${count} 個代理中選擇。`),
@@ -9075,6 +9076,7 @@ const zhHant: typeof en = {
             heldInMore: '「一律滑動」開啟時收在「更多」中',
             keepOnBar: '保留在列上',
             removeFromBar: '從列中移除',
+            pinnedSection: '已釘選',
             openFiles: '開啟檔案',
         },
         allTabs: {

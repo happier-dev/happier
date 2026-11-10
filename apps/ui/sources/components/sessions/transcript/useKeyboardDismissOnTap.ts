@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { Keyboard, type GestureResponderEvent, type ViewProps } from 'react-native';
+import { type GestureResponderEvent, type ViewProps } from 'react-native';
+
+import { dismissKeyboard } from '@/components/ui/keyboardAvoidance/dismissKeyboard';
 
 const TAP_MOVE_TOLERANCE_PX = 8;
 
@@ -56,7 +58,7 @@ export function useKeyboardDismissOnTap(): Pick<ViewProps, 'onTouchStart' | 'onT
         const previous = tapStateRef.current;
         tapStateRef.current = null;
         if (previous && previous.moved === false) {
-            Keyboard.dismiss();
+            dismissKeyboard();
         }
     }, []);
 

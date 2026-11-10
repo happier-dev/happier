@@ -68,7 +68,8 @@ async function renderSidePopover() {
     const layout = async (height: number) => {
         const view = findPopoverContentView(screen, 'OptionsPanel');
         await act(async () => {
-            view?.props?.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 360, height } } });
+            // The box's layout carries the shadow outset above and below the surface.
+            view?.props?.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 360, height: height + NATIVE_SHADOW_OUTSET_PX * 2 } } });
             await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
         const style = flattenStyle(findPopoverContentView(screen, 'OptionsPanel')?.props?.style);

@@ -50,6 +50,7 @@ function Entry() {
     const shell = useNewSessionShellHost();
     return <><Pressable testID="open-dock" onPress={() => open()} />
         <Pressable testID="close-dock" onPress={shell?.close} />
+        <Pressable testID="collapse-dock" onPress={shell?.collapse} />
         <Pressable testID="native-picker-return" onPress={() => setNewSessionPickerReturnParams({
             navigation: { getState: () => undefined, dispatch: boundary.dispatch },
             router: { replace: boundary.replace },
@@ -142,6 +143,25 @@ describe('native shell Docked composer', () => {
             expect(state().draftId).toBe(first);
             expect(input().props.value).toBe('Retain this native draft');
         }
+        await act(async () => screen.unmount());
+    });
+
+    // PHONE-POPOVERS-1109: a composer that leaves while its field holds focus sends no blur, so a focus fact kept
+    // outside the composer outlived it, and the full-screen "Dismiss keyboard" catcher stayed over the page (the card
+    // folds to its pill when Send opens the Session it started).
+    it('drops its keyboard-dismissal catcher with the composer that was focused', async () => {
+        boundary.os = 'ios';
+        await account.restore({ settings: { newSessionPresentationModeV1: 'docked', glassPreset: 'solid' } });
+        const screen = await renderScreen(<Journey />, { createNodeMock: () => ({ blur() {}, focus() {} }) });
+        await screen.pressByTestIdAsync('open-dock');
+        const input = () => screen.tree.root.findAllByProps({ testID: 'new-session-composer-input' }).find(node => typeof node.props.onChangeText === 'function' && typeof node.props.value === 'string');
+        await vi.waitFor(async () => { await act(async () => {}); expect(input()).toBeDefined(); });
+        await act(async () => input()!.props.onFocus());
+        expect(screen.findAllHostsByTestId('new-session-docked-dismiss-keyboard')).toHaveLength(1);
+        // Folded with the keyboard up: the native field unmounts without a blur event.
+        await screen.pressByTestIdAsync('collapse-dock');
+        await vi.waitFor(async () => { await act(async () => {}); expect(input()).toBeUndefined(); });
+        expect(screen.findAllHostsByTestId('new-session-docked-dismiss-keyboard')).toHaveLength(0);
         await act(async () => screen.unmount());
     });
 });

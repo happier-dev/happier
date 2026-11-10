@@ -164,7 +164,7 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
 
     return (
         <PopoverPortalTargetContextProvider value={portalTarget}>
-            <OverlayPortalProvider>
+            <OverlayPortalProvider scope="local">
                 <View
                     ref={rootRef}
                     // Required on native: Popover measures the portal root to derive anchor-relative coordinates.

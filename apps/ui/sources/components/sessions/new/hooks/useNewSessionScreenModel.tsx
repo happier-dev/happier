@@ -2789,6 +2789,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         selectedBackendEntry,
         getBackendEntryMachineAgent,
         selectedMachineName: selectedMachineSentenceName,
+        machineAgentsStatus: machineAgents.status,
         selectedBackendTargetKey,
         setBackendTarget,
         modelMode,

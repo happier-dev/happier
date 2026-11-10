@@ -6286,6 +6286,7 @@ const fr: MachineAgentsTranslation = {
     showFewer: 'Afficher moins',
     emptyInstalled: 'Aucun agent sur cette machine pour l’instant. Choisis-en un ci-dessous ; Happier l’installe et te connecte.',
     offlineNote: ({ machine }) => `${machine} est hors ligne. Voici ce qu’elle a signalé en dernier.`,
+    checkingAgents: 'Vérification des agents…',
     firstTitle: 'Configure ton premier agent',
     firstLead: ({ machine }) => `${machine} est connecté, mais n’a pas encore d’agent. Choisis-en un ; Happier l’installe et te connecte.`,
     firstMore: ({ count }) => (count === 1 ? `Ou choisis parmi 1 autre agent.` : `Ou choisis parmi ${count} autres agents.`),
@@ -9085,6 +9086,7 @@ const fr: typeof en = {
             heldInMore: 'Dans Plus tant que « Toujours glisser » est activé',
             keepOnBar: 'Garder sur la barre',
             removeFromBar: 'Retirer de la barre',
+            pinnedSection: 'Épinglés',
             openFiles: 'Ouvrir les fichiers',
         },
         allTabs: {

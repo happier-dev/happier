@@ -6315,6 +6315,7 @@ const ru: MachineAgentsTranslation = {
     showFewer: 'Показать меньше',
     emptyInstalled: 'На этой машине пока нет агента. Выберите ниже — Happier установит его и выполнит вход.',
     offlineNote: ({ machine }) => `${machine} офлайн. Вот что она сообщила в последний раз.`,
+    checkingAgents: 'Проверяем агентов…',
     firstTitle: 'Настройте первого агента',
     firstLead: ({ machine }) => `${machine} подключена, но на ней пока нет агента. Выберите — Happier установит его и выполнит вход.`,
     firstMore: ({ count }) => (count === 1 ? `Или выберите ещё из 1 агента.` : `Или выберите из ещё ${count} агентов.`),
@@ -9114,6 +9115,7 @@ const ru: typeof en = {
             heldInMore: 'В «Ещё», пока включено «Всегда смахивать»',
             keepOnBar: 'Оставить на панели',
             removeFromBar: 'Убрать с панели',
+            pinnedSection: 'Закреплённые',
             openFiles: 'Открыть файлы',
         },
         allTabs: {

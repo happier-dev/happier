@@ -79,7 +79,8 @@ import { useNewSessionDockHoldsComposerSeat, useNewSessionEntryRouter } from '@/
 import * as React from "react";
 import { AtmosphereSurfaceFrame } from "@/components/atmosphere/AtmosphereSurfaceFrame";
 import { useWorkspaceFileOriginReturn } from "@/components/workspaces/files/useWorkspaceFileOriginReturn";
-import { Keyboard, Platform, Pressable, View, useWindowDimensions } from "react-native";
+import { Platform, Pressable, View, useWindowDimensions } from "react-native";
+import { dismissKeyboard } from '@/components/ui/keyboardAvoidance/dismissKeyboard';
 import { layout } from "@/components/ui/layout/layout";
 import { useChromeSafeAreaInsets } from "@/components/ui/layout/useChromeSafeAreaInsets";
 import { useUnistyles } from "react-native-unistyles";
@@ -1376,7 +1377,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         const workspaceModeToggleActionId = resolveMobileWorkspaceExperienceToggleActionId(mobileWorkspaceExperience);
         if (actionId === workspaceModeToggleActionId && showWorkspaceExperienceToggle) {
             if (actionId === 'header.openMobileWorkspaceCockpit') {
-                Keyboard.dismiss();
+                dismissKeyboard();
             }
             if (mobileWorkspaceExperience === 'cockpit' && pathname === `/session/${sessionId}`) {
                 routerRef.current.replace(buildCurrentSessionHref() as any);

@@ -77,6 +77,25 @@ describe('Popover phone presentation', () => {
         expect(host.findAll(node => node.props.role === 'dialog' && node.props.accessibilityViewIsModal === true)).toHaveLength(0);
     });
 
+    // Owner 19:16 item 01: the Project Look sheet opened inside the page's popover scope and was hosted there,
+    // under the shell's floating header and tab bar, which took its close and drag. A sheet is a screen surface:
+    // it is hosted by the screen's (or its dialog's) overlay layer, never by a page-local popover scope.
+    it('hosts a sheet opened inside a page popover scope at the screen overlay layer', async () => {
+        const { PopoverScope } = await import('./PopoverScope');
+        const screen = await renderScreen(<OverlayPortalProvider>
+            <View testID="page">
+                <PopoverScope>
+                    <Popover open phonePresentation="sheet" accessibilityLabel="Look" onRequestClose={() => {}}>
+                        {() => <View testID="look-sheet-content" />}
+                    </Popover>
+                </PopoverScope>
+            </View>
+            <View testID="screen-overlay-host"><OverlayPortalHost /></View>
+        </OverlayPortalProvider>);
+        expect(screen.findByTestId('page')!.findAllByProps({ testID: 'look-sheet-content' })).toHaveLength(0);
+        expect(screen.findByTestId('screen-overlay-host')!.findAllByProps({ testID: 'look-sheet-content' }).length).toBeGreaterThan(0);
+    });
+
     it('keeps long plain sheet content reachable through the frame body scroller', async () => {
         viewport.height = 360;
         const recover = vi.fn();
@@ -298,6 +317,121 @@ describe('Popover phone presentation', () => {
             </Popover>,
         );
         expect(['top', 'bottom']).toContain(renderedBounds?.placement);
+    });
+
+    // Native QA 11-09 (R2): a View options panel taller than either side of its trigger slid up over the trigger
+    // row. A phone panel takes the side with more room, capped at it, and scrolls; it never covers its trigger.
+    it('opens a tall phone panel on its roomier side, capped there, instead of sliding over its trigger', async () => {
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+        const { flushHookEffects } = await import('@/dev/testkit/hooks/flushHookEffects');
+        const portalRootNode = {
+            measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => cb(0, 0, 390, 844),
+            measure: (cb: (...args: number[]) => void) => cb(0, 0, 390, 844, 0, 0),
+        };
+        let renderedBounds: PopoverRenderProps | undefined;
+        await renderScreen(
+            <PopoverPortalTargetContextProvider value={{ rootRef: { current: portalRootNode as never }, layout: { width: 390, height: 844 } }}>
+                <OverlayPortalProvider>
+                    <Popover open phonePresentation="panel" fit="shift" maxHeightCap={700} placement="bottom" gap={8}
+                        backdrop={false} portal={{ native: true }}
+                        anchor={{ kind: 'rect', rect: { left: 330, top: 300, width: 40, height: 40 } }}
+                        accessibilityLabel="View options" onRequestClose={() => {}}>
+                        {(bounds) => {
+                            renderedBounds = bounds;
+                            return <FloatingOverlay maxHeight={bounds.maxHeight}><View testID="panel-content" /></FloatingOverlay>;
+                        }}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+        await act(async () => {
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
+        });
+        expect(renderedBounds?.placement).toBe('bottom');
+        // Below the trigger the window leaves at most 844 - 340 - 8; the panel's height stays within it.
+        expect(renderedBounds?.maxHeight).toBeGreaterThan(0);
+        expect(renderedBounds?.maxHeight).toBeLessThanOrEqual(844 - 340 - 8);
+    });
+
+    // Owner 19:16 item 01: every popover stops below the top safe area (the status bar), whatever room it has.
+    it('stops a popover opened upward below the top safe area of a screen-level portal', async () => {
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+        const { flushHookEffects } = await import('@/dev/testkit/hooks/flushHookEffects');
+        const portalRootNode = {
+            measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => cb(0, 0, 390, 844),
+            measure: (cb: (...args: number[]) => void) => cb(0, 0, 390, 844, 0, 0),
+        };
+        let renderedBounds: PopoverRenderProps | undefined;
+        await renderScreen(
+            <PopoverPortalTargetContextProvider value={{ rootRef: { current: portalRootNode as never }, layout: { width: 390, height: 844 } }}>
+                <OverlayPortalProvider>
+                    <Popover open phonePresentation="panel" placement="top" gap={8} backdrop={false} portal={{ native: true }}
+                        anchor={{ kind: 'rect', rect: { left: 20, top: 700, width: 120, height: 32 } }}
+                        accessibilityLabel="This Home" onRequestClose={() => {}}>
+                        {(bounds) => {
+                            renderedBounds = bounds;
+                            return <FloatingOverlay maxHeight={bounds.maxHeight}><View testID="panel-content" /></FloatingOverlay>;
+                        }}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+        await act(async () => {
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
+        });
+        expect(renderedBounds?.placement).toBe('top');
+        // Above the trigger: 700 - 8, less the 24 status bar the safe area reports.
+        expect(renderedBounds?.maxHeight).toBe(700 - 8 - 24);
+    });
+
+    // SESSION-PHONE 21:50: a Session header menu opened invisibly from a paged pane. A phone panel spans its
+    // boundary from the boundary's left edge; with a portal root wider than the screen and scrolled to its second
+    // page, that edge is off the screen, so the panel was placed (and its backdrop live) where nobody could see it.
+    // A placement stays on the part of the portal root the screen shows.
+    it('keeps a phone panel on screen under its trigger when its portal root runs past the screen (a paged pane)', async () => {
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+        const { flushHookEffects } = await import('@/dev/testkit/hooks/flushHookEffects');
+        const { flattenTestStyle, findPopoverContentView } = await import('@/dev/testkit/harness/popoverHarness');
+        // Two pages side by side, moved one page left: the second is on screen.
+        const portalRootNode = {
+            measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => cb(-390, 0, 780, 844),
+            measure: (cb: (...args: number[]) => void) => cb(0, 0, 780, 844, -390, 0),
+        };
+        const anchorNode = {
+            measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => cb(330, 100, 40, 40),
+            measureLayout: (_root: unknown, onSuccess: (x: number, y: number, w: number, h: number) => void) => onSuccess(720, 100, 40, 40),
+        };
+        let renderedBounds: PopoverRenderProps | undefined;
+        const screen = await renderScreen(
+            <PopoverPortalTargetContextProvider value={{ rootRef: { current: portalRootNode as never }, layout: { width: 780, height: 844 } }}>
+                <OverlayPortalProvider>
+                    <Popover open phonePresentation="panel" placement="bottom" gap={8} backdrop={false}
+                        portal={{ native: true, anchorAlign: 'start' }} anchorRef={{ current: anchorNode as never }}
+                        accessibilityLabel="Session" onRequestClose={() => {}}>
+                        {(bounds) => {
+                            renderedBounds = bounds;
+                            return React.createElement('PopoverChild');
+                        }}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+        await act(async () => {
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
+        });
+        const style = flattenTestStyle(findPopoverContentView(screen)?.props?.style);
+        const outset = Number(style.paddingTop ?? 0);
+        // The panel's surface in window space: the root starts 390 left of the screen.
+        const windowLeft = Number(style.left) + outset - 390;
+        const surfaceWidth = Number(style.width) - outset * 2;
+        expect(renderedBounds?.placement).toBe('bottom');
+        expect(Number(style.top) + outset).toBe(148);
+        // The whole panel stands on the screen's 390, within its gutters.
+        expect(windowLeft).toBeGreaterThanOrEqual(0);
+        expect(windowLeft + surfaceWidth).toBeLessThanOrEqual(390);
     });
 
     // NATIVE-SWEEP-1110 L10: a plain menu (cockpit More, a draft's ⋯) kept its desktop width, or opened left of a

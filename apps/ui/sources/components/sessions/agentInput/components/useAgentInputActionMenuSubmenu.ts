@@ -26,6 +26,8 @@ export function useAgentInputActionMenuSubmenu(
   }>,
 ): Readonly<{
   actions: ReadonlyArray<AgentInputActionMenuAction>;
+  /** The same rows without hover intent, for a menu that pushes its pickers in place (a phone): press only. */
+  pressActions: ReadonlyArray<AgentInputActionMenuAction>;
   /** The pointer left the + menu's surface. */
   onMenuPointerLeave: (event: unknown) => void;
   submenu: AgentInputActionMenuSubmenu;
@@ -84,6 +86,11 @@ export function useAgentInputActionMenuSubmenu(
     [hover, params.actions, rowAnchorRef],
   );
 
+  const pressActions = React.useMemo(
+    () => actions.map(({ onHover: _hover, ...action }) => action),
+    [actions],
+  );
+
   const submenu = React.useMemo<AgentInputActionMenuSubmenu>(
     () => ({
       title: openRowTitle,
@@ -93,5 +100,5 @@ export function useAgentInputActionMenuSubmenu(
     [hover.surfacePointerChange, openRowTitle, params.returnToMenu],
   );
 
-  return { actions, onMenuPointerLeave: hover.scheduleClose, submenu };
+  return { actions, pressActions, onMenuPointerLeave: hover.scheduleClose, submenu };
 }

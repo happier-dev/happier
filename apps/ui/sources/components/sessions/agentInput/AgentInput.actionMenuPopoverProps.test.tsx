@@ -55,7 +55,10 @@ vi.mock('@/modal', async () => {
 });
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
-vi.mock('react-native-keyboard-controller', () => ({ useFocusedInputHandler: () => {} }));
+vi.mock('react-native-keyboard-controller', () => ({
+    useFocusedInputHandler: () => {},
+    KeyboardController: { dismiss: () => Promise.resolve() },
+}));
 
 const inputFocus = vi.hoisted(() => vi.fn());
 vi.mock('@/components/ui/forms/MultiTextInput', () => ({
@@ -118,6 +121,8 @@ function findSelectionListPopoverByOpen(open: boolean): Record<string, unknown> 
 
 /** The presentation the shared Popover reports to its content (a phone sheet in the sheet test). */
 const popoverPresentation: { current: 'sheet' | undefined } = { current: undefined };
+/** Popover's own push decision (a phone panel), as its render props report it. */
+const popoverPushesSubmenus: { current: boolean } = { current: false };
 
 function renderPopoverChildren(
     props: Readonly<{
@@ -126,7 +131,7 @@ function renderPopoverChildren(
     }>,
 ): React.ReactNode {
     return typeof props.children === 'function'
-        ? props.children({ maxHeight: props.maxHeightCap ?? 360, presentation: popoverPresentation.current })
+        ? props.children({ maxHeight: props.maxHeightCap ?? 360, presentation: popoverPresentation.current, ...(popoverPushesSubmenus.current ? { pushesSubmenus: true } : {}) })
         : props.children ?? null;
 }
 
@@ -864,6 +869,30 @@ describe('AgentInput (action menu popover props)', () => {
             expect(screen.findByTestId('machine-content')).toBeTruthy();
         } finally {
             popoverPresentation.current = undefined;
+        }
+    });
+
+    // PATTERNS-1110: at web 390 the + menu is a phone panel that pushes its row pickers; hover intent there closed a
+    // pushed picker as soon as the mouse "left" the hidden menu.
+    it('gives a + menu that pushes its pickers (a phone panel) no hover intent: its rows open by press only', async () => {
+        popoverPushesSubmenus.current = true;
+        try {
+            capturedActionMenuContent.last = null;
+            const { AgentInput } = await import('./AgentInput');
+            setComposerPlacements({ machine: 'overflow' });
+            const screen = await renderScreen(<AgentInput value="" placeholder="Type" onChangeText={() => {}} onSend={() => {}}
+                autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+                machinePopover={{ renderContent: () => React.createElement('View', { testID: 'machine-content' }) }}
+                machineName="Builder" onMachineClick={() => {}} />);
+            await screen.pressByTestIdAsync('agent-input-action-menu-button');
+            const machineRow = getCapturedActionMenuActions().find((action: { id?: string }) => action.id === 'machine') as
+                ({ onHover?: () => void; onPress?: () => void } | undefined);
+            expect(machineRow?.onHover).toBeUndefined();
+            expect((capturedActionMenuContent.last as { onPointerLeave?: unknown } | null)?.onPointerLeave).toBeUndefined();
+            act(() => machineRow?.onPress?.());
+            expect(screen.findByTestId('machine-content')).toBeTruthy();
+        } finally {
+            popoverPushesSubmenus.current = false;
         }
     });
 

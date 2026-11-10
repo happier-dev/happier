@@ -41,6 +41,7 @@ import { hiddenModelVisibilityKeys, resolveSessionModelSourceDescriptor } from '
 import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { OPTION_PICKER_HEADER_ACTION_METRICS } from '@/components/sessions/pickers/OptionPickerOverlay';
 
 export type NewSessionEngineOptionDetailProps = Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
@@ -136,8 +137,10 @@ function EngineFavoriteToggle(props: Readonly<{
             iconName={'star'}
             accessibilityLabel={actionLabel}
             tooltip={actionLabel}
-            iconSize={20}
-            interactiveTargetGapPx={4}
+            // The refresh control's twin beside it in the Model header: same box, glyph and touching gap.
+            size={OPTION_PICKER_HEADER_ACTION_METRICS.boxPx}
+            iconSize={OPTION_PICKER_HEADER_ACTION_METRICS.glyphPx}
+            interactiveTargetGapPx={OPTION_PICKER_HEADER_ACTION_METRICS.interactiveTargetGapPx}
             tone={props.favorite ? 'primary' : 'default'}
             variant="plain"
             onPress={props.onToggle}

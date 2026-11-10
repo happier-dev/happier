@@ -6288,6 +6288,7 @@ const ca: MachineAgentsTranslation = {
     showFewer: 'Mostra’n menys',
     emptyInstalled: 'Aquesta màquina encara no té cap agent. Tria’n un a sota; Happier l’instal·la i t’hi connecta.',
     offlineNote: ({ machine }) => `${machine} és fora de línia. Això és el darrer que va informar.`,
+    checkingAgents: 'Comprovant els agents…',
     firstTitle: 'Configura el teu primer agent',
     firstLead: ({ machine }) => `${machine} està connectat, però encara no té cap agent. Tria’n un; Happier l’instal·la i t’hi connecta.`,
     firstMore: ({ count }) => (count === 1 ? `O tria entre 1 agent més.` : `O tria entre ${count} agents més.`),
@@ -9087,6 +9088,7 @@ const ca: typeof en = {
             heldInMore: 'A Més mentre “Llisca sempre” està activat',
             keepOnBar: 'Mantén a la barra',
             removeFromBar: 'Treu de la barra',
+            pinnedSection: 'Fixats',
             openFiles: 'Obre fitxers',
         },
         allTabs: {

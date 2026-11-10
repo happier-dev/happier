@@ -4,7 +4,7 @@ import { BackHandler, Keyboard, Platform, StyleSheet as RNStyleSheet, View, type
 import { usePopoverBoundaryRef } from './PopoverBoundary';
 import { usePopoverScrollSourceRef } from './PopoverScrollSource';
 import { requireRadixDismissableLayer } from '@/utils/web/radixCjs';
-import { useOverlayPortal } from './OverlayPortal';
+import { useLayerOverlayPortal, useOverlayPortal } from './OverlayPortal';
 import {
     ModalPortalTargetProvider,
     useHasModalPortalTargetProvider,
@@ -447,7 +447,10 @@ function PushedPhonePopover(props: PopoverProps & Readonly<{ stack: PhoneSheetPu
 }
 
 function PhonePopoverSheet(props: PopoverProps) {
-    const overlayPortal = useOverlayPortal();
+    // A sheet is a screen surface: hosted above its layer's chrome, never inside a page's popover scope.
+    const layerOverlayPortal = useLayerOverlayPortal();
+    const nearestOverlayPortal = useOverlayPortal();
+    const overlayPortal = layerOverlayPortal ?? nearestOverlayPortal;
     const portalId = React.useId();
     const { width: windowWidth, height: windowHeight } = usePresentationWindowDimensions();
     const insets = useChromeSafeAreaInsets();
@@ -957,6 +960,11 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     const [anchorRectState, setAnchorRectState] = React.useState<WindowRect | null>(null);
     const [boundaryRectState, setBoundaryRectState] = React.useState<WindowRect | null>(null);
     const [contentRectState, setContentRectState] = React.useState<WindowRect | null>(null);
+    // The visible surface's height: a native portal box also carries the shadow outset above and below it, which
+    // may bleed into the edge padding. Placing by the box height lifted a full-height panel over its trigger.
+    const measuredSurfaceHeight = contentRectState
+        ? Math.max(0, contentRectState.height - nativePortalShadowOutset * 2)
+        : null;
     // The side the popover is shown on, which its position and its entrance both follow. A designed panel
     // (`fit: 'shift'`) that placement hung below its trigger is measured at its own height: when it does not fit
     // below but fits above, it opens above, whole, instead of sliding up over the trigger; it slides only when it
@@ -964,14 +972,14 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     // dropdown low in a dialog) opens below after all once its measured content fits there, so it never covers
     // the field's own label and help line.
     const shownPlacement: PopoverLayoutProps['placement'] = (() => {
-        if (!anchorRectState || !contentRectState) return computed.placement;
+        if (!anchorRectState || measuredSurfaceHeight === null) return computed.placement;
         const shiftedPanel = computed.placement === 'bottom' && props.fit === 'shift';
         const flippedFromBottom = computed.placement === 'top' && placement === 'bottom';
         if (!shiftedPanel && !flippedFromBottom) return computed.placement;
         const boundary = boundaryRectState ?? getFallbackBoundaryRect({ windowWidth, windowHeight });
-        const fitsBelow = anchorRectState.y + anchorRectState.height + gap + contentRectState.height <= boundary.y + boundary.height;
+        const fitsBelow = anchorRectState.y + anchorRectState.height + gap + measuredSurfaceHeight <= boundary.y + boundary.height;
         if (flippedFromBottom) return fitsBelow ? 'bottom' : 'top';
-        const fitsAbove = anchorRectState.y - gap - contentRectState.height >= boundary.y;
+        const fitsAbove = anchorRectState.y - gap - measuredSurfaceHeight >= boundary.y;
         return !fitsBelow && fitsAbove ? 'top' : 'bottom';
     })();
     const popoverMotionDirection = resolveOverlayMotionDirectionFromPlacement(shownPlacement);
@@ -1024,6 +1032,8 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     // The shell's floating bottom chrome (tab bar, docked band) covers the page and reserves nothing, so the popover
     // treats it like the keyboard: as the bottom of the usable viewport (NATIVE-SWEEP L12: View options over the bar).
     const bottomChromeClearance = useSessionCockpitPageBottomClearance();
+    // The status bar above a native screen: no popover runs under it (owner 19:16 item 01).
+    const safeAreaTop = useChromeSafeAreaInsets().top;
 
     const recompute = React.useCallback(async () => {
         if (!open) return;
@@ -1249,13 +1259,27 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
             // bottom viewport. Without this, `placement="auto"` can flip a menu into the covered region, making
             // it look like the popover disappeared, and a tall panel runs under the tab bar.
             const bottomOcclusion = Math.max(keyboardHeight, bottomChromeClearance);
-            const boundaryRect: WindowRect =
-                bottomOcclusion > 0
-                    ? {
-                        ...boundaryRectBase,
-                        height: Math.max(0, boundaryRectBase.height - bottomOcclusion),
-                    }
-                    : boundaryRectBase;
+            const unoccludedBoundary: WindowRect = {
+                ...boundaryRectBase,
+                height: Math.max(0, boundaryRectBase.height - bottomOcclusion),
+            };
+            // A native portal root can reach past the screen (a paged pane's row of pages, a pane sliding away) and
+            // under the status bar: the popover stays on the part the screen shows, below the top safe area. A phone
+            // panel spans its boundary from the boundary's edge, so a root edge off the screen placed it out of
+            // sight with its backdrop live (SESSION-PHONE 21:50). A root the screen does not show leaves no room:
+            // the popover stays unplaced (and inert) rather than open where nobody can see it.
+            const portalRootWindowRect = portalRootNode ? await measureInWindow(portalRootNode) : null;
+            if (!isMountedRef.current) return false;
+            const boundaryRect: WindowRect = (() => {
+                if (!portalRootWindowRect) return unoccludedBoundary;
+                const screenTop = safeAreaTop - portalRootWindowRect.y;
+                const screenLeft = -portalRootWindowRect.x;
+                const left = Math.max(unoccludedBoundary.x, screenLeft);
+                const top = Math.max(unoccludedBoundary.y, screenTop);
+                const right = Math.min(unoccludedBoundary.x + unoccludedBoundary.width, screenLeft + windowWidth);
+                const bottom = Math.min(unoccludedBoundary.y + unoccludedBoundary.height, screenTop - safeAreaTop + windowHeight);
+                return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+            })();
 
             // Shrink the usable boundary so the popover doesn't sit flush to the container edges.
             // (This also makes maxHeight/maxWidth clamping respect the margin.)
@@ -1334,8 +1358,10 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
             });
 
             // A designed panel that fits on neither side keeps its size and slides inside the boundary;
-            // the bottom placement's clamp then lifts it until it ends at the boundary's bottom edge.
+            // the bottom placement's clamp then lifts it until it ends at the boundary's bottom edge. A phone
+            // panel never covers its trigger (R2): it takes the side with more room and scrolls inside it.
             const shiftsToFit = props.fit === 'shift'
+                && !spansPhone
                 && (resolvedPlacement === 'top' || resolvedPlacement === 'bottom')
                 && Math.max(availableTop, availableBottom) < preferredRoom;
             const placementUsed = shiftsToFit ? 'bottom' : resolvedPlacement;
@@ -1439,7 +1465,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
         } else {
             scheduleFrame(() => { void measureWithRetries(0); });
         }
-    }, [anchorAlignVerticalOnPortal, anchorRef, anchorRectFromProp, bottomChromeClearance, boundaryRef, edgeInsets.horizontal, edgeInsets.top, edgeInsets.bottom, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, preferredRoom, placement, props.clearanceRef, props.horizontalBoundaryRef, props.fit, props.flip, props.placementMinSpace, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, sizesToAnchorExplicitly, windowHeight, windowWidth, portalTarget]);
+    }, [anchorAlignVerticalOnPortal, anchorRef, anchorRectFromProp, bottomChromeClearance, boundaryRef, edgeInsets.horizontal, edgeInsets.top, edgeInsets.bottom, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, preferredRoom, placement, props.clearanceRef, props.horizontalBoundaryRef, props.fit, props.flip, spansPhone, safeAreaTop, props.placementMinSpace, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, sizesToAnchorExplicitly, windowHeight, windowWidth, portalTarget]);
 
     React.useLayoutEffect(() => {
         if (!open) return;
@@ -1691,7 +1717,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
 
             const top = (() => {
                 if (computed.placement === 'left' || computed.placement === 'right') {
-                    const contentHeight = contentRectState?.height ?? computed.maxHeight;
+                    const contentHeight = measuredSurfaceHeight ?? computed.maxHeight;
                     const desiredTopRaw = (() => {
                         switch (anchorAlignVerticalOnPortal) {
                             case 'end':
@@ -1720,7 +1746,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                 }
 
                 // top/bottom
-                const contentHeight = contentRectState?.height ?? computed.maxHeight;
+                const contentHeight = measuredSurfaceHeight ?? computed.maxHeight;
                 const topForBottom = Math.min(
                     boundaryRect.y + boundaryRect.height - contentHeight,
                     Math.max(boundaryRect.y, anchorRectState.y + anchorRectState.height + gap),
@@ -1761,7 +1787,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                             : boundaryRect.y + boundaryRect.height;
                     // The box never starts above the boundary: a trigger that has scrolled up while the panel
                     // still stands at its last measured size would otherwise carry it out of the window.
-                    const panelHeight = contentRectState?.height ?? computed.maxHeight;
+                    const panelHeight = measuredSurfaceHeight ?? computed.maxHeight;
                     const boundaryTopInPortalSpace =
                         position === 'absolute'
                             ? boundaryRect.y - webPortalOffsetY

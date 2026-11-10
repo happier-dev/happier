@@ -6,8 +6,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
 import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 import { HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 
 import { resolveAgentInputChipPickerOptionAccessibilityLabel } from "./AgentInputChipPickerTypes";
 import type {
@@ -27,7 +25,8 @@ export type AgentInputChipPickerTopSelectorProps = Readonly<{
     onFocusOption: (optionId: string) => void;
 }>;
 
-// An option is a control-height chip under every pointer; a finger reaches it through the hit area.
+// An option is the Agent's mark alone in a control-height square (0.2's strip); its name is the accessible name, and a
+// finger reaches it through the hit area.
 const PICKER_OPTION_SIZE = HAPPIER_PAGE_METRICS.controlHeightPx;
 /** Half the strip's 8 px gap on each side: neighbouring options' hit areas meet, never overlap. */
 const PICKER_OPTION_HIT_REACH = { left: 4, right: 4 } as const;
@@ -110,7 +109,6 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                                     <View style={styles.statusBadge} pointerEvents="none">{normalizeNodeForView(option.statusMarker)}</View>
                                 ) : null}
                             </View>
-                            <Text style={styles.optionLabel}>{option.label}</Text>
                         </HappierPressable>
                         </React.Fragment>
                     );
@@ -126,31 +124,27 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     scrollContainer: {
         width: '100%',
-        minHeight: PICKER_OPTION_SIZE + 20,
+        minHeight: PICKER_OPTION_SIZE + theme.space.s12,
     },
+    // The strip stands as far from the popover's top as from its side; the pane below brings its own top inset.
     scrollContent: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
         paddingHorizontal: theme.space.s12,
-        paddingVertical: theme.space.s10,
+        paddingTop: theme.space.s12,
+        paddingBottom: 0,
     },
     optionButton: {
+        width: PICKER_OPTION_SIZE,
         height: PICKER_OPTION_SIZE,
         minWidth: PICKER_OPTION_SIZE,
         minHeight: PICKER_OPTION_SIZE,
         flexShrink: 0,
-        flexDirection: 'row',
-        gap: theme.space.s8,
-        paddingHorizontal: theme.space.s12,
         borderRadius: AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: 'transparent',
-    },
-    optionLabel: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.primary,
     },
     iconSlot: {
         position: 'relative',

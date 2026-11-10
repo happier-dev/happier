@@ -16,7 +16,9 @@ import type { NewSessionEngineOptionDetailProps } from '@/components/sessions/ne
 import { Icon } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 import { buildSessionAgentPickerOptions } from '@/components/sessions/agentPicker/buildSessionAgentPickerOptions';
+import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
+import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
 import { resolveMachineAgentPickerPlacement, type MachineAgentPickerPlacement } from '@/components/machines/agents/machineAgentPresentation';
 import { MachineAgentPickerMarker } from '@/components/machines/agents/MachineAgentPickerMarker';
 import type { SessionAgentPickerSelection } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
@@ -80,7 +82,50 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     installMachineAgent?: (agent: MachineAgent) => void;
     /** The composer's machine name, for the rail group headings. */
     selectedMachineName?: string | null;
+    /**
+     * The composer machine's inventory status, from the one inventory owner (`useMachineAgents`). While it has no
+     * ready report, Agents are unready with no per-row reason; the open Agent's pane says why once.
+     */
+    machineAgentsStatus?: MachineAgentsSnapshot['status'];
 }>;
+
+type MachineAgentsPaneStatus = Readonly<{
+    modelSummary?: string;
+    refreshProbe?: OptionPickerProbeState | null;
+}>;
+
+/**
+ * Why the strip's Agents are unready when the machine has not given a ready report, said once in the open Agent's
+ * pane. The inventory owner's status is the only input; the per-entry `agent-not-ready` reason (the selection owner's
+ * classification) only decides whether any Agent is waiting on it. A read failure is the pane's one failure line, whose
+ * Retry is the caller's existing refresh (`refreshProbe`, which carries the inventory owner's refresh).
+ */
+function resolveMachineAgentsPaneStatus(params: Readonly<{
+    status: MachineAgentsSnapshot['status'] | undefined;
+    machineName: string | null | undefined;
+    anyAgentWaitingOnMachine: boolean;
+    refreshProbe: OptionPickerProbeState | null | undefined;
+}>): MachineAgentsPaneStatus | null {
+    if (!params.anyAgentWaitingOnMachine) return null;
+    switch (params.status) {
+        case undefined:
+        case 'ready':
+            return null;
+        case 'offline':
+            return { modelSummary: params.machineName
+                ? t('machineAgents.offlineNote', { machine: params.machineName })
+                : t('machineAgents.offlineUnknown') };
+        // `idle` is the instant before the open picker's demand starts the check: the same fact for the person.
+        case 'idle':
+        case 'loading':
+            return { modelSummary: t('machineAgents.checkingAgents') };
+        case 'error':
+            return { refreshProbe: mergeOptionPickerProbes([
+                params.refreshProbe,
+                { phase: 'idle', failed: true, refreshErrorMessage: t('machineAgents.unknown') },
+            ]) ?? null };
+    }
+}
 
 export type NewSessionAgentPickerOptionsState = Readonly<{
     agentPickerOptions?: ReadonlyArray<AgentInputChipPickerOption>;
@@ -125,6 +170,15 @@ export function buildNewSessionAgentPickerOptions(
             selectableBackendEntries,
         };
     }
+
+    const machineAgentsPaneStatus = resolveMachineAgentsPaneStatus({
+        status: params.machineAgentsStatus,
+        machineName: params.selectedMachineName,
+        anyAgentWaitingOnMachine: sessionCapableBackendEntries.some((entry) => (
+            params.getBackendEntryUnavailabilityReason?.(entry)?.startsWith('agent-not-ready:') === true
+        )),
+        refreshProbe: params.refreshProbe,
+    });
 
     const favoriteOption = params.onSelectFavoriteModel && params.onToggleFavoriteModel
         ? buildNewSessionFavoriteModelsPickerOption({
@@ -236,6 +290,8 @@ export function buildNewSessionAgentPickerOptions(
                 onRememberAgentPickerView: params.onRememberAgentPickerView,
                 getEngineSelectionForTargetKey: params.getEngineSelectionForTargetKey,
                 selectEngineSelection: params.selectEngineSelection,
+                modelSummary: machineAgentsPaneStatus?.modelSummary,
+                ...(machineAgentsPaneStatus?.refreshProbe ? { refreshProbe: machineAgentsPaneStatus.refreshProbe } : {}),
                 });
             },
         }),

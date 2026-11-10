@@ -35,6 +35,8 @@ type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
     onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
     getEngineSelectionForTargetKey: (targetKey: string) => SessionAgentPickerSelection;
     selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: SessionAgentPickerSelection) => void;
+    /** One machine-wide line under the open Agent's Model label (an offline machine), said once rather than per row. */
+    modelSummary?: string;
 }>;
 
 function NewSessionAgentPickerDetailContent(props: Omit<
@@ -90,6 +92,7 @@ export function buildNewSessionAgentPickerOptionInteractions(
                 capabilityServerId: params.capabilityServerId,
                 cwd: params.selectedPath,
                         refreshProbe: params.refreshProbe,
+                modelSummary: params.modelSummary,
                 selection,
                 favoriteModelSelections: params.favoriteModelSelections ?? [],
                 onToggleFavoriteModel: params.onToggleFavoriteModel

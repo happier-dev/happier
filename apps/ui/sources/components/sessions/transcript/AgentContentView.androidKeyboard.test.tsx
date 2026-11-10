@@ -6,7 +6,9 @@ import { installTranscriptCommonModuleMocks } from './transcriptTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+// React Native's own dismissal stays observable: on a device the keyboard controller dismisses instead.
 const keyboardDismissMock = vi.fn();
+const nativeKeyboard = vi.hoisted(() => ({ dismiss: vi.fn(async () => undefined) }));
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (!style) return {};
@@ -60,6 +62,7 @@ vi.mock('react-native-keyboard-controller', () => ({
         height: { value: 0 },
         progress: { value: 0 },
     }),
+    KeyboardController: { dismiss: nativeKeyboard.dismiss },
 }));
 
 vi.mock('react-native-reanimated', async () => {
@@ -77,6 +80,7 @@ vi.mock('react-native-reanimated', async () => {
 
 afterEach(() => {
     keyboardDismissMock.mockReset();
+    nativeKeyboard.dismiss.mockClear();
 });
 
 describe('AgentContentView (android keyboard)', () => {
@@ -166,7 +170,8 @@ describe('AgentContentView (android keyboard)', () => {
             'agent-content-tap-end',
         );
 
-        expect(keyboardDismissMock).toHaveBeenCalledTimes(1);
+        expect(nativeKeyboard.dismiss).toHaveBeenCalledTimes(1);
+        expect(keyboardDismissMock).not.toHaveBeenCalled();
     });
 
     it('does not dismiss the keyboard when transcript content is scrolled', async () => {
@@ -201,6 +206,7 @@ describe('AgentContentView (android keyboard)', () => {
             'agent-content-scroll-end',
         );
 
+        expect(nativeKeyboard.dismiss).not.toHaveBeenCalled();
         expect(keyboardDismissMock).not.toHaveBeenCalled();
     });
 });

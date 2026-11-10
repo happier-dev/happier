@@ -22,7 +22,7 @@ import type {
     SessionConfigOptionValueId,
 } from '@/sync/domains/sessionControl/configOptionsControl';
 import { t } from '@/text';
-import { Icon } from '@/components/ui/icons/Icon';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { OptionPickerPaneRow, OptionPickerPaneRowContent, optionPickerPaneRowStyles } from './OptionPickerPaneRow';
@@ -59,10 +59,29 @@ const OPTION_INDICATOR_GAP_PX = 6;
  * header's own text; the real press target comes from the frame.
  */
 const HEADER_GLYPH_BOX_PX = 24;
-const HEADER_GLYPH_SIZE_PX = 16;
+/** The list rows' check glyph, so the header's glyphs read in the same column and weight as the rows' marks. */
+const HEADER_GLYPH_SIZE_PX = ICON_SIZE.sm;
 
-/** Gap inside `titleRowActions`, and so the refresh control's horizontal budget. */
-const TITLE_ROW_ACTION_GAP_PX = 4;
+/**
+ * Gap inside `titleRowActions`, and so the refresh control's horizontal budget. The boxes touch: each glyph keeps
+ * its own box's air, so a caller's favourite and the refresh read as one pair (owner 2026-11-10, PHONE-POPOVERS).
+ */
+const TITLE_ROW_ACTION_GAP_PX = 0;
+
+/**
+ * The metrics a caller's header action (`headerAccessory`) takes so it sits beside the refresh control as its twin.
+ */
+export const OPTION_PICKER_HEADER_ACTION_METRICS = Object.freeze({
+    boxPx: HEADER_GLYPH_BOX_PX,
+    glyphPx: HEADER_GLYPH_SIZE_PX,
+    interactiveTargetGapPx: TITLE_ROW_ACTION_GAP_PX,
+});
+
+/**
+ * A list's header actions end in the rows' check column: the last glyph's box hangs past the text edge by the air
+ * around its glyph, so the glyph centres over the check (a 16 glyph on the row's trailing padding).
+ */
+const LIST_HEADER_ACTIONS_END_OVERHANG_PX = (HEADER_GLYPH_BOX_PX - ICON_SIZE.sm) / 2;
 
 /**
  * The two-up card grid of the engine detail pane (0.2's model grid), opted into per caller.
@@ -569,7 +588,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                     ) : null}
                 </View>
                 {props.headerAccessory || shouldRenderProbeControl ? (
-                    <View style={styles.titleRowActions}>
+                    <View style={[styles.titleRowActions, multiColumn ? null : styles.listTitleRowActions]}>
                         {props.headerAccessory ? <View style={styles.headerAccessory}>{props.headerAccessory}</View> : null}
                         {shouldRenderProbeControl && probe ? (
                             <IconButton
@@ -606,7 +625,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                             title={customLabel}
                             titleSelected
                             description={props.customDescription}
-                            trailing={<Icon name="check" size={14} color={theme.colors.text.primary} />}
+                            trailing={<Icon name="check" size={ICON_SIZE.sm} color={theme.colors.text.primary} />}
                         />
                         <View style={styles.customEditor}>
                             <TextInput
@@ -787,7 +806,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
 const styles = StyleSheet.create((theme) => ({
     section: { gap: theme.space.s6 },
     /** The pane's own top and bottom inset travel with its content, so nothing stands fixed at either edge. */
-    paneHeader: { gap: theme.space.s6, paddingTop: theme.space.s16, paddingBottom: theme.space.s8 },
+    paneHeader: { gap: theme.space.s6, paddingTop: theme.space.s12, paddingBottom: theme.space.s4 },
     paneFooter: { gap: theme.space.s12, paddingTop: theme.space.s12, paddingBottom: theme.space.s16 },
     /** The "Custom…" entry keeps the pane's gap from the last row when it scrolls with them. */
     bodyFooter: { marginTop: theme.space.s6 },
@@ -802,6 +821,7 @@ const styles = StyleSheet.create((theme) => ({
     titleRow: { flex: 1, minWidth: 0, gap: theme.space.s2 },
     titleLine: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, minHeight: HEADER_GLYPH_BOX_PX },
     titleRowActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0, gap: TITLE_ROW_ACTION_GAP_PX, marginLeft: theme.space.s8 },
+    listTitleRowActions: { marginRight: -LIST_HEADER_ACTIONS_END_OVERHANG_PX },
     headerAccessory: { flexShrink: 0 },
     /**
      * The pane's own name ("Model"), in sentence case: it heads the pane beside its favourite and

@@ -21,6 +21,8 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { type CustomModalInjectedProps } from '@/modal';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { usePopoverScrollSourceRef } from '@/components/ui/popover/PopoverScrollSource';
 import { useProfile } from '@/sync/domains/state/storage';
 import { EMPTY_NAVIGATION_PLACEMENT_PREFERENCES, NavigationSurfacePlacementsV1Schema, navigationPlacementPatch, readNavigationPlacementPreferences, resolveNavigationPlacements, reorderNavigationPlacement, updateNavigationPlacement, type DetailNavigationAddress, type NavigationDefaultPlacement, type NavigationPlacementAddress, type NavigationPlacementPolicy, type NavigationPlacementPreferences, type NavigationSurfaceId, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
 import { t } from '@/text';
@@ -138,16 +140,17 @@ export function NavigationPlacementCustomizer(props: CustomizerProps & CustomMod
     const profile = useProfile();
     const home = useActiveServerSnapshot();
     const scope = React.useMemo(() => home.serverId && profile.id ? { serverId: home.serverId, accountId: profile.id } : null, [home.serverId, profile.id]);
+    const scrollsInBody = useSheetBodyScrolls();
     const footer = React.useMemo(() => <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
         <RoundButton testID={`${props.testID ?? 'navigation-placement-customizer'}.reset`} title={t('navigationPlacement.reset')} display="secondary" size="small" onPress={() => { void setPreferences({ orderedIds: [], placements: {} }); }} />
         <RoundButton title={t('common.done')} size="small" onPress={props.onClose} />
     </View>, [setPreferences, props.onClose, props.testID]);
     React.useEffect(() => {
         props.setChrome?.({ kind: 'card', title: t(`navigationPlacement.${props.surfaceId}`), subtitle: props.description ?? t('navigationPlacement.description'),
-            scrollHost: 'body', bodyScroll: 'none', phonePresentation: 'sheet', footer, dimensions: { size: 'lg' } });
-    }, [footer, props.setChrome, props.surfaceId, props.description]);
+            scrollHost: 'body', bodyScroll: scrollsInBody ? 'auto' : 'none', phonePresentation: 'sheet', footer, dimensions: { size: 'lg' } });
+    }, [footer, props.setChrome, props.surfaceId, props.description, scrollsInBody]);
     return <NavigationPlacementCustomizerView {...props} scope={scope} preferences={owner.preferences}
-        placementsBySurface={placementsBySurface} onChange={setPreferences} showHeader={false} />;
+        placementsBySurface={placementsBySurface} onChange={setPreferences} showHeader={false} scrollsInBody={scrollsInBody} />;
 }
 
 /** What a surface's preview may offer: moving what it draws, through the same write as the list's rows. */
@@ -221,6 +224,8 @@ type PlacementRowsProps = Readonly<{
     preferences: NavigationPlacementPreferences;
     onChange: (preferences: NavigationPlacementPreferences) => void | Promise<boolean>;
     scope?: EntityDragScopeV1 | null;
+    /** The scroller a drag near an edge moves: the sheet's body when the rows sit in it (see `useSheetBodyScrolls`). */
+    scrollRef?: React.RefObject<any> | null;
     testID: string;
 }>;
 
@@ -266,7 +271,8 @@ function PlacementRows(props: PlacementRowsProps) {
         showChevron={false} />);
     // A fixed control leads a headed section (the reserved primary destination comes first).
     const fixedFirst = props.heading !== undefined;
-    return <EntityFlatReorderList binding={binding} testID={`${testID}.reorder`} alwaysOrganizing>
+    return <EntityFlatReorderList binding={binding} testID={`${testID}.reorder`} alwaysOrganizing
+        {...(props.scrollRef ? { scrollRef: props.scrollRef } : {})}>
         {sections.map((section, index) => {
             const heading = index === 0 ? props.heading : undefined;
             const groupTitle = section.title === undefined ? undefined : props.groupTitles?.[section.title] ?? (props.groupTitles ? undefined : section.title);
@@ -332,12 +338,16 @@ export function NavigationPlacementCustomizerView(props: CustomizerProps & Reado
     onChange: (preferences: NavigationPlacementPreferences) => void | Promise<boolean>;
     scope?: EntityDragScopeV1 | null;
     showHeader?: boolean;
+    /** The rows sit in a scrolling sheet body (a phone) instead of scrolling under a pinned preview. */
+    scrollsInBody?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const testID = props.testID ?? 'navigation-placement-customizer';
+    const sheetScroll = usePopoverScrollSourceRef();
+    const inBody = props.scrollsInBody === true;
     // The surface itself at static props stays above the scrolling rows, so opening at a group
     // (or scrolling the catalog) never carries the picture of what the rows change out of view.
-    return <View style={PINNED_COLUMN_STYLE}>
+    return <View style={inBody ? undefined : PINNED_COLUMN_STYLE}>
         {props.renderPreview ? <View testID={`${testID}.preview`} style={{ paddingHorizontal: theme.space.s16, paddingTop: theme.space.s8, paddingBottom: theme.space.s8, flexShrink: 0 }}>
             {props.renderPreview(props.preferences, { reorderFor: ids => buildPlacementReorderBinding({
                 scope: props.scope ?? null,
@@ -351,11 +361,12 @@ export function NavigationPlacementCustomizerView(props: CustomizerProps & Reado
                 onChange: props.onChange,
             }) })}
         </View> : null}
-    <ItemList testID={testID}>
+    <ItemList testID={testID} {...(inBody ? IN_BODY_LIST_PROPS : null)}>
         {props.showHeader !== false ? <PageHeader title={t(`navigationPlacement.${props.surfaceId}`)} description={props.description ?? t('navigationPlacement.description')} /> : null}
         <PlacementRows dragSurfaceId={props.surfaceId} address={props.address ?? props.surfaceId} items={props.items}
             fixedItems={props.fixedItems} placementLabels={props.placementLabels} activeGroup={props.activeGroup}
-            preferences={props.preferences} onChange={props.onChange} scope={props.scope} testID={testID} />
+            preferences={props.preferences} onChange={props.onChange} scope={props.scope}
+            scrollRef={inBody ? sheetScroll : undefined} testID={testID} />
     </ItemList>
     </View>;
 }
@@ -401,36 +412,39 @@ export function DetailNavigationCustomizer(props: DetailNavigationCustomizerProp
     const profile = useProfile();
     const home = useActiveServerSnapshot();
     const scope = React.useMemo(() => home.serverId && profile.id ? { serverId: home.serverId, accountId: profile.id } : null, [home.serverId, profile.id]);
+    const scrollsInBody = useSheetBodyScrolls();
+    const sheetScroll = usePopoverScrollSourceRef();
     const footer = React.useMemo(() => <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
         <RoundButton testID={`${testID}.done`} title={t('common.done')} size="small" onPress={props.onClose} />
     </View>, [props.onClose, testID]);
     React.useEffect(() => {
         props.setChrome?.({ kind: 'card', title: t('navigationPlacement.detailTitle', { name: props.pageTitle }),
             subtitle: t('navigationPlacement.detailDescription'),
-            scrollHost: 'body', bodyScroll: 'none', phonePresentation: 'sheet', footer, dimensions: { size: 'lg' } });
-    }, [footer, props.setChrome, props.pageTitle]);
+            scrollHost: 'body', bodyScroll: scrollsInBody ? 'auto' : 'none', phonePresentation: 'sheet', footer, dimensions: { size: 'lg' } });
+    }, [footer, props.setChrome, props.pageTitle, scrollsInBody]);
     const deviceTabs = React.useMemo(() => [
         { id: 'desktop' as const, label: t('navigationPlacement.desktop'), icon: <Icon name="desktop" size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> },
         { id: 'phone' as const, label: t('navigationPlacement.phone'), icon: <Icon name="device-mobile" size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> },
     ], [theme.colors.text.secondary]);
     const sections = device === 'desktop' ? props.desktop : props.phone;
-    return <View style={PINNED_COLUMN_STYLE} testID={testID}>
+    return <View style={scrollsInBody ? undefined : PINNED_COLUMN_STYLE} testID={testID}>
         {/* Which device's places are being edited stays above the scrolling lists. */}
         <View style={{ paddingHorizontal: theme.space.s16, paddingTop: theme.space.s8, paddingBottom: theme.space.s8, flexShrink: 0 }}>
             <SegmentedTabBar tabs={deviceTabs} activeTabId={device} onSelectTab={setDevice} iconPlacement="leading"
                 accessibilityLabel={t('navigationPlacement.deviceLabel')} testIDPrefix={`${testID}.device`} />
         </View>
         {/* Keyed by device: switching device opens the other list at its top. */}
-        <ItemList key={device} testID={`${testID}.${device}`}>
+        <ItemList key={device} testID={`${testID}.${device}`} {...(scrollsInBody ? IN_BODY_LIST_PROPS : null)}>
             {sections.map(section => <DetailPlacementSection key={`${device}:${section.id}`} section={section}
-                dragSurfaceId={`${props.pageKind}.${device}.${section.id}`} scope={scope} testID={`${testID}.${section.id}`} />)}
+                dragSurfaceId={`${props.pageKind}.${device}.${section.id}`} scope={scope}
+                scrollRef={scrollsInBody ? sheetScroll : undefined} testID={`${testID}.${section.id}`} />)}
             {device === 'phone' && props.phonePageTabs ? <DetailPageTabsPosition pageKind={props.pageKind} testID={`${testID}.pageTabs`} /> : null}
         </ItemList>
     </View>;
 }
 
 function DetailPlacementSection(props: Readonly<{ section: DetailNavigationCustomizerSection; dragSurfaceId: string;
-    scope: EntityDragScopeV1 | null; testID: string }>) {
+    scope: EntityDragScopeV1 | null; scrollRef?: React.RefObject<any> | null; testID: string }>) {
     const { section } = props;
     const owner = useNavigationSurfacePlacement(section.address);
     const write = useNavigationSurfacePlacementActionWriter(section.address);
@@ -441,7 +455,7 @@ function DetailPlacementSection(props: Readonly<{ section: DetailNavigationCusto
             heading={{ title: section.title, description: section.description,
                 ...(section.renderPreview ? { preview: section.renderPreview(owner.preferences) } : {}),
                 action: <TextLinkButton testID={`${props.testID}.reset`} size="meta" label={t('navigationPlacement.reset')} onPress={reset} /> }}
-            preferences={owner.preferences} onChange={write} scope={props.scope} testID={props.testID} />
+            preferences={owner.preferences} onChange={write} scope={props.scope} scrollRef={props.scrollRef} testID={props.testID} />
     </>;
 }
 
@@ -461,6 +475,20 @@ function DetailPageTabsPosition(props: Readonly<{ pageKind: string; testID: stri
 }
 
 const PINNED_COLUMN_STYLE = { flex: 1, minHeight: 0 } as const;
+
+/**
+ * Whether a customizer's rows scroll in its sheet's body. A phone opens it as a bottom sheet (`phonePresentation:
+ * 'sheet'`, decided by the modal from the same device type); there the body is the one scroller and the rows sit
+ * in it at their own height. A list scrolling inside a still body relies on flex handing it the body's height,
+ * which native layout did not (PHONE-POPOVERS-1109, iOS: a 1041 pt list that never scrolled in an 874 pt window).
+ * Wider screens keep the pinned preview or device tabs above a list that scrolls under them.
+ */
+function useSheetBodyScrolls(): boolean {
+    return useDeviceType() === 'phone';
+}
+
+/** The rows' list inside a scrolling body: its own height, and no second scroller. */
+const IN_BODY_LIST_PROPS = { scrollEnabled: false, style: { flex: 0 } } as const;
 
 const LEADING_STYLE = { flexDirection: 'row', alignItems: 'center', gap: 8 } as const;
 const GLYPH_SLOT_STYLE = { width: ICON_SIZE.md, height: ICON_SIZE.md } as const;

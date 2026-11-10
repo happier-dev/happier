@@ -6278,6 +6278,7 @@ const zhHans: MachineAgentsTranslation = {
     showFewer: '收起',
     emptyInstalled: '此机器上还没有编程智能体。在下方选择一个，Happier 会为你安装并登录。',
     offlineNote: ({ machine }) => `${machine} 已离线。以下是它最后报告的内容。`,
+    checkingAgents: '正在检查智能体…',
     firstTitle: '设置你的第一个智能体',
     firstLead: ({ machine }) => `${machine} 已连接，但还没有编程智能体。选一个，Happier 会为你安装并登录。`,
     firstMore: ({ count }) => (count === 1 ? `或从另外 1 个智能体中选择。` : `或从另外 ${count} 个智能体中选择。`),
@@ -9075,6 +9076,7 @@ const zhHans: typeof en = {
             heldInMore: '“始终滑动”开启时收在“更多”中',
             keepOnBar: '保留在栏上',
             removeFromBar: '从栏中移除',
+            pinnedSection: '已固定',
             openFiles: '打开文件',
         },
         allTabs: {

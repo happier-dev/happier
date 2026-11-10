@@ -38,7 +38,12 @@ export function KeyboardProvider(props: React.PropsWithChildren): React.ReactNod
     return React.createElement(React.Fragment, null, props.children);
 }
 
-export function useKeyboardState(): Readonly<{ height: number; isVisible: boolean; progress: number }> {
+/** The native keyboard controller's imperative port; tests that observe it mock the module through the testkit. */
+export const KeyboardController = {
+    dismiss: async (): Promise<void> => undefined,
+};
+
+export function useKeyboardState():Readonly<{ height: number; isVisible: boolean; progress: number }> {
     return { height: 0, isVisible: false, progress: 0 };
 }
 

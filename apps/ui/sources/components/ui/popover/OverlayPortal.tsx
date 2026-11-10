@@ -12,8 +12,17 @@ type OverlayPortalDispatch = Readonly<{
 
 const OverlayPortalDispatchContext = React.createContext<OverlayPortalDispatch | null>(null);
 const OverlayPortalNodesContext = React.createContext<ReadonlyMap<string, React.ReactNode> | null>(null);
+// The nearest screen or dialog layer's host. A page-local scope (`scope: 'local'`) leaves it untouched.
+const OverlayLayerPortalDispatchContext = React.createContext<OverlayPortalDispatch | null>(null);
 
-export function OverlayPortalProvider(props: { children: React.ReactNode }) {
+export function OverlayPortalProvider(props: {
+    children: React.ReactNode;
+    /**
+     * `layer` (default): the host of a screen or dialog layer, above that layer's chrome. `local`: a page's popover
+     * scope, which anchored popovers measure against; screen surfaces (sheets) skip it for the enclosing layer.
+     */
+    scope?: 'layer' | 'local';
+}) {
     const [nodes, setNodes] = React.useState<Map<string, React.ReactNode>>(() => new Map());
 
     const setPortalNode = React.useCallback((id: string, node: React.ReactNode) => {
@@ -41,17 +50,25 @@ export function OverlayPortalProvider(props: { children: React.ReactNode }) {
         return { setPortalNode, removePortalNode };
     }, [removePortalNode, setPortalNode]);
 
-    return (
+    const content = (
         <OverlayPortalDispatchContext.Provider value={dispatch}>
             <OverlayPortalNodesContext.Provider value={nodes}>
                 {props.children}
             </OverlayPortalNodesContext.Provider>
         </OverlayPortalDispatchContext.Provider>
     );
+    return props.scope === 'local'
+        ? content
+        : <OverlayLayerPortalDispatchContext.Provider value={dispatch}>{content}</OverlayLayerPortalDispatchContext.Provider>;
 }
 
 export function useOverlayPortal() {
     return React.useContext(OverlayPortalDispatchContext);
+}
+
+/** The host of the enclosing screen or dialog layer, past any page-local popover scope. */
+export function useLayerOverlayPortal() {
+    return React.useContext(OverlayLayerPortalDispatchContext);
 }
 
 function useOverlayPortalNodes() {
