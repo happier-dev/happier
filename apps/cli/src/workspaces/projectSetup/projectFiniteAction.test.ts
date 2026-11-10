@@ -441,8 +441,17 @@ describe('authenticated finite Project Action owner', () => {
             const runtime = await factory({ operationRuntime: h.operationRuntime, terminalSessions: h.terminalSessions }, h.context);
             if (!runtime) throw new Error('Installed runtime unavailable');
             const action = createFiniteActionWithCapturedRequester(runtime, h.context);
-            await inspectProjectSetupFromRuntime({ runtime, ingress: h.context, workspace: h.address, context: { serverId: homeId } });
-            expect(nativeReads).toBe(0);
+            const inspection = await inspectProjectSetupFromRuntime({ runtime, ingress: h.context, workspace: h.address, context: { serverId: homeId } });
+            if (bindingScope === 'project') {
+                expect(inspection).toMatchObject({ setupReadiness: { kind: 'notRequired' },
+                    setupReview: { reviewedEffectDigest: expect.any(String) } });
+            }
+            // A successful Project-bound review validates its selected field;
+            // each later Run acquires fresh material in its own admitted lifetime.
+            const reviewReads = bindingScope === 'project' ? 1 : 0;
+            expect(nativeReads).toBe(reviewReads);
+            expect(h.spawned).toEqual([]);
+            expect(JSON.stringify(inspection)).not.toContain('private-finite-value');
             const run = (actionRequestId?: string) => action(bindingScope === 'project' ? {
                 actionId: 'projects.script.run', input: { workspace: h.address, selection: { kind: 'named', name: 'checked' } },
                 context: { serverId: homeId, bypassApprovals: true, ...(actionRequestId ? { actionRequestId } : {}) },
@@ -455,7 +464,7 @@ describe('authenticated finite Project Action owner', () => {
             await expect.poll(() => h.spawned.length || h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')?.state === 'failed').toBeTruthy();
             expect(h.spawned, JSON.stringify(h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation'))).toHaveLength(1);
             expect(h.spawned[0]!.params.options.env).toMatchObject({ TOKEN: 'private-finite-value' });
-            expect(nativeReads).toBe(1);
+            expect(nativeReads).toBe(reviewReads + 1);
             h.spawned[0]!.pty.exit(0);
             const terminal = await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: 'machine' }, 'operation');
             expect(terminal).toMatchObject({ state: 'succeeded' });
@@ -465,7 +474,7 @@ describe('authenticated finite Project Action owner', () => {
             expect(next).toMatchObject({ operation: { operationId: 'operation-2' } });
             await expect.poll(() => h.spawned.length).toBe(2);
             expect(h.spawned[1]!.params.options.env).toMatchObject({ TOKEN: 'rotated-finite-value' });
-            expect(nativeReads).toBe(2);
+            expect(nativeReads).toBe(reviewReads + 2);
             h.spawned[1]!.pty.exit(0);
             const nextTerminal = await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: 'machine' }, 'operation-2');
             expect(nextTerminal).toMatchObject({ state: 'succeeded' });
@@ -477,7 +486,7 @@ describe('authenticated finite Project Action owner', () => {
                 expect(await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: 'machine' }, 'operation-3'))
                     .toMatchObject({ state: 'failed', error: { errorCode: 'project_environment_binding_unavailable' } });
                 expect(h.spawned).toHaveLength(2);
-                expect(nativeReads).toBe(2);
+                expect(nativeReads).toBe(reviewReads + 2);
                 expect(await bind(binding, 1)).toMatchObject({ ok: true, revision: 2 });
                 expect(await run('rebound-vault-operation')).toMatchObject({ operation: { operationId: 'operation-4' } });
                 await expect.poll(() => h.spawned.length).toBe(3);
@@ -485,7 +494,7 @@ describe('authenticated finite Project Action owner', () => {
                 h.spawned[2]!.pty.exit(0);
                 expect(await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: 'machine' }, 'operation-4'))
                     .toMatchObject({ state: 'succeeded' });
-                expect(nativeReads).toBe(3);
+                expect(nativeReads).toBe(reviewReads + 3);
             }
             expect(JSON.stringify(h.post.mock.calls)).not.toContain(nativeValue);
         } finally {

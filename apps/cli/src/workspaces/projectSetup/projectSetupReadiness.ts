@@ -6,7 +6,8 @@ import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows'
 import { readProjectRuntimeAdmissionRefusal, type ProjectFiniteActionRuntime } from './projectFiniteAction';
 import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import { inspectProjectSetup, type ProjectSetupInspection } from './projectSetupPreparation';
-import { resolveProjectRequesterSecretEnvironment } from './projectSetupRequesterInputs';
+import { resolveProjectRequesterSecretInputs } from './projectSetupRequesterInputs';
+import { readProjectManifest } from './projectManifestFile';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { logger } from '@/ui/logger';
 import { projectSetupInspectionFailure } from './projectSetupInspectionFailure';
@@ -38,7 +39,10 @@ export async function inspectProjectSetupFromRuntime(input: Readonly<{
         const association = await phase('workspace', () => resolveProjectSetupAcceptedWorkspace({ address: input.workspace,
             ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId,
             serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal }));
-        const secretEnvironment = await phase('requester_environment', () => resolveProjectRequesterSecretEnvironment(runtime, undefined, signal));
+        const manifest = (await phase('manifest', () => readProjectManifest({ root: association.workspace.rootPath }))).document?.manifest;
+        const { environmentBindings, secretEnvironment } = await phase('requester_environment', () => resolveProjectRequesterSecretInputs(runtime, {
+            project: association.project, requirements: manifest?.environmentVariables ?? [],
+        }, signal));
         signal.throwIfAborted();
         const inspection = await phase('review', () => inspectProjectSetup({ workspace: association.workspace, projectAssociation: association,
             requesterIdentity: runtime.requesterIdentity,
@@ -46,6 +50,7 @@ export async function inspectProjectSetupFromRuntime(input: Readonly<{
             purpose: 'setup', approvalContext: input.context,
             platform: { os: (runtime.platform ?? process.platform) === 'win32' ? 'windows' : runtime.platform ?? process.platform,
                 arch: runtime.arch ?? process.arch }, nativeIo: runtime.nativeIo, signal,
+            ...(environmentBindings ? { environmentBindings } : {}),
             ...(secretEnvironment ? { secretEnvironment } : {}), ...(runtime.configEnvironment ? { configEnvironment: runtime.configEnvironment } : {}),
             ...(runtime.plugins ? { plugins: runtime.plugins } : {}), ...(runtime.successHomeDir ? { successHomeDir: runtime.successHomeDir } : {}) },
             input.reviewSetupConsent ? { reviewConsent: true } : undefined));
