@@ -29,6 +29,9 @@ import { SessionPullRequestWatchReadResultV1Schema, SessionPullRequestWatchInput
 import { requestTriageSessionHandoffV1 } from '@happier-dev/triage-sources/runtime';
 import { createPluginActionInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { TriageLinkEntryToSessionInputV1Schema } from '../actions/sessionLinksProtocol.js';
+import { AgentsBackendsListOutputSchema } from '@happier-dev/protocol/actions/agentBackendInventory';
+import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { PluginUiNewSessionSeedV1 } from '@happier-dev/plugin-sdk/ui';
 
 type TestAccountActionContext = PluginAccountActionContext & Readonly<{ ui: PluginClientActionUi }>;
 
@@ -82,6 +85,89 @@ function projectOperation(sourceWorkspace = acceptedWorkspace.checkout) {
 }
 
 describe('configured action execution through the shared Session owner', () => {
+    it.each([
+        { code: 'machine_offline', composer: true }, { code: 'target_unavailable', composer: true },
+        { code: 'incompatible_target', composer: true }, { code: 'machine_offline', composer: false },
+        { code: 'target_unavailable', composer: false }, { code: 'incompatible_target', composer: false },
+        { code: 'agent_cli_missing', composer: true },
+    ] as const)('authors the builtin reference-only investigation after Session admission refuses its target ($code, composer=$composer)', async ({ code, composer }) => {
+        const kv = createTestkitAccountKv();
+        const builtinCatalog = await readTriageActionsForSurface({ v: 1 }, { catalog: kv.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) });
+        const controllerMachineId = 'eadc2422-b42b-478d-97b1-af9b530d5f08';
+        const agentTarget: AgentExecutionTargetV1 = { kind: 'agent', identity: { pluginId: 'happier.example.agent', localId: 'example' } };
+        const targetKey = buildAgentTargetKeyV2(agentTarget);
+        const agents = AgentsBackendsListOutputSchema.parse({ defaultTargetKey: targetKey,
+            items: [{ targetKey, label: 'Example Agent', agentTarget, enabled: true }] });
+        const environment = DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, environment: {
+            v: 1, id: 'environment', serverId: 'server-a', projectSourceId: 'project', revision: 1,
+            owner: { kind: 'account', accountId: 'account-a' }, protection: 'nonProduction', purpose: 'standard',
+            deployerMode: 'managers', controllerMachineId, runtimeTargetLinkId: 'runtime',
+            contentArtifactId: 'environment-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+            capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true },
+            createdByAccountId: 'account-a', createdAtMs: 1, updatedAtMs: 1,
+        }, targetLinks: [] });
+        const source = { kind: 'host', topic: 'service_health', subject: {
+            kind: 'environment', environmentId: 'environment', targetLinkId: 'runtime', condition: 'deployment_failed',
+        } } as const;
+        const page = { kind: 'host', page: 'environment', targetLinkId: 'runtime', environment: {
+            serverId: 'server-a', projectSourceId: 'project', environmentId: 'environment',
+        } } as const;
+        const notice = { kind: 'host', artifactId: 'failed-deployment-notice', source } as const;
+        const content = { v: 1, source, page, type: 'blocked', healthPhase: 'open', resolved: false };
+        const invoker = createTestkitActionInvoker({ spawn: [{ type: 'error', code, retryable: true }] });
+        const seeds: PluginUiNewSessionSeedV1[] = [];
+        // Only host Action RPC and UI navigation are substituted. The builtin catalog,
+        // evidence admission, configured handoff and Session start owners stay real.
+        const host = {
+            version: () => ({ methods: composer ? ['openNewSession'] : [] }),
+            context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
+            ...(composer ? { openNewSession: async (seed: PluginUiNewSessionSeedV1) => { seeds.push(seed); } } : {}),
+            executeAction: async (id: string, value: JsonValue) => {
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return builtinCatalog;
+                if (id === 'artifact.get') return { artifact: { artifactId: notice.artifactId, ownerAccountId: 'account-a',
+                    access: 'owner', publicAudience: 'none', header: { ...content, kind: 'account_notice.v1',
+                        title: 'odeploy-qa-env-1030: deployment failed', status: 'open' }, body: JSON.stringify(content),
+                    revision: { headerVersion: 1, bodyVersion: 1 }, seq: 1, createdAt: 1, updatedAt: 1 } };
+                if (id === 'deployments.environments.get') return environment;
+                // An empty Project registry is valid for a managed reference-only start;
+                // only Session admission establishes that this controller is unavailable.
+                if (id === 'projects.list') return { items: [], truncated: false };
+                if (id === 'agents.backends.list') return agents;
+                return invoker.execute(id as Parameters<typeof invoker.execute>[0], value as Parameters<typeof invoker.execute>[1]);
+            },
+        };
+        const input = parseHandoffInput({ v: 1, handoff: { task: 'investigate', configuredActionId: 'investigate',
+            context: { kind: 'healthAlert', notice, target: page }, evidence: [{ kind: 'alert', notice }],
+            sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'configured' } });
+        const result = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
+            input.handoff, { entries: [], signal: new AbortController().signal });
+        expect(invoker.callsFor('session.spawn_new')).toHaveLength(1);
+        expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({
+            executionTarget: { serverId: 'server-a', machineId: controllerMachineId }, directory: { kind: 'managed' }, agentTarget,
+        });
+        expect(invoker.callsFor('session.message.send')).toHaveLength(0);
+        if (composer) {
+            expect(result.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
+            expect(result).not.toHaveProperty('recovery');
+            expect(seeds).toEqual([expect.objectContaining({ prompt: expect.any(String),
+                actionDefault: expect.objectContaining({ configuredActionId: 'investigate' }),
+                attachments: [expect.anything()], directoryIntent: { kind: 'managed' },
+            })]);
+            if (code === 'agent_cli_missing') {
+                expect(seeds[0]).toMatchObject({ placement: { kind: 'exactTarget', serverId: 'server-a', machineId: controllerMachineId } });
+                expect(seeds[0]).not.toHaveProperty('agentTarget');
+            } else {
+                expect(seeds[0]).not.toHaveProperty('placement');
+                expect(seeds[0]).toMatchObject({ agentTarget });
+            }
+            expect(JSON.stringify(seeds[0])).toContain(notice.artifactId);
+        } else {
+            expect(result.handoff).toMatchObject({ kind: 'placement_choice_required', reason: 'machine_unreachable',
+                candidates: [{ machine: { serverId: 'server-a', machineId: controllerMachineId }, reachable: false }] });
+            expect(seeds).toEqual([]);
+        }
+    });
+
     it('starts a saved fixed no-folder preference through the configured entry launch owner', async () => {
         const agentTarget: AgentExecutionTargetV1 = { kind: 'agent', identity: { pluginId: 'happier.example.agent', localId: 'example' } };
         const targetKey = buildAgentTargetKeyV2(agentTarget);
@@ -107,7 +193,7 @@ describe('configured action execution through the shared Session owner', () => {
         ] });
         const result = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
             input.handoff, { entries: [entry], signal: new AbortController().signal });
-        expect(result.handoff).toMatchObject({ kind: 'sendResult', session: { serverId: 'server-a', sessionId: 'saved-no-folder' } });
+        expect(result.handoff, JSON.stringify(result)).toMatchObject({ kind: 'sendResult', session: { serverId: 'server-a', sessionId: 'saved-no-folder' } });
         expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({
             executionTarget: { serverId: 'server-a', machineId: 'machine-a' }, agentTarget,
             directory: { kind: 'managed' }, profileId: 'saved-profile',

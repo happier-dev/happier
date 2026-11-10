@@ -427,7 +427,9 @@ An unavailable composer returns an explicit `composerUnavailable` outcome.
 Headless callers and existing Sessions retain the typed placement choice. A
 caller supplying a workspace or Agent key uses the same placement and Agent owners.
 If the Session creator subsequently refuses that target, its terminal target or
-Agent error also returns this choice. The refused Machine is marked unreachable
+Agent error opens the same seeded New Session composer on the UI; headless
+callers retain the typed choice. No second start is attempted. The refused
+Machine is marked unreachable
 alongside the already-read alternative Project placements; an Agent installation
 or sign-in refusal instead keeps the Machine and asks for an Agent. A native ACP
 transport that closes before startup completes retains the existing
