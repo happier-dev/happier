@@ -24,6 +24,7 @@ import { decodeBase64 } from '@/encryption/base64';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1, WorkflowRunListRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 
 // Only Home HTTP/credentials and the native Machine RPC leave the real path.
 const machineRpc = vi.hoisted(() => vi.fn());
@@ -131,6 +132,32 @@ const runWindowKey = (id: Parameters<typeof workflowRunListWindowStoreKey>[0]) =
     if (!scope) throw new Error('Expected a bound Home');
     return workflowRunListWindowStoreKey(id, scope);
 };
+
+it('lists a fired Once Run while its accepted snapshot is pending, then opens initialized content', async () => {
+    const trigger = { kind: 'schedule' as const, schedule: { kind: 'once' as const, scheduleExpr: null,
+        everyMs: null, timezone: 'UTC' }, remainingOccurrences: 0 };
+    const pending = createWorkflowRunSummaryFixture({ id: 'fired-once', ownerAccountId: accountId,
+        state: 'claimed', workflowCustodyState: 'pending', origin: { kind: 'automation', automationId: 'once',
+            cause: { kind: 'trigger', triggerId: 'once-trigger', triggerRevision: 0, triggerKind: 'schedule',
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: 'once-trigger', evidence: { v: 1, kind: 'schedule', scheduledFor: 1 } }),
+                occurredAt: 1, evidence: { scheduledFor: 1 } } } });
+    home.answer(serverId, route, { body: { runs: [pending], acceptedEnvelopesByRunId: {},
+        keyCensusByRunId: { [pending.id]: WorkflowRunRecipientCensusResponseV1Schema.parse({ runId: pending.id,
+            ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain', dataEncryptionKey: null,
+            callerDataEncryptionKey: null, recipients: [], visibleTeamId: null,
+            ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }) } } });
+    const screen = await renderScreen(<WorkflowTriggerRunHistory automationId="once" triggerId="once-trigger"
+        triggerName="One-time work" trigger={trigger} />);
+    await waitForHomeGovernance(() => expect(screen.findAll(node => node.type === WorkflowRunItemBody)).toHaveLength(1));
+    await waitForHomeGovernance(() => expect(storage.getState().workflowRunsById[workflowRunStoreKey(pending.id,
+        { serverId, accountId })]?.summary?.state).toBe('claimed'));
+    expect(screen.getTextContent()).toContain('One-time work');
+    expect(screen.getTextContent()).not.toContain(t('workflows.contentUnavailable'));
+    expect(screen.getTextContent()).not.toContain(t('workflows.readState.historyTitle'));
+    home.answer(serverId, route, { body: await runPage([{ ...pending, state: 'running', revision: 2 }], undefined, undefined, 'Initialized work') });
+    await act(async () => refreshRunWindow('trigger:once-trigger', true));
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Initialized work'));
+});
 
 it('expands and pages addressed B trigger History while A stays focused, and keeps explicit-null unavailable', async () => {
     const serverB = await home.addHome({ name: 'B history', serverUrl: 'https://workflow-history-b.test',

@@ -1,4 +1,5 @@
 import type { StoredCredentials } from '@/persistence';
+import { logger } from '@/ui/logger';
 import { parsePermissionIntentAlias, resolveAgentExecutionTargetFromSessionMetadata } from '@happier-dev/agents';
 import { buildExecutionRunResultContractPrompt } from '@happier-dev/protocol/execution/runs/resultContract';
 import { WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS } from '@happier-dev/protocol/workflows/workflowV1';
@@ -589,6 +590,8 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
         ...(request.manager ? { manager: request.manager } : {}),
         ...(request.organizationPlacement ? { organizationPlacement: request.organizationPlacement } : {}),
       })) } : undefined;
+    logger.infoFile('[WORKFLOW] Run phase', { event: 'workflow_run_phase', runId: deps.originRunId,
+      phase: 'session_spawn_start', timestamp: new Date().toISOString() });
     const created = await (deps.sessionStartup
       ? deps.sessionStartup({ creationKey, request: creationRequest, ...(startupAuthorization ? { authorization: startupAuthorization } : {}),
           ...(actionAdmission ? { actionAdmission } : {}),

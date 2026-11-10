@@ -21,6 +21,7 @@ import { getAutomationWorkerFeatureDecision } from './automationFeatureGate';
 import { executeClaimedRun, type ClaimableRunPayload } from './automationRunExecutor';
 import { resolveAutomationPollingConfig } from './automationScheduler';
 import { logAutomationInfo, logAutomationWarn } from './automationTelemetry';
+import { logger } from '@/ui/logger';
 import type {
   AutomationClaimedRunPayload,
   AutomationClaimRunResponse,
@@ -577,6 +578,9 @@ export function startAutomationWorker(params: {
         return;
       }
 
+      logger.infoFile('[WORKFLOW] Run phase', { event: 'workflow_run_phase', runId: claimed.run.id,
+        phase: 'claim', timestamp: new Date().toISOString() });
+
       // The Account-scoped claim may return another admitted occurrence. Its
       // own private scope must be available before this executor reads content.
       const claimedScopeId = claimed.run.triggerId ?? claimed.run.id;
@@ -915,6 +919,10 @@ export function startAutomationWorker(params: {
       }
 
       if (body.t === 'automation-run-updated' && body.state === 'queued') {
+        if (body.targetMachineId === params.machineId) {
+          logger.infoFile('[WORKFLOW] Run phase', { event: 'workflow_run_phase', runId: body.runId,
+            phase: 'daemon_receipt', timestamp: new Date().toISOString() });
+        }
         const scope = body.requesterScope;
         if (scope && typeof scope === 'object' && 'kind' in scope && scope.kind === 'workflow_trigger'
           && 'id' in scope && typeof scope.id === 'string' && body.targetMachineId === params.machineId) {

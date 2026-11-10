@@ -3,6 +3,7 @@ import { db } from '@/storage/db';
 import { afterTx, type Tx } from '@/storage/inTx';
 import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { Socket } from 'socket.io';
+import { log } from '@/utils/logging/log';
 
 type AdmittedWorkflowMachineTarget = Pick<Extract<MachineAdmission, { kind: 'admitted' }>, 'machineId' | 'custodianAccountId'>;
 
@@ -20,6 +21,8 @@ export async function replayWorkflowRunMachineWakes(input: Readonly<{
     } } } });
     for (const { run } of assignments) {
         if (!input.socket.connected) return;
+        if (run.state === 'queued') log({ event: 'workflow_run_phase', runId: run.id, phase: 'dispatch_publication',
+            timestamp: new Date().toISOString(), machineId: input.machineId });
         input.socket.emit('update', buildAutomationRunMachineWakeUpdate({ accountId: input.custodianAccountId,
             machineId: input.machineId, run, cursor: run.account.seq,
             ...(run.accountId !== input.custodianAccountId ? { requesterScope: {
@@ -39,13 +42,17 @@ export async function publishWorkflowRunMachineWakeInTx(tx: Tx, params: Readonly
 }>) {
     const targets = params.admittedTargets ?? await readWorkflowRunMachineTargetsInTx(tx, params);
     for (const target of targets) {
-        afterTx(tx, () => emitAutomationRunUpdatedToMachineOnly({ accountId: target.custodianAccountId,
-            machineId: target.machineId, run: params.run, cursor: params.cursor.resolveCursor(),
-            ...(target.custodianAccountId !== params.accountId ? { requesterScope: {
-                kind: 'workflow_trigger', id: params.run.triggerId ?? params.run.id,
-            } } : {}),
-            ...(params.workflowControl ? { workflowControl: params.workflowControl } : {}),
-        }));
+        afterTx(tx, () => {
+            if (params.run.state === 'queued' && !params.workflowControl) log({ event: 'workflow_run_phase', runId: params.run.id, phase: 'dispatch_publication',
+                timestamp: new Date().toISOString(), machineId: target.machineId });
+            emitAutomationRunUpdatedToMachineOnly({ accountId: target.custodianAccountId,
+                machineId: target.machineId, run: params.run, cursor: params.cursor.resolveCursor(),
+                ...(target.custodianAccountId !== params.accountId ? { requesterScope: {
+                    kind: 'workflow_trigger', id: params.run.triggerId ?? params.run.id,
+                } } : {}),
+                ...(params.workflowControl ? { workflowControl: params.workflowControl } : {}),
+            });
+        });
     }
 }
 

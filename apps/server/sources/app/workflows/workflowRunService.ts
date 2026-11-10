@@ -42,6 +42,7 @@ import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv, isPrismaErrorCode, prismaRuntime } from "@/storage/prisma";
 import { timeWebLatencyPhase } from '@/utils/webLatencyTrace';
 import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
+import { log } from '@/utils/logging/log';
 
 import { assertWorkflowStoredEnvelopeOuterForMode, WorkflowStoredContentError } from "./runs/storedContent";
 import { workflowRunAttentionWhere, workflowRunSqlIdentifier, workflowRunFailureUnseen,
@@ -735,6 +736,8 @@ export async function initializeWorkflowRunExecution(params: Readonly<{
             select: workflowRunSelect,
         });
         await markWorkflowRunChangedTx(tx, params.accountId, params.runId);
+        afterTx(tx, () => log({ event: 'workflow_run_phase', runId: params.runId,
+            phase: 'run_initialization', timestamp: new Date().toISOString() }));
         return { run: await projectRunInTx(tx, parent as WorkflowRunProjectionRow, params.accountId), initialization: "created" as const };
     }, {
         // Ordered publication locks/replay and mode/control/row predicates fence this mutation.
