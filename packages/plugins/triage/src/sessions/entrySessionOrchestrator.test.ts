@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import { deriveSessionLinkTag } from '../corpus/identity/tags.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
@@ -112,6 +113,43 @@ function deps(
  * repository action runs in the project the reader selected.
  */
 describe('startEntrySession', () => {
+    it.each(['start', 'resume'] as const)('settles the SDK target refusal after %s without linking or delivering', async phase => {
+        const fixture = createTestkitCorpusCollections();
+        const invoker = createTestkitActionInvoker();
+        // The SDK Action boundary rejects this admission; it does not return a Session result.
+        const execute: TriageEntrySessionDepsV1['execute'] = async (action, input, options) => {
+            if (action === 'session.spawn_new') throw new PluginError({ code: 'target_unavailable' });
+            return invoker.execute(action, input, options);
+        };
+        const ownerDeps = { ...deps(fixture, invoker), execute };
+        const result = phase === 'start' ? await startEntrySession(ownerDeps, {
+            workspaceMode: 'reference_only', destination: { kind: 'new', creationKey: 'refused-start',
+                spawn: TESTKIT_SPAWN_REQUEST, materialization: { kind: 'referenceOnly', directory: { kind: 'managed' } } },
+        }) : await resumeEntrySessionStart(ownerDeps, {
+            pending: { type: 'creationPending', creationKey: 'refused-start', spawn: TESTKIT_SPAWN_REQUEST,
+                directory: { kind: 'managed' }, workspace: { kind: 'referenceOnly' } },
+        });
+        expect(result).toEqual({ type: 'creationFailed', failureCode: 'target_unavailable',
+            creationKey: 'refused-start', workspace: { kind: 'referenceOnly' } });
+        expect(invoker.calls).toEqual([]);
+    });
+
+    it.each(['start', 'resume'] as const)('preserves a genuinely unknown SDK failure after %s', async phase => {
+        const failure = new PluginError({ code: 'action_outcome_unknown' });
+        const fixture = createTestkitCorpusCollections();
+        const invoker = createTestkitActionInvoker();
+        const execute: TriageEntrySessionDepsV1['execute'] = async () => { throw failure; };
+        const ownerDeps = { ...deps(fixture, invoker), execute };
+        const result = phase === 'start' ? startEntrySession(ownerDeps, {
+            workspaceMode: 'reference_only', destination: { kind: 'new', creationKey: 'unknown-start',
+                spawn: TESTKIT_SPAWN_REQUEST, materialization: { kind: 'referenceOnly', directory: { kind: 'managed' } } },
+        }) : resumeEntrySessionStart(ownerDeps, {
+            pending: { type: 'creationPending', creationKey: 'unknown-start', spawn: TESTKIT_SPAWN_REQUEST,
+                directory: { kind: 'managed' }, workspace: { kind: 'referenceOnly' } },
+        });
+        await expect(result).rejects.toBe(failure);
+    });
+
     it('fails a misbound relation callback without writing corpus links or admitting input', async () => {
         const fixture = createTestkitCorpusCollections();
         const invoker = createTestkitActionInvoker();

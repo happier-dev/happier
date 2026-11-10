@@ -2,6 +2,7 @@ import type {
     PluginActionInputById,
     PluginActionResultById,
 } from '@happier-dev/plugin-sdk/actions';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { SessionServerStartSpawnDraftV1Schema, projectSessionSpawnNewActionInputV2, type SessionId } from '@happier-dev/plugin-sdk/sessions';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageStartEntrySessionInputV1 } from '../actions/entrySessionProtocol.js';
@@ -227,6 +228,23 @@ export type TriageEntrySessionDepsV1 = Readonly<{
     signal?: AbortSignal;
 }>;
 
+/** SDK admission refusals reject; Session creation settlements are returned. */
+async function spawnEntrySession(
+    deps: TriageEntrySessionDepsV1,
+    input: SessionSpawnInput,
+): Promise<PluginActionResultById['session.spawn_new']> {
+    try {
+        return await deps.execute('session.spawn_new', input, deps.signal ? { signal: deps.signal } : undefined);
+    } catch (error) {
+        // This documented SDK refusal precedes creation. Preserve other
+        // exceptions so a lost response retains same-key recovery.
+        if (isPluginError(error) && error.code === 'target_unavailable') {
+            return { type: 'error', code: 'target_unavailable', retryable: error.retryable };
+        }
+        throw error;
+    }
+}
+
 /**
  * Link, then deliver, then open — unless the batch owner retained final open.
  *
@@ -404,13 +422,12 @@ export async function resumeEntrySessionStart(
         if (input.orchestrate === true && !hasOrchestrationEntryInput(input.entryRef, delivery)) {
             return { type: 'rejected', reason: 'orchestrationRequiresNewSessionWithEntryInput' };
         }
-        const result = await deps.execute(
-            'session.spawn_new',
+        const result = await spawnEntrySession(
+            deps,
             {
                 ...entrySpawnSelection(pending.spawn, pending.directory, input.orchestrate, delivery),
                 creationKey: pending.creationKey,
             },
-            deps.signal ? { signal: deps.signal } : undefined,
         );
         if (result.type === 'pending') {
             return {
@@ -623,11 +640,7 @@ export async function startEntrySession(
         ...entrySpawnSelection(destination.spawn, materializationDirectory(resolved.materialization), request.orchestrate, request.delivery),
         creationKey: destination.creationKey,
     };
-    const result = await deps.execute(
-        'session.spawn_new',
-        spawnInput,
-        deps.signal ? { signal: deps.signal } : undefined,
-    );
+    const result = await spawnEntrySession(deps, spawnInput);
     // The generic action executor is the sole owner of the creation tag,
     // correspondence lookup and create-versus-rejoin decision. Triage consumes
     // its result unchanged.

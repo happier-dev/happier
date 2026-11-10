@@ -218,6 +218,14 @@ export interface ActionsService {
    */
   getCurrentExecutionRouting?(options?: PluginCancellationOptions): Promise<PluginMachineExecutionRoutingV1 | null>;
 
+  /**
+   * Returns the Action's domain result. Host admission failures reject with
+   * PluginError; they are not returned as domain-result error arms.
+   * For session.spawn_new, target_unavailable is a refusal before creation.
+   * An unclassified exception does not establish whether creation occurred;
+   * retain the creation key when recovering an unknown outcome.
+   * @throws PluginError when the host refuses or cannot settle the invocation.
+   */
   execute<K extends PluginInvocableActionId>(
     actionId: K,
     input: PluginActionInputById[K],

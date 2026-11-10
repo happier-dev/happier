@@ -2336,6 +2336,15 @@ availability authorities.
 
 ### Portable Account Actions (0.3 development source)
 
+`ActionsService.execute` and `PluginUiHostApi.executeAction` return an Action's
+domain result and reject host admission failures with `PluginError`. For
+`session.spawn_new`, a thrown `target_unavailable` refuses the target before
+creation; it is not an unknown Session outcome. Session-start callers consume
+that refusal separately from returned creation settlements. Unclassified
+exceptions still require the existing same-creation-key recovery: a missing
+reply alone does not prove that no Session was created. Triage handles this at
+its shared Session-start owner for initial starts and resumes.
+
 The optional Account Action `services.machineConnectorSecrets` sink spends the
 owning controller's existing Domain admission. The host captures its controller,
 every target installation/public key and operation; an author supplies only token

@@ -550,6 +550,11 @@ export interface PluginUiHostApi {
      * Host ActionSpecs retain their generated types; contributed references use
      * the structural JSON transport contract. `NoInfer` makes the action
      * reference, never a broad input object, decide which branch applies.
+     *
+     * Like ActionsService.execute, host admission failures reject with
+     * PluginError. For session.spawn_new, target_unavailable refuses creation;
+     * other exceptions do not imply that no Session was created.
+     * @throws PluginError when the host refuses or cannot settle the invocation.
      */
     executeAction<TAction extends PluginUiActionReference>(
         action: TAction,
