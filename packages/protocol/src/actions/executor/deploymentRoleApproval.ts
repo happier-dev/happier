@@ -8,7 +8,7 @@ import { resolveApprovalSurface } from '../actionApprovalSurface.js';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from '../actionIds.js';
 import { getActionSpec, type ActionSpec } from '../actionSpecs.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
-import { readActionApprovalScopeAdmissionV1 } from './approvalScope.js';
+import { readActionApprovalScopeAdmissionV1, type ActionApprovalScopeAdmissionV1 } from './approvalScope.js';
 import type { ActionHomeEquivalence, PreparedCoreAdmission } from './coreInvocation.js';
 import type { ActionSettingsActionId } from '../actionSettings.js';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1, HostReviewedChildInvocationV1 } from './types.js';
@@ -54,7 +54,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   declaredChildren?: HostReviewedChildrenPlanV1['children'];
   /** The root's exact native confirmation answers demanded defaults, never explicit Require. */
   reviewAdmitted?: boolean;
-  approvalScope?: ActionApprovalPolicyScopeV1;
+  approvalScopeAdmission?: ActionApprovalScopeAdmissionV1;
   existing?: PreparedCoreAdmission; approvalReplay: boolean; isSameHome: ActionHomeEquivalence;
   executeChild(actionId: ActionId, input: unknown, context: ActionExecutorContext): Promise<ActionExecuteResult>;
   admitCredentialScope(actionId: ActionId, context: ActionExecutorContext, input: unknown): Promise<ActionExecuteFailure | null>;
@@ -72,8 +72,18 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
     ...(existing.admittedReviewedChild ? { admittedReviewedChild: true } : {}),
     ...(existing.executeAdmittedAction ? { executeAdmittedAction: existing.executeAdmittedAction } : {}), reviewRequired: false };
   const parent = () => ({ actionId, input: projectNativeJsonValueForTransport(params.input) as Record<string, import('../../json/strictJsonValue.js').JsonValue> });
-  const invokePreparationChild = (child: HostReviewedChildInvocationV1) => {
-    const policy = prepareHostReviewedChildPolicyV1(child, context, params.approvalScope);
+  let parentScopeAdmission: Promise<ActionApprovalScopeAdmissionV1 | ActionExecuteFailure> | undefined;
+  const readParentScopeAdmission = () => {
+    // Ordinary admission already owns this fact. Explicit Artifact creation
+    // needs it only when a demanded child inherits the parent's scope.
+    return params.approvalScopeAdmission ?? (parentScopeAdmission ??= readActionApprovalScopeAdmissionV1({ actionId,
+      spec: getActionSpec(actionId), input: params.input, context, deps,
+      phase: params.approvalReplay ? 'replay' : 'prepare', isSameHome: params.isSameHome }));
+  };
+  const invokePreparationChild = async (child: HostReviewedChildInvocationV1) => {
+    const scope = await readParentScopeAdmission();
+    if ('ok' in scope) return scope;
+    const policy = prepareHostReviewedChildPolicyV1(child, context, scope.approvalScope);
     return invokeHostReviewedChildV1({ parent: parent(), context, child,
       // Explicit Require still enters ordinary review without an accepted parent.
       ...(policy && policy.requiredActionIds.length === 0 ? { admittedReview: policy } : {}),
@@ -143,7 +153,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
     const childId = typeof child.action === 'string' ? child.action : 'action.invoke';
     const operand = child.input === undefined ? child.scopeInput : child.input;
     const input = typeof child.action === 'string' ? operand : { action: child.action, input: operand };
-    const scope = operand === undefined ? { approvalScope: params.approvalScope }
+    const scope = operand === undefined ? await readParentScopeAdmission()
       : await readActionApprovalScopeAdmissionV1({ actionId: childId, spec: getActionSpec(childId), input,
       context, deps, phase: params.approvalReplay ? 'replay' : 'prepare', isSameHome: params.isSameHome });
     if ('ok' in scope) return scope;

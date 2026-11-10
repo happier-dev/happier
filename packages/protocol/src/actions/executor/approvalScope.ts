@@ -7,7 +7,7 @@ import { readRecord } from '../../inputs/inputRecords.js';
 import type { ActionHomeEquivalence } from './coreInvocation.js';
 import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } from './types.js';
 
-type ApprovalScopeAdmission = Readonly<{
+export type ActionApprovalScopeAdmissionV1 = Readonly<{
   approvalScope?: ActionApprovalPolicyScopeV1;
 }>;
 
@@ -20,7 +20,7 @@ export async function readActionApprovalScopeAdmissionV1(args: Readonly<{
   deps: ActionExecutorDeps;
   phase: 'prepare' | 'dispatch' | 'replay';
   isSameHome: ActionHomeEquivalence;
-}>): Promise<ApprovalScopeAdmission | ActionExecuteFailure> {
+}>): Promise<ActionApprovalScopeAdmissionV1 | ActionExecuteFailure> {
   const { actionId, spec, input, context, deps } = args;
   if (actionId === 'machines.services.exec') {
     const request = MachineServiceExecInputV1Schema.parse(input);

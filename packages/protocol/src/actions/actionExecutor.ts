@@ -2875,11 +2875,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return completeSpawnActionResult({ type: 'error', code: 'incompatible_target', retryable: false,
             incompatibleTarget: { reason: 'target_preparation_rpc_unavailable' } });
         }
-        const forbidden = rpcCode === RPC_ERROR_CODES.FORBIDDEN;
         return completeSpawnActionResult({
           type: 'error',
-          code: ctx.signal?.aborted ? 'cancelled' : forbidden ? 'permission_denied' : 'spawn_failed',
-          retryable: !ctx.signal?.aborted && !forbidden,
+          code: ctx.signal?.aborted ? 'cancelled' : 'spawn_failed',
+          retryable: !ctx.signal?.aborted,
         });
       }
       if (directoryPreflight.type === 'error') {
@@ -3144,7 +3143,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       admitCredentialScope: (id, context, input) => admitCredentialScope(id, context, input, true),
       reviewAdmitted: nativeReview !== null,
       ...(preparedHostReviewedChildren ? { prepared: preparedHostReviewedChildren } : {}),
-      ...(approvalScope ? { approvalScope } : {}),
+      approvalScopeAdmission: scopeAdmission,
       ...(existingAdmission ? { existing: existingAdmission } : {}), approvalReplay: options?.approvalReplay === true,
       isSameHome: (left, right) => isSameHome(left, right, ctx) });
     if ('ok' in childrenPreparation) return childrenPreparation;
@@ -6554,17 +6553,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
         const initialApprovalActionArgs = materializeSessionCreationActionInput(targetActionId, targetArgs, ctx);
-        const targetScope = await readActionApprovalScopeAdmissionV1({ actionId: targetActionId,
-          spec: targetSpec, input: initialApprovalActionArgs, context: ctx, deps, phase: 'prepare',
-          isSameHome: (left, right) => isSameHome(left, right, ctx) });
-        if ('ok' in targetScope) return targetScope;
         // Explicit requests retain the same native preparation and demanded
         // effects as ordinary admission, so approval replays the reviewed plan.
         const targetChildren = await prepareHostReviewedChildrenV1({
           actionId: targetActionId, input: initialApprovalActionArgs, context: ctx, deps,
           executeChild: executeHostChild,
           admitCredentialScope: (id, context, input) => admitCredentialScope(id, context, input, true),
-          ...(targetScope.approvalScope ? { approvalScope: targetScope.approvalScope } : {}),
           ...(targetSpec.hostReviewedChildren ? { declaredChildren: typeof targetSpec.hostReviewedChildren === 'function'
             ? targetSpec.hostReviewedChildren(initialApprovalActionArgs) : targetSpec.hostReviewedChildren } : {}),
           approvalReplay: false, isSameHome: (left, right) => isSameHome(left, right, ctx),
