@@ -1178,6 +1178,10 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
             } };
           },
           async refresh(context) {
+            if (await context.credentials.get('token') === 'refresh-rejected') return {
+              status: 'reconnectRequired',
+              diagnostic: { code: 'novel_refresh_rejected', message: 'private-provider-message' },
+            };
             await context.stagedCredentials.set('token', 'novel-token-refreshed');
             return { status: 'connected', displayName: 'Novel account', scopes: [] };
           },
@@ -1324,6 +1328,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     });
     const onCredentialUpdated = vi.fn();
     const onReauthRequired = vi.fn(async () => undefined);
+    const onCredentialHealthNotification = vi.fn(async () => undefined);
     const acquireRefreshLease = vi.fn(async (input: Readonly<{
       token: string;
       lease: unknown;
@@ -1355,6 +1360,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       refreshWindowMs: 60_000,
       refreshLeaseMs: 30_000,
       now: () => now,
+      onCredentialHealthNotification,
       qualifiedConnectedAccountRuntime: {
         resolvePeerClass: () => 'advertised_v4',
         establishedRuntimeOwner,
@@ -1805,5 +1811,32 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     } finally {
       warn.mockRestore();
     }
+
+    content = sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
+      payload: { v: 1, values: { token: 'refresh-rejected' } }, randomBytes: length => new Uint8Array(length) });
+    for (const pid of [901, 902]) coordinator.registerSpawnTarget({
+      pid, agentId: null, sessionId: `novel-health-${pid}`, materializationKey: `novel-materialization-${pid}`,
+      connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {
+        'acme.novel.refresh/novel-service': { source: 'connected', profileId: novelAccount.accountId },
+      } },
+    });
+    expect(onCredentialHealthNotification).not.toHaveBeenCalled();
+    await coordinator.applyQualifiedConnectedAccountConfigurationConsequence({
+      account: novelAccount,
+      authenticationModeId: 'manual',
+      configurationScope: 'service',
+      behavior: 'refresh',
+      runtimeConfigurationRevision: 'configuration-2',
+    });
+    expect(onCredentialHealthNotification).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      diagnostic: expect.objectContaining({
+        serviceId: 'acme.novel.refresh/novel-service',
+        profileId: novelAccount.accountId,
+        providerErrorCode: 'novel_refresh_rejected',
+      }),
+      healthStatus: 'reconnect_required',
+      affectedTargets: [901, 902].map((pid) => ({ pid, agentId: null, sessionId: `novel-health-${pid}` })),
+    }));
+    expect(JSON.stringify(onCredentialHealthNotification.mock.calls)).not.toContain('private-provider-message');
   });
 });

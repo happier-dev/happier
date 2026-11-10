@@ -1,5 +1,6 @@
 import type { AgentPluginAccountSettingsSource } from '@/plugins/runtime/agentPluginSettings';
-import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedServiceIdSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServiceCredentialHealthV1Schema, ConnectedServiceCredentialRefreshFailureKindV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, type ConnectedServiceCredentialReconnectCauseV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
@@ -320,9 +321,15 @@ export type ConnectedServiceCredentialHealthNotificationStatus =
   | 'reconnect_required'
   | 'refresh_failed_retryable';
 
+export type ConnectedServiceCredentialHealthNotificationDiagnostic = Readonly<
+  Omit<Pick<ConnectedServiceCredentialRefreshDiagnostic,
+    'serviceId' | 'profileId' | 'status' | 'category' | 'providerStatus' | 'providerErrorCode'>, 'serviceId'>
+  & { serviceId: string }
+>;
+
 export type ConnectedServiceCredentialHealthNotificationTarget = Readonly<{
   pid: number;
-  agentId: CatalogAgentId | null;
+  agentId: string | null;
   sessionId: string;
 }>;
 
@@ -654,7 +661,7 @@ export class ConnectedServiceRefreshCoordinator {
     }>) => void | Promise<void>;
     onCredentialHealthNotification?: (event: Readonly<{
       signal?: AbortSignal;
-      diagnostic: ConnectedServiceCredentialRefreshDiagnostic;
+      diagnostic: ConnectedServiceCredentialHealthNotificationDiagnostic;
       healthStatus: ConnectedServiceCredentialHealthNotificationStatus;
       affectedTargets: ReadonlyArray<ConnectedServiceCredentialHealthNotificationTarget>;
     }>) => void | Promise<void>;
@@ -2530,6 +2537,17 @@ export class ConnectedServiceRefreshCoordinator {
         this.scheduledHealthProbeAtByKey.set(key, { ...scheduled, credentialRevision });
       }
     }
+    if (input.healthWritePath !== 'status'
+      && (input.health.status === 'needs_reauth' || input.health.status === 'refresh_failed_retryable')) {
+      await this.notifyCredentialHealth({
+        serviceId: buildQualifiedPluginContributionKey(input.account.service),
+        profileId: input.account.accountId,
+        status: input.health.status === 'needs_reauth' ? 'blocked_by_credential_health' : 'refresh_failed',
+        category: input.health.lastRefreshFailureKind ?? 'unknown',
+        providerStatus: input.health.providerHttpStatus,
+        providerErrorCode: input.health.providerErrorCode,
+      }, input.health.status === 'needs_reauth' ? 'reconnect_required' : 'refresh_failed_retryable', signal);
+    }
     return credentialRevision;
   }
 
@@ -2775,11 +2793,6 @@ export class ConnectedServiceRefreshCoordinator {
             refreshWindowMs: this.params.refreshWindowMs,
           }),
         };
-        if (health.reconnectRequired) {
-          // The actual refresh attempt settled reconnect health against its exact
-          // invocation basis. A preliminary status probe never emits this notice.
-          await this.notifyCredentialHealthForRefreshResult(result, 'reconnect_required', signal);
-        }
         return result;
       } catch (error) {
         signal?.throwIfAborted();
@@ -2985,7 +2998,7 @@ export class ConnectedServiceRefreshCoordinator {
     }
     const healthSettled = await this.persistCredentialHealthForRefreshResult(finalizedResult, signal);
     if (healthSettled) {
-      await this.notifyCredentialHealthForRefreshResult(finalizedResult, undefined, signal);
+      await this.notifyCredentialHealthForRefreshResult(finalizedResult, signal);
     }
     return finalizedResult;
   }
@@ -3470,14 +3483,23 @@ export class ConnectedServiceRefreshCoordinator {
 
   private async notifyCredentialHealthForRefreshResult(
     result: ConnectedServiceCredentialRefreshResult,
-    settledHealthStatus?: ConnectedServiceCredentialHealthNotificationStatus, signal?: AbortSignal,
+    signal?: AbortSignal,
   ): Promise<void> {
     signal?.throwIfAborted();
-    if (result.status !== 'refresh_failed' && settledHealthStatus === undefined) return;
+    if (result.status !== 'refresh_failed') return;
+    await this.notifyCredentialHealth(result.diagnostic,
+      isReauthRequiredFailure(result.diagnostic.category ?? 'unknown')
+        ? 'reconnect_required' : 'refresh_failed_retryable', signal);
+  }
+
+  private async notifyCredentialHealth(
+    diagnostic: ConnectedServiceCredentialHealthNotificationDiagnostic,
+    healthStatus: ConnectedServiceCredentialHealthNotificationStatus,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    signal?.throwIfAborted();
     const notify = this.params.onCredentialHealthNotification;
     if (!notify) return;
-    const diagnostic = result.diagnostic;
-    const category = diagnostic.category ?? 'unknown';
     const affectedTargets = this.resolveNotificationTargetsForBinding({
       serviceId: diagnostic.serviceId,
       profileId: diagnostic.profileId,
@@ -3485,7 +3507,7 @@ export class ConnectedServiceRefreshCoordinator {
     try {
       await this.runCurrentAccountOperation(async () => notify({ ...(signal ? { signal } : {}),
         diagnostic,
-        healthStatus: settledHealthStatus ?? (isReauthRequiredFailure(category) ? 'reconnect_required' : 'refresh_failed_retryable'),
+        healthStatus,
         affectedTargets,
       }), undefined, signal);
     } catch (error) {
@@ -3502,17 +3524,20 @@ export class ConnectedServiceRefreshCoordinator {
   }
 
   private resolveNotificationTargetsForBinding(
-    binding: BoundProfile,
+    binding: Readonly<{ serviceId: string; profileId: string }>,
   ): ReadonlyArray<ConnectedServiceCredentialHealthNotificationTarget> {
-    return this.runtimeRegistry.listRefreshTargets()
-      .filter((target) => this.resolveBoundProfiles(target).some((candidate) =>
-        candidate.serviceId === binding.serviceId && candidate.profileId === binding.profileId,
-      ))
-      .map((target) => ({
+    const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(binding.serviceId) ?? binding.serviceId;
+    return this.runtimeRegistry.listTargets().flatMap((target) => {
+      const sessionId = target.sessionId ?? target.materializationKey;
+      if (!sessionId || !target.boundProfiles.some((candidate) =>
+        candidate.serviceId === serviceId && candidate.profileId === binding.profileId,
+      )) return [];
+      return [{
         pid: target.pid,
         agentId: target.agentId,
-        sessionId: target.sessionId ?? target.materializationKey,
-      }));
+        sessionId,
+      }];
+    });
   }
 
   private async resolveMaterializedHomeRootForTarget(input: Readonly<{
