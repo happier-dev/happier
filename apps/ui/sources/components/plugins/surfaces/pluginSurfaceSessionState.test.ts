@@ -346,21 +346,29 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         mounted.dispose();
     });
 
-    it('tracks the host title when its Home-qualified list projection changes', async () => {
-        const session = waitingSession({ serverId: CURRENT_ACCOUNT_LIFETIME.scope.serverId, agentState: null });
+    it('tracks the list title from the real transcript producer and later saved title', async () => {
+        const serverId = await homes.addHome({ name: 'Session titles', serverUrl: 'https://session-titles.test', accountId: 'account-a', currentAccount: true });
+        const restoreHome = applyRevealHome(serverId);
+        const session = waitingSession({ serverId, agentState: null });
         storage.getState().applySessions([session]);
-        const mounted = mountSurface();
+        const mounted = mountSurface({ serverId, accountId: 'account-a' });
         const events: ResourceSubscriptionEvent[] = [];
         const subscription = await mounted.api.watchSession(session.id, (event) => { events.push(event); });
         try {
-            const row = buildSessionListRenderableFromSession(session, undefined, [{
-                id: 'first-prompt', kind: 'user-text', localId: null, createdAt: 1,
-                text: 'Investigate the mobile panel',
+            await expect(mounted.api.readSession(session.id)).resolves.toMatchObject({ title: 'repo' });
+            storage.getState().applyMessages(session.id, [{
+                id: 'first-prompt', role: 'user', localId: null, createdAt: 1, seq: 2, isSidechain: false,
+                content: { type: 'text', text: 'Investigate the mobile panel' },
             }]);
-            storage.setState({ sessionListRowsByServerId: { [CURRENT_ACCOUNT_LIFETIME.scope.serverId]: { [session.id]: row } } });
             await vi.waitFor(() => expect(events).toHaveLength(1));
             await expect(mounted.api.readSession(session.id)).resolves.toMatchObject({ title: 'Investigate the mobile panel' });
-        } finally { subscription.dispose(); mounted.dispose(); }
+            const { getSessionName } = await import('@/utils/sessions/sessionUtils');
+            const row = storage.getState().sessionListRowsByServerId[serverId]![session.id]!;
+            expect(getSessionName(row, serverId)).toBe('Investigate the mobile panel');
+            storage.getState().applySessions([{ ...session, metadataVersion: session.metadataVersion + 1,
+                metadata: { ...session.metadata!, summary: { text: 'Saved investigation', updatedAt: 2 } } }]);
+            await expect(mounted.api.readSession(session.id)).resolves.toMatchObject({ title: 'Saved investigation' });
+        } finally { subscription.dispose(); mounted.dispose(); restoreHome(); }
     });
 
     it('keeps missing credential readiness distinct from terminal Session absence', async () => {
