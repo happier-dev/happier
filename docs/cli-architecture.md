@@ -2401,6 +2401,11 @@ through the retained service owner. Omitted `cwd` and declaration operands use t
 instance's authoritative Project binding; explicit qualifiers must match it. Agent
 and UI Stop therefore share the same resolution path without rediscovering or
 re-admitting the Start declaration.
+Foreign Machine Use actors resolve controls through the requester's visible
+managed Services; detected inventory entries, including Forget Undo, stay with
+the custodian. Minimal Start approval and Start result snapshots use the same
+requester projection as launcher reads, so another person's declaration path
+cannot appear in the requester's Ask or refusal snapshot.
 
 Builtin Compose uses detached `up` under a stable requester-scoped project name,
 then the same native supervisor observes immutable Docker container IDs. Successful

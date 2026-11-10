@@ -12,6 +12,7 @@ import {
     type LocalServiceActionExecutionOutcome,
 } from './executor';
 import { resolveLocalServiceActionEligibility } from './policy';
+import { selectVisibleMachineProjectServices } from '../launch/machineServiceDisclosure';
 import type { TerminateDetectedService } from './terminate';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
@@ -101,15 +102,24 @@ function executionResult(input: Readonly<{
     };
 }
 
-function resolveActionTarget(input: Readonly<{
+async function resolveActionTarget(input: Readonly<{
     request: LocalServiceActionRequestV1;
     machineId: string;
     inventoryRegistry: LocalServiceInventoryRegistry;
     projectManagedServices?: Pick<ManagedServicesOwner, 'resolveProjectService'>;
-}>): ResolvedLocalServiceActionTarget | Readonly<{ reasonCode: string }> {
+    execution?: LocalServiceActionExecutionContext;
+}>): Promise<ResolvedLocalServiceActionTarget | Readonly<{ kind: 'undo_forget'; undoKey: string }> | Readonly<{ reasonCode: string }>> {
     const target = input.request.target;
     if (target.machineId !== input.machineId) {
         return { reasonCode: 'wrong_machine' };
+    }
+    const admission = input.execution?.ingress?.machineAdmission;
+    const requesterOnly = admission?.role === 'use' && admission.actorAccountId !== admission.custodianAccountId;
+    if (requesterOnly && target.kind === 'inventory_entry') return { reasonCode: 'unknown_inventory_entry' };
+    if (input.request.undoKey) {
+        if (input.request.action !== 'forget' || target.kind !== 'inventory_entry'
+            || target.inventoryEntryId !== input.request.undoKey) return { reasonCode: 'wrong_target_kind' };
+        return { kind: 'undo_forget', undoKey: input.request.undoKey };
     }
     if (target.kind === 'inventory_entry') {
         const entry = input.inventoryRegistry.getSnapshot().entries.find((candidate) => (
@@ -122,8 +132,17 @@ function resolveActionTarget(input: Readonly<{
     }
 
     const resolved = input.projectManagedServices?.resolveProjectService(target);
-    return resolved?.status === 'found' ? { kind: 'managed_service', handle: resolved.handle }
-        : { reasonCode: resolved?.status === 'mismatch' ? 'managed_service_target_mismatch' : 'unknown_managed_service' };
+    if (resolved?.status !== 'found') return {
+        reasonCode: resolved?.status === 'mismatch' ? 'managed_service_target_mismatch' : 'unknown_managed_service',
+    };
+    const handle = resolved.handle;
+    if (requesterOnly) {
+        const serverId = input.execution?.actionContext.serverId;
+        const visible = serverId ? await selectVisibleMachineProjectServices({ serverId, machineId: input.machineId },
+            [handle], { requesterAccountId: admission.actorAccountId, context: input.execution?.actionContext }) : [];
+        if (!visible.length) return { reasonCode: 'unknown_managed_service' };
+    }
+    return { kind: 'managed_service', handle };
 }
 
 export function createLocalServiceActionRoutes(input: Readonly<{
@@ -141,15 +160,18 @@ export function createLocalServiceActionRoutes(input: Readonly<{
     return {
         async execute(request, execution) {
             const requestedAt = now();
-            if (request.undoKey) {
-                if (request.target.machineId !== input.machineId) {
-                    return deniedResult({ request, requestedAt, reasonCode: 'wrong_machine' });
-                }
-                if (request.action !== 'forget' || request.target.kind !== 'inventory_entry'
-                    || request.target.inventoryEntryId !== request.undoKey) {
-                    return deniedResult({ request, requestedAt, reasonCode: 'wrong_target_kind' });
-                }
-                const restored = input.inventoryRegistry.undoForget(request.undoKey);
+            const target = await resolveActionTarget({
+                request,
+                machineId: input.machineId,
+                inventoryRegistry: input.inventoryRegistry,
+                projectManagedServices: input.projectManagedServices,
+                execution,
+            });
+            if ('reasonCode' in target) {
+                return deniedResult({ request, requestedAt, reasonCode: target.reasonCode });
+            }
+            if (target.kind === 'undo_forget') {
+                const restored = input.inventoryRegistry.undoForget(target.undoKey);
                 return executionResult({
                     request,
                     requestedAt,
@@ -157,15 +179,6 @@ export function createLocalServiceActionRoutes(input: Readonly<{
                     status: restored.ok ? 'succeeded' : 'denied',
                     ...(!restored.ok ? { reasonCode: restored.reason } : {}),
                 });
-            }
-            const target = resolveActionTarget({
-                request,
-                machineId: input.machineId,
-                inventoryRegistry: input.inventoryRegistry,
-                projectManagedServices: input.projectManagedServices,
-            });
-            if ('reasonCode' in target) {
-                return deniedResult({ request, requestedAt, reasonCode: target.reasonCode });
             }
 
             const decision = resolveLocalServiceActionEligibility({

@@ -9,6 +9,7 @@ import type { LocalServiceNativePrerequisiteV1, LocalServiceEstablishmentFailure
 import type { LocalServiceLauncherFeed } from './feed';
 import type { LocalServiceLauncherHistoryStore } from './leaves';
 import { logger } from '@/ui/logger';
+import { assertLocalServiceReadCustody } from '../credentialAdmission';
 
 export type LocalServiceLauncherStartTarget = (
     request: DaemonLocalServiceLauncherStartRequestV1,
@@ -125,8 +126,34 @@ export function completeLocalServiceLauncherStartRequest(
     };
 }
 
+type LocalServiceLauncherStartSnapshotInput = Readonly<{
+    feed: Pick<LocalServiceLauncherFeed, 'getSnapshot'>;
+    machineId: string;
+    ingress?: RpcHandlerContext;
+    actionContext?: RuntimeActionExecuteArgs['context'];
+}>;
+
+/** Start completion and responses consume the same admitted requester projection. */
+export async function createLocalServiceLauncherStartSnapshotReader(
+    input: LocalServiceLauncherStartSnapshotInput,
+): Promise<Pick<LocalServiceLauncherFeed, 'getSnapshot'>> {
+    const accountId = await assertLocalServiceReadCustody({
+        accountId: input.ingress?.machineAdmission?.custodianAccountId,
+        machineId: input.machineId,
+        context: input.ingress,
+    }, 'requester_managed_services');
+    const serverId = input.actionContext?.serverId;
+    if (accountId && !serverId) throw new Error('requester_credentials_unavailable');
+    return {
+        getSnapshot: request => input.feed.getSnapshot({ ...request,
+            ...(accountId && serverId ? { requesterManagedServices: { accountId, serverId } } : {}),
+        }),
+    };
+}
+
 async function readSnapshot(
-    input: Pick<CreateLocalServiceLauncherStartTargetInput, 'feed' | 'now'>,
+    input: Readonly<{ feed: Promise<Pick<LocalServiceLauncherFeed, 'getSnapshot'>> }>
+        & Pick<CreateLocalServiceLauncherStartTargetInput, 'now'>,
     request: DaemonLocalServiceLauncherStartRequestV1,
     actualWorkspaceId?: string,
     managedBindingsOnly = false,
@@ -136,7 +163,8 @@ async function readSnapshot(
     | { ok: false; response: DaemonLocalServiceLauncherStartResponseV1 }
 >> {
     try {
-        const rawSnapshot = await input.feed.getSnapshot({
+        const feed = await input.feed;
+        const rawSnapshot = await feed.getSnapshot({
             ...(request.sessionId ? { sessionId: request.sessionId } : {}),
             // Exact Project declarations are freshly admitted by the declaration
             // owner below. Listener/suggestion discovery contributes no authority;
@@ -154,13 +182,14 @@ async function readSnapshot(
             snapshot: bindSnapshotToRequest(scopedSnapshot, request),
             machineMatches: rawSnapshot.machineId === request.machineId,
         };
-    } catch {
+    } catch (error) {
+        const credentialsUnavailable = error instanceof Error && error.message === 'requester_credentials_unavailable';
         return {
             ok: false,
             response: response({
                 request,
-                status: 'failed',
-                reasonCode: 'launcher_snapshot_unavailable',
+                status: credentialsUnavailable ? 'denied' : 'failed',
+                reasonCode: credentialsUnavailable ? error.message : 'launcher_snapshot_unavailable',
                 snapshot: emptyRequestBoundSnapshot(request, input.now?.() ?? Date.now()),
             }),
         };
@@ -172,6 +201,9 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
 ): LocalServiceLauncherStartTarget {
     const now = input.now ?? (() => Date.now());
     return async (request, ingress, actionContext, executeCanonicalAction) => {
+        const snapshotInput = { feed: createLocalServiceLauncherStartSnapshotReader({
+            feed: input.feed, machineId: request.machineId, ingress, actionContext,
+        }), now };
         const phase = async <T>(name: string, read: () => T | Promise<T>): Promise<T> => {
             const startedAt = performance.now();
             let status: 'completed' | 'failed' = 'failed';
@@ -184,7 +216,7 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
         // Start consumes the target already published by discovery. Re-discovering
         // every Machine package here adds no execution authority; the declaration
         // owner freshly admits the selected workspace and manifest below.
-        const snapshotResult = await phase('launcher_snapshot', () => readSnapshot({ feed: input.feed, now }, request, undefined, suppliedDeclaration, request.workspace === undefined));
+        const snapshotResult = await phase('launcher_snapshot', () => readSnapshot(snapshotInput, request, undefined, suppliedDeclaration, request.workspace === undefined));
         if (!snapshotResult.ok) {
             return snapshotResult.response;
         }
@@ -196,7 +228,7 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
             // Action responses are published as complete launcher snapshots by
             // clients. A mutation-only preflight projection must not erase sibling
             // declarations or presentation targets from that response.
-            const complete = await phase('response_snapshot', () => readSnapshot({ feed: input.feed, now }, request, undefined, false, true));
+            const complete = await phase('response_snapshot', () => readSnapshot(snapshotInput, request, undefined, false, true));
             return response({ ...value, snapshot: complete.ok ? complete.snapshot : emptyRequestBoundSnapshot(request, now()) });
         };
         if (!snapshotResult.machineMatches) {
@@ -273,7 +305,7 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
         // The supervisor has just settled readiness. Return its current state with
         // every admitted sibling target; unrelated listener discovery is not a
         // prerequisite for acknowledging this exact Project mutation.
-        const postStartSnapshot = await phase('response_snapshot', () => readSnapshot({ feed: input.feed, now }, request,
+        const postStartSnapshot = await phase('response_snapshot', () => readSnapshot(snapshotInput, request,
             outcome.status === 'succeeded' && request.workspace?.machineId !== request.machineId
                 ? outcome.currentTarget?.workspaceId : undefined, false, exactDeclaration));
         const responseSnapshot = postStartSnapshot.ok

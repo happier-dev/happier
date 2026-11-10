@@ -7,6 +7,7 @@ import type { LocalServiceLauncherLeafRoutes } from './leaves';
 import {
     completeLocalServiceLauncherStartRequest,
     createLocalServiceLauncherStartTarget,
+    createLocalServiceLauncherStartSnapshotReader,
     type CreateLocalServiceLauncherStartTargetInput,
     type LocalServiceLauncherStartTarget,
 } from './start';
@@ -40,12 +41,24 @@ export function createLocalServiceLauncherRoutes<TDeclaration = unknown>(input: 
     });
     const prepareStartApproval: LocalServiceLauncherRoutes['prepareStartApproval'] = input.prepareStartApproval
         ? async (request, ingress, context, executeCanonicalAction) => {
-            const complete = request.workspace && request.declaration ? request
-                : completeLocalServiceLauncherStartRequest(request, await input.feed.getSnapshot({
-                    ...(request.workspace ? { workspaceRoot: request.workspace.rootPath } : { discovery: 'cached' as const }),
-                    ...(request.sessionId ? { sessionId: request.sessionId } : {}),
-                }));
-            return input.prepareStartApproval!(complete, ingress, context, executeCanonicalAction);
+            try {
+                let complete = request;
+                if (!request.workspace || !request.declaration) {
+                    const feed = await createLocalServiceLauncherStartSnapshotReader({
+                        feed: input.feed, machineId: request.machineId, ingress, actionContext: context,
+                    });
+                    complete = completeLocalServiceLauncherStartRequest(request, await feed.getSnapshot({
+                        ...(request.workspace ? { workspaceRoot: request.workspace.rootPath } : { discovery: 'cached' as const }),
+                        ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+                    }));
+                }
+                return input.prepareStartApproval!(complete, ingress, context, executeCanonicalAction);
+            } catch (error) {
+                if (error instanceof Error && error.message === 'requester_credentials_unavailable') {
+                    return { ok: false, errorCode: error.message, error: error.message };
+                }
+                throw error;
+            }
         } : undefined;
     return {
         async getSnapshot(request) {

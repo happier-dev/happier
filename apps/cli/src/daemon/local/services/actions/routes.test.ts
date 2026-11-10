@@ -7,6 +7,7 @@ import type { NormalizedLocalServiceInventorySnapshot } from '../inventory/scann
 import { createManagedServicesOwner, type ProjectManagedServiceSupervisionInput } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import type { LocalServiceActionExecutionContext } from './executor';
 import { assertActionOutputContract } from '@/testkit/actionOutputContract';
 
 const inventorySnapshot: NormalizedLocalServiceInventorySnapshot = {
@@ -41,9 +42,14 @@ const inventorySnapshot: NormalizedLocalServiceInventorySnapshot = {
 };
 
 describe('createLocalServiceActionRoutes', () => {
-    it.each(['unsupported', 'accepted', 'termination_incomplete'] as const)(
-        'preserves the canonical %s native Stop outcome through real service controls',
-        async stopOutcome => {
+    it.each([
+        ['unsupported', 'custodian-one'],
+        ['unsupported', 'requester-one'],
+        ['accepted', 'requester-one'],
+        ['termination_incomplete', 'requester-one'],
+    ] as const)(
+        'preserves native Stop %s for requester %s through real service controls',
+        async (stopOutcome, requesterAccountId) => {
             const owner = createManagedServicesOwner({
                 processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
                 // This Project-only owner admits no Plugin scope/dependency request.
@@ -65,11 +71,12 @@ describe('createLocalServiceActionRoutes', () => {
             };
             let stoppable = false;
             let nativeStopped = false;
+            let nativeStopCalls = 0;
             const supervision: ProjectManagedServiceSupervisionInput = {
                 kind: 'workspace',
                 workspace, declaration, cwd: workspace.rootPath,
                 requester: {
-                    serverId: workspace.serverId, accountId: 'requester-one',
+                    serverId: workspace.serverId, accountId: requesterAccountId,
                     machineId: workspace.machineId, installationId: 'installation-one',
                 },
                 serviceId: 'project:workspace-one:manifest:worker',
@@ -105,6 +112,7 @@ describe('createLocalServiceActionRoutes', () => {
                                 };
                             },
                             stop: async observed => {
+                                nativeStopCalls++;
                                 expect(observed).toEqual(instance);
                                 if (stoppable) {
                                     nativeStopped = true;
@@ -129,8 +137,6 @@ describe('createLocalServiceActionRoutes', () => {
                     managedServiceId: handle.instanceId,
                     machineId: workspace.machineId,
                     workspaceId: workspace.id,
-                    cwd: workspace.rootPath,
-                    declaration,
                 };
                 const request = {
                     requestId: 'retained-native-control',
@@ -147,7 +153,29 @@ describe('createLocalServiceActionRoutes', () => {
                 const reasonCode = stopOutcome === 'unsupported'
                     ? 'plugin_managed_service_unavailable'
                     : 'plugin_managed_server_termination_incomplete';
-                const result = await routes.execute(confirmed);
+                const guestExecution: LocalServiceActionExecutionContext = {
+                    ingress: { signal: new AbortController().signal, machineAdmission: {
+                        actorAccountId: requesterAccountId === 'custodian-one' ? 'requester-one' : 'foreign-guest', custodianAccountId: 'custodian-one',
+                        machineId: workspace.machineId, installationId: 'installation-one', role: 'use', encryptionMode: 'plain',
+                    } },
+                    actionContext: { surface: 'cli', serverId: workspace.serverId },
+                };
+                expect(await routes.execute(confirmed, guestExecution)).toMatchObject({
+                    status: 'denied', reasonCode: 'unknown_managed_service',
+                });
+                expect(nativeStopCalls).toBe(0);
+                const ownExecution: LocalServiceActionExecutionContext = { ...guestExecution,
+                    ingress: { ...guestExecution.ingress!, machineAdmission: {
+                        ...guestExecution.ingress!.machineAdmission!, actorAccountId: supervision.requester.accountId,
+                    } },
+                };
+                if (requesterAccountId !== 'custodian-one') {
+                    expect(await routes.execute(confirmed, { ...ownExecution,
+                        actionContext: { ...ownExecution.actionContext, serverId: 'another-home' },
+                    })).toMatchObject({ status: 'denied', reasonCode: 'unknown_managed_service' });
+                    expect(nativeStopCalls).toBe(0);
+                }
+                const result = await routes.execute(confirmed, ownExecution);
                 assertActionOutputContract('localServices.actions.stopManaged', result);
                 expect(result).toMatchObject({ status: 'failed', reasonCode });
                 expect(result.auditEvents.at(-1)).toMatchObject({ result: 'failed', reasonCode });
@@ -158,7 +186,7 @@ describe('createLocalServiceActionRoutes', () => {
                 expect(owner.readRetainedSemanticCustodyCount()).toBe(1);
 
                 stoppable = true;
-                const stopped = await routes.execute(confirmed);
+                const stopped = await routes.execute(confirmed, ownExecution);
                 assertActionOutputContract('localServices.actions.stopManaged', stopped);
                 expect(stopped).toMatchObject({ status: 'succeeded' });
                 expect(nativeStopped).toBe(true);
@@ -248,10 +276,30 @@ describe('createLocalServiceActionRoutes', () => {
     });
 
 
-    // The managed local-service runtime was removed as a producerless spine (RU2 surfaces
-    // finalization, DEC-6). The protocol still declares a `managed_service` action target, so
-    // the route must answer it — the contract under test is that the answer is a constant,
-    // audited denial and never an execution path.
+    it('refuses foreign Use inventory actions including Undo without changing custodian inventory', async () => {
+        const inventoryRegistry = createLocalServiceInventoryRegistry();
+        inventoryRegistry.replaceSnapshot(inventorySnapshot);
+        const routes = createLocalServiceActionRoutes({ machineId: 'machine-a', inventoryRegistry });
+        const target = { kind: 'inventory_entry' as const, machineId: 'machine-a', inventoryEntryId: 'entry-a' };
+        const execution: LocalServiceActionExecutionContext = {
+            ingress: { signal: new AbortController().signal, machineAdmission: {
+                actorAccountId: 'guest', custodianAccountId: 'custodian', machineId: 'machine-a',
+                installationId: 'installation', role: 'use', encryptionMode: 'plain',
+            } }, actionContext: { surface: 'cli', serverId: 'home' },
+        };
+        const request = { requestId: 'guest-forget', target, action: 'forget' as const };
+        expect(await routes.execute(request, execution)).toMatchObject({ status: 'denied', reasonCode: 'unknown_inventory_entry' });
+        expect(inventoryRegistry.getSnapshot().entries.map(entry => entry.id)).toEqual(['entry-a']);
+        const ownerResult = await routes.execute(request);
+        expect(ownerResult).toMatchObject({ status: 'succeeded', undoKey: expect.any(String) });
+        const undoRequest = { ...request, target: { ...target, inventoryEntryId: ownerResult.undoKey! }, undoKey: ownerResult.undoKey };
+        expect(await routes.execute(undoRequest, execution))
+            .toMatchObject({ status: 'denied', reasonCode: 'unknown_inventory_entry' });
+        expect(inventoryRegistry.getSnapshot().entries).toEqual([]);
+        expect(await routes.execute(undoRequest)).toMatchObject({ status: 'succeeded' });
+    });
+
+    // A route without a managed owner must return an audited unknown-target refusal.
     it.each(['stop_managed', 'restart_managed'] as const)(
         'denies %s: no managed service can be resolved on any machine',
         async (action) => {

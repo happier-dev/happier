@@ -914,14 +914,14 @@ describe('accepted Project Service declaration starter', () => {
 
     // Establish native custody through its real owner. SOURCE inspection is an independent
     // Start seam; this composition measures Move over an already running worker occurrence.
-    async function seedWorkerService(f: Awaited<ReturnType<typeof fixture>>, workspace = f.targetWorkspace) {
+    async function seedWorkerService(f: Awaited<ReturnType<typeof fixture>>, workspace = f.targetWorkspace, serviceId = 'worker') {
         // A retained worker copy already has the reviewed files before Move;
         // the coordinator must still invoke its own clean preparation after Stop.
         if (f.root !== f.targetRoot) await cp(f.root, f.targetRoot, { recursive: true });
         let phase: 'running' | 'stopped' = 'running';
         const handle = await f.owner.superviseProject({ kind: 'workspace', workspace,
             declaration: { workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'worker' } },
-            cwd: workspace.rootPath, serviceId: 'worker', specIdentity: 'worker', execution: 'portable', isCurrent: () => true,
+            cwd: workspace.rootPath, serviceId, specIdentity: 'worker', execution: 'portable', isCurrent: () => true,
             requester: { serverId: f.workspace.serverId, accountId: 'owner', machineId: workspace.machineId, installationId: 'installation' },
             // Native process IO is the boundary; native custody, feed and confirmed Stop remain real.
             processSpec: { mode: { kind: 'native', instance: {
@@ -1576,22 +1576,40 @@ describe('accepted Project Service declaration starter', () => {
         cancelDuringHomeVerification = state === 'cancelled during Home verification';
         if (state !== 'current') {
             const review = await h.routes.startTarget!(h.request, ingress, h.context);
-            expect(cancellation.signal.aborted).toBe(state === 'cancelled during Home verification');
             assertActionOutputContract('localServices.launcher.start', review);
             expect(review).toMatchObject({ status: 'denied', reasonCode: state === 'retired'
                 ? 'project_requester_credentials_unavailable' : 'cancelled' });
+            expect(cancellation.signal.aborted).toBe(state === 'cancelled during Home verification');
             expect(h.owner.listProjectServices()).toEqual([]);
             await admitted.dispose();
             return;
         }
+        ingress.machineAdmission.role = 'use';
+        const minimalRequest = { machineId: h.request.machineId, targetId: h.request.targetId, workspaceId: h.workspace.id };
+        await seedWorkerService(h, h.workspace, h.request.targetId);
+        const foreignHandle = h.owner.listProjectServices()[0]!;
+        expect(await h.routes.prepareStartApproval!(minimalRequest, ingress, h.context))
+            .toEqual({ ok: false, errorCode: 'launcher_start_declaration_unavailable', error: 'launcher_start_declaration_unavailable' });
+        expect(await h.routes.startTarget!(minimalRequest, ingress, h.context))
+            .toMatchObject({ status: 'denied', reasonCode: 'launcher_start_declaration_unavailable', snapshot: { targets: [] } });
+        const { serverId: _serverId, ...missingHomeContext } = h.context;
+        expect(await h.routes.prepareStartApproval!({ ...minimalRequest, workspace: h.request.workspace }, ingress, missingHomeContext))
+            .toEqual({ ok: false, errorCode: 'requester_credentials_unavailable', error: 'requester_credentials_unavailable' });
+        expect(await h.routes.startTarget!(minimalRequest, ingress, missingHomeContext))
+            .toMatchObject({ status: 'denied', reasonCode: 'requester_credentials_unavailable', snapshot: { targets: [] } });
+        await foreignHandle.dispose();
+        await seedWorkerService(h, { ...h.workspace, id: 'foreign-workspace' });
         const review = await h.selectStart(ingress);
         expect(cancellation.signal.aborted).toBe(false);
         expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String) });
-        expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, ingress, h.context))
-            .toMatchObject({ status: 'succeeded' });
-        const handle = h.owner.listProjectServices()[0]!;
+        const started = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, ingress, h.context);
+        expect(started).toMatchObject({ status: 'succeeded' });
+        expect(started.snapshot.targets.map(target => target.id)).toEqual([h.request.targetId]);
+        const handle = h.owner.listProjectServices().find(candidate => candidate.requester.accountId === 'bob')!;
         if (handle.kind !== 'workspace') throw new Error('Expected workspace Service');
         expect(handle.requester.accountId).toBe('bob');
+        expect(await h.routes.prepareStartApproval!(minimalRequest, ingress, h.context))
+            .toMatchObject({ request: { ...minimalRequest, workspace: h.request.workspace, declaration: h.request.declaration } });
         await admitted.dispose();
         // Installed requester invocation retirement does not revoke custody of its already-running Service.
         expect(handle.isCurrent()).toBe(true);
