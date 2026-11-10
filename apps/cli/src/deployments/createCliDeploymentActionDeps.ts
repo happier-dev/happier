@@ -16,7 +16,7 @@ import {
   type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentReceiptHeaderV1, type DeploymentBindingsSetInputV1, type DeploymentBindingsPreparedInputV1,
   type DeploymentTeardownInputV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1,
 } from '@happier-dev/protocol';
-import type { MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBindingsSetStorageInputV1, MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 import { isDeploymentPromoteActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentApprovalEnvironmentResultV1Schema, type DeploymentApprovalEnvironmentResultV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -44,7 +44,10 @@ export type DeploymentReceiptDispatchV1 = { [TAction in ReceiptAction]: Readonly
   receipt: ReceiptSuccess;
   context: ActionExecutorContext;
 }> }[ReceiptAction];
-export type PreparedDeploymentBindingStorageV1 = DeploymentBindingsPreparedInputV1 & Readonly<{ grants: readonly MachineSecretGrantV1[] }>;
+export type PreparedDeploymentBindingStorageV1 = Omit<DeploymentBindingsSetStorageInputV1, 'grants'> & Readonly<{
+  grants: readonly MachineSecretGrantV1[];
+  providerVariables?: Extract<import('@happier-dev/protocol').DeploymentBindingsSetResultV1, { ok: true }>['providerVariables'];
+}>;
 export type DeploymentBindingPreparationRequestV1 = Readonly<{
   input: DeploymentBindingsSetInputV1; context: ActionExecutorContext;
   /** Exact future placement from this invocation's admitted update operand. */
@@ -55,6 +58,7 @@ export type DeploymentBindingPreparationRequestV1 = Readonly<{
 export type CliDeploymentEnvironmentAccessRead = (input: Omit<DeploymentEnvironmentAccessInputV1, 'environmentIds'>
   & Readonly<{ environmentIds: readonly string[] }>, context: ActionExecutorContext, effectActionId: string
 ) => Promise<DeploymentEnvironmentAccessResultV1 | ActionExecuteFailure>;
+const normalizeProviderVariables = (value: NonNullable<PreparedDeploymentBindingStorageV1['providerVariables']>, persisted: boolean) => ({ ...value, persisted });
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 const domainOperationUnavailable = (requiredFact: 'operationAcceptance' | 'requestId'): ActionExecuteFailure => {
   const phase = requiredFact === 'operationAcceptance'
@@ -190,6 +194,10 @@ export function createCliDeploymentActionDeps(params: Readonly<{
     let issued = false;
     let method = 'POST';
     let preparedBindingArtifact: Pick<PreparedDeploymentBindingStorageV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'> | undefined;
+    let preparedUpdateArtifact: typeof preparedBindingArtifact;
+    let providerVariables: PreparedDeploymentBindingStorageV1['providerVariables'];
+    const withProviderEffect = (result: ActionExecuteFailure): ActionExecuteFailure => providerVariables
+      ? { ...result, effectAttempted: true, details: { providerVariables: normalizeProviderVariables(providerVariables, false) } } : result;
     let preparedUpdateBindings: Pick<PreparedDeploymentBindingStorageV1, 'grants' | 'referencedSavedSecretRevisions'> | undefined;
     try {
       const denied = await params.admitAccount(input.serverId, context);
@@ -230,6 +238,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
           if (!('environment' in current) || current.environment.id !== preparedInput.environmentId) return failure('invalid_action_output');
           if (current.environment.revision !== preparedInput.expectedRevision) return failure('deployment_conflict');
           needsContentAdmission = hasDeploymentEnvironmentContentPatchV1(preparedInput.patch)
+            || preparedInput.patch.buildMachineId !== undefined
             || current.environment.contentArtifactId !== preparedInput.contentArtifactId
             || current.environment.contentHeaderVersion !== preparedInput.contentHeaderVersion
             || current.environment.contentBodyVersion !== preparedInput.contentBodyVersion;
@@ -254,6 +263,11 @@ export function createCliDeploymentActionDeps(params: Readonly<{
           if (preparedContent) {
             input = preparedContent.input;
             authoredEnvironmentInputDigest = preparedContent.authoredInputDigest;
+            if (actionId === 'deployments.environments.update') preparedUpdateArtifact = {
+              contentArtifactId: preparedContent.input.contentArtifactId,
+              contentHeaderVersion: preparedContent.input.contentHeaderVersion,
+              contentBodyVersion: preparedContent.input.contentBodyVersion,
+            };
           }
           if ('patch' in preparedInput && preparedInput.patch?.bindings) {
             if (!params.prepareBindings) return failure('client_required');
@@ -323,13 +337,15 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         if ('errorCode' in prepared) return prepared;
         preparedBindingArtifact = { contentArtifactId: prepared.contentArtifactId,
           contentHeaderVersion: prepared.contentHeaderVersion, contentBodyVersion: prepared.contentBodyVersion };
-        body = homeId ? { ...prepared, serverId: homeId } : prepared;
+        const { providerVariables: observed, ...storage } = prepared;
+        providerVariables = observed;
+        body = homeId ? { ...storage, serverId: homeId } : storage;
         const changed = await params.admitAccount(input.serverId, context);
-        if (changed) return changed;
+        if (changed) return withProviderEffect(changed);
       }
       const headers = await params.resolveRequestHeaders(context, authorizationActionId, { method, path,
         ...(body === undefined ? {} : { body }) });
-      if (!headers) return deploymentAuthorizationFailure('home_request_headers_refused');
+      if (!headers) return withProviderEffect(deploymentAuthorizationFailure('home_request_headers_refused'));
       context.signal?.throwIfAborted();
       issued = true;
       context.onTransportIssued?.();
@@ -337,12 +353,14 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         method, headers, ...(body === undefined ? {} : { data: body }),
         ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true });
       const rollback = readHomeDomainConfirmedRollbackV1(response.status, response.data);
+      if (providerVariables && rollback) return withProviderEffect(failure(rollback.code));
       if (rollback) return { ok: false, errorCode: rollback.code, error: rollback.code, effectAttempted: false,
         details: { ...rollback.details, requiredFact: 'transaction_commit',
           remedy: 'Retry the action; the Home rolled back its database transaction.' },
         failureCause: projectActionFailureCauseV1({ code: rollback.code, status: response.status }, 'home.database.transaction') };
       const parsed = (approvalMetadata ? DeploymentApprovalEnvironmentResultV1Schema : actionId === 'deployments.environments.create'
         ? DeploymentEnvironmentCreateResultV1Schema : DeploymentActionOutputSchemasV1[actionId]).safeParse(response.data);
+      if (!parsed.success && providerVariables) return withProviderEffect(failure('outcome_unknown'));
       if (!parsed.success && (response.status === 401 || response.status === 403)) return projectHomeAuthorizationHttpFailure(response.status, headers, response.data);
       if (!parsed.success && method === 'GET' && ![404, 405, 501].includes(response.status)) {
         return deploymentOutputValidationFailure(actionId, response.status, parsed.error);
@@ -354,9 +372,15 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         const changed = await params.admitAccount(input.serverId, context);
         if (changed) return changed;
       }
+      if (providerVariables && 'ok' in parsed.data && !parsed.data.ok && 'error' in parsed.data)
+        return withProviderEffect(failure(parsed.data.error));
+      if (actionId === 'deployments.environments.update' && parsed.data.ok && preparedUpdateArtifact)
+        return { ...parsed.data, preparedArtifact: preparedUpdateArtifact };
       return actionId === 'deployments.bindings.set' && 'ok' in parsed.data && parsed.data.ok && preparedBindingArtifact
-        ? { ...parsed.data, preparedArtifact: preparedBindingArtifact } : parsed.data;
+        ? { ...parsed.data, preparedArtifact: preparedBindingArtifact,
+          ...(providerVariables ? { providerVariables: normalizeProviderVariables(providerVariables, true) } : {}) } : parsed.data;
     } catch (error) {
+      if (providerVariables) return withProviderEffect(failure(context.signal?.aborted ? 'cancelled' : 'outcome_unknown'));
       // HTTP rejected these headers before routing, including for mutations.
       if (!context.signal?.aborted) {
         const refused = transportRefusal(error);

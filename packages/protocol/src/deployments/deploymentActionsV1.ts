@@ -8,7 +8,7 @@ import { DeploymentTargetUnlinkInputV1Schema, DeploymentTeardownDispositionV1Sch
 export { DEPLOYMENT_TEARDOWN_STEPS_V1, DeploymentTeardownStepV1Schema, DeploymentTargetUnlinkInputV1Schema, DeploymentTeardownReasonV1Schema, DeploymentTeardownDispositionV1Schema, DeploymentTeardownInputV1Schema, DeploymentDataCreationReferenceV1Schema, DeploymentTeardownIntentInputV1Schema, DeploymentTeardownDetachInputV1Schema, DeploymentTeardownNothingDeployedInputV1Schema, DeploymentTeardownPreparedInputV1Schema, DeploymentTeardownActionInputV1Schema, DeploymentTeardownAdmissionInputV1Schema, DeploymentTeardownActionAdmissionInputV1Schema, type DeploymentTargetUnlinkInputV1, type DeploymentDataCreationReferenceV1, type DeploymentTeardownIntentInputV1, type DeploymentTeardownNothingDeployedInputV1, type DeploymentTeardownPreparedInputV1, type DeploymentTeardownActionInputV1, type DeploymentTeardownInputV1, type DeploymentTeardownAdmissionInputV1 } from './deploymentTeardownRequestV1.js';
 import { DeploymentEnvironmentCreateIntentInputV1Schema } from './deploymentTemplateInstantiationV1.js';
 export { DeploymentEnvironmentCreateIntentInputV1Schema, type DeploymentEnvironmentCreateIntentInputV1 } from './deploymentTemplateInstantiationV1.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { DeploymentTargetVariablesReadResultV1Schema, DeploymentTargetVariablesSyncResultV1Schema } from '../plugins/contributions/deploymentTargetVariablesV1.js';
 import { DeploymentCreationDefaultsV1Schema, ResolvedDeploymentCreationDefaultsV1Schema, DeploymentConfigurationDefaultsForV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { DeploymentControllerAvailabilityV1Schema } from './deploymentControllerAvailabilityV1.js';
@@ -104,7 +104,9 @@ import { DeploymentStoredDefinitionV1Schema, DeploymentSourceMethodV1Schema, Dep
 import { DeploymentPrepareInputV1Schema, DeploymentPrepareResultV1Schema } from './deploymentPreparationV1.js';
 import { DeploymentMoveToRepositoryInputV1Schema, DeploymentMoveToRepositoryResultV1Schema } from './deploymentMoveToRepositoryV1.js';
 export * from './deploymentMoveToRepositoryV1.js';
-export { ScmRepositoryFilesPullRequestPartialV1Schema, type ScmRepositoryFilesPullRequestPartialV1 } from '../scm/repositoryFilesPullRequest.js';
+export { ScmRepositoryFilesPullRequestPartialV1Schema, type ScmRepositoryFilesPullRequestPartialV1,
+  ScmRepositoryFilesPullRequestSuccessV1Schema, type ScmRepositoryFilesPullRequestSuccessV1,
+  ScmRepositoryFilesPullRequestResultV1Schema, type ScmRepositoryFilesPullRequestResultV1 } from '../scm/repositoryFilesPullRequest.js';
 export { REPOSITORY_FILES_PULL_REQUEST_CHILDREN_V1, REPOSITORY_FILES_PULL_REQUEST_READ_CHILDREN_V1, repositoryFilesPullRequestChildRoleV1,
   deploymentMoveToRepositoryReviewedChildrenV1, deploymentMoveToRepositoryChildRoleV1, DEPLOYMENT_MOVE_DEFINITION_CHILD_ROLE_V1,
   type DeploymentMoveToRepositoryChildActionIdV1, type RepositoryFilesPullRequestChildActionIdV1 } from '../scm/repositoryFilesPullRequestActionIds.js';
@@ -442,6 +444,7 @@ export type DeploymentPreviewEnrollmentV1 = z.infer<typeof DeploymentPreviewEnro
 /** Enrollment follows the persisted edit; a source refusal cannot undo that edit. */
 export const DeploymentEnvironmentUpdateResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...result, projectSourceId: z.optional(DeploymentIdentifierV1Schema),
+    preparedArtifact: z.optional(DeploymentArtifactContentReferenceV1Schema),
     creationDefaults: z.optional(ResolvedDeploymentCreationDefaultsV1Schema),
     backupSourceChoices: z.optional(z.array(DeploymentBackupSourceV1Schema)),
     forkEligibility: z.optional(DeploymentPreviewForkEligibilityV1Schema),

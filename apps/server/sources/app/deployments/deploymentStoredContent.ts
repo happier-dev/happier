@@ -10,8 +10,9 @@ import { decodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKi
 import { ArtifactHeaderMetadataV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, readDeploymentEnvironmentArtifactV1,
-    type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
+    readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1,
+    type DeploymentArtifactReadResultV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
 import { eventRouter, buildUpdateArtifactUpdate } from '@/app/events/eventRouter';
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 import { afterTx, type Tx } from '@/storage/inTx';
@@ -107,12 +108,13 @@ export function deploymentContentReference(input: DeploymentContentReference): D
 }
 
 /** Plain content is inspectable through the incumbent Artifact envelopes; E2EE stays opaque. */
-export async function readPlainDeploymentEnvironmentContentInTx(tx: Tx, actorAccountId: string, owner: ProjectSourceOwnerV1,
-    reference: DeploymentContentReference,
-): Promise<Readonly<{ ok: true; content: DeploymentEnvironmentContentV1 | null }> | DeploymentFailure> {
+async function readPlainDeploymentContentInTx<T>(tx: Tx, actorAccountId: string, owner: ProjectSourceOwnerV1,
+    reference: DeploymentContentReference, expectedStoredKind: string,
+    open: (reference: DeploymentContentReference, artifact: DeploymentArtifactDocumentV1) => DeploymentArtifactReadResultV1<T>,
+): Promise<Readonly<{ ok: true; content: T | null }> | DeploymentFailure> {
     const read = await readArtifactForCallerInTx(tx, { actorAccountId, artifactId: reference.contentArtifactId });
     if (!read.ok) return deploymentFailure('deployment_content_unavailable');
-    const authorityFailure = await contentAuthorityFailure(tx, read.artifact, owner, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, 'write');
+    const authorityFailure = await contentAuthorityFailure(tx, read.artifact, owner, expectedStoredKind, 'write');
     if (authorityFailure) return authorityFailure;
     if (read.artifact.headerVersion !== reference.contentHeaderVersion || read.artifact.bodyVersion !== reference.contentBodyVersion) {
         return deploymentFailure('deployment_conflict');
@@ -121,10 +123,19 @@ export async function readPlainDeploymentEnvironmentContentInTx(tx: Tx, actorAcc
     const header = ArtifactHeaderMetadataV1Schema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(read.artifact.header)));
     const body = ArtifactBodyEnvelopeV1StoredSchema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(read.artifact.body)));
     if (!header.success || !body.success) return deploymentFailure('deployment_content_unavailable');
-    const opened = readDeploymentEnvironmentArtifactV1(reference, { artifactId: read.artifact.id,
+    const opened = open(reference, { artifactId: read.artifact.id,
         revision: { headerVersion: read.artifact.headerVersion, bodyVersion: read.artifact.bodyVersion },
         header: header.data, body: body.data.body });
     return opened.ok ? { ok: true, content: opened.content } : deploymentFailure(opened.error);
+}
+
+export function readPlainDeploymentEnvironmentContentInTx(tx: Tx, actorAccountId: string, owner: ProjectSourceOwnerV1, reference: DeploymentContentReference) {
+    return readPlainDeploymentContentInTx(tx, actorAccountId, owner, reference,
+        DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, readDeploymentEnvironmentArtifactV1);
+}
+export function readPlainDeploymentTargetLinkContentInTx(tx: Tx, actorAccountId: string, owner: ProjectSourceOwnerV1, reference: DeploymentContentReference) {
+    return readPlainDeploymentContentInTx(tx, actorAccountId, owner, reference,
+        DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, readDeploymentTargetLinkArtifactV1);
 }
 
 /** The Artifact owner writes prepared bytes in the same transaction as the owning record CAS. */
