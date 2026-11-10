@@ -258,7 +258,7 @@ describe('Team credential resource usage query', () => {
     if ('ok' in result) throw new Error('expected usage result');
     expect(result.totals).toMatchObject({
       requestCount: 1,
-      tokens: { total: 0 },
+      tokens: { total: null },
       cost: { costSource: 'none' },
     });
     expect(result.totals.cost.effectiveUsd).toBeUndefined();
@@ -754,7 +754,7 @@ describe('Team credential resource usage query', () => {
     const managerView = await queryTeamCredentialUsage(manager.id, { resourceId: resource.id, ...range }, TEST_AUTHENTICATION);
     expect('ok' in managerView).toBe(false);
   });
-  it('sums best-available monetary contributions while strict modes refuse an incompletely priced population', async () => {
+  it('sums known monetary contributions while strict modes retain their known subtotals', async () => {
     const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
     const team = await db.team.create({ data: { name: 'Mixed provenance team' } });
     await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: 'admin' } });
@@ -798,11 +798,11 @@ describe('Team credential resource usage query', () => {
     const reportedOnly = await queryTeamCredentialUsage(manager.id, { ...input, costMode: 'reported' }, TEST_AUTHENTICATION);
     if ('ok' in reportedOnly) throw new Error('expected usage result');
     expect(reportedOnly.totals.cost.reportedUsd).toBe(2);
-    expect(reportedOnly.totals.cost.effectiveUsd).toBeUndefined();
+    expect(reportedOnly.totals.cost.effectiveUsd).toBe(2);
     const estimatedOnly = await queryTeamCredentialUsage(manager.id, { ...input, costMode: 'estimated' }, TEST_AUTHENTICATION);
     if ('ok' in estimatedOnly) throw new Error('expected usage result');
     expect(estimatedOnly.totals.cost.estimatedUsd).toBe(3);
-    expect(estimatedOnly.totals.cost.effectiveUsd).toBeUndefined();
+    expect(estimatedOnly.totals.cost.effectiveUsd).toBe(3);
 
     const invoiceResource = await db.teamCredentialResource.create({ data: {
       id: 'usage-invoice-provenance-resource', teamId: team.id, custodianAccountId: manager.id,

@@ -81,12 +81,12 @@ export function normalizeCodexTokenUsage(value: unknown): UsageObservationTokens
         && cacheCreation == null && thought == null) return null;
 
     return {
-        total: total ?? (input ?? 0) + (output ?? 0),
-        input: input ?? 0,
-        output: output ?? 0,
-        cacheRead: cacheRead ?? 0,
-        cacheWrite: cacheCreation ?? 0,
-        reasoning: thought ?? 0,
+        total: total ?? (input === null || output === null ? null : input + output),
+        input,
+        output,
+        cacheRead,
+        cacheWrite: cacheCreation,
+        reasoning: thought,
     };
 }
 
@@ -119,7 +119,7 @@ export function buildCodexAppServerTokenCountObservationInput(params: Readonly<{
         ? null
         : estimateUsageModelCost(modelId, tokens
             ? resolveUsageTokenCategories(tokens, { inputIncludesCache: true, outputIncludesReasoning: true }) : null);
-    const contextSnapshot = lastUsageTokens ? {
+    const contextSnapshot = lastUsageTokens?.total != null ? {
         v: 1,
         modelId,
         usedTokens: lastUsageTokens.total,
@@ -133,7 +133,7 @@ export function buildCodexAppServerTokenCountObservationInput(params: Readonly<{
     } satisfies SessionContextUsageSnapshotV1 : null;
     const runtimeTokens = tokens;
     const runtimeCost = cost ? {
-        reportedUsd: 0,
+        reportedUsd: null,
         estimatedUsd: cost.estimatedUsd,
         billingContext: 'unknown' as const,
         costSource: 'pricing_estimate' as const,

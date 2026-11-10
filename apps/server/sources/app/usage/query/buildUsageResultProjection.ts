@@ -85,7 +85,7 @@ function costFactsForRow(row: ScopedUsageContribution): UsageAnalyticsCostFact[]
     const facts: UsageAnalyticsCostFact[] = resolveUsageCostFacts(row.cost).map((fact) => ({
         ...base, ...fact, complete: complete && (fact.kind !== "estimated" || row.modelId !== null),
     }));
-    if (facts.length === 0 && row.tokens.total > 0) facts.push({ ...base, kind: "unpriced", amountUsd: null, source: "none", complete: false });
+    if (facts.length === 0 && (row.tokens.total === null || row.tokens.total > 0)) facts.push({ ...base, kind: "unpriced", amountUsd: null, source: "none", complete: false });
     return facts;
 }
 
@@ -177,7 +177,7 @@ export function buildUsageResultProjection(input: UsageResultProjectionInput): {
         ? input.preparedContributions.map(row => row.tokenCategories ?? null)
         : input.contributions.map((row) => resolveUsageTokenCategories(row.tokens, readScopedUsageAccountingEvidence(row).accounting));
     const coverageFacts = projectCoverageFacts(input.contributions, perContributionCategories, input.request, input.coverageReasons);
-    const tokenCategories = projectUsageContributionTokenCategories(perContributionCategories.map(tokenCategories => ({ tokenCategories })));
+    const tokenCategories = projectUsageContributionTokenCategories(perContributionCategories.map(tokenCategories => ({ tokenCategories: tokenCategories ?? undefined })));
     const ranked = [...input.ranked ?? []];
     const evidence = input.coverageEvidence ?? projectUsageCoverageEvidence(input.evidenceRows);
     const costReasons = new Set<UsageAccountingCoverageReason>();
@@ -205,7 +205,7 @@ export function buildUsageResultProjection(input: UsageResultProjectionInput): {
     const first = selected[0];
     const oneBasis = first && selected.every((fact) => fact !== null && fact.kind === first.kind && fact.currency === first.currency && fact.source === first.source);
     const costPresentation = oneBasis ? {
-        mode, effectiveUsd: selected.reduce((sum, fact) => sum + (fact?.amountUsd ?? 0), 0), currency: first.currency, source: first.source,
+        mode, effectiveUsd: selected.reduce((sum, fact) => sum + fact!.amountUsd, 0), currency: first.currency, source: first.source,
     } : undefined;
     return {
         costFacts: [...groupedFacts.values()],

@@ -11,8 +11,8 @@ export type ExactTurnUsageAccumulator = Readonly<{
   current(): ExactTurnUsage | undefined;
 }>;
 
-function addSafeInteger(current: number | undefined, delta: number): number | null {
-  if (!Number.isSafeInteger(delta) || delta < 0) return null;
+function addSafeInteger(current: number | undefined, delta: number | null): number | null {
+  if (delta === null || !Number.isSafeInteger(delta) || delta < 0) return null;
   const next = (current ?? 0) + delta;
   return Number.isSafeInteger(next) ? next : null;
 }
@@ -34,8 +34,8 @@ export function createExactTurnUsageAccumulator(): ExactTurnUsageAccumulator {
     observe(observation) {
       if (observation.scope !== 'turn_delta') return;
 
-      if (observation.tokens) {
-        const nextInput = addSafeInteger(inputTokens, observation.tokens.input);
+      {
+        const nextInput = addSafeInteger(inputTokens, observation.tokens?.input ?? null);
         if (observation.availability?.inputTokens === true
           && !inputTokensUnavailable && nextInput !== null) {
           inputTokens = nextInput;
@@ -44,7 +44,7 @@ export function createExactTurnUsageAccumulator(): ExactTurnUsageAccumulator {
           inputTokensUnavailable = true;
         }
 
-        const nextOutput = addSafeInteger(outputTokens, observation.tokens.output);
+        const nextOutput = addSafeInteger(outputTokens, observation.tokens?.output ?? null);
         if (observation.availability?.outputTokens === true
           && !outputTokensUnavailable && nextOutput !== null) {
           outputTokens = nextOutput;
@@ -54,9 +54,9 @@ export function createExactTurnUsageAccumulator(): ExactTurnUsageAccumulator {
         }
       }
 
-      if (observation.cost) {
+      {
         const exactReportedUsd = observation.availability?.reportedCostUsd === true
-          && observation.cost.currency === 'USD'
+          && observation.cost?.currency === 'USD'
           && (observation.cost.costSource === 'provider_reported'
             || observation.cost.costSource === 'provider_reported_api_equivalent')
           ? observation.cost.reportedUsd

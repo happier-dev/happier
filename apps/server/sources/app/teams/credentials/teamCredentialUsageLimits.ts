@@ -42,7 +42,7 @@ export type TeamCredentialUsageLimitEvent = Readonly<{
     resourceId: string | null;
     actorAccountId: string | null;
     requestCount: number;
-    totalTokens: number;
+    totalTokens: number | null;
     effectiveCostUsd: number | null;
     costMeasurementExpected: boolean;
     deliveryMode: string | null;

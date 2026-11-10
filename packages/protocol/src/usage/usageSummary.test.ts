@@ -585,7 +585,7 @@ describe('compact Usage summary', () => {
         const compact = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(usageCost.projectUsageAnalyticsSummary(rich, query))));
         const priced = usageCost.repriceUsageAnalyticsResponse(compact, catalog, overrides);
         const decoded = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(priced)));
-        expect(usageCost.resolveEffectiveUsageCostUsd(decoded.series![0]!.cost, 'auto')).toBe(0);
+        expect(usageCost.resolveEffectiveUsageCostUsd(decoded.series![0]!.cost, 'auto')).toBeNull();
         expect(usageCost.projectUsagePageCost(decoded, 'auto').amountUsd).toBe(3);
         const outside = response([contribution(3, { cost: { ...cost, reportedTotalId: 'outside-report' } })]);
         const outsideCompact = usageCost.projectUsageAnalyticsSummary(outside, query);

@@ -123,6 +123,24 @@ async function createRuntime(params: Readonly<{
 }
 
 describe('OpenCode native interactions', () => {
+  it('omits current context when paid counters have no native total while retaining a measured zero total', async () => {
+    const client = createClient();
+    vi.mocked(client.sessionPromptAsync).mockResolvedValue({ id: 'native-paid-user' });
+    const runtime = await createRuntime({ client, askQuestions: vi.fn() });
+    const events: unknown[] = [];
+    const dispose = runtime.subscribeRuntimeEvents(event => events.push(event));
+    try {
+      runtime.beginTurnLifecycle('partial-paid-turn');
+      await runtime.sendTurnPrompt('hello');
+      for (const total of [null, 0]) await runtime.handleProviderEvent({ type: 'message.updated', properties: { info: {
+        id: `paid-${total}`, sessionID: 'provider-session-1', parentID: 'native-paid-user',
+        role: 'assistant', modelID: 'sonnet', time: { created: 100, completed: 200 }, tokens: { input: 12, output: 0, total },
+      } } });
+      const observations = events.filter(value => value && typeof value === 'object' && Reflect.get(value, 'kind') === 'usage-observed');
+      expect(observations).toMatchObject([{ tokens: { input: 12, total: null } }, { tokens: { total: 0 }, context: { usedTokens: 0 } }]);
+      expect(observations[0]).not.toHaveProperty('context');
+    } finally { dispose(); await runtime.resetOrDisposeRuntime(); }
+  });
   it.each(['v1', 'v2'] as const)('withdraws unproven ChatGPT catalog rows without preventing an explicit native selection (%s)', async dialect => {
     const config = buildOpenCodeV2ConnectedAuthConfigPart({ configHome: '/opencode', requestAuthProviders: ['openai'], directApiKeys: {} });
     const nativeProviders = dialect === 'v1' ? asRecord(config.provider) : asRecord(config.providers);
@@ -243,7 +261,7 @@ describe('OpenCode native interactions', () => {
     await runtime.handleProviderEvent({ type: 'session.next.compaction.ended', properties: { sessionID: 'provider-session-1', messageID: 'v2-paid' } });
     expect(events.filter((value) => value && typeof value === 'object' && Reflect.get(value, 'kind') === 'usage-observed'))
       .toMatchObject([{ accounting: { nativeSessionId: 'provider-session-1', inferenceId: 'v2-paid', outputIncludesReasoning: false, historyComplete: false },
-        tokens: { total: 24, output: 5, reasoning: 2 }, cost: { estimatedUsd: 0.2 } }]);
+        tokens: { total: null, output: 5, reasoning: 2 }, cost: { estimatedUsd: 0.2 } }]);
     dispose(); await runtime.resetOrDisposeRuntime();
   });
   it('publishes paid compaction accounting before transcript suppression without step duplication', async () => {
@@ -256,7 +274,7 @@ describe('OpenCode native interactions', () => {
     await runtime.handleProviderEvent(event);
     await runtime.handleProviderEvent(event);
     expect(events.filter((value) => value && typeof value === 'object' && Reflect.get(value, 'kind') === 'usage-observed'))
-      .toMatchObject([{ accounting: { nativeSessionId: 'provider-session-1', inferenceId: 'paid-compaction', historyComplete: false }, tokens: { total: 22 }, cost: { estimatedUsd: 0.2 } }]);
+      .toMatchObject([{ accounting: { nativeSessionId: 'provider-session-1', inferenceId: 'paid-compaction', historyComplete: false }, tokens: { total: null }, cost: { estimatedUsd: 0.2 } }]);
     dispose(); await runtime.resetOrDisposeRuntime();
   });
   it('translates a provider question through the host owner and replies exactly once', async () => {

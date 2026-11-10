@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { UsageAnalyticsContribution, UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
-import { createEmptyUsageSelectedCost, mergeUsageSelectedCosts, resolveUsageContributionCosts, selectResolvedUsageCost,
+import { addUsageMeasurements, createEmptyUsageSelectedCost, mergeUsageSelectedCosts, resolveUsageContributionCosts, selectResolvedUsageCost,
     type UsageSelectedCostAccumulator } from './usageAggregation.js';
 import { createUsageFixedBucketResolver, resolveUsageBucketBounds, resolveUsageCalendarDateStart, resolveUsageCalendarInstant } from './usageCalendar.js';
 import type { UsageCostMode } from './usageCostFacts.js';
@@ -110,7 +110,7 @@ export interface UsageAgentAccountingCalendar {
 
 export interface UsageCalendarAccountingFacts {
     contributionCount: number;
-    tokens: number;
+    tokens: number | null;
     eventCount: number | null;
     sessionIds: string[] | null;
     sources: Array<{ source: UsageAnalyticsContribution['source']; path: string; machineId: string | null }>;
@@ -125,37 +125,37 @@ export function mergeUsageCalendarAccountingFacts(parts: readonly UsageCalendarA
     const sessionIds = new Set<string>();
     const sources = new Map<string, UsageCalendarAccountingFacts['sources'][number]>();
     let contributionCount = 0;
-    let tokens = 0;
+    let tokens: number | null = null;
     let eventCount: number | null = 0;
     let knownSessions = true;
     for (const part of parts) {
         contributionCount += part.contributionCount;
-        tokens += part.tokens;
+        if (part.contributionCount > 0) tokens = addUsageMeasurements(tokens, part.tokens);
         eventCount = eventCount === null || part.eventCount === null ? null : eventCount + part.eventCount;
         if (part.sessionIds === null) knownSessions = false;
         else for (const id of part.sessionIds) sessionIds.add(id);
         for (const source of part.sources) sources.set(JSON.stringify([source.source, source.path, source.machineId]), source);
     }
-    return { contributionCount, tokens, eventCount, sessionIds: knownSessions ? [...sessionIds] : null, sources: [...sources.values()] };
+    return { contributionCount, tokens: contributionCount === 0 ? 0 : tokens, eventCount, sessionIds: knownSessions ? [...sessionIds] : null, sources: [...sources.values()] };
 }
 
 export function projectUsageCalendarAccountingFacts(rows: readonly UsageAnalyticsContribution[]): UsageCalendarAccountingFacts {
     const sessionIds = new Set<string>();
     const sources = new Map<string, UsageCalendarAccountingFacts['sources'][number]>();
-    let tokens = 0;
+    let tokens: number | null = null;
     let eventCount: number | null = 0;
     let knownSessions = true;
     for (const row of rows) {
-        tokens += row.tokens.total;
+        tokens = addUsageMeasurements(tokens, row.tokens.total);
         eventCount = eventCount === null || row.eventCount === undefined ? null : eventCount + row.eventCount;
-        if (row.tokens.total > 0 || row.eventCount !== 0) {
+        if (row.tokens.total !== 0 || row.eventCount !== 0) {
             if (row.sessionId === null) knownSessions = false;
             else sessionIds.add(row.sessionId);
         }
         const source = { source: row.source, path: row.sourceContext?.path ?? 'unknown', machineId: row.machineId };
         sources.set(JSON.stringify([source.source, source.path, source.machineId]), source);
     }
-    return { contributionCount: rows.length, tokens, eventCount, sessionIds: knownSessions ? [...sessionIds] : null, sources: [...sources.values()] };
+    return { contributionCount: rows.length, tokens: rows.length === 0 ? 0 : tokens, eventCount, sessionIds: knownSessions ? [...sessionIds] : null, sources: [...sources.values()] };
 }
 
 /** Open accounting calendars begin on the selected population's first observed local day. */

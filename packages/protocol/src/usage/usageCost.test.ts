@@ -6,6 +6,26 @@ import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, ty
 import { addUsageCostForMode, createEmptyUsageCost } from './usageAggregation.js';
 import { buildUsagePricingPopulation, createUsagePricedPartitionBuilder, priceUsagePricingPopulation } from './usagePricingPopulation.js';
 
+it('keeps unknown token categories unpriced in detailed and compact projections without losing known money', () => {
+  const unknown = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+  const measured = { input: 1_000_000, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1_000_000 };
+  const cost = { reportedUsd: null, estimatedUsd: null, currency: 'USD' };
+  const rows = [measured, unknown].map((tokens, index) => ({ id: String(index), eventCount: 1,
+    observedAtMs: index, sessionId: null, turnId: null, agentId: null, modelId: 'gpt-4o',
+    machineId: null, projectKey: null, workspaceId: null, source: null, tokens, tokenCategories: index === 0 ? tokens : null, cost }));
+  const value: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 2, tokens: measured, cost }, contributions: rows };
+  const detailed = repriceUsageAnalyticsResponse(value);
+  expect(detailed.contributions![1]!.cost.apiEquivalentUsd).toBeUndefined();
+  expect(detailed.costFacts).toContainEqual(expect.objectContaining({ kind: 'unpriced', amountUsd: null, tokens: unknown }));
+  const known = detailed.contributions![0]!.cost.apiEquivalentUsd;
+  expect(known).toBeGreaterThan(0);
+  expect(projectUsagePageCost(detailed, 'auto').amountUsd).toBe(known);
+  const compact = priceUsagePricingPopulation(buildUsagePricingPopulation(rows), bundledUsageModelPriceCatalog, {}, 'auto');
+  expect(compact.selected?.amountUsd).toBe(known);
+  expect(compact.facts).toContainEqual(expect.objectContaining({ kind: 'unpriced', tokens: unknown }));
+  expect(resolveUsageCostBasis(repriceUsageObservationCost(cost, 'gpt-4o', unknown), 'auto')).toBeNull();
+});
+
 it('suspends pricing only when its host checkpoint is due', () => {
   const tokens = { input: 10, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 };
   const cost = { reportedUsd: 0, estimatedUsd: 1, currency: 'USD' };
@@ -307,7 +327,7 @@ it('reuses the completed cost projection across refreshes with unchanged account
 it('never reclassifies a mixed aggregate with none provenance as reported money', () => {
   const mixed = { reportedUsd: 4, estimatedUsd: 0, currency: 'USD', costSource: 'none' as const };
   expect(resolveUsageCostBasis(mixed, 'reported')).toBeNull();
-  expect(resolveEffectiveUsageCostUsd(mixed, 'reported')).toBe(0);
+  expect(resolveEffectiveUsageCostUsd(mixed, 'reported')).toBeNull();
 });
 
 it('recognizes explicit zero pricing while leaving default zero unpriced', () => {
@@ -316,12 +336,12 @@ it('recognizes explicit zero pricing while leaving default zero unpriced', () =>
   expect(resolveUsageCostBasis({ ...zero, costSource: 'pricing_estimate' }, 'auto')).toMatchObject({ kind: 'estimated', amountUsd: 0 });
 });
 
-it('does not restore an incomplete API tariff population when a later row is priced', () => {
+it('retains the known tariff subtotal when a preceding row was unpriced', () => {
   const unpriced = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'none' as const };
   const priced = { reportedUsd: 0, estimatedUsd: 1, currency: 'USD', costSource: 'pricing_estimate' as const, apiEquivalentUsd: 9 };
   const cost = addUsageCostForMode(addUsageCostForMode(createEmptyUsageCost(), unpriced, 'api_equivalent'), priced, 'api_equivalent');
-  expect(cost.apiEquivalentUsd).toBeUndefined();
-  expect(resolveUsageCostBasis(cost, 'api_equivalent')).toBeNull();
+  expect(cost.apiEquivalentUsd).toBe(9);
+  expect(resolveUsageCostBasis(cost, 'api_equivalent')).toMatchObject({ amountUsd: 9 });
 });
 
 it('keeps a money-only final from invalidating fully priced token accounting', () => {
@@ -404,7 +424,7 @@ it('projects one common page basis without repricing witnessed facts or changing
   expect(resolveUsageCostBasis(costs[0]!, 'auto')?.kind).toBe('reported');
   expect(projectUsagePageCost(response, 'api_equivalent')).toMatchObject({ amountUsd: 17,
     selection: { kind: 'api_equivalent', currency: 'USD' } });
-  expect(projectUsagePageCost(response, 'auto', { kind: 'invoice', currency: 'USD' }).amountUsd).toBeNull();
+  expect(projectUsagePageCost(response, 'auto', { kind: 'invoice', currency: 'USD' }).amountUsd).toBe(2);
   expect(projectUsagePageCost(response, 'auto', { kind: 'reported', currency: 'EUR' }).amountUsd).toBeNull();
 });
 
@@ -413,9 +433,9 @@ it('sums best available reported and priced rows with a mixed label, keeping unk
   const priced = { reportedUsd: 0, estimatedUsd: 6, apiEquivalentUsd: 9, currency: 'USD', costSource: 'pricing_estimate' as const };
   const mixed = addUsageCostForMode(addUsageCostForMode(createEmptyUsageCost(), reported, 'auto'), priced, 'auto');
   expect(resolveUsageCostBasis(mixed, 'auto')).toMatchObject({ kind: 'mixed', amountUsd: 12, currency: 'USD' });
-  expect(resolveUsageCostBasis(addUsageCostForMode(mixed, { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'none' }, 'auto'), 'auto')).toBeNull();
+  expect(resolveUsageCostBasis(addUsageCostForMode(mixed, { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'none' }, 'auto'), 'auto')).toMatchObject({ amountUsd: 12 });
   expect(resolveUsageCostBasis(addUsageCostForMode(mixed, { ...reported, currency: 'EUR' }, 'auto'), 'auto')).toBeNull();
-  expect(resolveUsageCostBasis(addUsageCostForMode(reported, priced, 'reported'), 'reported')).toBeNull();
+  expect(resolveUsageCostBasis(addUsageCostForMode(reported, priced, 'reported'), 'reported')).toMatchObject({ amountUsd: 3 });
   expect(resolveUsageCostFacts(mixed)).toContainEqual(expect.objectContaining({ kind: 'reported', amountUsd: 3 }));
   expect(mixed.costSource).toBe('none');
   expect(addUsageCostForMode(addUsageCostForMode(createEmptyUsageCost(), priced, 'auto'), reported, 'auto').costSource).toBe('none');
@@ -501,7 +521,7 @@ it('reprojects source money with its leader when older contributions have no wit
   expect(leader.sources![0]!.cost.estimatedUsd).toBe(6);
 });
 
-it('does not expose stale aggregate money when a selected API-equivalent bucket is partly unpriced', () => {
+it('projects known API-equivalent money for a partly unpriced bucket', () => {
   const tokens = { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 };
   const cost = { reportedUsd: 3, estimatedUsd: 0, apiEquivalentUsd: 9, currency: 'USD' };
   const response = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 2, tokens, cost },
@@ -512,6 +532,6 @@ it('does not expose stale aggregate money when a selected API-equivalent bucket 
     })),
   });
   const page = projectUsagePageCost(response, 'api_equivalent');
-  expect(page.amountUsd).toBeNull();
-  expect(resolveUsageCostBasis(page.accounting.series![0]!.cost, 'api_equivalent')).toBeNull();
+  expect(page.amountUsd).toBe(9);
+  expect(resolveUsageCostBasis(page.accounting.series![0]!.cost, 'api_equivalent')).toMatchObject({ amountUsd: 9 });
 });

@@ -1,3 +1,4 @@
+import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
 import { describe, expect, it, vi } from 'vitest';
 import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery, projectUsagePageCost, resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCost';
@@ -94,7 +95,7 @@ describe('captured usage query projection', () => {
                 && value.length === 3 && value[0] === 'session').length;
         } finally { stringify.mockRestore(); }
         expect(population.totalContributions).toHaveLength(rows.length);
-        expect(population.totalContributions.reduce((total, row) => total + row.tokens.total, 0)).toBe(rows.length);
+        expect(population.totalContributions.reduce<number | null>((total, row) => addUsageMeasurements(total, row.tokens.total), null)).toBe(rows.length);
         expect(subjectIdentities, 'one subject identity per admitted event, shared by fold and evidence selection').toBe(rows.length);
     });
     it('prices compact activity by rendered populations while preserving requested Session membership', async () => {
@@ -237,7 +238,7 @@ describe('captured usage query projection', () => {
         expect(result.totals.tokens.total).toBe(150);
         expect(result.totals.cost.estimatedUsd).toBeCloseTo(0.15);
         expect(result.totals.context).toEqual({ usedTokens: 25, windowTokens: 1000 });
-        expect(result.series?.reduce((sum, bucket) => sum + bucket.tokens.total, 0)).toBe(150);
+        expect(result.series?.reduce<number | null>((sum, bucket) => addUsageMeasurements(sum, bucket.tokens.total), null)).toBe(150);
         expect(result.breakdowns?.session?.[0]?.context).toEqual({ usedTokens: 25, windowTokens: 1000 });
         expect(result.coverage?.reasons).not.toContain('ambiguous_overlap');
         expect(result.coverage?.reasons).not.toContain('counter_discontinuity');
@@ -436,6 +437,26 @@ describe('captured usage query projection', () => {
         expect(projectUsageAnalyticsResponseDemand(supplied, richer, { ...richer, breakdowns: ['agent'] })).toBeUndefined();
     });
 
+    it('preserves unknown token frontiers without tying them to measured zero', async () => {
+        const query = UsageAnalyticsQueryRequestSchema.parse({ includeSeries: false,
+            breakdowns: ['model'], topLimit: 1, costMode: 'reported' });
+        const unknown = { ...row('unknown-frontier', 0, null), modelId: 'a-unknown',
+            inputTokens: null, outputTokens: null, reasoningTokens: null, cacheReadTokens: null,
+            cacheWriteTokens: null, totalTokens: null, reportedCostUsd: 1, costSource: 'provider_reported' };
+        const zero = { ...row('zero-frontier', 0, null), modelId: 'z-zero',
+            reportedCostUsd: 1, costSource: 'provider_reported' };
+        for (const rows of [[unknown], [unknown, zero]]) {
+            const snapshot: UsageAnalyticsSnapshot = { rows, legacyReports: [],
+                priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
+            const population = projectUsageAnalyticsPopulation(snapshot, query);
+            const select = await projectUsageAnalyticsDemands(snapshot, [query],
+                resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog), population, true);
+            const selected = await select(query, snapshot);
+            expect(selected.summary?.rankedPricing?.['breakdowns:model']?.map(candidate => candidate.value.key))
+                .toEqual([rows.length === 1 ? 'a-unknown' : 'z-zero']);
+        }
+    });
+
     it('services native I/O during lazy Summary selection', async () => {
         const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 1000 },
             includeSeries: true, includeActivity: true, includeLeaders: true, includeModelTimeline: true, breakdowns: ['agent', 'machine'] });
@@ -607,7 +628,7 @@ describe('captured usage query projection', () => {
         metadataReads = 0;
         const control = await projectUsageAnalyticsBatch(capturedControl, selected, true, false, timing);
         expect(metadataReads, 'distinct population folds consume the same admitted metadata within this batch').toBe(single);
-        expect(control.results.map(result => 'value' in result ? result.value.totals.tokens.total : null)).toEqual([27330, 0, 27330]);
+        expect(control.results.map(result => 'value' in result ? result.value.totals.tokens.total : null)).toEqual([27330, null, 27330]);
         // A pricing phase can resume more than once when its elapsed slice expires.
         const retainedTransitions = retainedSnapshotsAtPrice.filter((count, index, counts) => index === 0 || count !== counts[index - 1]);
         expect(retainedTransitions, 'pricing retains raw capture only for populations that have not folded yet').toEqual([1, 0]);
@@ -689,7 +710,7 @@ describe('captured usage query projection', () => {
         const captured = { priceCatalog: snapshot.priceCatalog,
             snapshots: new Map(queries.map(query => [getUsageAnalyticsQueryRequestKey(query), snapshot])) };
         const batch = await projectUsageAnalyticsBatch(captured, queries, true, true);
-        expect(batch.results[0]).toMatchObject({ value: { totals: { tokens: { total: 0 } }, summary: { v: 1 } } });
+        expect(batch.results[0]).toMatchObject({ value: { totals: { tokens: { total: null } }, summary: { v: 1 } } });
         expect(batch.results[1]).toMatchObject({ error: 'usage_query_failed' });
     });
 
@@ -797,7 +818,7 @@ describe('captured usage query projection', () => {
             const result = projectUsageAnalytics(snapshot, UsageAnalyticsQueryRequestSchema.parse({ ...query, filters: { execution } }));
             expect(result.totals.tokens.total).toBe(total);
             expect(result.contributions?.every(row => row.sourceContext?.execution === execution)).toBe(true);
-            expect(result.series?.reduce((sum, row) => sum + row.tokens.total, 0)).toBe(total);
+            expect(result.series?.reduce<number | null>((sum, row) => addUsageMeasurements(sum, row.tokens.total), null)).toBe(total);
             expect(result.engineTimeline?.[0]?.leaders[0]?.sources?.every(row => row.execution === execution)).toBe(true);
             expect(result.coverage?.sources.map(row => row.path).sort()).toEqual(
                 execution === 'happier' ? ['native', 'runtime'] : [execution === 'outside' ? 'native' : 'unknown']);

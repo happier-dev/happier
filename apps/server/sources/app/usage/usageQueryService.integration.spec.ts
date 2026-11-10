@@ -1,5 +1,6 @@
+import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
 import { bundledUsageModelPriceCatalog, estimateUsageModelCost, repriceUsageAnalyticsResponse,
-    UsageAnalyticsQueryRequestSchema } from "@happier-dev/protocol";
+    UsageAnalyticsQueryRequestSchema, UsageEventIngestRequestSchema } from "@happier-dev/protocol";
 import { getUsageAnalyticsQueryRequestKey } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -44,7 +45,12 @@ function buildUsageEvent(params: Readonly<{
         source: "codex_app_server",
         scope: params.scope,
         isCumulative: params.scope !== "turn_delta",
+        // This fixture measures input-only usage, including zero in the other categories.
         inputTokens: params.totalTokens,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
         totalTokens: params.totalTokens,
         estimatedCostUsd: params.totalTokens / 1_000,
         costSource: "pricing_estimate",
@@ -88,6 +94,37 @@ describe("usageQueryService scoped aggregation", () => {
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it('keeps measured totals with partial coverage beside unknown events, and preserves unknown-only child usage', async () => {
+        const owner = await createUsageOwner('unknown-measurements');
+        const child = await db.session.create({ data: { accountId: owner.accountId, tag: 'unknown-child',
+            encryptionMode: 'plain', metadata: '{}' } });
+        const unknownTokens = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+        for (const [index, sessionId] of [owner.sessionId, owner.sessionId, child.id].entries()) {
+            const unknown = index !== 0;
+            const request = UsageEventIngestRequestSchema.parse({ sessionId, externalKey: `unknown-event-${index}`,
+                observedAt: 100 + index, source: 'runtime', scope: 'turn_delta', isCumulative: false,
+                agentId: 'codex', modelId: 'unpriced-test-model', turnId: `turn-${index}`,
+                tokens: unknown ? unknownTokens : { input: 8, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 },
+                cost: { reportedUsd: unknown ? null : 0.25, estimatedUsd: null, invoiceUsd: null,
+                    costSource: unknown ? 'none' : 'provider_reported', currency: 'USD' },
+                metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } } });
+            expect(await recordUsageEvent(owner.accountId, request)).toMatchObject({ ok: true });
+        }
+        const mixed = await querySession(owner.accountId, owner.sessionId);
+        expect(mixed.totals.tokens.total).toBe(10);
+        expect(mixed.coverage?.status).toBe('partial');
+        expect(mixed.coverage?.reasons).toContain('unknown_token_categories');
+        const unknown = await querySession(owner.accountId, child.id);
+        expect(unknown.totals.tokens).toEqual(unknownTokens);
+        expect(unknown.totals.cost.reportedUsd).toBeNull();
+        expect(unknown.contributions).toHaveLength(1);
+        expect(unknown.contributions?.[0]?.sessionId).toBe(child.id);
+        expect(unknown.coverage?.status).toBe('partial');
+        const account = await queryUsageAnalytics(owner.accountId, UsageAnalyticsQueryRequestSchema.parse({}));
+        expect(account.totals.tokens.total).toBe(10);
+        expect(account.contributions).toHaveLength(3);
     });
 
     it('hydrates window fold groups while retaining exact historical coverage and legacy evidence', async () => {
@@ -293,7 +330,7 @@ describe("usageQueryService scoped aggregation", () => {
         expect(ordinary.messageStats?.messageCount).toBe(2);
         const admitted = await querySession(owner.accountId, owner.sessionId, { ...clauses, population: 'public_eligible_personal' });
         expect(admitted.totals.tokens.total).toBe(90);
-        expect(admitted.series?.reduce((sum, row) => sum + row.tokens.total, 0)).toBe(90);
+        expect(admitted.series?.reduce<number | null>((sum, row) => addUsageMeasurements(sum, row.tokens.total), null)).toBe(90);
         expect(admitted.contributions?.map(row => row.turnId)).toEqual(['personal', 'unknown', null]);
         expect(admitted.breakdowns?.source?.map(row => row.key)).toEqual(['counter', 'unknown', 'personal']);
         expect(admitted.coverage?.sources.map(row => row.source)).toEqual(['personal', 'unknown', 'counter']);
@@ -430,7 +467,7 @@ describe("usageQueryService scoped aggregation", () => {
             }));
             expect(selected.totals.tokens.total).toBe(total);
             expect(selected.contributions?.every(row => row.sourceContext?.execution === execution)).toBe(true);
-            expect(selected.series?.reduce((sum, row) => sum + row.tokens.total, 0)).toBe(total);
+            expect(selected.series?.reduce<number | null>((sum, row) => addUsageMeasurements(sum, row.tokens.total), null)).toBe(total);
             expect(selected.engineTimeline?.[0]?.leaders[0]?.sources?.every(row => row.execution === execution)).toBe(true);
             expect(selected.insights).toBeUndefined();
             expect(selected.messageStats).toBeUndefined();
@@ -738,7 +775,7 @@ describe("usageQueryService scoped aggregation", () => {
 
         expect(result.totals.tokens.total).toBe(140);
         expect(result.series?.map((bucket) => bucket.tokens.total)).toEqual([100, 40]);
-        expect(result.series?.reduce((sum, bucket) => sum + bucket.tokens.total, 0)).toBe(140);
+        expect(result.series?.reduce<number | null>((sum, bucket) => addUsageMeasurements(sum, bucket.tokens.total), null)).toBe(140);
     });
 
     it("reconciles the provider final without blending its reported fact into earlier estimated inferences", async () => {
@@ -773,7 +810,7 @@ describe("usageQueryService scoped aggregation", () => {
             expect.objectContaining({ kind: "estimated", amountUsd: 0.05 }),
             expect.objectContaining({ kind: "reported", amountUsd: 0.12 }),
         ]));
-        expect(result.series?.reduce((sum, bucket) => sum + bucket.tokens.total, 0)).toBe(100);
+        expect(result.series?.reduce<number | null>((sum, bucket) => addUsageMeasurements(sum, bucket.tokens.total), null)).toBe(100);
     });
 
     it("keeps distinct cost facts when final provenance changes rather than telescoping incomparable bases", async () => {
@@ -823,7 +860,7 @@ describe("usageQueryService scoped aggregation", () => {
 
         expect(result.totals.tokens.total).toBe(160);
         expect(result.series?.map((bucket) => bucket.tokens.total)).toEqual([100, 40, 20]);
-        expect(result.series?.reduce((sum, bucket) => sum + bucket.tokens.total, 0)).toBe(160);
+        expect(result.series?.reduce<number | null>((sum, bucket) => addUsageMeasurements(sum, bucket.tokens.total), null)).toBe(160);
         expect(result.coverage?.reasons).toContain("counter_discontinuity");
     });
 
@@ -840,7 +877,7 @@ describe("usageQueryService scoped aggregation", () => {
 
         expect(result.totals.tokens.total).toBe(140);
         expect(result.series?.map((bucket) => bucket.tokens.total)).toEqual([100, 40]);
-        expect(result.series?.reduce((sum, bucket) => sum + bucket.tokens.total, 0)).toBe(140);
+        expect(result.series?.reduce<number | null>((sum, bucket) => addUsageMeasurements(sum, bucket.tokens.total), null)).toBe(140);
     });
 
     it("continues summing pure turn-delta groups", async () => {

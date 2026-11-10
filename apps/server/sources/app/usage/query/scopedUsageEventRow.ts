@@ -80,15 +80,15 @@ export type ScopedUsageEventDbRow = Readonly<{
     metadata?: unknown;
     /** Already admitted facts on a captured row shared by one accounting batch. */
     accountingEvidence?: ScopedUsageAccountingEvidence;
-    inputTokens: number;
-    outputTokens: number;
-    reasoningTokens: number;
-    cacheReadTokens: number;
-    cacheWriteTokens: number;
-    totalTokens: number;
-    reportedCostUsd: number;
-    estimatedCostUsd: number;
-    invoiceCostUsd: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    reasoningTokens: number | null;
+    cacheReadTokens: number | null;
+    cacheWriteTokens: number | null;
+    totalTokens: number | null;
+    reportedCostUsd: number | null;
+    estimatedCostUsd: number | null;
+    invoiceCostUsd: number | null;
     billingContext: string | null;
     costSource: string | null;
     currency: string;

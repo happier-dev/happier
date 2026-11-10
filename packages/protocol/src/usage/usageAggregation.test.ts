@@ -1,8 +1,48 @@
 import { expect, it } from 'vitest';
-import { addUsageCostForMode, aggregateUsageContributionCosts, aggregateUsageCostPartitions, aggregateUsageCosts, resolveUsageContributionCosts, withEffectiveUsageCost } from './usageAggregation.js';
+import { addUsageTokens, createEmptyUsageTokens, addUsageCostForMode, aggregateUsageContributionCosts, aggregateUsageCostPartitions, aggregateUsageCosts, resolveUsageContributionCosts, withEffectiveUsageCost } from './usageAggregation.js';
 import { resolveUsageCostBasis } from './usageCost.js';
+import { normalizeLegacyUsageTokens } from './legacyUsageTokens.js';
+import { aggregateUsageCostFactTotals } from './usageCostFactTotals.js';
 import { addUsageMoney, readUsageMoney, restoreUsageMoneyProvenance, serializeUsageMoneyProvenance,
     withUsageMoney } from './usageMoney.js';
+
+it('skips unmeasured token operands while preserving unknown-only categories and measured zero', () => {
+    const unknown = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+    expect(addUsageTokens(unknown, unknown)).toEqual(unknown);
+    expect(addUsageTokens(unknown, { ...unknown, input: 12, output: 0 })).toEqual({ ...unknown, input: 12, output: 0 });
+    expect(addUsageTokens(createEmptyUsageTokens(), unknown)).toEqual(unknown);
+    expect(normalizeLegacyUsageTokens({ input: 12, output: 0 })).toEqual({ ...unknown, input: 12, output: 0 });
+});
+
+it('skips unmeasured money without fabricating a zero price fact', () => {
+    const unknown = { reportedUsd: null, estimatedUsd: null, invoiceUsd: null, currency: 'USD', costSource: 'none' as const };
+    const measured = { ...unknown, reportedUsd: 0.1, costSource: 'provider_reported' as const };
+    expect(aggregateUsageCosts([unknown, unknown])).toMatchObject(unknown);
+    expect(aggregateUsageCosts([unknown, measured])).toMatchObject({ reportedUsd: 0.1, estimatedUsd: null, invoiceUsd: null });
+    expect(resolveUsageCostBasis(aggregateUsageContributionCosts([{ cost: unknown }, { cost: measured }], 'auto'), 'auto'))
+        .toMatchObject({ amountUsd: 0.1 });
+    expect(resolveUsageCostBasis({ ...unknown, costSource: 'provider_reported' }, 'auto')).toBeNull();
+    expect(resolveUsageCostBasis({ ...unknown, reportedUsd: 0, costSource: 'provider_reported' }, 'auto')).toMatchObject({ amountUsd: 0 });
+});
+
+it('preserves known source-fact money when another source did not measure that kind', () => {
+    const tokens = createEmptyUsageTokens();
+    const base = { kind: 'reported' as const, currency: 'USD', source: 'provider', tokens, eventCount: 1, asOfMs: 1, complete: false };
+    expect(aggregateUsageCostFactTotals([{ ...base, amountUsd: null }, { ...base, amountUsd: 0.2 }])[0]?.amountUsd).toBe(0.2);
+    expect(aggregateUsageCostFactTotals([{ ...base, amountUsd: 0.2 }, { ...base, amountUsd: null }])[0]?.amountUsd).toBe(0.2);
+    expect(aggregateUsageCostFactTotals([{ ...base, amountUsd: null }, { ...base, amountUsd: null }])[0]?.amountUsd).toBeNull();
+});
+
+it.each([0, 0.25])('ignores unmeasured default currency when folding a measured EUR amount of %s', amount => {
+    const unknown = { reportedUsd: null, estimatedUsd: null, invoiceUsd: null, currency: 'USD', costSource: 'none' as const };
+    const measured = { ...unknown, reportedUsd: amount, currency: 'EUR', costSource: 'provider_reported' as const };
+    for (const costs of [[unknown, measured], [measured, unknown]]) {
+        const total = aggregateUsageCosts(costs);
+        expect(total).toMatchObject({ reportedUsd: amount, currency: 'EUR', costSource: 'provider_reported' });
+        expect(resolveUsageCostBasis(total, 'reported')).toMatchObject({ amountUsd: amount, currency: 'EUR' });
+    }
+    expect(aggregateUsageCosts([measured, { ...measured, currency: 'USD' }])).toMatchObject({ currency: 'MIXED' });
+});
 
 it('preserves an admitted covered partition when aggregating it again with its reported total', () => {
     const delta = { id: 'delta', cost: { reportedUsd: 0, estimatedUsd: 0.2, currency: 'USD',
@@ -16,7 +56,7 @@ it('preserves an admitted covered partition when aggregating it again with its r
     expect(actual.estimatedUsd).toBe(0.2);
     const unpriced = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'none' as const };
     expect(resolveUsageCostBasis(aggregateUsageContributionCosts([{ cost: actual }, { cost: unpriced }], 'auto'), 'auto'))
-        .toBeNull();
+        .toMatchObject({ amountUsd: 1.25 });
 });
 
 it('round-trips admitted exact operands through a compact JSON checkpoint', () => {
@@ -133,7 +173,7 @@ it('does not mistake a nonempty aggregate for an empty identity when its next re
     const mixed = aggregateUsageContributionCosts([{ cost: reported }, { cost: invoice }], 'auto');
     expect(resolveUsageCostBasis(mixed, 'auto')).toMatchObject({ kind: 'mixed', amountUsd: 0.6 });
     const next = addUsageCostForMode(mixed, reported, 'reported');
-    expect(resolveUsageCostBasis(next, 'reported')).toBeNull();
-    expect(next.effectiveUsd).toBeUndefined();
+    expect(resolveUsageCostBasis(next, 'reported')).toMatchObject({ amountUsd: 0.2 });
+    expect(next.effectiveUsd).toBe(0.2);
     expect(next.reportedUsd).toBe(0.2);
 });

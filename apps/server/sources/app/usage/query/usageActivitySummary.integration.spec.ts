@@ -179,13 +179,37 @@ describe('compact Usage activity summary read cache', () => {
         ]);
     });
 
+    it('preserves unknown-only and mixed measurement totals across cold and warm compact reads', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
+        const query = compactQuery();
+        const unknown = UsageEventIngestRequestSchema.parse({ sessionId: session.id, externalKey: 'unknown', observedAt: startMs + 1,
+            agentId: 'codex', source: 'runtime', scope: 'turn_delta', isCumulative: false,
+            tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+            cost: { reportedUsd: null, estimatedUsd: null, invoiceUsd: null, currency: 'USD' },
+            metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } } });
+        expect(await recordUsageEvent(account.id, unknown)).toMatchObject({ ok: true });
+        const cold = await expectControl(account.id, query);
+        expect(total(cold)).toBeNull();
+        const warm = await read(account.id, query);
+        expectSameWire(warm.serialized, cold.serialized);
+        expect(warm.capture.activitySummary?.stats.eventsRead).toBe(0);
+        await writeRuntime(account.id, session.id, startMs + 2, 10);
+        const mixed = await expectControl(account.id, query);
+        expect(total(mixed)).toBe(10);
+        const result = mixed.delivery.results[0];
+        if (!result || !('value' in result)) throw new Error('Expected mixed compact usage');
+        expect(result.value.coverage?.status).toBe('partial');
+        expectSameWire((await read(account.id, query)).serialized, mixed.serialized);
+    });
+
     it('drops empty Session, subject, routing and day dependencies after their last source is deleted', async () => {
         const { account } = await seed();
         const query = compactQuery();
         await expectControl(account.id, query);
         await db.usageEvent.deleteMany({ where: { accountId: account.id } });
         const empty = await expectControl(account.id, query);
-        expect(total(empty)).toBe(0);
+        expect(total(empty)).toBeNull();
         expect((await readSummaryChunks(account.id)).size).toBe(0);
         const head = await inReadSnapshot(tx => readUsageActivitySummaryHead(tx, account.id));
         expect(JSON.parse(head!).sessionKeys).toEqual([]);
@@ -851,7 +875,8 @@ describe('compact Usage activity summary read cache', () => {
             await db.usageEvent.create({ data: { accountId: account.id, sessionId: sessions[index % 2]!.id,
                 observedAt: new Date(startMs + index * day + 12 * 3_600_000), agentId: 'codex',
                 modelId: 'selective-price-model', source: 'runtime', scope: 'turn_delta',
-                inputTokens: (index + 1) * 1_000_000, totalTokens: (index + 1) * 1_000_000 } });
+                inputTokens: (index + 1) * 1_000_000, outputTokens: 0, reasoningTokens: 0,
+                cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: (index + 1) * 1_000_000 } });
         }
         const query = UsageAnalyticsQueryRequestSchema.parse({ ...compactQuery({ startMs, endMs: startMs + 14 * day }),
             costMode: 'api_equivalent' });
@@ -863,7 +888,8 @@ describe('compact Usage activity summary read cache', () => {
         await db.usageEvent.create({ data: { accountId: account.id, sessionId: sessions[1]!.id,
             observedAt: new Date(startMs + 11 * day + 12 * 3_600_000 + 1000), agentId: 'codex',
             modelId: 'selective-price-model', source: 'runtime', scope: 'turn_delta',
-            inputTokens: 500_000, totalTokens: 500_000 } });
+            inputTokens: 500_000, outputTokens: 0, reasoningTokens: 0,
+            cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 500_000 } });
         const changed = await expectControl(account.id, query);
         const stats = changed.capture.activitySummary!.stats;
         expect(stats.tariffCalculations).toBeGreaterThan(0);

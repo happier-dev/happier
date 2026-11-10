@@ -19,6 +19,14 @@ function observation(overrides: Partial<UsageObservation> = {}): UsageObservatio
 }
 
 describe('exact-turn usage accumulation', () => {
+  it('withdraws exact dimensions after an unmeasured turn observation', () => {
+    const accumulator = createExactTurnUsageAccumulator();
+    accumulator.observe(observation({ tokens: { input: 7, output: 3, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 },
+      cost: { reportedUsd: 0.02, estimatedUsd: 0, currency: 'USD', costSource: 'provider_reported' },
+      availability: { inputTokens: true, outputTokens: true, reportedCostUsd: true } }));
+    accumulator.observe(observation());
+    expect(accumulator.current()).toBeUndefined();
+  });
   it('sums only availability-proven turn deltas and ignores cumulative snapshots', () => {
     const accumulator = createExactTurnUsageAccumulator();
     accumulator.observe(observation({

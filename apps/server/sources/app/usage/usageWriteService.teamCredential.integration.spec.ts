@@ -169,6 +169,11 @@ describe("usageWriteService Team credential attribution", () => {
         expect(retry).toEqual({ id: first.id, created: false });
         expect(new Set([first.id, otherApiKey.id, otherResource.id, otherActor.id]).size).toBe(4);
         expect(await db.usageEvent.count({ where: { source: "team_credential_admission" } })).toBe(4);
+        expect(await db.usageEvent.findUniqueOrThrow({ where: { id: first.id } })).toMatchObject({
+            requestCount: 1, inputTokens: null, outputTokens: null, reasoningTokens: null,
+            cacheReadTokens: null, cacheWriteTokens: null, totalTokens: null,
+            reportedCostUsd: null, estimatedCostUsd: null, invoiceCostUsd: null,
+        });
         expect((await db.teamCredentialExternalApiKey.findUniqueOrThrow({ where: { id: keyA.id } })).lastUsedAt)
             .toEqual(firstObservedAt);
         expect((await db.teamCredentialExternalApiKey.findUniqueOrThrow({ where: { id: keyB.id } })).lastUsedAt)
@@ -189,7 +194,7 @@ describe("usageWriteService Team credential attribution", () => {
             measurement: "reported" as const,
             modelId: "provider-model-1",
             tokens: { input: 5, output: 3, reasoning: 1, cacheRead: 0, cacheWrite: 0, total: 9 },
-            cost: { reportedUsd: 0.12, estimatedUsd: 0, currency: "USD", costSource: "provider_reported" as const, billingContext: "api_usage" as const },
+            cost: { reportedUsd: 0.12, estimatedUsd: null, currency: "USD", costSource: "provider_reported" as const, billingContext: "api_usage" as const },
             authority: terminalAuthority,
         };
         await db.machine.create({ data: { id: "broker-machine-1", accountId: fixture.storageAccount.id,
@@ -216,10 +221,19 @@ describe("usageWriteService Team credential attribution", () => {
             totalTokens: 9,
             modelId: "provider-model-1",
             reportedCostUsd: 0.12,
-            estimatedCostUsd: 0,
+            estimatedCostUsd: null,
+            invoiceCostUsd: null,
             costSource: "provider_reported",
             teamCredentialActorAccountId: fixture.actorA.id,
             teamCredentialExternalApiKeyId: keyA.id,
+        });
+        const unavailable = await inTx(tx => recordTeamCredentialExternalTerminalUsageEventInTx(tx, {
+            ...terminalInput, measurement: 'unavailable', tokens: null, cost: null,
+            authority: { ...terminalAuthority, admissionUsageEventId: otherApiKey.id },
+        }));
+        expect(await db.usageEvent.findUniqueOrThrow({ where: { id: unavailable.id } })).toMatchObject({
+            requestCount: 0, totalTokens: null, inputTokens: null, reportedCostUsd: null,
+            estimatedCostUsd: null, invoiceCostUsd: null,
         });
     });
 
@@ -342,7 +356,7 @@ describe("usageWriteService Team credential attribution", () => {
         });
         const agentRow = rows.find((row) => row.source === "claude_sdk");
         expect(rows.filter((row) => row.requestCount > 0)).toHaveLength(2);
-        expect(rows.filter((row) => row.totalTokens > 0)).toHaveLength(1);
+        expect(rows.filter((row) => row.totalTokens !== null && row.totalTokens > 0)).toHaveLength(1);
         expect(agentRow).toEqual({
             source: "claude_sdk",
             requestCount: 0,

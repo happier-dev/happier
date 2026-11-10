@@ -14,7 +14,8 @@ export function usagePageCostRow(cost: UsageObservationCost, selection: UsagePag
   const basis = resolveUsageCostBasisForSelection(cost, selection);
   if (basis) return { ...basis, label: usageCostKindPhrase(basis.kind) };
   if (!selection) return null;
-  const partlyPriced = cost.reportedUsd > 0 || cost.estimatedUsd > 0 || (cost.apiEquivalentUsd ?? 0) > 0 || (cost.invoiceUsd ?? 0) > 0;
+  const partlyPriced = cost.reportedUsd !== null && cost.reportedUsd > 0 || cost.estimatedUsd !== null && cost.estimatedUsd > 0
+    || cost.apiEquivalentUsd != null && cost.apiEquivalentUsd > 0 || cost.invoiceUsd != null && cost.invoiceUsd > 0;
   return { label: t(partlyPriced ? 'usage.board.page.costRowPartUnpriced' : 'usage.board.page.factUnpriced') };
 }
 

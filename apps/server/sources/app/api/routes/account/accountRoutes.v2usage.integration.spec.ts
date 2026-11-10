@@ -196,7 +196,7 @@ describe("accountRoutes v2 usage", () => {
         });
     });
 
-    it('settles the QA-ACCT exact empty model/Machine clauses as zero on scalar and batch routes', async () => {
+    it('preserves unmeasured totals for the QA-ACCT exact empty model/Machine clauses on scalar and batch routes', async () => {
         const account = await db.account.create({ data: { publicKey: 'qa-usage-acct-1030-empty', encryptionMode: 'plain' }, select: { id: true } });
         await db.usageEvent.create({ data: { accountId: account.id, observedAt: new Date(), agentId: 'codex',
             modelId: 'a-different-model', source: 'runtime', scope: 'turn_delta', inputTokens: 7, totalTokens: 7 } });
@@ -214,7 +214,7 @@ describe("accountRoutes v2 usage", () => {
                 const response = await app.inject({ method: 'POST', url: '/v2/usage/query', headers, payload: query });
                 expect(response.statusCode, response.body).toBe(200);
                 const value = UsageAnalyticsQueryResponseSchema.parse(response.json());
-                expect(value.totals).toMatchObject({ eventCount: 0, tokens: { total: 0 } });
+                expect(value.totals).toMatchObject({ eventCount: 0, tokens: { total: null } });
                 expect(value.breakdowns?.model).toEqual([]);
             }
             const response = await app.inject({ method: 'POST', url: '/v2/usage/query-batch', headers, payload: { queries } });
@@ -223,7 +223,7 @@ describe("accountRoutes v2 usage", () => {
             expect(batch.results).toHaveLength(3);
             for (const row of batch.results) {
                 expect(row).not.toHaveProperty('error');
-                if ('value' in row) expect(row.value.totals).toMatchObject({ eventCount: 0, tokens: { total: 0 } });
+                if ('value' in row) expect(row.value.totals).toMatchObject({ eventCount: 0, tokens: { total: null } });
             }
         });
     });
@@ -318,7 +318,7 @@ describe("accountRoutes v2 usage", () => {
             expect((await query(owner.id)).json().totals.tokens.total).toBe(10);
             const shared = await query(reader.id);
             expect(shared.statusCode).toBe(200);
-            expect(shared.json()).toMatchObject({ totals: { eventCount: 0, tokens: { total: 0 } },
+            expect(shared.json()).toMatchObject({ totals: { eventCount: 0, tokens: { total: null } },
                 messageStats: { sessionCount: 0, messageCount: 0 } });
             const legacy = await app.inject({ method: "POST", url: "/v1/usage/query",
                 headers: { "content-type": "application/json", "x-test-user-id": reader.id },
@@ -602,7 +602,7 @@ describe("accountRoutes v2 usage", () => {
                     totals: {
                         eventCount: 2,
                         tokens: { total: 15, input: 9, output: 6 },
-                        cost: { reportedUsd: 0.15, estimatedUsd: 0, currency: "USD" },
+                        cost: { reportedUsd: 0.15, estimatedUsd: null, currency: "USD" },
                     },
                 });
             },
@@ -672,7 +672,7 @@ describe("accountRoutes v2 usage", () => {
                     totals: {
                         eventCount: 2,
                         tokens: { total: 25, input: 15, output: 10 },
-                        cost: { reportedUsd: 0.25, estimatedUsd: 0, currency: "USD" },
+                        cost: { reportedUsd: 0.25, estimatedUsd: null, currency: "USD" },
                     },
                 });
             },
@@ -769,7 +769,6 @@ describe("accountRoutes v2 usage", () => {
                         total: 0.12,
                         reportedUsd: 0.12,
                         estimatedUsd: 0,
-                        invoiceUsd: 0,
                     },
                     timestamp: expect.any(Number),
                 });

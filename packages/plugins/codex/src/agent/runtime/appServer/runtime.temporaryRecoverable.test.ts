@@ -1211,7 +1211,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         output: 18,
         reasoning: 10,
         cacheRead: 4_480,
-        cacheWrite: 0,
+        cacheWrite: null,
         total: 20_019,
       },
       context: expect.objectContaining({

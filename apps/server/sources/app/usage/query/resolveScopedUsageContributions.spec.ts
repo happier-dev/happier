@@ -18,7 +18,64 @@ function row(id: string, time: number, scope: string, total: number): ScopedUsag
     };
 }
 
+function requireMeasurement(value: number | null): number {
+    if (value === null) throw new Error("Expected a measured fixture value");
+    return value;
+}
+
 describe("resolveScopedUsageContributions", () => {
+    it('keeps child native counters independent from the parent sharing the Happier Session', () => {
+        const native = (id: string, time: number, total: number, nativeSessionId: string) => ({ ...row(id, time, 'session_cumulative', total),
+            metadata: { usageAccounting: { path: 'runtime', nativeSessionId, status: 'available', historyComplete: true } } });
+        const childUnknown = { ...native('child-unknown', 150, 0, 'native-child'),
+            tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+            cost: { reportedUsd: null, estimatedUsd: null, invoiceUsd: null, currency: 'USD' } };
+        const result = resolveScopedUsageContributions([
+            native('parent-first', 100, 100, 'native-parent'), childUnknown,
+            native('child-known', 200, 7, 'native-child'), native('parent-latest', 300, 120, 'native-parent'),
+        ]);
+        expect(result.totalContributions.map(event => [event.id, event.tokens.total])).toEqual([
+            ['parent-first', 100], ['child-unknown', null], ['child-known', 7], ['parent-latest', 20],
+        ]);
+        expect(result.coverageReasons).not.toContain('counter_discontinuity');
+    });
+    it('keeps missing-baseline coverage when an initial measured snapshot has no prior deltas', () => {
+        expect(resolveScopedUsageContributions([row('snapshot', 100, 'session_cumulative', 100)]).coverageReasons)
+            .toContain('missing_baseline');
+    });
+    it('retains a measured zero cumulative counter as zero rather than unknown', () => {
+        const zero = row('zero', 100, 'session_cumulative', 0);
+        const result = resolveScopedUsageContributions([zero]);
+        expect(result.totalContributions).toHaveLength(1);
+        expect(result.totalContributions[0]?.tokens.total).toBe(0);
+    });
+    it('retains unmeasured snapshots without making them counter baselines or merging child subjects', () => {
+        const unknown = (id: string, time: number): ScopedUsageEventRow => ({ ...row(id, time, 'session_cumulative', 0),
+            tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+            cost: { reportedUsd: null, estimatedUsd: null, invoiceUsd: null, currency: 'USD', costSource: 'none' } });
+        const result = resolveScopedUsageContributions([
+            row('known', 100, 'session_cumulative', 100), unknown('unknown', 200),
+            { ...unknown('child', 250), sessionId: 'child-session' }, row('latest', 300, 'session_cumulative', 120),
+        ]);
+        expect(result.totalContributions.map(event => [event.id, event.tokens.total])).toEqual([
+            ['known', 100], ['unknown', null], ['child', null], ['latest', 20],
+        ]);
+        expect(result.coverageReasons).not.toContain('counter_discontinuity');
+    });
+    it('retains each measured counter baseline across a partially measured snapshot', () => {
+        const partial = { ...row('partial', 200, 'session_cumulative', 0),
+            tokens: { input: null, output: 5, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+            cost: { reportedUsd: null, estimatedUsd: null, invoiceUsd: null, currency: 'USD' } };
+        const result = resolveScopedUsageContributions([
+            row('baseline', 100, 'session_cumulative', 100), partial,
+            row('latest', 300, 'session_cumulative', 120),
+        ]);
+        expect(result.totalContributions.map(event => [event.id, event.tokens.total])).toEqual([
+            ['baseline', 100], ['partial', null], ['latest', 20],
+        ]);
+        expect(result.totalContributions.find(event => event.id === 'partial')?.cost.estimatedUsd).toBeNull();
+        expect(result.totalContributions.find(event => event.id === 'latest')?.cost.estimatedUsd).toBeCloseTo(0.2);
+    });
     it('updates Session fallback eligibility from changed sources while retaining suppressed subject references', () => {
         const legacy = toScopedUsageReplayFact({ ...row('legacy', 1, 'turn_delta', 10), source: 'legacy_usage_report', agentId: 'legacy' });
         const native = toScopedUsageReplayFact(row('native', 2, 'turn_delta', 3));
@@ -83,8 +140,8 @@ describe("resolveScopedUsageContributions", () => {
             context,
             row("latest", 300, "session_cumulative", 120),
         ]);
-        expect(result.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(120);
-        expect(result.totalContributions.reduce((sum, event) => sum + event.cost.estimatedUsd, 0)).toBeCloseTo(1.2);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(120);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.cost.estimatedUsd), 0)).toBeCloseTo(1.2);
         expect(result.totalContributions.find(event => event.id === "context")).toMatchObject({
             contextUsedTokens: 25, contextWindowTokens: 1000, tokens: { total: 0 },
         });
@@ -107,8 +164,8 @@ describe("resolveScopedUsageContributions", () => {
             { ...first, id: "replayed-first", source: "native", observedAt: new Date(500), createdAt: new Date(500),
                 metadata: { usageAccounting: { path: "native", inferenceId: "first" } } },
         ]);
-        expect(result.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(120);
-        expect(result.totalContributions.reduce((sum, event) => sum + event.cost.reportedUsd, 0)).toBeCloseTo(0.5);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(120);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.cost.reportedUsd), 0)).toBeCloseTo(0.5);
         expect(result.totalContributions.filter(event => event.contextUsedTokens != null).at(-1)).toMatchObject({
             contextUsedTokens: 25, contextWindowTokens: 1000,
         });
@@ -147,7 +204,7 @@ describe("resolveScopedUsageContributions", () => {
         const second = { ...row("second", 100, "turn_delta", 3), createdAt: new Date(103),
             metadata: order(2) };
         const result = resolveScopedUsageContributions([snapshot, first, second]);
-        expect(result.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(1006);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(1006);
         expect(result.totalContributions.filter(event => event.scope === 'turn_delta').map(event => event.tokens.total)).toEqual([3, 3]);
     });
 
@@ -166,7 +223,7 @@ describe("resolveScopedUsageContributions", () => {
             ordered('first-snapshot', 'session_cumulative', 1003, 2, 5),
             ordered('first-response', 'turn_delta', 3, 1, 6)];
         const selected = resolveScopedUsageContributions(rows, { startMs: 100, endMs: 101 });
-        expect(selected.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(6);
+        expect(selected.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(6);
         expect(selected.totalContributions.filter(event => event.scope === 'turn_delta').map(event => event.id))
             .toEqual(['first-response', 'other', 'legacy', 'second-response']);
         expect(resolveScopedUsageContributions([...rows].reverse(), { startMs: 100, endMs: 101 })).toEqual(selected);
@@ -215,7 +272,7 @@ describe("resolveScopedUsageContributions", () => {
         expect(result.totalContributions.map((event) => [event.modelId, event.tokens.total])).toEqual([
             ["A", 30], ["B", 40], [null, 10],
         ]);
-        expect(result.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(80);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(80);
     });
 
     it("reconciles witnessed inference replay once, without deduping different inferences in one turn", () => {
@@ -225,7 +282,7 @@ describe("resolveScopedUsageContributions", () => {
             { ...row("native", 100, "turn_delta", 30), sessionId: null, source: "native", metadata: { accountingSubject: subject, usageAccounting: { inferenceId: "one", path: "native" } } },
             { ...row("second", 200, "turn_delta", 20), source: "runtime", turnId: "turn", metadata: { accountingSubject: subject, usageAccounting: { inferenceId: "two", path: "runtime" } } },
         ]);
-        expect(result.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(50);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(50);
         expect(result.totalContributions.map((event) => [event.id, event.sessionId])).toEqual([["runtime", "session"], ["second", "session"]]);
     });
 
@@ -241,7 +298,7 @@ describe("resolveScopedUsageContributions", () => {
             { ...native, id: "other-inference", metadata: { accountingSubject: subject, usageAccounting: { inferenceId: "two", path: "native" } } },
             { ...native, id: "unwitnessed", metadata: { accountingSubject: subject, usageAccounting: { path: "native" } } },
         ]);
-        expect(result.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(150);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(150);
         expect(result.totalContributions.filter((event) => event.sessionId !== null).map((event) => event.id)).toEqual(["runtime"]);
     });
 
@@ -250,7 +307,7 @@ describe("resolveScopedUsageContributions", () => {
             row("before", 100, "session_cumulative", 100),
             row("reset", 200, "session_cumulative", 20),
         ]);
-        expect(result.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(120);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(120);
         expect(result.coverageReasons).toContain("counter_discontinuity");
     });
 
@@ -259,7 +316,7 @@ describe("resolveScopedUsageContributions", () => {
             { ...row("one", 100, "session_cumulative", 100), sessionId: null, metadata: { usageAccounting: { nativeSessionId: "one" } } },
             { ...row("two", 200, "session_cumulative", 20), sessionId: null, metadata: { usageAccounting: { nativeSessionId: "two" } } },
         ]);
-        expect(result.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(120);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(120);
     });
 
     it("reconciles the admitted native subject without merging distinct source roots", () => {
@@ -270,7 +327,7 @@ describe("resolveScopedUsageContributions", () => {
             { ...row("different-root", 300, "session_cumulative", 50), sessionId: null, metadata: { accountingSubject: { ...subject, sourceRootKey: "root-two" } } },
         ]);
         expect(result.totalContributions.map((event) => event.tokens.total)).toEqual([100, 20, 50]);
-        expect(result.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(170);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(170);
     });
 
     it("counts deltas from a later interrupted turn after the latest final", () => {
@@ -284,10 +341,10 @@ describe("resolveScopedUsageContributions", () => {
             { ...row("late-replay", 3, "turn_delta", 8), createdAt: new Date(6), metadata: { usageAccounting: { inferenceId: "same" } } },
         ]);
 
-        expect(result.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(27);
-        expect(result.bucketAttributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(27);
-        expect(result.totalContributions.reduce((sum, event) => sum + event.cost.estimatedUsd, 0)).toBeCloseTo(0.27);
-        expect(result.bucketAttributions.reduce((sum, event) => sum + resolveEffectiveUsageCostUsd(event.cost, "auto"), 0)).toBeCloseTo(0.27);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(27);
+        expect(result.bucketAttributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(27);
+        expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.cost.estimatedUsd), 0)).toBeCloseTo(0.27);
+        expect(result.bucketAttributions.reduce((sum, event) => sum + requireMeasurement(resolveEffectiveUsageCostUsd(event.cost, "auto")), 0)).toBeCloseTo(0.27);
         expect(result.totalContributions.map((event) => event.tokens.total)).toEqual([5, 5, 8, 2, 7]);
     });
 

@@ -1,10 +1,10 @@
 /** Pre-v2 ACP `token_count` compatibility; see `legacyUsageTransport.ts` for removal conditions. */
-import { extractUsageObservationFromTokenCountMessage } from '../usageObservation';
+import { extractUsageObservationFromTokenCountMessage, type UsageNumberMap } from '../usageObservation';
 
 type TokenCountExtraction = {
     key: string | null;
     modelId: string | null;
-    tokens: Record<string, number>;
+    tokens: UsageNumberMap;
 };
 
 export function extractTokensFromAcpTokenCountMessage(body: unknown): TokenCountExtraction | null {

@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { summarizeUsageExecutionSources } from './usageSourceSummary.js';
 
 describe('summarizeUsageExecutionSources', () => {
+    it('retains unknown totals and known-only subtotals without attributing an invented zero', () => {
+        const unknown = { tokens: { total: null }, sourceContext: { execution: 'outside' as const } };
+        expect(summarizeUsageExecutionSources([unknown])).toMatchObject({ totalTokens: null, groups: [{ tokens: null, share: null }] });
+        expect(summarizeUsageExecutionSources([unknown, { ...unknown, tokens: { total: 7 } }])).toMatchObject({ totalTokens: 7,
+            coverage: 'complete', groups: [{ tokens: 7, share: 1 }] });
+    });
     it('weights shares by tokens and retains unknown execution independently of native capture', () => {
         const result = summarizeUsageExecutionSources([
             { tokens: { total: 20 }, sourceContext: { path: 'native' as const, execution: 'happier' as const } },

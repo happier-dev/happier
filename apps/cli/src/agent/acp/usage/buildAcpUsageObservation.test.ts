@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
+import { AgentUsageObservedPayloadV1Schema } from '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1';
 import { buildTokenCountAgentMessageFromUsageObservation, buildLegacyUsageReportFromUsageObservation } from '@/usage/legacy/legacyUsageTransport';
 import { buildUsageObservedMeasurementFromTokenCountMessage } from '../runtime/tokenCountForwarding';
 
 import { buildAcpPromptUsageObservation, buildAcpUsageUpdateObservation } from './buildAcpUsageObservation';
+
+it('keeps partial ACP counters through telemetry into the runtime without synthesizing totals or cache facts', () => {
+  const observation = buildAcpUsageUpdateObservation({ provider: 'fixture', update: { inputTokens: 8, outputTokens: 2 } });
+  const message = buildTokenCountAgentMessageFromUsageObservation(observation!);
+  expect(message).toMatchObject({ tokens: { input: 8, output: 2 } });
+  expect(message?.tokens).not.toHaveProperty('total');
+  const measurement = buildUsageObservedMeasurementFromTokenCountMessage({ provider: 'fixture', body: message, observedAtMs: 1 });
+  expect(AgentUsageObservedPayloadV1Schema.parse({ kind: 'usage-observed', observationId: 'partial-1', ...measurement }))
+    .toMatchObject({ tokens: { input: 8, output: 2, cacheRead: null, cacheWrite: null, reasoning: null, total: null } });
+});
 
 describe('buildAcpPromptUsageObservation', () => {
   it('reads usage from the ACP prompt metadata envelope', () => {

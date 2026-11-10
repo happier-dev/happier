@@ -26,20 +26,20 @@ export const UsageObservationScopeSchema = lazyZodSchema(() => z.enum([
 export type UsageObservationScope = z.infer<typeof UsageObservationScopeSchema>;
 
 export const UsageObservationTokensSchema = lazyZodSchema(() => z.strictObject({
-  input: NonNegativeNumberSchema,
-  output: NonNegativeNumberSchema,
-  reasoning: NonNegativeNumberSchema,
-  cacheRead: NonNegativeNumberSchema,
-  cacheWrite: NonNegativeNumberSchema,
-  total: NonNegativeNumberSchema,
+  input: z.nullable(NonNegativeNumberSchema),
+  output: z.nullable(NonNegativeNumberSchema),
+  reasoning: z.nullable(NonNegativeNumberSchema),
+  cacheRead: z.nullable(NonNegativeNumberSchema),
+  cacheWrite: z.nullable(NonNegativeNumberSchema),
+  total: z.nullable(NonNegativeNumberSchema),
 }));
 export type UsageObservationTokens = z.infer<typeof UsageObservationTokensSchema>;
 
 export const UsageAnalyticsCostModeSchema = lazyZodSchema(() => z.enum(USAGE_ANALYTICS_COST_MODES));
 
 export const UsageObservationCostSchema = lazyZodSchema(() => z.strictObject({
-  reportedUsd: NonNegativeNumberSchema,
-  estimatedUsd: NonNegativeNumberSchema,
+  reportedUsd: z.nullable(NonNegativeNumberSchema),
+  estimatedUsd: z.nullable(NonNegativeNumberSchema),
   /** Query projection only; never the authority for vendor-reported or stored estimated costs. */
   apiEquivalentUsd: z.optional(NonNegativeNumberSchema),
   pricingSource: z.optional(z.string().check(z.trim(), z.minLength(1))),
@@ -47,7 +47,7 @@ export const UsageObservationCostSchema = lazyZodSchema(() => z.strictObject({
   reportedTotalId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   /** Query-only scope of a money-only reported total; subsets cannot apportion this charge. */
   reportedTotalContributionIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
-  invoiceUsd: z.optional(NonNegativeNumberSchema),
+  invoiceUsd: z.optional(z.nullable(NonNegativeNumberSchema)),
   billingContext: z.optional(z.enum([
     'api_usage',
     'subscription_included',
@@ -525,9 +525,9 @@ export const UsageAnalyticsSummarySchema = lazyZodSchema(() => z.strictObject({
   accounts: z.strictObject({ unknownContributionCount: z.number().check(z.int(), z.nonnegative()),
     values: z.array(z.strictObject({ ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
       contributionCount: z.number().check(z.int(), z.nonnegative()), pricedContributionCount: z.number().check(z.int(), z.nonnegative()),
-      apiEquivalentUsd: NonNegativeNumberSchema, pricingSources: z.array(z.string().check(z.minLength(1))) })) }),
+      apiEquivalentUsd: z.nullable(NonNegativeNumberSchema), pricingSources: z.array(z.string().check(z.minLength(1))) })) }),
   execution: z.strictObject({ coverage: z.enum(['complete', 'partial', 'unknown']), totalTokens: z.nullable(NonNegativeNumberSchema),
-    groups: z.array(z.strictObject({ execution: UsageAnalyticsExecutionSchema, tokens: NonNegativeNumberSchema,
+    groups: z.array(z.strictObject({ execution: UsageAnalyticsExecutionSchema, tokens: z.nullable(NonNegativeNumberSchema),
       share: z.nullable(NonNegativeNumberSchema) })) }),
 }));
 export type UsageAnalyticsSummary = z.infer<typeof UsageAnalyticsSummarySchema>;

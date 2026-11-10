@@ -11,6 +11,19 @@ import {
 } from './legacy/legacyUsageTransport';
 
 describe('usageObservation', () => {
+    it('omits unrepresentable legacy accounting rather than replacing unknown measurements with zero', () => {
+        const observation = { provider: 'pi', source: 'native-statistics', scope: 'session_cumulative' as const,
+            key: null, modelId: null, tokens: { total: 12 }, cost: null,
+            contextUsedTokens: null, contextWindowTokens: null };
+        expect(buildLegacyUsageReportFromUsageObservation({ sessionId: 'session-1', observation })).toBeNull();
+        expect(buildLegacyUsageReportFromUsageObservation({ sessionId: 'session-1',
+            observation: { ...observation, tokens: { input: 8, cacheRead: 4 }, cost: { reportedUsd: 0 } } })).toBeNull();
+        expect(buildTokenCountSessionMessageFromUsageObservation({ ...observation,
+            tokens: { input: 8, cacheRead: 4 } })?.tokens).toEqual({ input: 8, cache_read: 4 });
+        expect(buildLegacyUsageReportFromUsageObservation({ sessionId: 'session-1',
+            observation: { ...observation, tokens: { total: 0 }, cost: { reportedUsd: 0 } } }))
+            .toMatchObject({ tokens: { total: 0 }, cost: { total: 0 } });
+    });
     it.each([
         { lastUseAtMs: 0 },
         { lastUseAtMs: 123.5, ttlMs: 300_000 },
@@ -93,7 +106,7 @@ describe('usageObservation', () => {
                 total: 184,
                 input: 120,
                 cacheRead: 20,
-                cacheWrite: 0,
+                cacheWrite: null,
                 output: 35,
                 reasoning: 9,
             },
@@ -160,7 +173,7 @@ describe('usageObservation', () => {
             reasoning: 3,
             cacheRead: 2,
             cacheWrite: 1,
-            total: 20,
+            total: null,
         });
         expect(observation?.tokens).not.toHaveProperty('thought');
         expect(observation?.tokens).not.toHaveProperty('cache_read');

@@ -6,6 +6,26 @@ import { createCodexExternalSessionsContribution } from '../surfaces/sessions/ex
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
+it('replays measured zero explicitly while preserving omitted native counters and billing as unknown', async () => {
+  const homePath = await mkdtemp(join(tmpdir(), 'happier-codex-accounting-')); roots.push(homePath);
+  const dir = join(homePath, 'sessions'); await mkdir(dir);
+  await writeFile(join(dir, 'rollout.jsonl'), [
+    { type: 'session_meta', payload: { id: 'native' }, timestamp: '2026-01-01T00:00:00.000Z' },
+    { type: 'token_usage_record', payload: { thread_id: 'native', response_id: 'partial', model: 'gpt-5.4',
+      usage: { input_tokens: 0 } }, timestamp: '2026-01-01T00:00:01.000Z' },
+    { type: 'token_usage_record', payload: { thread_id: 'native', response_id: 'zero', model: 'gpt-5.4',
+      usage: { input_tokens: 0, output_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0,
+        reasoning_output_tokens: 0, total_tokens: 0 } }, timestamp: '2026-01-01T00:00:02.000Z' },
+  ].map(record => JSON.stringify(record) + '\n').join(''));
+  const result = await createCodexExternalSessionsContribution({ env: { CODEX_HOME: homePath } }).readAccounting?.({
+    source: { kind: 'codexHome', home: 'user', homePath }, signal: new AbortController().signal,
+  });
+  expect(result).toMatchObject({ ok: true, value: { observations: [
+    { inferenceId: 'partial', observation: { tokens: { input: 0, output: null, cacheRead: null, cacheWrite: null, reasoning: null, total: null }, cost: null } },
+    { inferenceId: 'zero', observation: { tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0 },
+      cost: { reportedUsd: null, estimatedUsd: 0 } } },
+  ] } });
+});
 it('retains separate legacy records when a rewritten source reuses a native Session and byte position', async () => {
   const homePath = await mkdtemp(join(tmpdir(), 'happier-codex-accounting-')); roots.push(homePath);
   const dir = join(homePath, 'sessions'); await mkdir(dir);

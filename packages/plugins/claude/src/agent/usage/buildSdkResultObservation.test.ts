@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { buildClaudeSdkResultUsageObservation } from './buildSdkResultObservation.js';
 
 describe('buildClaudeSdkResultUsageObservation', () => {
+    it('distinguishes measured zero billing from an unmeasured estimate and reasoning category', () => {
+        const observation = buildClaudeSdkResultUsageObservation({ modelId: 'claude-sonnet-4-6', result: {
+            type: 'result', subtype: 'success', total_cost_usd: 0,
+            modelUsage: { 'claude-sonnet-4-6': { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } },
+        } });
+        expect(observation?.tokens).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, total: 0 });
+        expect(observation?.cost?.reportedUsd).toBe(0);
+        expect(observation?.cost?.estimatedUsd).toBeNull();
+    });
     // Claude 2.1.295's kQ terminal producer shares whole-call modelUsage across these variants.
     it.each(['error_max_turns', 'error_during_execution', 'error_max_budget_usd', 'error_max_structured_output_retries'])(
         'preserves validated whole-call accounting from %s without claiming provider billing', (subtype) => {
@@ -38,7 +47,7 @@ describe('buildClaudeSdkResultUsageObservation', () => {
             },
         });
         expect(observation).toMatchObject({ scope: 'session_final', modelId: null, nativeRecordId: 'summary-record',
-            tokens: { input: 180, output: 25, cacheRead: 5, cacheWrite: 5, reasoning: 0, total: 215 },
+            tokens: { input: 180, output: 25, cacheRead: 5, cacheWrite: 5, reasoning: null, total: 215 },
             cost: { reportedUsd: 0.3, costSource: 'provider_reported_api_equivalent' } });
         expect(observation).not.toHaveProperty('inferenceId');
         expect(observation).toMatchObject({
@@ -103,13 +112,13 @@ describe('buildClaudeSdkResultUsageObservation', () => {
                 total: 40,
                 input: 11,
                 output: 22,
-                reasoning: 0,
+                reasoning: null,
                 cacheRead: 3,
                 cacheWrite: 4,
             },
             cost: {
                 reportedUsd: 0.123,
-                estimatedUsd: 0,
+                estimatedUsd: null,
                 billingContext: 'unknown',
                 costSource: 'provider_reported_api_equivalent',
                 currency: 'USD',
@@ -180,7 +189,7 @@ describe('buildClaudeSdkResultUsageObservation', () => {
         expect(observation?.tokens?.total).toBe(44_025_000);
         expect(observation?.cost).toMatchObject({
             reportedUsd: 100,
-            estimatedUsd: 0,
+            estimatedUsd: null,
             costSource: 'provider_reported_api_equivalent',
         });
         expect(observation?.contextSnapshot).toEqual({
@@ -226,7 +235,7 @@ describe('buildClaudeSdkResultUsageObservation', () => {
         }));
     });
 
-    it('uses estimated cost when the provider omits total_cost_usd', () => {
+    it('leaves cost unknown when reported billing and the reasoning split are unavailable', () => {
         const result = {
             type: 'result',
             subtype: 'success',
@@ -252,13 +261,7 @@ describe('buildClaudeSdkResultUsageObservation', () => {
             result,
         });
 
-        expect(observation?.cost).toMatchObject({
-            estimatedUsd: expect.any(Number),
-            reportedUsd: 0,
-            costSource: 'pricing_estimate',
-        });
-        expect(observation?.cost?.estimatedUsd).toBeGreaterThan(0);
-        expect(observation?.cost?.reportedUsd).toBe(0);
+        expect(observation?.cost).toBeNull();
     });
 
     it('keeps Provider-bound cost unavailable when the upstream omits it', () => {

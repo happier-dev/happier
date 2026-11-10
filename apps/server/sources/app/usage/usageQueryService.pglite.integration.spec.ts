@@ -94,6 +94,27 @@ describe('Usage analytics PostgreSQL event transport', () => {
         }
     });
 
+    it('preserves nullable measurements through PostgreSQL row transport and known-only aggregation', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const unknown = { accountId: account.id, observedAt: new Date(100), agentId: 'codex', source: 'runtime',
+            scope: 'turn_delta', inputTokens: null, outputTokens: null, reasoningTokens: null, cacheReadTokens: null,
+            cacheWriteTokens: null, totalTokens: null, reportedCostUsd: null, estimatedCostUsd: null, invoiceCostUsd: null,
+            metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } } };
+        await db.usageEvent.create({ data: unknown });
+        const request = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 } });
+        const read = () => inTx(async tx => captureUsageAnalyticsInTx(tx, account.id, request), { readOnly: true });
+        const first = await read();
+        expect(first.rows[0]?.totalTokens).toBeNull();
+        expect(projectUsageAnalytics(first, request).totals.tokens.total).toBeNull();
+        await db.usageEvent.create({ data: { ...unknown, observedAt: new Date(101), inputTokens: 8, outputTokens: 2,
+            reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 10, reportedCostUsd: 0.25,
+            costSource: 'provider_reported' } });
+        const mixed = projectUsageAnalytics(await read(), request);
+        expect(mixed.totals.tokens.total).toBe(10);
+        expect(mixed.coverage?.status).toBe('partial');
+        expect(mixed.coverage?.reasons).toContain('unknown_token_categories');
+    });
+
     it('preserves typed rows and projected results across replay, source, Account and half-open bounds', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         const other = await db.account.create({ data: { publicKey: randomUUID() } });

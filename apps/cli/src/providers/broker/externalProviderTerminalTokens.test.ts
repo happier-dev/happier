@@ -25,6 +25,15 @@ function observe(input: Readonly<{
 }
 
 describe('external Provider terminal token observation', () => {
+    it('preserves unknown optional token measurements instead of inventing zero or a partial total', () => {
+        expect(observe({ routeKind: 'anthropic_messages', contentType: 'application/json',
+            body: JSON.stringify({ type: 'message', stop_reason: 'end_turn', model: 'claude', usage: { input_tokens: 8, output_tokens: 2 } }) }))
+            .toMatchObject({ tokens: { input: 8, output: 2, reasoning: null, cacheRead: null, cacheWrite: null, total: null } });
+        expect(observe({ routeKind: 'openai_chat_completions', contentType: 'application/json',
+            body: JSON.stringify({ model: 'model', choices: [{ finish_reason: 'stop' }],
+                usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 } }) }))
+            .toMatchObject({ tokens: { input: 8, output: 2, reasoning: null, cacheRead: null, cacheWrite: null, total: 10 } });
+    });
     it('preserves one terminal reported charge rather than summing repeated usage or upstream costs', () => {
         const reader = createExternalProviderTerminalTokenReader({
             routeKind: 'openai_chat_completions', contentType: 'text/event-stream',
@@ -84,7 +93,7 @@ describe('external Provider terminal token observation', () => {
             actualModelId: 'claude-sonnet-4-5-20250929',
             // Anthropic never folds cache into `input_tokens`, so the Happier
             // total is the sum — the Claude Agent observation's convention.
-            tokens: { input: 100, output: 25, reasoning: 0, cacheRead: 40, cacheWrite: 10, total: 175 },
+            tokens: { input: 100, output: 25, reasoning: null, cacheRead: 40, cacheWrite: 10, total: 175 },
         });
         expect(observe({
             routeKind: 'openai_responses',
@@ -105,7 +114,7 @@ describe('external Provider terminal token observation', () => {
             actualModelId: 'gpt-5-2025-11-01',
             // OpenAI already counts cached input inside `input_tokens` and
             // reasoning inside `output_tokens`, so its reported total stands.
-            tokens: { input: 120, output: 45, reasoning: 30, cacheRead: 80, cacheWrite: 0, total: 165 },
+            tokens: { input: 120, output: 45, reasoning: 30, cacheRead: 80, cacheWrite: null, total: 165 },
         });
         expect(observe({
             routeKind: 'openai_chat_completions',
@@ -124,7 +133,7 @@ describe('external Provider terminal token observation', () => {
             }),
         })).toEqual({
             actualModelId: 'gpt-5-mini',
-            tokens: { input: 60, output: 15, reasoning: 5, cacheRead: 20, cacheWrite: 0, total: 75 },
+            tokens: { input: 60, output: 15, reasoning: 5, cacheRead: 20, cacheWrite: null, total: 75 },
         });
     });
 
@@ -141,7 +150,7 @@ describe('external Provider terminal token observation', () => {
             ].join(''),
         })).toEqual({
             actualModelId: 'claude-opus-4-6',
-            tokens: { input: 200, output: 90, reasoning: 0, cacheRead: 50, cacheWrite: 0, total: 340 },
+            tokens: { input: 200, output: 90, reasoning: null, cacheRead: 50, cacheWrite: 0, total: 340 },
         });
     });
 
@@ -156,7 +165,7 @@ describe('external Provider terminal token observation', () => {
             ].join(''),
         })).toEqual({
             actualModelId: 'gpt-5',
-            tokens: { input: 10, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 14 },
+            tokens: { input: 10, output: 4, reasoning: null, cacheRead: null, cacheWrite: null, total: 14 },
         });
     });
 
@@ -183,7 +192,7 @@ describe('external Provider terminal token observation', () => {
                 + 'data: [DONE]\n\n',
         })).toEqual({
             actualModelId: 'gpt-5-mini',
-            tokens: { input: 8, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 },
+            tokens: { input: 8, output: 2, reasoning: null, cacheRead: null, cacheWrite: null, total: 10 },
         });
     });
 
@@ -207,7 +216,7 @@ describe('external Provider terminal token observation', () => {
             contentType: 'application/json',
             body: oversized,
             chunkSize: 64 * 1024,
-        })).toEqual({ actualModelId: 'gpt-5', tokens: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 } });
+        })).toEqual({ actualModelId: 'gpt-5', tokens: { input: 1, output: 1, reasoning: null, cacheRead: null, cacheWrite: null, total: 2 } });
     });
 
     it.each([
@@ -249,7 +258,7 @@ describe('external Provider terminal token observation', () => {
         reader.push(encoder.encode('data: {"type":"message_start","message":{"model":"claude","usage":{"input_tokens":25,"output_tokens":1}},"pad":"'));
         reader.push(encoder.encode('x'.repeat(5 * 1024 * 1024 + 1)));
         reader.push(encoder.encode('"}\n\ndata: {"type":"message_delta","usage":{"output_tokens":3}}\n\ndata: {"type":"message_stop"}\n\n'));
-        expect(reader.read()).toEqual({ outcome: 'succeeded', actualModelId: 'claude', tokens: { input: 25, output: 3, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 28 } });
+        expect(reader.read()).toEqual({ outcome: 'succeeded', actualModelId: 'claude', tokens: { input: 25, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null } });
     });
 
     it('keeps observing a long stream whose total size exceeds the budget', () => {
@@ -270,7 +279,7 @@ describe('external Provider terminal token observation', () => {
                 + 'event: message_stop\ndata: {"type":"message_stop"}\n\n',
         })).toEqual({
             actualModelId: 'claude-opus-4-6',
-            tokens: { input: 12, output: 4000, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 4012 },
+            tokens: { input: 12, output: 4000, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
         });
     });
 });

@@ -63,9 +63,9 @@ function requestCell(result: TeamCredentialUsageQueryResultV1, requestCount: num
         : String(requestCount);
 }
 
-function tokenCell(result: TeamCredentialUsageQueryResultV1, tokenCount: number): string {
+function tokenCell(result: TeamCredentialUsageQueryResultV1, tokenCount: number | null): string {
     return result.coverage.tokenCoverage === 'unavailable'
-        || (result.coverage.tokenCoverage === 'partial' && tokenCount === 0)
+        || tokenCount === null
         ? ''
         : String(tokenCount);
 }
@@ -78,14 +78,14 @@ function costCell(
     // A period the Home could not price has no cost, which is not the same
     // number as zero; an empty cell keeps that distinction in the file.
     return result.coverage.costCoverage === 'unavailable'
-        || (result.coverage.costCoverage === 'partial' && resolved === 0)
+        || resolved === null
         ? ''
         : String(resolved);
 }
 
 /** One cost component; blank, never zero, when the Home could not price the period. */
-function costComponentCell(result: TeamCredentialUsageQueryResultV1, amountUsd: number): string {
-    return result.coverage.costCoverage === 'unavailable' ? '' : String(amountUsd);
+function costComponentCell(result: TeamCredentialUsageQueryResultV1, amountUsd: number | null): string {
+    return result.coverage.costCoverage === 'unavailable' || amountUsd === null ? '' : String(amountUsd);
 }
 
 export function buildTeamCredentialUsageCsv(input: TeamCredentialUsageExportInput): string {

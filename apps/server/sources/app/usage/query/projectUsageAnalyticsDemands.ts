@@ -1,6 +1,7 @@
 import type { UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse, UsageAnalyticsSummary } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { hasCompleteUsageCostEvidence, projectUsageAnalyticsSummarySteps } from '@happier-dev/protocol/usage/usageCost';
+import { compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
 import { prepareUsageAnalyticsProjectionSteps, type UsageAnalyticsProjectionContext } from '../usageQueryService';
 import type { UsageAnalyticsPopulation } from './projectUsageAnalyticsPopulation';
 import { setImmediate } from 'node:timers/promises';
@@ -60,8 +61,9 @@ export async function projectUsageAnalyticsDemands(snapshot: UsageAnalyticsProje
         }).map(([key, candidates]) => {
             // Private prices can reorder every candidate tied at the displayed
             // token frontier. Retain that whole tie, not just N priced entries.
-            const frontier = candidates[Math.min(query.topLimit, candidates.length) - 1]?.value.tokens.total ?? Infinity;
-            return [key, candidates.filter(candidate => candidate.value.tokens.total >= frontier)];
+            const frontier = candidates[Math.min(query.topLimit, candidates.length) - 1]?.value.tokens.total;
+            return [key, frontier === undefined ? [] : candidates.filter(candidate =>
+                compareUsageMeasurementsDescending(candidate.value.tokens.total, frontier) <= 0)];
         }));
         return { ...value, summary: { ...summary, pricing, rankedPricing,
             accountingCalendar: query.includeActivity || query.includeModelTimeline ? summary.accountingCalendar : undefined } };

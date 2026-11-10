@@ -7,6 +7,7 @@ import { projectUsageFootprint } from '../usage/usageFootprint.js';
 import { projectUsageWorkIntervals, type UsageWorkIntervalsProjection } from '../usage/usageWorkIntervals.js';
 import type { UsageHowYouWork } from '../usage/resolveUsageHowYouWork.js';
 import { projectUsageAccountingSessionMembership } from '../usage/usageAccountingMembership.js';
+import { addUsageMeasurements } from '../usage/usageAggregation.js';
 import type { PublicProfileAccountingPopulation, PublicProfileAccountingProjection, PublicProfilePrivateFacts } from './publicProfileAccountingContracts.js';
 export { PublicProfileAccountingProjectionSchema, PublicProfilePrivateFactsSchema, PublicProfilePrivateAccountingFactsSchema,
   PublicProfilePrivateFieldCoverageSchema, type PublicProfileAccountingPopulation, type PublicProfileAccountingProjection,
@@ -73,11 +74,12 @@ function population(rows: readonly UsageAnalyticsContribution[], accounting: Usa
   const complete = accounting.coverage?.status === 'complete' && accounting.coverage.range.complete;
   const methods = captureMethods(rows, accounting);
   const footprint = projectUsageFootprint(accounting);
+  const tokens = rows.reduce<number | null>((sum, row) => addUsageMeasurements(sum, row.tokens.total), null);
   const value: PublicProfileAccountingPopulation = { contributionCount: rows.length,
     coverage: { status: complete ? 'complete_for_supplied_facts' : rows.length ? 'partial' : 'unknown', method: methods.method },
     agentMethods: methods.agentMethods, calendar,
     days: days ?? calendar.days.map(day => ({ date: day.date, eventCount: day.totals.eventCount })),
-    facts: rows.length || complete ? { tokens: rows.reduce((sum, row) => sum + row.tokens.total, 0),
+    facts: rows.length || complete ? { ...(tokens === null ? {} : { tokens }),
       footprint: { status: footprint.status, reason: footprint.reason } } : {} };
   return { ...value, facts: projectPublicProfilePopulationFacts(value) };
 }

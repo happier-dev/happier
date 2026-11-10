@@ -32,6 +32,9 @@ describe('usage number formatting', () => {
     });
 
     it('uses an em dash for invalid token counts', () => {
+        expect(formatTokenCount(null)).toBe('—');
+        expect(formatTokenCountLong(null)).toBe('—');
+        expect(formatUsageCost(null, 'USD')).toBe('—');
         expect(formatTokenCount(-1)).toBe('—');
         expect(formatTokenCount(Number.NaN)).toBe('—');
         expect(formatTokenCount(Number.POSITIVE_INFINITY)).toBe('—');

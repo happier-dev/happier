@@ -52,10 +52,10 @@ export type UsageRecapDeliveryInput = z.infer<typeof UsageRecapDeliveryInputSche
 
 const count = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 const amount = lazyZodSchema(() => z.number().check(z.nonnegative()));
-const mixRow = lazyZodSchema(() => z.strictObject({ tokens: amount, events: count, name: z.optional(z.string()) }));
+const mixRow = lazyZodSchema(() => z.strictObject({ tokens: z.nullable(amount), events: count, name: z.optional(z.string()) }));
 const agentMixRow = lazyZodSchema(() => z.extend(mixRow, { agentId: z.optional(z.string().check(z.minLength(1))) }));
 const highlight = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('observed_peak'), bucketStartMs: count, bucketEndMs: count, tokens: amount }),
+  z.strictObject({ kind: z.literal('observed_peak'), bucketStartMs: count, bucketEndMs: count, tokens: z.nullable(amount) }),
   z.strictObject({ kind: z.literal('linked_outcomes'), count }),
 ]));
 
@@ -65,7 +65,7 @@ export const UsageRecapFactsSchema = lazyZodSchema(() => z.strictObject({
   streak: z.optional(z.strictObject({ longestDays: count })),
   modelMix: z.optional(z.array(mixRow)),
   agentMix: z.optional(z.array(agentMixRow)),
-  cache: z.optional(z.strictObject({ readTokens: amount, writeTokens: amount })),
+  cache: z.optional(z.strictObject({ readTokens: z.nullable(amount), writeTokens: z.nullable(amount) })),
   rhythm: z.optional(z.strictObject({ calendarDays: UsageAnalyticsQueryResponseSchema.shape.activity._zod.def.innerType.shape.calendarDays._zod.def.innerType,
     weekdayHourBuckets: UsageAnalyticsQueryResponseSchema.shape.activity._zod.def.innerType.shape.weekdayHourBuckets._zod.def.innerType })),
   parallel: z.optional(z.strictObject({ sumAgentMs: amount, unionElapsedMs: amount, maximumConcurrency: count })),

@@ -9,12 +9,12 @@ const MODEL_ID_MAX = LIMITS.modelIdMaxCodeUnits;
 const SOURCE_MAX = LIMITS.usageSourceMaxCodeUnits;
 
 const UsageTokensSchema = lazyZodSchema(() => z.strictObject({
-  input: SafeIntegerSchema,
-  output: SafeIntegerSchema,
-  reasoning: SafeIntegerSchema,
-  cacheRead: SafeIntegerSchema,
-  cacheWrite: SafeIntegerSchema,
-  total: SafeIntegerSchema,
+  input: z.nullable(SafeIntegerSchema),
+  output: z.nullable(SafeIntegerSchema),
+  reasoning: z.nullable(SafeIntegerSchema),
+  cacheRead: z.nullable(SafeIntegerSchema),
+  cacheWrite: z.nullable(SafeIntegerSchema),
+  total: z.nullable(SafeIntegerSchema),
 }));
 
 const UsageCostBreakdownKeysSchema = lazyZodSchema(() => z.array(
@@ -22,9 +22,9 @@ const UsageCostBreakdownKeysSchema = lazyZodSchema(() => z.array(
 ).check(z.maxLength(LIMITS.usage.breakdownMaxEntries)));
 
 const UsageCostSchema = lazyZodSchema(() => z.strictObject({
-  reportedUsd: z.number().check(z.nonnegative()),
-  estimatedUsd: z.number().check(z.nonnegative()),
-  invoiceUsd: z.optional(z.number().check(z.nonnegative())),
+  reportedUsd: z.nullable(z.number().check(z.nonnegative())),
+  estimatedUsd: z.nullable(z.number().check(z.nonnegative())),
+  invoiceUsd: z.optional(z.nullable(z.number().check(z.nonnegative()))),
   billingContext: z.optional(z.enum([
     'api_usage',
     'subscription_included',

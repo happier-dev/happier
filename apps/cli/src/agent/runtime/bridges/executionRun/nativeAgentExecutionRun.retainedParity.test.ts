@@ -324,6 +324,15 @@ describe('native Session Run parity', () => {
                     availability: { inputTokens: true, outputTokens: true, reportedCostUsd: false },
                 }),
             });
+            publishRuntimeEvent!({ sequence: 4, sessionId: 'session-parent', emittedAtMs: 21,
+                turnId: 'run-usage-turn-1', kind: 'usage-observed', observationId: 'child-usage-identity',
+                source: 'native-statistics', scope: 'session_cumulative',
+                accounting: { nativeSessionId: 'child-native', historyComplete: false } });
+            await vi.waitFor(() => expect(publishUsage).toHaveBeenCalledTimes(2));
+            expect(publishUsage).toHaveBeenLastCalledWith(expect.objectContaining({
+                observation: expect.objectContaining({ tokens: null, cost: null }),
+                metadata: { usageAccounting: expect.objectContaining({ nativeSessionId: 'child-native', historyComplete: false }) },
+            }));
         } finally { await host.dispose(); }
     });
 

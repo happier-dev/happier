@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { FX_PROMPT_USAGE } from './usage.js';
 
 describe('FX prompt usage', () => {
+  it('preserves measured zero without fabricating missing counts or replacing an explicit total', () => {
+    expect(FX_PROMPT_USAGE.projectPromptUsage({ usage: { inputTokens: 0 }, promptResponse: {} }))
+      .toEqual({ inputTokens: 0 });
+    expect(FX_PROMPT_USAGE.projectPromptUsage({ usage: { inputTokens: 0, outputTokens: 0 }, promptResponse: {} }))
+      .toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0 });
+    expect(FX_PROMPT_USAGE.projectPromptUsage({ usage: { inputTokens: 1, outputTokens: 2, totalTokens: 4 }, promptResponse: {} }))
+      .toEqual({ inputTokens: 1, outputTokens: 2, totalTokens: 4 });
+  });
   it('keeps cache and reasoning details within the provider input/output totals', () => {
     // fx 0.0.14 wire keys captured 2026-10-27 in E-fx-live-probe.md §3.
     // Nonzero vector: fx 1a070af, src/gateway/responses_protocol.zig:2681.

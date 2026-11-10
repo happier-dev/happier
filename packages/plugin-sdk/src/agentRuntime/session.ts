@@ -4,9 +4,9 @@ import type {
   RuntimeCapabilities,
   TerminalHostHandle,
 } from '@happier-dev/agents';
-import type { $brand } from 'zod/mini';
 import type { AgentTerminalLaunchPlan, AgentTerminalLaunchRequest } from './surfaces.js';
 import type { AgentSessionIdleCompactionPreferenceV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
+import type { AgentUsageObservedPayloadV1 } from '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1';
 export type { AgentSessionIdleCompactionPreferenceV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
 
 import type { JsonValue } from '../identity.js';
@@ -468,80 +468,10 @@ export type AgentSessionRuntimeEvent =
       newContent?: string;
       sidechainId?: string;
     }>
-  | Readonly<{
+  | Readonly<AgentUsageObservedPayloadV1 & {
       sequence: number;
       sessionId: string;
       emittedAtMs: number;
-      kind: 'usage-observed';
-      /** Conservative provider request clock; an observed lifetime is optional. */
-      promptCache?: Readonly<{ lastUseAtMs: number; ttlMs?: number }>;
-      observationId: string;
-      /** Native request evidence; the host validates it against the accepted source and matching turn. */
-      attribution?: Readonly<{
-        v: 1; turnId: string;
-        source: Readonly<{
-          kind: 'native';
-          connectedAccount: Readonly<{ service: Readonly<{ pluginId: string; localId: string }>; accountId: string }> | null;
-          /** Prospective native request fact; absent or invalidated evidence remains unknown. */
-          accountScope?: 'personal' | 'workspace';
-        }>
-          | Readonly<{ kind: 'provider'; providerId: string | null; providerConnectionId: string & $brand<'ProviderConnectionId'> }>;
-      }>;
-      /** Witnessed accounting identity and counter semantics, never an inferred host turn identity. */
-      accounting?: Readonly<{
-        nativeSessionId?: string;
-        inferenceId?: string;
-        inputIncludesCache?: boolean;
-        outputIncludesReasoning?: boolean;
-        historyComplete?: boolean;
-      }>;
-      turnId?: string;
-      source: string;
-      scope: 'turn_delta' | 'session_cumulative' | 'session_final';
-      modelId?: string;
-      tokens?: Readonly<{
-        input: number;
-        output: number;
-        reasoning: number;
-        cacheRead: number;
-        cacheWrite: number;
-        total: number;
-      }>;
-      cost?: Readonly<{
-        reportedUsd: number;
-        estimatedUsd: number;
-        invoiceUsd?: number;
-        billingContext?:
-          | 'api_usage'
-          | 'subscription_included'
-          | 'subscription_with_possible_overage'
-          | 'unknown';
-        costSource?:
-          | 'provider_reported'
-          | 'provider_reported_api_equivalent'
-          | 'pricing_estimate'
-          | 'invoice'
-          | 'none';
-        currency: string;
-        breakdown?: Record<string, number>;
-        effectiveUsd?: number;
-      }>;
-      context?: Readonly<{
-        v: 1;
-        modelId: string | null;
-        usedTokens: number;
-        windowTokens: number | null;
-        totalProcessedTokens: number | null;
-        baselineTokens: number | null;
-        isAutoCompactEnabled: boolean | null;
-        categories: Array<Readonly<{
-          key: string;
-          label: string | null;
-          tokens: number;
-        }>> | null;
-        observedAtMs: number;
-        source: 'provider_live' | 'provider_turn' | 'derived_estimate';
-      }>;
     }>
   | Readonly<{
       sequence: number;

@@ -14,5 +14,5 @@ export function usageCompositionSegments(composition: UsageComposition, color: (
         label: t(`usage.tokenMix.${segment.key}`),
         value: segment.tokens,
         color: color(index),
-    })).filter(segment => segment.value > 0);
+    })).filter(segment => segment.value !== null && segment.value > 0);
 }

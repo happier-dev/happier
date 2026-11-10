@@ -6,12 +6,12 @@ const REASONING_KEYS = ['reasoning', 'reasoning_tokens'] as const;
 const CACHE_READ_KEYS = ['cache_read', 'cacheRead', 'cache_read_input_tokens'] as const;
 const CACHE_WRITE_KEYS = ['cache_creation', 'cache_write', 'cacheWrite', 'cache_creation_input_tokens'] as const;
 
-function firstNumber(source: Record<string, number>, keys: readonly string[]): number {
+function firstNumber(source: Record<string, number>, keys: readonly string[]): number | null {
     for (const key of keys) {
         const value = source[key];
         if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
     }
-    return 0;
+    return null;
 }
 
 export function normalizeLegacyUsageTokens(source: Record<string, number>): UsageObservationTokens {

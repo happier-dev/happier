@@ -12,6 +12,8 @@ import type {
 import { resolveUsageCalendarInstant } from '@happier-dev/protocol/usage/usageCalendar';
 import { resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
 import { buildUsageFocusFilters } from './usageFocusFilters';
+import { normalizeLegacyUsageTokens } from '@happier-dev/protocol/usage/legacyUsageTokens';
+import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
 export { buildUsageFocusFilters } from './usageFocusFilters';
 import {
     getUsagePeriodDefinition,
@@ -53,10 +55,10 @@ export interface UsageQueryParams {
 export type UsageResponse = UsageAnalyticsQueryResponse | UsageDataPoint[];
 
 export interface UsageTotals {
-    totalTokens: number;
-    totalCost: number;
-    tokenBreakdown: Record<string, number>;
-    costBreakdown: Record<string, number>;
+    totalTokens: number | null;
+    totalCost: number | null;
+    tokenBreakdown: Record<string, number | null>;
+    costBreakdown: Record<string, number | null>;
     reportCount: number;
     eventCount: number;
     activeDays: number | null;
@@ -69,18 +71,18 @@ function isTotalKey(key: string): boolean {
     return key === 'total' || key.endsWith('Total') || key.endsWith('_total');
 }
 
-export function sumRecordValues(record: Record<string, number>): number {
-    let total = 0;
+export function sumRecordValues(record: Record<string, number>): number | null {
+    let total: number | null = null;
     for (const [key, value] of Object.entries(record)) {
         if (typeof value !== 'number' || !Number.isFinite(value) || isTotalKey(key)) {
             continue;
         }
-        total += value;
+        total = addUsageMeasurements(total, value);
     }
     return total;
 }
 
-export function getRecordTotal(record: Record<string, number>): number {
+export function getRecordTotal(record: Record<string, number>): number | null {
     const explicit = record.total;
     if (typeof explicit === 'number' && Number.isFinite(explicit)) {
         return explicit;
@@ -284,8 +286,8 @@ export async function getUsageForPeriod(
  * Calculate total tokens and cost from usage data
  */
 export function calculateTotals(usage: UsageDataPoint[], timeZoneOffsetMinutes?: number): {
-    totalTokens: number;
-    totalCost: number;
+    totalTokens: number | null;
+    totalCost: number | null;
     tokensByModel: Record<string, number>;
     costByModel: Record<string, number>;
     tokenBreakdown: Record<string, number>;
@@ -294,8 +296,8 @@ export function calculateTotals(usage: UsageDataPoint[], timeZoneOffsetMinutes?:
     activeDays: number;
 } {
     const result = {
-        totalTokens: 0,
-        totalCost: 0,
+        totalTokens: usage.length === 0 ? 0 : null,
+        totalCost: usage.length === 0 ? 0 : null,
         tokensByModel: {} as Record<string, number>,
         costByModel: {} as Record<string, number>,
         tokenBreakdown: {} as Record<string, number>,
@@ -306,8 +308,8 @@ export function calculateTotals(usage: UsageDataPoint[], timeZoneOffsetMinutes?:
     const activeDayKeys = new Set<string>();
     
     for (const dataPoint of usage) {
-        result.totalTokens += getRecordTotal(dataPoint.tokens);
-        result.totalCost += getRecordTotal(dataPoint.cost);
+        result.totalTokens = addUsageMeasurements(result.totalTokens, normalizeLegacyUsageTokens(dataPoint.tokens).total);
+        result.totalCost = addUsageMeasurements(result.totalCost, getRecordTotal(dataPoint.cost));
         result.reportCount += Number.isFinite(dataPoint.reportCount) ? dataPoint.reportCount : 0;
 
         const timestampMs = dataPoint.timestamp * 1000;

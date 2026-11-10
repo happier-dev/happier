@@ -1,6 +1,6 @@
 import type { UsageAnalyticsContribution, UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse, UsageObservationCost, UsageObservationTokens } from './usageAnalyticsContracts.js';
 import { bundledUsageModelPriceCatalog, resolveUsageModelPrice, type ResolvedUsageModelPrice, type UsageModelPriceCatalog, type UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
-import { resolveUsageTokenCategories } from './usageTokenCategories.js';
+import { hasMeasuredUsageTokenCategories, resolveUsageTokenCategories } from './usageTokenCategories.js';
 import { createUsageSourceCostFacts } from './usageCostFactTotals.js';
 import { reprojectUsageLeadersSteps, usageTimelinePartitionKey, type UsageAnalyticsPricingPartitions } from './usageLeaderProjection.js';
 import { usageCostAggregationBasis } from './usageAggregation.js';
@@ -68,7 +68,7 @@ function admitUsageModelCostOperands({ rates }: ResolvedUsageModelPrice): UsageM
 
 function estimateResolvedUsageModelCost(price: ResolvedUsageModelPrice | null, categories: UsageObservationTokens | null,
   admitted?: UsageModelCostOperands): UsageModelCostEstimate | null {
-  if (!price || !categories) return null;
+  if (!price || !hasMeasuredUsageTokenCategories(categories)) return null;
   const { rates } = price;
   if (categories.cacheRead > 0 && rates.cacheReadUsdPerMillion === undefined
     || categories.cacheWrite > 0 && rates.cacheWriteUsdPerMillion === undefined) return null;
@@ -110,14 +110,15 @@ export function priceUsageObservation(rawCost: UsageObservationCost, modelId: st
   const breakdown = observed.breakdown ? withUsageMoney(observed.breakdown, Object.fromEntries(
     Object.entries(observed.breakdown).map(([field, amount]) => [field, readUsageMoney(observed.breakdown!, field, amount)]))) : undefined;
   const money = Object.fromEntries((['reportedUsd', 'estimatedUsd', 'invoiceUsd'] as const)
-    .map(field => [field, readUsageMoney(observed, field, observed[field] ?? 0)]));
+    .flatMap(field => { const value = observed[field]; return value == null ? [] : [[field, readUsageMoney(observed, field, value)]]; }));
   const projected: UsageObservationCost = observed;
   if (breakdown) projected.breakdown = breakdown;
   const source = estimate ? estimate.price.source === 'catalog' ? `litellm:${catalog.provenance.revision}`
     : `user:${estimate.price.source}:${modelId}` : undefined;
   // A money-only observation adds no token-tariff population. Its unknown model
   // must not make otherwise fully priced tokens incomplete.
-  const noTokens = categories !== null && Object.values(categories).every(value => value === 0);
+  const noTokens = categories !== null && categories.input === 0 && categories.output === 0 && categories.reasoning === 0
+    && categories.cacheRead === 0 && categories.cacheWrite === 0;
   const apiMoney = estimate ? readUsageMoney(estimate, 'total', estimate.total) : noTokens ? usageMoneyFromNumber(0) : undefined;
   // This rest object is owned by this call. Build its monetary fields before
   // publishing provenance, rather than copying a JSON-shaped cost per phase.
@@ -162,13 +163,13 @@ export function* repriceUsageAnalyticsResponseSteps(value: UsageAnalyticsQueryRe
   for (const row of value.contributions) {
     const categories = row.tokenCategories ?? resolveUsageTokenCategories(row.tokens, null);
     const { estimate, cost } = priceUsageObservation(row.cost, row.modelId, categories, catalog, overrides, mode, estimateCost(row.modelId, categories));
-    if (!estimate && row.tokens.cacheRead > 0) cacheSavingsComplete = false;
+    if (!estimate && row.tokens.cacheRead !== 0) cacheSavingsComplete = false;
     cacheSavings = addUsageMoney(cacheSavings, readUsageMoney(estimate?.breakdown ?? {}, 'cacheSavingsUsd', estimate?.breakdown?.cacheSavingsUsd ?? 0));
     const existing = resolveUsageCostFacts(cost);
     const base = { tokens: row.tokens, eventCount: row.eventCount ?? 1, asOfMs: row.observedAtMs,
       complete: row.eventCount !== undefined && hasCompleteUsageCostEvidence(value) };
     for (const fact of existing) facts.add({ ...base, ...fact, currency: fact.kind === 'api_equivalent' ? 'USD' : fact.currency });
-    if (!estimate && row.tokens.total > 0) facts.add({ ...base, kind: 'unpriced', currency: 'USD', amountUsd: null,
+    if (!estimate && cost.apiEquivalentUsd === undefined) facts.add({ ...base, kind: 'unpriced', currency: 'USD', amountUsd: null,
       source: categories ? 'model_price_unknown' : 'token_categories_unknown', complete: false });
     contributions.push({ ...row, cost });
     if (shouldYield()) yield;
@@ -187,7 +188,7 @@ export function* repriceUsageAnalyticsResponseSteps(value: UsageAnalyticsQueryRe
     const part = yield* pricePartition(rows, range !== undefined);
     if (range) partitions.series.set(usageTimelinePartitionKey('series', range), part.population);
     const { apiEquivalentUsd: _old, pricingSource: _source, effectiveUsd: _effective, selectedBasis: _selected, ...observed } = raw;
-    const allPriced = part.allPriced;
+    const allPriced = part.hasPrices;
     const exactApi = part.api;
     const updated: UsageObservationCost = allPriced ? withUsageMoney({ ...observed,
       apiEquivalentUsd: usageMoneyToNumber(exactApi),

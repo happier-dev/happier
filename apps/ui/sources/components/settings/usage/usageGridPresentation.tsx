@@ -41,7 +41,7 @@ export function usageHeatmapPresentation(input: Readonly<{ calendarDays: readonl
             columns: strip.map((cell) => ({ id: cell.isoDate, label: strip.length > 14 ? cell.weekday === 1 ? String(cell.dayOfMonth) : '' : weekdayLabel(cell.weekday, 'narrow') })),
             cells: strip.map((cell) => { const value = valueFor(cell); return { id: cell.isoDate, row: 'days', column: cell.isoDate, label: dateLabel(cell.isoDate), value,
                 valueLabel: value === null ? t('common.unavailable') : events(value), emphasized: cell.isToday,
-                color: resolveHeatmapColor({ value: value ?? 0, values, baseColor: input.accentColor, emptyColor: input.emptyColor }) }; }) };
+                color: value === null ? input.emptyColor : resolveHeatmapColor({ value, values, baseColor: input.accentColor, emptyColor: input.emptyColor }) }; }) };
     }
     const grid = buildHeatmapGrid(input.calendarDays, nowMs, input.mode, undefined, range);
     const values = grid.columns.flatMap((column) => column.cells.filter((cell) => cell.inRange).map(valueFor)).filter((value): value is number => value !== null);
@@ -49,7 +49,7 @@ export function usageHeatmapPresentation(input: Readonly<{ calendarDays: readonl
         columns: grid.columns.map((column) => ({ id: column.cells[0]!.isoDate, label: column.monthLabel ?? '' })),
         cells: grid.columns.flatMap((column) => column.cells.flatMap((cell, row) => { const value = valueFor(cell); return cell.inRange ? [{ id: cell.isoDate, row: String(row), column: column.cells[0]!.isoDate, label: dateLabel(cell.isoDate), value,
             valueLabel: value === null ? t('common.unavailable') : events(value),
-            color: resolveHeatmapColor({ value: value ?? 0, values, baseColor: input.accentColor, emptyColor: input.emptyColor }) }] : []; })) };
+            color: value === null ? input.emptyColor : resolveHeatmapColor({ value, values, baseColor: input.accentColor, emptyColor: input.emptyColor }) }] : []; })) };
 }
 
 export function usageDotGridPresentation(punchCard: UsagePunchCard, accentColor: string, emptyColor: string): GridFacts {
@@ -71,13 +71,13 @@ export function usageActivityGridPresentation(activity: readonly UsageSummaryAct
     const recent = activity.slice(-squareCount);
     const fillerCount = Math.max(0, squareCount - recent.length);
     const points = [...Array.from({ length: fillerCount }, () => null), ...recent];
-    const values = recent.map((point) => point.tokens);
+    const values = recent.map((point) => point.tokens).filter((value): value is number => value !== null);
     return { label: t('usage.activity'), size: 'tile', order: 'rows',
         rows: Array.from({ length: Math.ceil(squareCount / rowSize) }, (_, index) => ({ id: String(index), label: '' })),
         columns: Array.from({ length: rowSize }, (_, index) => ({ id: String(index), label: '' })),
         cells: points.map((point, index) => ({ id: point ? String(point.timestamp) : `unavailable:${index}`, row: String(Math.floor(index / rowSize)), column: String(index % rowSize),
             label: point ? formatUsageCalendarDate(point.timestamp, timeZoneOffsetMinutes) : t('usage.noData.title'), value: point ? point.tokens : null,
-            color: resolveHeatmapColor({ value: point?.active ? point.tokens : 0, values, baseColor: color, emptyColor }) })) };
+            color: point?.tokens == null ? emptyColor : resolveHeatmapColor({ value: point.active ? point.tokens : 0, values, baseColor: color, emptyColor }) })) };
 }
 
 /** Canonical host overlay owns hover, touch and keyboard; the renderer owns semantic selection. */

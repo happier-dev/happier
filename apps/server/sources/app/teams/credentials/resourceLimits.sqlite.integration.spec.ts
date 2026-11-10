@@ -271,7 +271,7 @@ describe('Team credential usage-limit administration', () => {
         await expect(db.usageEvent.findFirstOrThrow({ where: {
             accountId: f.member.id,
             externalKey: requestId,
-        } })).resolves.toMatchObject({ requestCount: 1, totalTokens: 0 });
+        } })).resolves.toMatchObject({ requestCount: 1, totalTokens: null });
     });
 
     it('applies only Group limits for the actor\'s current Groups at admission, never event attribution alone', async () => {

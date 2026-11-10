@@ -1,3 +1,4 @@
+import { compareUsageMeasurementsDescending } from './usageAggregation.js';
 import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsContribution, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse, type UsageAnalyticsSummary,
     type UsageObservationCost, type UsageAnalyticsBreakdownEntry, type UsagePricingPopulation, type UsageAnalyticsTimelineSource } from './usageAnalyticsContracts.js';
 import { readUsagePageCostProjectionBasis, resolveUsageCostBasis, resolveUsageContributionDimensionKey, serializeUsageCostBasis, usagePageCostProjectionBasis, type UsageCostMode } from './usageCostFacts.js';
@@ -45,17 +46,17 @@ function buildRankedPricing(rows: readonly UsageAnalyticsContribution[], dimensi
         const admittedValues = admitted?.candidates.map(candidate => {
             const { cost: _cost, sources: _sources, ...value } = candidate.value;
             return { ...value, label: labels.get(value.key) ?? value.key };
-        }).sort((left, right) => right.tokens.total - left.tokens.total);
-        const admittedFrontier = admittedValues?.[Math.min(previous.length, admittedValues.length) - 1]?.tokens.total ?? Infinity;
+        }).sort((left, right) => compareUsageMeasurementsDescending(left.tokens.total, right.tokens.total));
+        const admittedFrontier = admittedValues?.[Math.min(previous.length, admittedValues.length) - 1]?.tokens.total;
         const candidates = countedRows && !witnessedAll
-            ? decorateUsageBreakdownList(admittedValues?.filter(entry => entry.tokens.total >= admittedFrontier)
+            ? decorateUsageBreakdownList(admittedValues?.filter(entry => admittedFrontier !== undefined && compareUsageMeasurementsDescending(entry.tokens.total, admittedFrontier) <= 0)
                 ?? selectUsageLeaderTokenFrontier(countedRows, dimension, previous.length, labels).map(group => group.value),
                 countedRows, dimension, previous)
             : previous;
-        const frontier = candidates[Math.min(previous.length, candidates.length) - 1]?.tokens.total ?? Infinity;
+        const frontier = candidates[Math.min(previous.length, candidates.length) - 1]?.tokens.total;
         // Compact operands have no selected price yet; private repricing owns tie ordering.
-        return { key, entries: candidates.filter(entry => entry.tokens.total >= frontier)
-            .sort((left, right) => right.tokens.total - left.tokens.total || left.key.localeCompare(right.key)) };
+        return { key, entries: candidates.filter(entry => frontier !== undefined && compareUsageMeasurementsDescending(entry.tokens.total, frontier) <= 0)
+            .sort((left, right) => compareUsageMeasurementsDescending(left.tokens.total, right.tokens.total) || left.key.localeCompare(right.key)) };
     });
     // One dimension admits each candidate's money once for all consuming outputs.
     // Labels, context and requested frontiers still belong to each output.
@@ -220,7 +221,7 @@ export function* projectUsageAnalyticsSummarySteps(value: UsageAnalyticsQueryRes
             return basis?.kind === 'api_equivalent' ? [basis] : [];
         });
         accounts.values.push({ ref: group.ref, contributionCount: group.rows.length, pricedContributionCount: priced.length,
-            apiEquivalentUsd: usageMoneyToNumber(priced.reduce((sum, basis) => addUsageMoney(sum, readUsageMoney(basis, 'amountUsd', basis.amountUsd)), usageMoneyFromNumber(0))),
+            apiEquivalentUsd: priced.length ? usageMoneyToNumber(priced.reduce((sum, basis) => addUsageMoney(sum, readUsageMoney(basis, 'amountUsd', basis.amountUsd)), usageMoneyFromNumber(0))) : null,
             pricingSources: [...new Set(priced.map(basis => basis.source))].sort() });
         yield;
     }

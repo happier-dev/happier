@@ -1,4 +1,4 @@
-import { estimateUsageModelCost, PROMPT_CACHE_DURATIONS } from '@happier-dev/plugin-sdk/agents/runtime';
+import { PROMPT_CACHE_DURATIONS } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
     ClaudeTokenUsage,
     ClaudeUsageModelSource,
@@ -36,20 +36,17 @@ export function buildClaudeAssistantUsageObservation(params: Readonly<{
         return null;
     }
 
-    const total =
-        (inputTokens ?? 0) +
-        (outputTokens ?? 0) +
-        (cacheCreationTokens ?? 0) +
-        (cacheReadTokens ?? 0);
+    const total = inputTokens === null || outputTokens === null
+        || cacheCreationTokens === null || cacheReadTokens === null
+        ? null : inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens;
     const tokens: ClaudeUsageObservation['tokens'] = {
         total,
-        input: inputTokens ?? 0,
-        output: outputTokens ?? 0,
-        reasoning: 0,
-        cacheWrite: cacheCreationTokens ?? 0,
-        cacheRead: cacheReadTokens ?? 0,
+        input: inputTokens,
+        output: outputTokens,
+        reasoning: null,
+        cacheWrite: cacheCreationTokens,
+        cacheRead: cacheReadTokens,
     };
-    const costs = params.modelSource === 'provider' ? null : estimateUsageModelCost(params.modelId, tokens);
 
     return {
         provider: 'claude',
@@ -68,16 +65,8 @@ export function buildClaudeAssistantUsageObservation(params: Readonly<{
         } }),
         modelId: typeof params.modelId === 'string' && params.modelId.trim().length > 0 ? params.modelId.trim() : null,
         tokens,
-        cost: costs
-            ? {
-                estimatedUsd: costs.total,
-                ...(costs.breakdown ? { breakdown: costs.breakdown } : {}),
-                reportedUsd: 0,
-                billingContext: 'unknown',
-                costSource: 'pricing_estimate',
-                currency: 'USD',
-            }
-            : null,
+        // Claude does not report the separate reasoning category required by tariff pricing.
+        cost: null,
         contextUsedTokens: null,
         contextWindowTokens: null,
     };

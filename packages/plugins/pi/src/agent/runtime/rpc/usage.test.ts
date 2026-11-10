@@ -25,4 +25,15 @@ describe('projectPiSessionStatsUsage', () => {
       observedAtMs: 10,
     })).toBeNull();
   });
+  it('retains partial paid counters without borrowing them as a total or current context', () => {
+    expect(projectPiSessionStatsUsage({ stats: { tokens: { input: 12, output: 0 } },
+      sessionId: 'session-1', turnId: null, observationId: 'partial', observedAtMs: 10,
+    })).toMatchObject({ tokens: { input: 12, output: 0, total: null, reasoning: null } });
+    expect(projectPiSessionStatsUsage({ stats: { tokens: { total: 0 }, cost: 0 },
+      sessionId: 'session-1', turnId: null, observationId: 'zero', observedAtMs: 10,
+    })).toMatchObject({ tokens: { total: 0 }, cost: { estimatedUsd: 0, reportedUsd: null } });
+    expect(projectPiSessionStatsUsage({ stats: { cost: 0.2 },
+      sessionId: 'session-1', turnId: null, observationId: 'cost-only', observedAtMs: 10,
+    })).toMatchObject({ tokens: { total: null }, cost: { estimatedUsd: 0.2 } });
+  });
 });

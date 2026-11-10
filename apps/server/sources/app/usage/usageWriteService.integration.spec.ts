@@ -66,6 +66,30 @@ describe("usageWriteService", () => {
         ]);
     });
 
+    it('stores a child native identity with null measurements and retains measured zero separately', async () => {
+        const account = await db.account.create({ data: { publicKey: 'unknown-native-measurements' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'unknown-native-measurements', encryptionMode: 'plain', metadata: '{}' } });
+        const request = UsageEventIngestRequestSchema.parse({
+            sessionId: session.id, observedAt: 100, agentId: 'muse', source: 'muse-native-accounting',
+            scope: 'session_cumulative', externalKey: 'child-observation', isCumulative: true,
+            tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+            cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD' },
+            metadata: { usageAccounting: { path: 'runtime', status: 'partial', nativeSessionId: 'child-native' } },
+        });
+        expect(await recordUsageEvent(account.id, request)).toMatchObject({ ok: true });
+        const unknown = await db.usageEvent.findFirstOrThrow({ where: { accountId: account.id, externalKey: 'child-observation' } });
+        expect(unknown).toMatchObject({ inputTokens: null, outputTokens: null, reasoningTokens: null,
+            cacheReadTokens: null, cacheWriteTokens: null, totalTokens: null, reportedCostUsd: null,
+            estimatedCostUsd: null, invoiceCostUsd: null,
+            metadata: { usageAccounting: { nativeSessionId: 'child-native', status: 'partial' } } });
+        expect(unknown.turnId).toBeNull();
+        expect(await recordUsageEvent(account.id, { ...request, externalKey: 'measured-zero',
+            tokens: { ...request.tokens, total: 0 }, cost: { ...request.cost, reportedUsd: 0 } })).toMatchObject({ ok: true });
+        const measured = await db.usageEvent.findFirstOrThrow({ where: { accountId: account.id, externalKey: 'measured-zero' } });
+        expect(measured).toMatchObject({ totalTokens: 0, reportedCostUsd: 0, inputTokens: null,
+            estimatedCostUsd: null, invoiceCostUsd: null });
+    });
+
     it('pushes the captured Provider connection for a completed request without inferring the current Session selection', async () => {
         const account = await db.account.create({ data: { publicKey: 'provider-connection-usage-wake' } });
         const session = await db.session.create({ data: {
@@ -311,8 +335,8 @@ describe("usageWriteService", () => {
             expect(result.series?.map((bucket) => bucket.tokens.total)).toEqual([30]);
             expect(result.breakdowns?.session?.map((entry) => [entry.key, entry.tokens.total])).toEqual([[session.id, 30]]);
         }
-        expect((await query({ sources: ['claude-native'] })).totals.tokens.total).toBe(0);
-        expect((await queryUsageAnalytics(otherAccount.id, UsageAnalyticsQueryRequestSchema.parse({}))).totals.tokens.total).toBe(0);
+        expect((await query({ sources: ['claude-native'] })).totals.tokens.total).toBeNull();
+        expect((await queryUsageAnalytics(otherAccount.id, UsageAnalyticsQueryRequestSchema.parse({}))).totals.tokens.total).toBeNull();
 
         for (const extra of [
             { subject: { ...subject, sourceRootKey: 'other-root' }, modelId: 'A', total: 40, inference: 'opaque-inference-one' },
@@ -332,7 +356,7 @@ describe("usageWriteService", () => {
         expect((await query({ machineIds: ['runtime-native-machine'] })).totals.tokens.total).toBe(90);
         expect((await query({ machineIds: ['runtime-native-other-machine'] })).totals.tokens.total).toBe(50);
         expect((await query({ sessionIds: [session.id] })).totals.tokens.total).toBe(30);
-        expect((await query({ sessionIds: [session.id], sources: ['claude-native'] })).totals.tokens.total).toBe(0);
+        expect((await query({ sessionIds: [session.id], sources: ['claude-native'] })).totals.tokens.total).toBeNull();
 
         // A replay disagreement must remain visible even on Session/model/source
         // reads; filtering the evidence first would silently hide it.

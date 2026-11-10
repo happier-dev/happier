@@ -8,6 +8,7 @@ import { UsageRequestAttributionSchema } from '../usageAnalyticsContracts.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { selectUsageWorkPermissions } from '../usageWorkIntervals.js';
 import { summarizeUsageExecutionSources } from '../usageSourceSummary.js';
+import { hasMeasuredUsageTokenCategories, type MeasuredUsageTokenCategories } from '../usageTokenCategories.js';
 import { UsageCoachPreferencesV1Schema } from '../../account/settings/usageCoachPreferencesV1.js';
 import { USAGE_COACH_DETECTOR_IDS, USAGE_COACH_REQUIRED_EVIDENCE, type UsageCoachCapability, type UsageCoachEvaluation,
     type UsageCoachEvaluationInput, type UsageCoachConceptEvaluation, type UsageCoachDetectorId, type UsageCoachFinding,
@@ -493,14 +494,16 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
                 if (!pricedRows) return insufficient(id, capability);
                 const sessions = new Map<string, typeof pricedRows>();
                 for (const entry of pricedRows) {
-                    if (!entry.row.sessionId || entry.row.eventCount !== 1 || !entry.row.tokenCategories) continue;
+                    if (!entry.row.sessionId || entry.row.eventCount !== 1 || !hasMeasuredUsageTokenCategories(entry.row.tokenCategories)) continue;
                     const group = sessions.get(entry.row.sessionId) ?? [];
                     group.push(entry); sessions.set(entry.row.sessionId, group);
                 }
                 for (const group of sessions.values()) {
                     group.sort((a, b) => a.row.observedAtMs - b.row.observedAtMs || a.row.id.localeCompare(b.row.id));
-                    const size = (entry: typeof group[number]) => entry.row.tokenCategories!.input
-                        + entry.row.tokenCategories!.cacheRead + entry.row.tokenCategories!.cacheWrite;
+                    const size = (entry: typeof group[number]) => {
+                        const categories = entry.row.tokenCategories as MeasuredUsageTokenCategories;
+                        return categories.input + categories.cacheRead + categories.cacheWrite;
+                    };
                     let growingRequest: typeof group[number] | undefined;
                     for (let index = group.length - 1; index > 0; index -= 1) {
                         if (size(group[index]!) > size(group[index - 1]!)) {
@@ -514,7 +517,7 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
                     const measurements: UsageCoachFinding['measurements'] = [{ metric: 'composed_tokens', value: size(growingRequest), unit: 'tokens' }];
                     if (group.every(entry => entry.price !== null && (entry.row.tokenCategories!.cacheRead === 0
                         || entry.price!.price.rates.cacheReadUsdPerMillion !== undefined))) measurements.push({
-                        metric: 'cached_history_cost', value: group.reduce((sum, entry) => sum + entry.row.tokenCategories!.cacheRead
+                        metric: 'cached_history_cost', value: group.reduce((sum, entry) => sum + (entry.row.tokenCategories as MeasuredUsageTokenCategories).cacheRead
                             * (entry.price!.price.rates.cacheReadUsdPerMillion ?? 0) / 1_000_000, 0),
                         unit: 'currency', currency: 'USD', costKind: 'api_equivalent',
                     });
@@ -524,12 +527,13 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
                         observedAtMs: entry.row.observedAtMs, value: size(entry) })))] });
                 }
                 return negative(id, capability, input.accounting?.coverage?.status === 'complete'
-                    && pricedRows.every(entry => entry.row.eventCount === 1 && entry.row.tokenCategories !== undefined && entry.row.tokenCategories !== null));
+                    && pricedRows.every(entry => entry.row.eventCount === 1 && hasMeasuredUsageTokenCategories(entry.row.tokenCategories)));
             }
             case 'cache_economics': {
-                if (!accountingRows?.length || accountingRows.some(row => !row.tokenCategories)) return insufficient(id, capability);
-                const totals = accountingRows.reduce((sum, row) => ({ input: sum.input + row.tokenCategories!.input,
-                    read: sum.read + row.tokenCategories!.cacheRead, write: sum.write + row.tokenCategories!.cacheWrite }), { input: 0, read: 0, write: 0 });
+                if (!accountingRows?.length || accountingRows.some(row => !hasMeasuredUsageTokenCategories(row.tokenCategories))) return insufficient(id, capability);
+                const categoryRows = accountingRows.map(row => ({ ...row, tokenCategories: row.tokenCategories as MeasuredUsageTokenCategories }));
+                const totals = categoryRows.reduce((sum, row) => ({ input: sum.input + row.tokenCategories.input,
+                    read: sum.read + row.tokenCategories.cacheRead, write: sum.write + row.tokenCategories.cacheWrite }), { input: 0, read: 0, write: 0 });
                 const denominator = totals.input + totals.read + totals.write;
                 if (denominator === 0) return negative(id, capability, input.accounting?.coverage?.status === 'complete');
                 const measurements: UsageCoachFinding['measurements'] = [
@@ -555,7 +559,7 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
                 ], measurements, input.accounting?.coverage?.status ?? 'unknown', undefined,
                 share !== null && share >= facts.costs.behaviorFlagShare ? 'cost_linked' : 'informational', { cacheCauses,
                     evidenceSeries: (['input_tokens', 'cache_read_tokens', 'cache_write_tokens'] as const).map(metric => series(metric, 'tokens',
-                        accountingRows.map(row => ({ evidenceId: row.id, observedAtMs: row.observedAtMs, value: metric === 'input_tokens'
+                        categoryRows.map(row => ({ evidenceId: row.id, observedAtMs: row.observedAtMs, value: metric === 'input_tokens'
                             ? row.tokenCategories!.input : metric === 'cache_read_tokens' ? row.tokenCategories!.cacheRead : row.tokenCategories!.cacheWrite })))),
                 });
             }
@@ -594,11 +598,12 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
                     .map(row => [row.id, row])).values()];
                 const summary = summarizeUsageExecutionSources(rows);
                 const outside = summary.groups.find(group => group.execution === 'outside')?.contributions ?? [];
+                const measuredOutside = outside.flatMap(row => row.tokens.total === null ? [] : [{ row, total: row.tokens.total }]);
                 if (outside.length) return finding(id, capability, 'outside_happier_usage_observed',
                     outside.map(row => ({ kind: 'accounting', id: row.id, observedAtMs: row.observedAtMs })),
-                    [{ metric: 'outside_tokens', value: outside.reduce((sum, row) => sum + row.tokens.total, 0), unit: 'tokens' }], accounting.coverage.status,
-                    undefined, 'informational', { evidenceSeries: [series('outside_tokens', 'tokens', outside.map(row => ({ evidenceId: row.id,
-                        observedAtMs: row.observedAtMs, value: row.tokens.total })))] });
+                    measuredOutside.length ? [{ metric: 'outside_tokens', value: measuredOutside.reduce((sum, entry) => sum + entry.total, 0), unit: 'tokens' }] : [], accounting.coverage.status,
+                    undefined, 'informational', measuredOutside.length ? { evidenceSeries: [series('outside_tokens', 'tokens', measuredOutside.map(({ row, total }) => ({ evidenceId: row.id,
+                        observedAtMs: row.observedAtMs, value: total })))] } : {});
                 return negative(id, capability, accounting.coverage.status === 'complete' && accounting.coverage.range.complete
                     && accounting.coverage.range.startMs === input.period.startMs && accounting.coverage.range.endMs === input.period.endMs
                     && summary.coverage === 'complete');

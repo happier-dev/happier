@@ -62,9 +62,6 @@ describe('handleTokenUsageNotification', () => {
         observedAtMs: 1_752_089_600_000,
         source: 'provider_turn',
       },
-      cost: expect.objectContaining({
-        estimatedUsd: expect.any(Number),
-      }),
     }));
     expect(emit.mock.calls[0]?.[1]).toEqual({
       kind: 'usage-observed',
@@ -78,17 +75,10 @@ describe('handleTokenUsageNotification', () => {
         output: 18,
         reasoning: 10,
         cacheRead: 4_480,
-        cacheWrite: 0,
+        cacheWrite: null,
         total: 20_019,
       },
       accounting: { nativeSessionId: 'thread-1', inputIncludesCache: true, outputIncludesReasoning: true },
-      cost: expect.objectContaining({
-        reportedUsd: 0,
-        estimatedUsd: expect.any(Number),
-        billingContext: 'unknown',
-        costSource: 'pricing_estimate',
-        currency: 'USD',
-      }),
       context: {
         v: 1,
         modelId: 'gpt-5.4',

@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { calculateTotals, type UsageDataPoint } from './apiUsage';
 
 describe('calculateTotals', () => {
+    it('leaves absent legacy measurements unknown and never sums raw input with cache into a total', () => {
+        const unknown: UsageDataPoint = { timestamp: 1000, tokens: { input: 10, cacheRead: 20 }, cost: {}, reportCount: 1 };
+        expect(calculateTotals([unknown])).toMatchObject({ totalTokens: null, totalCost: null });
+        expect(calculateTotals([unknown, { ...unknown, tokens: { total: 0 }, cost: { total: 0 } }]))
+            .toMatchObject({ totalTokens: 0, totalCost: 0 });
+    });
+
     it('uses an explicit captured offset while preserving the absent-offset native calendar', () => {
         vi.stubEnv('TZ', 'America/New_York');
         try {

@@ -38,27 +38,27 @@ function createLegacyNumberMap(): Record<string, number> {
  * Preserve inference categories when present; otherwise encode context occupancy
  * for legacy transcript telemetry. Accounting callers must first require measured tokens.
  */
-function getCompatibleLegacyTokens(observation: UsageObservation): LegacyUsageNumberMap | null {
+function getCompatibleLegacyTokens(observation: UsageObservation): Record<string, number> | null {
     if (observation.tokens) {
         const out = createLegacyNumberMap();
-        out.total = observation.tokens.total;
-        if (observation.availability?.inputTokens === true || observation.tokens.input > 0) {
+        if (observation.tokens.total != null) out.total = observation.tokens.total;
+        if (observation.tokens.input != null) {
             out.input = observation.tokens.input;
         }
-        if (observation.availability?.outputTokens === true || observation.tokens.output > 0) {
+        if (observation.tokens.output != null) {
             out.output = observation.tokens.output;
         }
-        if (observation.tokens.reasoning > 0) out.thought = observation.tokens.reasoning;
-        if (observation.tokens.cacheRead > 0) out.cache_read = observation.tokens.cacheRead;
-        if (observation.tokens.cacheWrite > 0) out.cache_creation = observation.tokens.cacheWrite;
-        return out as LegacyUsageNumberMap;
+        if (observation.tokens.reasoning != null) out.thought = observation.tokens.reasoning;
+        if (observation.tokens.cacheRead != null) out.cache_read = observation.tokens.cacheRead;
+        if (observation.tokens.cacheWrite != null) out.cache_creation = observation.tokens.cacheWrite;
+        return out;
     }
     if (observation.contextUsedTokens == null && observation.contextWindowTokens == null) return null;
     const out = createLegacyNumberMap();
-    out.total = observation.contextUsedTokens ?? 0;
+    if (observation.contextUsedTokens != null) out.total = observation.contextUsedTokens;
     if (observation.contextUsedTokens != null) out.used = observation.contextUsedTokens;
     if (observation.contextWindowTokens != null) out.size = observation.contextWindowTokens;
-    return out as LegacyUsageNumberMap;
+    return out;
 }
 
 function getCompatibleLegacyCost(
@@ -66,15 +66,15 @@ function getCompatibleLegacyCost(
     input: UsageObservationBoundaryInput,
 ): LegacyUsageCostMap | undefined {
     if (!observation.cost) return undefined;
+    const total = observation.cost.reportedUsd ?? observation.cost.estimatedUsd ?? observation.cost.invoiceUsd;
+    if (total == null) return undefined;
     const inputCost = input.cost && typeof input.cost === 'object' ? input.cost : null;
     const carries = (key: string) => inputCost != null && Object.prototype.hasOwnProperty.call(inputCost, key);
     const out = createLegacyNumberMap() as LegacyUsageCostMap;
     Object.assign(out, observation.cost.breakdown ?? {});
-    out.total = observation.cost.reportedUsd || observation.cost.estimatedUsd || observation.cost.invoiceUsd || 0;
-    if (carries('reportedUsd') && (
-        observation.availability?.reportedCostUsd === true || observation.cost.reportedUsd > 0
-    )) out.reportedUsd = observation.cost.reportedUsd;
-    if (carries('estimatedUsd')) out.estimatedUsd = observation.cost.estimatedUsd;
+    out.total = total;
+    if (carries('reportedUsd') && observation.cost.reportedUsd != null) out.reportedUsd = observation.cost.reportedUsd;
+    if (carries('estimatedUsd') && observation.cost.estimatedUsd != null) out.estimatedUsd = observation.cost.estimatedUsd;
     if (carries('invoiceUsd') && observation.cost.invoiceUsd != null) out.invoiceUsd = observation.cost.invoiceUsd;
     if (carries('billingContext') && observation.cost.billingContext) out.billingContext = observation.cost.billingContext;
     if (carries('costSource') && observation.cost.costSource) out.costSource = observation.cost.costSource;
@@ -90,7 +90,7 @@ export function buildTokenCountAgentMessageFromUsageObservation(
     input: UsageObservationBoundaryInput,
 ): ({
     type: 'token-count';
-    tokens: LegacyUsageNumberMap;
+    tokens: Record<string, number>;
     source: string;
     scope: UsageObservationScope;
     key?: string;
@@ -123,7 +123,7 @@ export function buildTokenCountSessionMessageFromUsageObservation(
     input: UsageObservationBoundaryInput,
 ): ({
     type: 'token_count';
-    tokens: LegacyUsageNumberMap;
+    tokens: Record<string, number>;
     source: string;
     scope: UsageObservationScope;
     key?: string;
@@ -167,16 +167,18 @@ export function buildLegacyUsageReportFromUsageObservation(params: Readonly<{
     // servers replace the session key and cannot reconcile the two; retain
     // their unchanged cumulative report instead of letting a delta replace it.
     if (observation.source === 'codex-app-server-response-usage') return null;
-    if (!observation.tokens) return null;
+    if (observation.tokens?.total == null) return null;
     const tokens = getCompatibleLegacyTokens(observation);
     if (!tokens) return null;
+    const costTotal = observation.cost?.reportedUsd ?? observation.cost?.estimatedUsd ?? observation.cost?.invoiceUsd;
+    if (costTotal == null) return null;
     const cost = createLegacyNumberMap();
     Object.assign(cost, observation.cost?.breakdown ?? {});
-    cost.total = observation.cost?.reportedUsd || observation.cost?.estimatedUsd || observation.cost?.invoiceUsd || 0;
+    cost.total = costTotal;
     return {
         key: observation.key ?? `${observation.provider}-session`,
         sessionId: params.sessionId,
-        tokens,
+        tokens: { ...tokens, total: observation.tokens.total },
         cost: cost as LegacyUsageNumberMap,
     };
 }

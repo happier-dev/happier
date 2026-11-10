@@ -67,7 +67,7 @@ export function buildRecapStorySlides(input: Parameters<typeof buildUsageRecapCa
     if (model) {
         slides.push(toSlide(model, null));
     }
-    if (input.cacheSavings && input.cacheSavings.cachedReadTokens > 0) {
+    if (input.cacheSavings && input.cacheSavings.cachedReadTokens !== null && input.cacheSavings.cachedReadTokens > 0) {
         slides.push({
             id: 'cache',
             label: t('usage.cacheSavings'),

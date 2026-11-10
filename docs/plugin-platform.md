@@ -1822,6 +1822,20 @@ authority; placement does not ask the person again. This does not confer host
 authority or consent to another Action or changed input. Native execution and
 mounted daemon Actions retain their existing confirmation paths.
 
+In development, `plugin_action_current_intent_mismatch` carries
+`details.currentIntentMismatch.field` in the existing PluginError detail envelope.
+The admission owner names the failed comparison category without including either
+value. `fingerprint_source` identifies the aggregate input/declaration/source/version
+fingerprint; it does not establish which constituent changed. The Account relay
+and UI retain this detail for a traced replay. Admission and single-use consent
+remain unchanged.
+
+Failure projection also retains the canonical dispatch owner's `notStarted`
+proof through Account and mounted daemon Action carriers. Callers can classify
+that definite refusal as not saved. Without that proof, an unknown outward
+outcome remains uncertain; the error code alone does not establish whether the
+provider ran.
+
 An own host UI press admitted by the canonical Action policy also retains that
 private parent intent without requiring a separate confirmation. The UI dispatcher
 and receiving Account host use the existing reviewed-child port: child Actions
@@ -4913,6 +4927,11 @@ Account profile and admitted integration descriptor where available. It does not
 read the other Account's bindings or connection names. Own-Account presentation
 retains the exact binding/connection reader. Both page and inline approval cards
 consume the same destination result; neither projection grants send authority.
+Pending imported `discussion.post` approvals use the shared approval title owner
+in Inbox, Needs you, the review page and retained views. The title reads sealed
+conversation provenance before publication, with public integration package and
+Account names from their scoped presentation owners; it never reads Channel
+bindings or copies message bodies into the row. Authored titles remain authored.
 
 In unreleased 0.3 source, `actions.getCurrentExecutionRouting()` reads the
 invoking plugin's own current Home/Machine/plugin routing through that same

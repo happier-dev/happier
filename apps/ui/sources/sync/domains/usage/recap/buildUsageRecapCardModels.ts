@@ -135,7 +135,7 @@ function buildSummaryViewModel(viewModel: UsageAnalyticsViewModel, timeZoneOffse
         topEngine,
         busiestWindowLabel: busiestBucket ? formatUsageWeekdayHourLabel(busiestBucket.weekday, busiestBucket.hour) : null,
         recentActivity,
-        hasData: viewModel.overview.totalTokens > 0 || viewModel.overview.totalCost > 0,
+        hasData: viewModel.overview.reportCount > 0,
     };
 }
 
@@ -176,9 +176,9 @@ export function buildUsageRecapCardModels(input: Readonly<{
         .find(model => model && isKnownUsageLabel(model.key)) ?? null;
     const modelBreakdown = viewModel.breakdowns.models.find(row => row.key === topModel?.key);
     const topEngineLabel = resolveTopEngineLabel(viewModel, summary);
-    const modelShare = modelBreakdown && viewModel.overview.totalTokens > 0
+    const modelShare = modelBreakdown && modelBreakdown.totalTokens !== null && viewModel.overview.totalTokens !== null && viewModel.overview.totalTokens > 0
         ? modelBreakdown.totalTokens / viewModel.overview.totalTokens
-        : 0;
+        : null;
     const selectedPeriod = input.query ? formatUsageCalendarPeriod({ ...input.query.period, timeZoneOffsetMinutes: offset }) : resolvePeriodLabel(filters.period);
     const rangeDayCount = input.query
         ? input.query.period.startMs !== undefined && input.query.period.endMs !== undefined
@@ -238,7 +238,7 @@ export function buildUsageRecapCardModels(input: Readonly<{
                 : t('common.unavailable'),
             valueTone: 'compact',
             accentTone: 'purple',
-            visual: {
+            visual: modelShare === null ? null : {
                 kind: 'progress',
                 ratio: modelShare,
             },

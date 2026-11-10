@@ -3,6 +3,15 @@ import { AgentUsageObservedPayloadV1Schema } from './agentUsageObservedPayloadV1
 import { AgentSessionRuntimeEventV1Schema } from './agentSessionV1.js';
 
 describe('shared usage observation payload', () => {
+  it('retains measured categories alongside explicit unknown counters', () => {
+    const payload = { kind: 'usage-observed', observationId: 'partial-observation', source: 'native',
+      scope: 'turn_delta', accounting: { nativeSessionId: 'native' },
+      tokens: { input: 12, output: 2, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+      cost: { reportedUsd: null, estimatedUsd: null, invoiceUsd: null, currency: 'USD' } };
+    expect(AgentUsageObservedPayloadV1Schema.parse(payload)).toEqual(payload);
+    expect(AgentSessionRuntimeEventV1Schema.parse({ ...payload, sequence: 1, sessionId: 'session', emittedAtMs: 1 }))
+      .toMatchObject(payload);
+  });
   it.each([
     { scope: 'session_cumulative', accounting: { nativeSessionId: 'child-native' } },
     { scope: 'turn_delta', accounting: { nativeSessionId: 'parent-native', inferenceId: 'inference-without-cache-split' } },

@@ -12,28 +12,31 @@ function clampNonNegative(value: number): number {
 }
 
 export function usageHasAnyValue(tokens: UsageObservationTokens, cost: UsageObservationCost): boolean {
-    return (
-        tokens.input > 0 ||
-        tokens.output > 0 ||
-        tokens.reasoning > 0 ||
-        tokens.cacheRead > 0 ||
-        tokens.cacheWrite > 0 ||
-        tokens.total > 0 ||
-        cost.reportedUsd > 0 ||
-        cost.estimatedUsd > 0 ||
-        (cost.invoiceUsd ?? 0) > 0
-    );
+    return tokens.input !== null && tokens.input > 0
+        || tokens.output !== null && tokens.output > 0
+        || tokens.reasoning !== null && tokens.reasoning > 0
+        || tokens.cacheRead !== null && tokens.cacheRead > 0
+        || tokens.cacheWrite !== null && tokens.cacheWrite > 0
+        || tokens.total !== null && tokens.total > 0
+        || cost.reportedUsd !== null && cost.reportedUsd > 0
+        || cost.estimatedUsd !== null && cost.estimatedUsd > 0
+        || cost.invoiceUsd != null && cost.invoiceUsd > 0;
 }
 
 export function normalizeLegacyUsageCost(source: LegacyNumberMap): UsageObservationCost {
     return {
-        reportedUsd: clampNonNegative(source.total ?? 0),
-        estimatedUsd: 0,
-        invoiceUsd: 0,
+        reportedUsd: source.total === undefined ? null : clampNonNegative(source.total),
+        estimatedUsd: null,
+        invoiceUsd: null,
         billingContext: 'unknown',
         costSource: 'provider_reported',
         currency: 'USD',
     };
+}
+
+function subtractMeasurement(next: number | null | undefined, previous: number | null | undefined): number | null {
+    if (next == null) return null;
+    return previous == null ? next : clampNonNegative(next - previous);
 }
 
 export function subtractUsageTokens(
@@ -41,12 +44,12 @@ export function subtractUsageTokens(
     previousValue: UsageObservationTokens,
 ): UsageObservationTokens {
     return {
-        input: clampNonNegative(nextValue.input - previousValue.input),
-        output: clampNonNegative(nextValue.output - previousValue.output),
-        reasoning: clampNonNegative(nextValue.reasoning - previousValue.reasoning),
-        cacheRead: clampNonNegative(nextValue.cacheRead - previousValue.cacheRead),
-        cacheWrite: clampNonNegative(nextValue.cacheWrite - previousValue.cacheWrite),
-        total: clampNonNegative(nextValue.total - previousValue.total),
+        input: subtractMeasurement(nextValue.input, previousValue.input),
+        output: subtractMeasurement(nextValue.output, previousValue.output),
+        reasoning: subtractMeasurement(nextValue.reasoning, previousValue.reasoning),
+        cacheRead: subtractMeasurement(nextValue.cacheRead, previousValue.cacheRead),
+        cacheWrite: subtractMeasurement(nextValue.cacheWrite, previousValue.cacheWrite),
+        total: subtractMeasurement(nextValue.total, previousValue.total),
     };
 }
 
@@ -55,9 +58,9 @@ export function subtractUsageCost(
     previousValue: UsageObservationCost,
 ): UsageObservationCost {
     return {
-        reportedUsd: clampNonNegative(nextValue.reportedUsd - previousValue.reportedUsd),
-        estimatedUsd: clampNonNegative(nextValue.estimatedUsd - previousValue.estimatedUsd),
-        invoiceUsd: clampNonNegative((nextValue.invoiceUsd ?? 0) - (previousValue.invoiceUsd ?? 0)),
+        reportedUsd: subtractMeasurement(nextValue.reportedUsd, previousValue.reportedUsd),
+        estimatedUsd: subtractMeasurement(nextValue.estimatedUsd, previousValue.estimatedUsd),
+        invoiceUsd: subtractMeasurement(nextValue.invoiceUsd, previousValue.invoiceUsd),
         billingContext: nextValue.billingContext ?? previousValue.billingContext ?? 'unknown',
         costSource: nextValue.costSource ?? previousValue.costSource ?? 'none',
         currency: nextValue.currency || previousValue.currency || 'USD',

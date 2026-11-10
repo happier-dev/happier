@@ -8,6 +8,14 @@ const contribution = { id: 'row', observedAtMs: 1, sessionId: 'session', turnId:
     tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
     cost: { reportedUsd: 0, estimatedUsd: 0, costSource: 'none', currency: 'USD' } };
 
+it('retains unknown token totals after measured zero in ranked and frontier projections', () => {
+    const rows = [null, 0, 7].map((total, index) => ({ ...contribution, id: String(index), sessionId: String(index),
+        eventCount: 1, tokens: { ...contribution.tokens, total }, cost: { ...contribution.cost, costSource: 'none' as const } }));
+    expect(selectUsageLeaderTokenFrontier(rows, 'session', 3).map(group => group.value.tokens.total)).toEqual([7, 0, null]);
+    const ranked = rows.map(row => ({ ...row, key: row.id }));
+    expect(selectUsageRankedLeaders(ranked, 3, 'auto').map(row => row.tokens.total)).toEqual([7, 0, null]);
+});
+
 it('selects top-N with linear comparison work for a fixed one-entry demand, preserving monetary and key ties', () => {
     let costReads = 0;
     const entries = Array.from({ length: 2733 }, (_, index) => ({ key: String(index), eventCount: 1,
@@ -168,7 +176,7 @@ it('buckets the same selected Claude money as the breakdown across a midnight-sp
     expect(page.accounting.contributions).toEqual(UsageAnalyticsQueryResponseSchema.parse(repriced).contributions);
     const dayQuery = projectUsagePageCost({ ...repriced,
         contributions: repriced.contributions!.filter(row => row.observedAtMs < midnight) }, 'auto');
-    expect(dayQuery.amountUsd, 'a new day-scoped query cannot attribute the absent report').toBeNull();
+    expect(dayQuery.amountUsd, 'the day retains only its independently measured charge, excluding the absent report').toBe(0.0300936);
 });
 
 it('uses one model identity for the real QA snapshot, alias and newer Haiku generation before ranking', () => {
@@ -315,8 +323,8 @@ it('keeps a known Codex day priced while its period total includes an unpriced d
             leaders: [{ key: 'codex', ...raw }] })),
     });
     const page = projectUsagePageCost(response, 'auto');
-    expect(page.amountUsd).toBeNull();
-    expect(resolveUsageCostForSelection(page.accounting.breakdowns!.agent![0]!.cost, page.selection)).toBeNull();
+    expect(page.amountUsd).toBe(7.1);
+    expect(resolveUsageCostForSelection(page.accounting.breakdowns!.agent![0]!.cost, page.selection)).toBe(7.1);
     const days = page.accounting.engineTimeline!.map(day => resolveUsageCostForSelection(day.leaders[0]!.cost!, page.selection));
     expect(days).toEqual([null, 7.1]);
     expect(page.accounting.series!.map(day => resolveUsageCostForSelection(day.cost, page.selection))).toEqual(days);

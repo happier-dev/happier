@@ -82,7 +82,7 @@ describe('projectUsageAgentCalendar', () => {
             const actual = projectUsageAgentAccountingCalendar(input).projection;
             expect(JSON.stringify(actual)).toBe(JSON.stringify(expected));
             expect(actual.hours[0]?.totals.cost).toBeNull();
-            expect(actual.periodSummary.totals.cost?.amountUsd ?? null).toBe(originals.length === 2 ? 1.25 : null);
+            expect(actual.periodSummary.totals.cost?.amountUsd ?? null).toBe(1.25);
         }
     });
     it('keeps carried and direct projections identical across source coverage, cost modes and refused private evidence', () => {
@@ -209,8 +209,8 @@ describe('projectUsageAgentCalendar', () => {
         unpriced.cost = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'none' };
         const data = accounting([row('priced', 'a', 2), unpriced]);
         const unknown = projectUsageAgentCalendar({ period, timeZoneOffsetMinutes: 0, accounting: data });
-        expect(unknown.periodSummary.totals.cost).toBeNull();
-        expect(unknown.periodSummary.agents.map(agent => agent.shares.cost)).toEqual([null, null]);
+        expect(unknown.periodSummary.totals.cost).toMatchObject({ amountUsd: 0.2 });
+        expect(unknown.periodSummary.agents.map(agent => agent.shares.cost)).toEqual([1, null]);
         unpriced.cost = { reportedUsd: 3, estimatedUsd: 0, currency: 'EUR', costSource: 'provider_reported' };
         const mixed = projectUsageAgentCalendar({ period, timeZoneOffsetMinutes: 0, accounting: accounting([row('usd', 'a', 2), unpriced]) });
         expect(mixed.periodSummary.totals.cost).toBeNull();

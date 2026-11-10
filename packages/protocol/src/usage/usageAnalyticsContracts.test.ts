@@ -13,6 +13,20 @@ import {
 } from './usageAnalyticsContracts.js';
 
 describe('usageAnalyticsContracts', () => {
+  it('retains unknown token and cost measurements as null without inventing zeros', () => {
+    const request = {
+      sessionId: 'host-session', observedAt: 1, agentId: 'muse', source: 'muse-native-accounting',
+      scope: 'session_cumulative', isCumulative: true,
+      tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+      cost: { reportedUsd: null, estimatedUsd: null, invoiceUsd: null, currency: 'USD' },
+      metadata: { usageAccounting: { path: 'runtime', status: 'partial', nativeSessionId: 'child-native' } },
+    };
+    expect(UsageEventIngestRequestSchema.parse(request)).toEqual(request);
+    const measuredZero = { ...request, tokens: { ...request.tokens, total: 0 },
+      cost: { ...request.cost, reportedUsd: 0 } };
+    expect(UsageEventIngestRequestSchema.parse(measuredZero)).toEqual(measuredZero);
+  });
+
   it('validates witnessed attribution without constructing errors for absent historical attribution', () => {
     const validation = vi.spyOn(UsageRequestAttributionSchema, 'safeParse');
     try {

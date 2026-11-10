@@ -55,6 +55,21 @@ describe('the all-series lens', () => {
 });
 
 describe('usage projection into the shared series renderer', () => {
+    it('retains known source measurements beside unknown source partitions', () => {
+        const cost = { reportedUsd: null, estimatedUsd: null, currency: 'USD' };
+        const unknown = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+        const known = { ...unknown, total: 12 };
+        const series = usageSourceTimelineSeries({ timeline: [{ bucketStartMs: 0, bucketEndMs: 10, leaders: [
+            { key: 'claude:local', eventCount: 1, tokens: unknown, cost, sources: [
+                { source: 'native', path: 'native', execution: 'outside', eventCount: 1, tokens: unknown, cost },
+                { source: 'runtime', path: 'runtime', execution: 'happier', eventCount: 1, tokens: known, cost },
+            ] },
+        ] }], range: null, metric: 'tokens', costMode: 'auto', dimensionKey: key => key.split(':')[0]!,
+            label: key => key, color: () => 'ink', bucketLabel: String });
+        expect(series[0]?.points[0]?.y).toBe(12);
+        expect(series[0]?.sourceDetails?.['0']?.map(part => part.value)).toEqual([null, 12]);
+    });
+
     it.each(['tokens', 'cost'] as const)('combines repeated engine source partitions with unique stable lens keys for %s', async (metric) => {
         const tokens = { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 };
         const cost = { reportedUsd: 0, estimatedUsd: 9, currency: 'USD' };

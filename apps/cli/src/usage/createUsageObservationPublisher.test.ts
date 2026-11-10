@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, UsageEventIngestRequestSchema } from '@happier-dev/protocol';
 
 import { createUsageObservationPublisher } from './createUsageObservationPublisher';
 import { logger } from '@/ui/logger';
@@ -135,7 +135,7 @@ describe('createUsageObservationPublisher', () => {
         if (!observation) throw new Error('Expected a usage observation');
         expect(await publisher.publish({ sessionId: 'session', observation })).toEqual({ status: 'sent', transport: 'v2' });
         expect(postJson).toHaveBeenCalledWith(expect.objectContaining({ body: expect.objectContaining({
-            tokens: expect.objectContaining({ total: 0 }),
+            tokens: expect.objectContaining({ total: null }),
             cost: expect.objectContaining({ reportedUsd: 0.25 }),
             context: withContext ? { usedTokens: 900, windowTokens: 1000 } : undefined,
         }) }));
@@ -193,7 +193,7 @@ describe('createUsageObservationPublisher', () => {
         });
         const observation = { provider: 'codex', source: 'codex-app-server-response-usage', scope: 'turn_delta' as const,
             key: null, modelId: null, tokens: { total: 3, input: 2, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
-            cost: null, contextUsedTokens: null, contextWindowTokens: null };
+            cost: { reportedUsd: 0, estimatedUsd: null, currency: 'USD' }, contextUsedTokens: null, contextWindowTokens: null };
         const exact = { sessionId: 'session-1', externalKey: 'response-1', observation };
         expect(await publisher.publish(exact)).toEqual({ status: 'skipped' });
         expect(await publisher.publish({ sessionId: 'session-1', observation: { ...observation,
@@ -301,7 +301,7 @@ describe('createUsageObservationPublisher', () => {
         }
     });
 
-    it('posts prompt-cache facts in one existing v2 accounting request when the server advertises support', async () => {
+    it('posts prompt-cache facts and unknown child measurements through the advertised v2 accounting request', async () => {
         const fetchServerFeaturesSnapshot = vi.fn(async () => ({
             status: 'ready' as const,
             features: FeaturesResponseSchema.parse({
@@ -321,7 +321,7 @@ describe('createUsageObservationPublisher', () => {
                 },
             }),
         }));
-        const postJson = vi.fn(async () => ({ ok: true as const }));
+        const postJson = vi.fn(async (_request: { body: unknown }) => ({ ok: true as const }));
         const emitLegacyUsageReport = vi.fn();
         const publisher = createUsageObservationPublisher({
             token: 'token-1',
@@ -374,6 +374,20 @@ describe('createUsageObservationPublisher', () => {
             },
         })).toEqual({ status: 'skipped' });
         expect(postJson).toHaveBeenCalledTimes(1);
+
+        expect(await publisher.publish({
+            sessionId: 'session-1', observedAt: 30, externalKey: 'child-identity',
+            metadata: { usageAccounting: { path: 'runtime', status: 'unknown', asOfMs: 30, nativeSessionId: 'child-native' } },
+            observation: { provider: 'runtime-agent', source: 'native-statistics', scope: 'session_cumulative',
+                key: null, modelId: null, tokens: null, cost: null, contextUsedTokens: null, contextWindowTokens: null },
+        })).toEqual({ status: 'sent', transport: 'v2' });
+        expect(postJson).toHaveBeenCalledTimes(2);
+        const lastRequest = postJson.mock.calls.at(-1)?.[0];
+        expect(UsageEventIngestRequestSchema.parse(lastRequest?.body)).toMatchObject({
+            tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+            cost: { reportedUsd: null, estimatedUsd: null },
+            metadata: { usageAccounting: { nativeSessionId: 'child-native' } },
+        });
     });
 
     it('falls back to legacy usage-report when the server does not advertise v2 analytics ingest', async () => {
@@ -400,7 +414,7 @@ describe('createUsageObservationPublisher', () => {
                 key: 'codex-session',
                 modelId: null,
                 tokens: { total: 12, input: 7, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
-                cost: null,
+                cost: { reportedUsd: 0, estimatedUsd: null, currency: 'USD' },
                 contextUsedTokens: null,
                 contextWindowTokens: null,
             },
@@ -410,7 +424,7 @@ describe('createUsageObservationPublisher', () => {
         expect(emitLegacyUsageReport).toHaveBeenCalledWith({
             key: 'codex-session',
             sessionId: 'session-1',
-            tokens: { total: 12, input: 7, output: 5 },
+            tokens: { total: 12, input: 7, output: 5, thought: 0, cache_read: 0, cache_creation: 0 },
             cost: { total: 0 },
         });
     });
@@ -453,7 +467,7 @@ describe('createUsageObservationPublisher', () => {
             key: 'codex-session',
             modelId: null,
             tokens: { total: 12, input: 7, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
-            cost: null,
+            cost: { reportedUsd: 0, estimatedUsd: null, currency: 'USD' },
             contextUsedTokens: null,
             contextWindowTokens: null,
         };
@@ -577,7 +591,7 @@ describe('createUsageObservationPublisher', () => {
                 key: 'opencode-step:1',
                 modelId: null,
                 tokens: { total: 24, input: 12, output: 7, reasoning: 5, cacheRead: 0, cacheWrite: 0 },
-                cost: { reportedUsd: 0, estimatedUsd: 0.09, currency: 'USD' },
+                cost: { reportedUsd: null, estimatedUsd: 0.09, currency: 'USD' },
                 contextUsedTokens: 24,
                 contextWindowTokens: 1_024,
             },
@@ -588,7 +602,7 @@ describe('createUsageObservationPublisher', () => {
         expect(emitLegacyUsageReport).toHaveBeenCalledWith({
             key: 'opencode-step:1',
             sessionId: 'session-1',
-            tokens: { total: 24, input: 12, output: 7, thought: 5 },
+            tokens: { total: 24, input: 12, output: 7, thought: 5, cache_read: 0, cache_creation: 0 },
             cost: { total: 0.09 },
         });
     });

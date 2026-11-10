@@ -105,13 +105,14 @@ export function usageAccountingSubjectIdentity(row: Pick<ScopedUsageEventRow,
         return ["native", native.machineId, native.agent.pluginId, native.agent.localId,
             native.sourceRootKey, native.nativeSessionKey];
     }
-    if (row.sessionId) return ["session", row.sessionId, row.agentId];
     const nativeSessionId = accounting?.nativeSessionId;
+    // Child native Sessions can share the parent's Happier Session attribution;
+    // their witnessed native counter identity must remain independent.
+    if (nativeSessionId) return ["native", row.machineId ?? null, row.agentId, nativeSessionId];
+    if (row.sessionId) return ["session", row.sessionId, row.agentId];
     // Admission owns native identity. A missing subject cannot merge every
     // nullable Session row into one counter stream.
-    return nativeSessionId
-        ? ["native", row.machineId ?? null, row.agentId, nativeSessionId]
-        : ["unidentified", row.id];
+    return ["unidentified", row.id];
 }
 
 export function usageAccountingSubjectKey(row: Parameters<typeof usageAccountingSubjectIdentity>[0]): string {

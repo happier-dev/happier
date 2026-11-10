@@ -85,15 +85,15 @@ const COST_MODE_LABEL_KEYS = {
  * both.
  */
 function costProvenanceLabel(
-    cost: Readonly<{ reportedUsd: number; estimatedUsd: number }>,
+    cost: Readonly<{ reportedUsd: number | null; estimatedUsd: number | null }>,
     mode: UsageCostMode,
 ): string | undefined {
     if (mode !== 'auto') return t(COST_MODE_LABEL_KEYS[mode]);
-    if (cost.reportedUsd > 0 && cost.estimatedUsd > 0) {
+    if (cost.reportedUsd !== null && cost.reportedUsd > 0 && cost.estimatedUsd !== null && cost.estimatedUsd > 0) {
         return `${t('usage.reported')} + ${t('usage.estimated')}`;
     }
-    if (cost.reportedUsd > 0) return t('usage.reported');
-    if (cost.estimatedUsd > 0) return t('usage.estimated');
+    if (cost.reportedUsd !== null && cost.reportedUsd > 0) return t('usage.reported');
+    if (cost.estimatedUsd !== null && cost.estimatedUsd > 0) return t('usage.estimated');
     return undefined;
 }
 
@@ -290,12 +290,10 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     const showRequests = coverage !== null
         && (coverage.requestCountCoverage === 'complete' || coverage.requestAdmissionCount > 0);
     const tokenChartAvailable = coverage !== null
-        && coverage.tokenCoverage !== 'unavailable'
-        && !(coverage.tokenCoverage === 'partial' && result?.totals.tokens.total === 0);
-    const resolvedCost = result === null ? 0 : resolveDisplayCost(result.totals.cost);
+        && coverage.tokenCoverage !== 'unavailable';
+    const resolvedCost = result === null ? null : resolveDisplayCost(result.totals.cost);
     const costChartAvailable = coverage !== null
-        && coverage.costCoverage !== 'unavailable'
-        && !(coverage.costCoverage === 'partial' && resolvedCost === 0);
+        && coverage.costCoverage !== 'unavailable';
     const chartMetrics: readonly UsageVolumeMetric[] = coverage === null
         ? ['tokens', 'cost']
         : [
@@ -325,16 +323,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
             : null,
     ].filter((part): part is string => part !== null).join('\n');
 
-    /**
-     * `null` means the Home could not price this period, which is a different
-     * fact from nothing having been spent. Only a zero total that the Home
-     * itself marked incomplete is unknown; a real zero stays a real zero.
-     */
-    const costUsd = result === null
-        ? null
-        : (() => {
-            return result.coverage.costCoverage !== 'complete' && resolvedCost === 0 ? null : resolvedCost;
-        })();
+    const costUsd = resolvedCost;
 
     // Offered from the totals themselves, exactly as the personal dashboard
     // does; a chosen mode stays offered so it can be switched back.
@@ -439,7 +428,6 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                                             ? t('common.unavailable')
                                             : formatTokenCountLong(entry.totals.requestCount),
                                         tokens: result.coverage.tokenCoverage === 'unavailable'
-                                            || (result.coverage.tokenCoverage === 'partial' && entry.totals.tokens.total === 0)
                                             ? t('common.unavailable')
                                             : formatTokenCountLong(entry.totals.tokens.total),
                                     })].filter(Boolean).join(' · ')}
@@ -651,7 +639,6 @@ export function TeamCredentialUsageSummary(props: Readonly<{
                         testID="team-credential-usage-tokens"
                         title={limitMetricLabel('total_tokens')}
                         detail={coverage?.tokenCoverage === 'unavailable'
-                            || (coverage?.tokenCoverage === 'partial' && result.totals.tokens.total === 0)
                             ? t('common.unavailable')
                             : formatTokenCountLong(result.totals.tokens.total)}
                         showChevron={false}

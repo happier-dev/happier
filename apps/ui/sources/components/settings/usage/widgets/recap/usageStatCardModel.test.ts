@@ -46,6 +46,16 @@ function composed(
 }
 
 describe('private stat card model', () => {
+  it('shows unknown cache measurements without inventing their share or mix volume', async () => {
+    const { buildUsageStatCardModel } = await import('./usageStatCardModel');
+    const model = buildUsageStatCardModel(composed(['tokens', 'cache', 'agentMix'], {
+      tokens: { ...tokens, total: 100 }, cache: { readTokens: null, writeTokens: null },
+      agentMix: [{ tokens: null, agentId: 'codex' }],
+    }));
+    expect(model.stats.filter(stat => stat.id === 'cacheShare')).toEqual([]);
+    expect(model.stats.filter(stat => stat.id === 'cacheReadTokens' || stat.id === 'cacheWriteTokens').map(stat => stat.value)).toEqual(['—', '—']);
+    expect(model.mixGroups[0]).toMatchObject({ totalTokens: null, rows: [] });
+  });
   it('renders public shares and independent figures without inventing private amounts or elapsed time', async () => {
     const { buildUsageStatCardModel } = await import('./usageStatCardModel');
     const { UsageRecapComposeResultSchema } = await import('@happier-dev/protocol/usage/usageRecap');

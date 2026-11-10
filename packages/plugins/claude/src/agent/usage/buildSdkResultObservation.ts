@@ -1,4 +1,3 @@
-import { estimateUsageModelCost } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ClaudeUsageModelSource, ClaudeUsageObservation } from './types.js';
 
 export const CLAUDE_SDK_RESULT_USAGE_SOURCE = 'claude-sdk-result';
@@ -76,9 +75,9 @@ export function buildClaudeSdkResultUsageObservation(params: Readonly<{
     const modelUsage = asRecord(result.modelUsage);
     const modelIds = modelUsage ? Object.keys(modelUsage) : [];
     if (!modelUsage || modelIds.length === 0) return null;
-    const tokens: ClaudeUsageObservation['tokens'] = {
-        input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0,
-    };
+    const tokens = {
+        input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, total: 0,
+    } satisfies ClaudeUsageObservation['tokens'];
     for (const modelId of modelIds) {
         const entry = asRecord(modelUsage[modelId]);
         if (!entry || modelId.trim().length === 0) return null;
@@ -93,7 +92,7 @@ export function buildClaudeSdkResultUsageObservation(params: Readonly<{
         tokens.cacheWrite += cacheWrite;
     }
     tokens.total = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
-    if (!Object.values(tokens).every(Number.isFinite)) return null;
+    if (!Object.values(tokens).every(value => value === null || Number.isFinite(value))) return null;
     const modelId = modelIds.length === 1 ? modelIds[0]! : null;
     const total = tokens.total;
     const usage = asRecord(result.usage);
@@ -107,28 +106,16 @@ export function buildClaudeSdkResultUsageObservation(params: Readonly<{
         modelId: params.modelId,
     });
     const contextUsedTokens = usage ? readLastMessageIterationContextTokens(usage) : null;
-    const estimatedCost = params.modelSource === 'provider' || !modelId
-        ? null
-        : estimateUsageModelCost(modelId, tokens);
     const cost = reportedCost != null
         ? {
             reportedUsd: reportedCost,
-            estimatedUsd: 0,
+            estimatedUsd: null,
             billingContext: 'unknown' as const,
             // Claude computes this amount from its local API price table, not an invoice.
             costSource: 'provider_reported_api_equivalent' as const,
             currency: 'USD',
         }
-        : estimatedCost
-            ? {
-                estimatedUsd: estimatedCost.total,
-                ...(estimatedCost.breakdown ? { breakdown: estimatedCost.breakdown } : {}),
-                reportedUsd: 0,
-                billingContext: 'unknown' as const,
-                costSource: 'pricing_estimate' as const,
-                currency: 'USD',
-            }
-            : null;
+        : null;
     return {
         provider: 'claude',
         source: CLAUDE_SDK_RESULT_USAGE_SOURCE,

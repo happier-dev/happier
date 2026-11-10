@@ -70,7 +70,7 @@ export function composeUsageRecap(args: Readonly<{
   if (selected.has('highlights')) {
     facts.highlights = [];
     const peak = accounting.series?.reduce<(NonNullable<typeof accounting.series>)[number] | undefined>((current, row) =>
-      row.tokens.total > 0 && (!current || row.tokens.total > current.tokens.total) ? row : current, undefined);
+      row.tokens.total !== null && row.tokens.total > 0 && (!current || current.tokens.total === null || row.tokens.total > current.tokens.total) ? row : current, undefined);
     if (peak) facts.highlights.push({ kind: 'observed_peak', bucketStartMs: peak.bucketStartMs, bucketEndMs: peak.bucketEndMs, tokens: peak.tokens.total });
     if (work?.outcomes.length) facts.highlights.push({ kind: 'linked_outcomes', count: work.outcomes.length });
   }

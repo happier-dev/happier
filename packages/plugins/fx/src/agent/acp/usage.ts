@@ -11,10 +11,10 @@ export const FX_PROMPT_USAGE = Object.freeze({
     const record = usage as Exclude<typeof usage, readonly unknown[]>;
     const input = nonNegativeNumber(record.inputTokens);
     const output = nonNegativeNumber(record.outputTokens);
-    if (input === null && output === null) return record;
+    if (nonNegativeNumber(record.totalTokens) !== null || input === null || output === null) return record;
 
     // fx 0.0.14 carries cache details within input and reasoning within output
     // (src/gateway/responses_protocol.zig). Canonical token normalization stays host-owned.
-    return { ...record, totalTokens: (input ?? 0) + (output ?? 0) };
+    return { ...record, totalTokens: input + output };
   },
 } satisfies AgentAcpPromptUsageDefinition);

@@ -24,7 +24,7 @@ export function projectPiSessionStatsUsage(params: Readonly<{
   const stats = readRecord(params.stats);
   if (!stats) return null;
   const paidTokens = readRecord(stats.tokens);
-  const paid = paidTokens ? normalizePiPaidUsage({ ...paidTokens, totalTokens: paidTokens.total, cost: { total: stats.cost } }) : null;
+  const paid = normalizePiPaidUsage({ ...paidTokens, totalTokens: paidTokens?.total, cost: { total: stats.cost } });
   const usage = readRecord(stats.contextUsage);
   const usedTokens = readNonNegativeInteger(usage?.tokens);
   const windowTokens = readNonNegativeInteger(usage?.contextWindow);

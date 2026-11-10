@@ -29,6 +29,7 @@ import { resolveEffectiveSessionAccessWhere } from '@/app/session/access/session
 import { isSessionTranscriptShareable, SESSION_TRANSCRIPT_PUBLICATION_SELECT } from '@/app/session/sessionTranscriptPublicationPolicy';
 import { resolveEffectiveTeamGroupIdsForAccountInTx } from '../groups/effectiveGroupMembership';
 import { classifyTeamCredentialUsageObservationSource } from '@/app/usage/usageSourceClassifier';
+import { compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
 
 const UNAVAILABLE_SESSION_KEY = 'unavailable_session';
 const UNAVAILABLE_WORKER_MACHINE_KEY = 'unavailable_worker_machine';
@@ -370,7 +371,7 @@ export async function queryTeamCredentialUsage(
                 return groups;
             }, new Map<string, ScopedUsageContribution[]>()).entries())
                 .map(([key, group]) => ({ key, totals: aggregate(group, costMode) }))
-                .sort((left, right) => right.totals.tokens.total - left.totals.tokens.total
+                .sort((left, right) => compareUsageMeasurementsDescending(left.totals.tokens.total, right.totals.tokens.total)
                     || right.totals.requestCount - left.totals.requestCount
                     || left.key.localeCompare(right.key))
             : undefined;

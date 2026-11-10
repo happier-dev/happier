@@ -19,7 +19,7 @@ describe('acp token_count usage extraction', () => {
       key: 'turn-1',
       modelId: 'openai/gpt-4o-mini',
       tokens: {
-        total: 24,
+        total: null,
         input: 10,
         output: 4,
         cacheWrite: 2,
@@ -38,11 +38,11 @@ describe('acp token_count usage extraction', () => {
     expect(res).toEqual({
       key: null,
       modelId: null,
-      tokens: { total: 12, input: 7, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+      tokens: { total: 12, input: 7, output: 5, reasoning: null, cacheRead: null, cacheWrite: null },
     });
   });
 
-  it('computes total for nested tokens maps that omit total', () => {
+  it('leaves total unknown for nested tokens maps that omit total', () => {
     const res = extractTokensFromAcpTokenCountMessage({
       type: 'token_count',
       tokens: { input: 7, output: 5, thought: 2 },
@@ -51,7 +51,7 @@ describe('acp token_count usage extraction', () => {
     expect(res).toEqual({
       key: null,
       modelId: null,
-      tokens: { total: 14, input: 7, output: 5, reasoning: 2, cacheRead: 0, cacheWrite: 0 },
+      tokens: { total: null, input: 7, output: 5, reasoning: 2, cacheRead: null, cacheWrite: null },
     });
   });
 
@@ -81,7 +81,7 @@ describe('acp token_count usage extraction', () => {
         total: 184,
         input: 120,
         cacheRead: 20,
-        cacheWrite: 0,
+        cacheWrite: null,
         output: 35,
         reasoning: 9,
       },

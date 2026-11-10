@@ -912,8 +912,9 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
                     // Cost stays unknown: no canonical price covers these routes,
                     // and an unknown cost is never recorded as a zero-cost request.
                     costSource: null,
-                    reportedCostUsd: 0,
-                    estimatedCostUsd: 0,
+                    reportedCostUsd: null,
+                    estimatedCostUsd: null,
+                    invoiceCostUsd: null,
                 });
             const failedAdmission = extraAdmissions[0];
             if (!failedAdmission) throw new Error("expected failed admission");

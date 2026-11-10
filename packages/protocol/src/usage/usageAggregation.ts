@@ -3,21 +3,37 @@ import { resolveUsageCostBasis, type UsageCostMode, type UsageSelectedCostBasis 
 import { addUsageMoney, createUsageMoneyAccumulator, hasUsageMoneyProvenance, readUsageMoney, usageMoneyToNumber, withUsageMoney, type ExactUsageMoney } from './usageMoney.js';
 
 export function createEmptyUsageTokens(): UsageObservationTokens {
-    return { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+    return { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
 }
 
 export function createEmptyUsageCost(currency = 'USD'): UsageObservationCost {
-    return { reportedUsd: 0, estimatedUsd: 0, invoiceUsd: 0, billingContext: 'unknown', costSource: 'none', currency };
+    return { reportedUsd: null, estimatedUsd: null, invoiceUsd: null, billingContext: 'unknown', costSource: 'none', currency };
+}
+
+/** NULL means not measured; zero is an admitted measurement. */
+export function addUsageMeasurements(left: number | null, right: number | null): number | null {
+    return left === null ? right : right === null ? left : left + right;
+}
+
+/** Descending presentation order retains unknown values after every measured value. */
+export function compareUsageMeasurementsDescending(left: number | null, right: number | null): number {
+    return left === null ? right === null ? 0 : 1 : right === null ? -1 : right - left;
 }
 
 export function addUsageTokens(left: UsageObservationTokens, right: UsageObservationTokens): UsageObservationTokens {
-    const total = { input: left.input + right.input, output: left.output + right.output, reasoning: left.reasoning + right.reasoning,
-        cacheRead: left.cacheRead + right.cacheRead, cacheWrite: left.cacheWrite + right.cacheWrite, total: left.total + right.total };
+    const total = { input: addUsageMeasurements(left.input, right.input), output: addUsageMeasurements(left.output, right.output),
+        reasoning: addUsageMeasurements(left.reasoning, right.reasoning), cacheRead: addUsageMeasurements(left.cacheRead, right.cacheRead),
+        cacheWrite: addUsageMeasurements(left.cacheWrite, right.cacheWrite), total: addUsageMeasurements(left.total, right.total) };
     const fields = Object.keys(total) as Array<keyof UsageObservationTokens>;
     if (!hasUsageMoneyProvenance(left) && !hasUsageMoneyProvenance(right)
         && fields.every(field => Number.isSafeInteger(left[field]) && Number.isSafeInteger(right[field]) && Number.isSafeInteger(total[field]))) return total;
-    return withUsageMoney(total, Object.fromEntries(fields.map(field =>
-        [field, addUsageMoney(readUsageMoney(left, field, left[field]), readUsageMoney(right, field, right[field]))])));
+    return withUsageMoney(total, Object.fromEntries(fields.flatMap(field => {
+        const a = left[field];
+        const b = right[field];
+        if (a === null && b === null) return [];
+        return [[field, a === null ? readUsageMoney(right, field, b!) : b === null ? readUsageMoney(left, field, a)
+            : addUsageMoney(readUsageMoney(left, field, a), readUsageMoney(right, field, b))]];
+    })));
 }
 
 /** Fold raw monetary operands before publishing their public numeric representation. */
@@ -34,29 +50,47 @@ export function aggregateUsageCosts(costs: Iterable<UsageObservationCost>): Usag
 export function createUsageCostAccumulator(initial: UsageObservationCost) {
     const fields = ['reportedUsd', 'estimatedUsd', 'invoiceUsd'] as const;
     const first = { ...initial };
-    const money = Object.fromEntries(fields.map(field => [field, createUsageMoneyAccumulator(readUsageMoney(first, field, first[field] ?? 0))] as const));
+    const money = new Map<typeof fields[number], ReturnType<typeof createUsageMoneyAccumulator>>();
+    for (const field of fields) {
+        const value = first[field];
+        if (value != null) money.set(field, createUsageMoneyAccumulator(readUsageMoney(first, field, value)));
+    }
     const breakdownMoney = new Map<string, ReturnType<typeof createUsageMoneyAccumulator>>();
     for (const [key, value] of Object.entries(first.breakdown ?? {})) breakdownMoney.set(key, createUsageMoneyAccumulator(readUsageMoney(first.breakdown!, key, value)));
     let { billingContext, costSource, currency } = first;
     return { add(input: UsageObservationCost) {
         const cost = { ...input };
-        for (const field of fields) money[field]!.add(readUsageMoney(cost, field, cost[field] ?? 0));
+        if (fields.some(field => cost[field] != null) || Object.keys(cost.breakdown ?? {}).length > 0) {
+            if (money.size === 0 && breakdownMoney.size === 0) {
+                ({ billingContext, costSource, currency } = cost);
+            } else {
+                if (billingContext !== cost.billingContext) billingContext = 'unknown';
+                if (costSource !== cost.costSource) costSource = 'none';
+                if (currency !== cost.currency) currency = 'MIXED';
+            }
+        }
+        for (const field of fields) {
+            const value = cost[field];
+            if (value == null) continue;
+            const operand = readUsageMoney(cost, field, value);
+            const accumulator = money.get(field);
+            if (accumulator) accumulator.add(operand);
+            else money.set(field, createUsageMoneyAccumulator(operand));
+        }
         for (const [key, value] of Object.entries(cost.breakdown ?? {})) {
             const amount = readUsageMoney(cost.breakdown!, key, value);
             const accumulated = breakdownMoney.get(key);
             if (accumulated) accumulated.add(amount);
             else breakdownMoney.set(key, createUsageMoneyAccumulator(amount));
         }
-        if (billingContext !== cost.billingContext) billingContext = 'unknown';
-        if (costSource !== cost.costSource) costSource = 'none';
-        if (currency !== cost.currency) currency = 'MIXED';
     }, value(): UsageObservationCost {
-        const amounts = Object.fromEntries(fields.map(field => [field, money[field]!.value()] as const));
+        const amounts = Object.fromEntries([...money].map(([field, value]) => [field, value.value()] as const));
         const breakdownAmounts = Object.fromEntries([...breakdownMoney].map(([key, value]) => [key, value.value()] as const));
         const breakdown = Object.keys(breakdownAmounts).length
             ? withUsageMoney(Object.fromEntries(Object.entries(breakdownAmounts).map(([key, value]) => [key, usageMoneyToNumber(value)])), breakdownAmounts) : undefined;
-        return withUsageMoney({ reportedUsd: usageMoneyToNumber(amounts.reportedUsd!), estimatedUsd: usageMoneyToNumber(amounts.estimatedUsd!),
-            invoiceUsd: usageMoneyToNumber(amounts.invoiceUsd!), billingContext, costSource, currency, breakdown }, amounts);
+        return withUsageMoney({ reportedUsd: amounts.reportedUsd ? usageMoneyToNumber(amounts.reportedUsd) : null,
+            estimatedUsd: amounts.estimatedUsd ? usageMoneyToNumber(amounts.estimatedUsd) : null,
+            invoiceUsd: amounts.invoiceUsd ? usageMoneyToNumber(amounts.invoiceUsd) : null, billingContext, costSource, currency, breakdown }, amounts);
     } };
 }
 
@@ -87,7 +121,7 @@ export function selectResolvedUsageCost(cost: UsageObservationCost, mode: UsageC
     const admitted = (cost as AggregatedUsageCost)[usageCostAggregationBasis];
     if (admitted?.covered) return createEmptyUsageSelectedCost();
     const selected = resolveUsageCostBasis(cost, mode);
-    return { available: admitted?.mode === mode ? admitted.available : selected !== null, selected };
+    return { available: admitted?.mode === mode ? admitted.available : true, selected };
 }
 
 /** Merge already-selected partitions without re-reading raw facts or resolving overlap. */
@@ -185,71 +219,46 @@ function* aggregateResolvedUsageCostsSteps(initial: UsageObservationCost, costs:
     shouldYield?: () => boolean): Generator<void, AggregatedUsageCost, void> {
     if (!costs.length) return initial;
     const fields = ['reportedUsd', 'estimatedUsd', 'invoiceUsd'] as const;
-    const money = Object.fromEntries(fields.map(field => [field, createUsageMoneyAccumulator(readUsageMoney(initial, field, initial[field] ?? 0))])) as Record<typeof fields[number], ReturnType<typeof createUsageMoneyAccumulator>>;
-    const breakdown = new Map(Object.entries(initial.breakdown ?? {}).map(([key, amount]) => [key, createUsageMoneyAccumulator(readUsageMoney(initial.breakdown!, key, amount))]));
-    let api = initial.apiEquivalentUsd === undefined ? undefined : createUsageMoneyAccumulator(readUsageMoney(initial, 'apiEquivalentUsd', initial.apiEquivalentUsd));
-    let currency = initial.currency;
-    let billingContext = initial.billingContext;
-    let costSource = initial.costSource;
-    let pricingSource = initial.pricingSource;
     const initialState = (initial as AggregatedUsageCost)[usageCostAggregationBasis];
-    let hasState = initialState !== undefined;
-    const basis = resolveUsageCostBasis(initial, mode);
-    let empty = initialState ? initialState.available && !initialState.selected
-        : api === undefined && costSource === 'none' && fields.every(field => (initial[field] ?? 0) === 0);
-    const initialSelected = selectedCostOperands({ available: empty || basis !== null, selected: basis });
-    let selected: SelectedCostEvidence = initialSelected;
-    const selectedMoney = createUsageMoneyAccumulator(initialSelected.amount ?? { units: 0n, scale: 0 });
+    const initialBasis = resolveUsageCostBasis(initial, mode);
+    const identity = !initialState && initial.costSource === 'none' && initial.apiEquivalentUsd === undefined
+        && fields.every(field => initial[field] == null);
+    let raw = identity ? undefined : createUsageCostAccumulator(initial);
+    let api = initial.apiEquivalentUsd === undefined ? undefined : createUsageMoneyAccumulator(readUsageMoney(initial, 'apiEquivalentUsd', initial.apiEquivalentUsd));
+    let pricingSource = initial.pricingSource;
+    let selected: SelectedCostEvidence = selectedCostOperands({ available: initialState?.available ?? true, selected: initialBasis });
+    const selectedMoney = createUsageMoneyAccumulator(initialBasis
+        ? readUsageMoney(initialBasis, 'amountUsd', initialBasis.amountUsd) : { units: 0n, scale: 0 });
     for (const input of costs) {
-        // Snapshot the admitted numeric operand once. Symbols retain exact
-        // precision and overlap admission; no schema/JSON round-trip occurs.
+        // Snapshot once before raw and selected exact arithmetic share the operand.
         const cost = { ...input };
-        const admitted = selectResolvedUsageCost(cost, mode);
-        const right = admitted.selected;
-        const noApiPopulation = api === undefined && fields.every(field => money[field].isZero());
-        if (!hasState && noApiPopulation) {
-            api = cost.apiEquivalentUsd === undefined ? undefined : createUsageMoneyAccumulator(readUsageMoney(cost, 'apiEquivalentUsd', cost.apiEquivalentUsd));
-        } else if (api !== undefined && cost.apiEquivalentUsd !== undefined) {
-            api.add(readUsageMoney(cost, 'apiEquivalentUsd', cost.apiEquivalentUsd));
-        } else api = undefined;
-        pricingSource = api === undefined ? undefined : empty ? cost.pricingSource
-            : pricingSource === cost.pricingSource ? pricingSource : 'effective_model_prices';
-        currency = currency === cost.currency ? currency : 'MIXED';
-        billingContext = billingContext === cost.billingContext ? billingContext : 'unknown';
-        costSource = costSource === cost.costSource ? costSource : 'none';
-        for (const field of fields) money[field].add(readUsageMoney(cost, field, cost[field] ?? 0));
-        for (const [key, amount] of Object.entries(cost.breakdown ?? {})) {
-            const operand = readUsageMoney(cost.breakdown!, key, amount);
-            const accumulated = breakdown.get(key);
-            if (accumulated) accumulated.add(operand);
-            else breakdown.set(key, createUsageMoneyAccumulator(operand));
+        if (raw) raw.add(cost);
+        else raw = createUsageCostAccumulator(cost);
+        if (cost.apiEquivalentUsd !== undefined) {
+            const operand = readUsageMoney(cost, 'apiEquivalentUsd', cost.apiEquivalentUsd);
+            if (api) {
+                api.add(operand);
+                if (pricingSource !== cost.pricingSource) pricingSource = 'effective_model_prices';
+            } else {
+                api = createUsageMoneyAccumulator(operand);
+                pricingSource = cost.pricingSource;
+            }
         }
-        const rightOperands = selectedCostOperands(admitted);
-        selected = mergeSelectedCostEvidence(selected, rightOperands, mode);
-        if (selected.available && rightOperands.amount) selectedMoney.add(rightOperands.amount);
-        if (empty && right) {
-            currency = cost.currency;
-            if (noApiPopulation) costSource = cost.costSource;
-        }
-        if (!selected.available) costSource = 'none';
-        empty = selected.available && !selected.basis;
-        hasState = true;
+        const right = selectedCostOperands(selectResolvedUsageCost(cost, mode));
+        selected = mergeSelectedCostEvidence(selected, right, mode);
+        if (selected.available && right.amount) selectedMoney.add(right.amount);
         if (shouldYield?.()) yield;
     }
-    const exactMoney = Object.fromEntries(fields.map(field => [field, money[field].value()])) as Record<typeof fields[number], ExactUsageMoney>;
-    const exactBreakdown = Object.fromEntries([...breakdown].map(([key, amount]) => [key, amount.value()]));
+    const observed = raw!.value();
     const exactApi = api?.value();
     const exactSelected = selected.basis ? selectedMoney.value() : undefined;
     const published = publishSelectedCost({ ...selected, ...(exactSelected ? { amount: exactSelected } : {}) });
     const selectedBasis = published.selected;
-    const amounts = { ...exactMoney, ...(exactApi === undefined ? {} : { apiEquivalentUsd: exactApi }),
-        ...(exactSelected ? { effectiveUsd: exactSelected } : {}) };
-    return withUsageMoney({ reportedUsd: usageMoneyToNumber(exactMoney.reportedUsd), estimatedUsd: usageMoneyToNumber(exactMoney.estimatedUsd),
-        invoiceUsd: usageMoneyToNumber(exactMoney.invoiceUsd), currency, billingContext, costSource,
-        breakdown: breakdown.size ? withUsageMoney(Object.fromEntries(Object.entries(exactBreakdown).map(([key, amount]) => [key, usageMoneyToNumber(amount)])), exactBreakdown) : undefined,
+    return withUsageMoney({ ...observed,
         ...(exactApi === undefined ? {} : { apiEquivalentUsd: usageMoneyToNumber(exactApi), pricingSource }),
         ...(selectedBasis ? { effectiveUsd: selectedBasis.amountUsd } : {}),
-        [usageCostAggregationBasis]: { mode, available: published.available, ...(selectedBasis ? { selected: selectedBasis } : {}) } }, amounts);
+        [usageCostAggregationBasis]: { mode, available: published.available, ...(selectedBasis ? { selected: selectedBasis } : {}) } },
+        { ...(exactApi === undefined ? {} : { apiEquivalentUsd: exactApi }), ...(exactSelected ? { effectiveUsd: exactSelected } : {}) });
 }
 
 export function withEffectiveUsageCost(cost: UsageObservationCost, mode: UsageCostMode): UsageObservationCost {

@@ -46,16 +46,17 @@ async function renderControls(children: React.ReactNode) {
 
 const day = 86_400_000;
 const tokens = { input: 10, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 };
-function mountedCosts(unpriced = false, tokenCount = 10) {
+function mountedCosts(unpriced: boolean | 'all' = false, tokenCount = 10) {
   const tokens = { input: tokenCount, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: tokenCount };
   const query = normalizeUsageQuery({ period: { startMs: 0, endMs: day }, metric: 'cost', costBasis: 'auto', breakdown: ['agent'] });
   const contributions: UsageAnalyticsContribution[] = [
     { id: 'a', sessionId: 's', turnId: 'a', observedAtMs: 1, eventCount: 1, agentId: 'claude', modelId: 'unknown-a',
       machineId: null, projectKey: null, workspaceId: null, source: 'runtime', sourceContext: { path: 'runtime', execution: 'happier' }, tokens,
-      cost: { reportedUsd: 1, estimatedUsd: 0.5, invoiceUsd: 0.2, currency: 'USD' } },
+      cost: unpriced === 'all' ? { reportedUsd: null, estimatedUsd: null, currency: 'USD', costSource: 'none' }
+        : { reportedUsd: 1, estimatedUsd: 0.5, invoiceUsd: 0.2, currency: 'USD' } },
     { id: 'b', sessionId: 's', turnId: 'b', observedAtMs: 2, eventCount: 1, agentId: 'claude', modelId: 'unknown-b',
       machineId: null, projectKey: null, workspaceId: null, source: 'runtime', sourceContext: { path: 'runtime', execution: 'happier' }, tokens,
-      cost: unpriced ? { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'none' }
+      cost: unpriced ? { reportedUsd: null, estimatedUsd: null, currency: 'USD', costSource: 'none' }
         : { reportedUsd: 2, estimatedUsd: 0.7, currency: 'USD' } },
   ];
   const cost = { reportedUsd: unpriced ? 1 : 3, estimatedUsd: unpriced ? 0.5 : 1.2, invoiceUsd: 0.2, currency: 'USD', costSource: 'none' as const };
@@ -73,6 +74,25 @@ function mountedCosts(unpriced = false, tokenCount = 10) {
 }
 
 describe('one selected money basis across Usage bodies', () => {
+  it('keeps unknown token figures as dashes in the period summary and unpriced fact widgets', async () => {
+    const base = mountedCosts(true);
+    const unknownTokens = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+    const query = normalizeUsageQuery({ ...base.query, metric: 'tokens' });
+    const slice = { ...base.slice, accounting: { ...base.slice.accounting!,
+      totals: { ...base.slice.accounting!.totals, tokens: unknownTokens } }, costFactTotals: [
+        { kind: 'unpriced' as const, eventCount: 1, currency: 'USD', amountUsd: null, tokens: unknownTokens, complete: false },
+      ] };
+    const props = { ...base, query, slice, model: { ...base.model, slice } };
+    const screen = await renderScreen(<>
+      <UsagePeriodSummaryWidget {...props} id="usage_period_summary" testID="unknown-summary" />
+      <UsageUnpricedWidget {...props} id="usage_unpriced" testID="unknown-unpriced" />
+      <UsageCostFactsWidget {...props} id="usage_cost_facts" testID="unknown-facts" />
+    </>);
+    expect(screen.findAllByType(HappierDataMetric).find(node => node.props.label === t('usage.tokens'))?.props.value).toBe('—');
+    expect(screen.findAllByType(HappierDataMetric).find(node => node.props.testID === 'unknown-unpriced.tokens')?.props.value).toBe('—');
+    expect(screen.findAllByType(HappierDataMetric).find(node => node.props.testID === 'unknown-facts.fact.unpriced')?.props.value).toBe('—');
+  });
+
   it('uses the agent presentation owner for Constellation unattributed identities', async () => {
     const props = mountedCosts();
     const query = normalizeUsageQuery({ ...props.query, includeActivity: true });
@@ -99,14 +119,12 @@ describe('one selected money basis across Usage bodies', () => {
     expect(screen.getTextContent()).toContain(usageAgentTitle(''));
     expect(screen.getTextContent()).not.toContain(t('usage.board.charts.unknownAgent'));
   });
-  it('explains an unavailable partially unpriced Agent cost in its existing annotation', async () => {
+  it('retains measured Agent money beside unpriced observations', async () => {
     const props = mountedCosts(true);
     const screen = await renderScreen(<UsageBreakdownsWidget {...props} id="usage_breakdowns" testID="agents" />);
     const row = screen.findByType(RankedRows).props.rows.find((row: { id: string }) => row.id === 'claude');
-    expect(row.value).toBeNull();
-    // The row says it in the Daily legend's words, so the row, the hatched day and the missing total read as one (R138);
-    // a row with some priced money says only part of it has no price (R139).
-    expect(row.annotation).toContain(t('usage.board.page.costRowPartUnpriced'));
+    expect(row.value).toBe(1);
+    expect(row.annotation).toContain(t('usage.board.page.kindReported'));
     expect(row.annotation).not.toContain(t('usage.board.page.costUnpricedCaption'));
   });
   it('keeps exact cache-hit precision in percentage units rather than the fractional numeric model', async () => {
@@ -303,24 +321,22 @@ describe('one selected money basis across Usage bodies', () => {
       <UsageEfficiencyWidget {...props} query={query} slice={slice} id="usage_efficiency" testID="whole-efficiency" />
     </>);
     const metrics = screen.findAllByType(HappierDataMetric);
-    const selected = olderUnpriced ? null : costBasis === 'auto' ? 11 : costBasis === 'estimated' ? 6 : null;
+    const selected = costBasis === 'auto' ? 11 : costBasis === 'estimated' ? 6 : costBasis === 'reported' ? 7 : 0;
     expect(projectUsagePageCost(slice.accounting!, costBasis).amountUsd).toBe(selected);
-    expect(metrics.find(metric => metric.props.testID === 'whole-summary.hero')?.props.value).toBe(selected ?? '—');
-    expect(metrics.find(metric => metric.props.testID === 'whole-efficiency.perMtok')?.props.value).toBe(selected === null ? '—' : selected / 20 * 1e6);
+    expect(metrics.find(metric => metric.props.testID === 'whole-summary.hero')?.props.value).toBe(selected);
+    expect(metrics.find(metric => metric.props.testID === 'whole-efficiency.perMtok')?.props.value).toBe(selected / total.tokens.total * 1e6);
     expect(metrics.find(metric => metric.props.testID === 'whole-facts.fact.reported')?.props.value).toBe(7);
     expect(metrics.find(metric => metric.props.testID === 'whole-facts.fact.estimated')?.props.value).toBe(6);
     expect(screen.findByType(RankedRows).props.rows[0].value).toBe(selected);
     const chart = screen.findByType(StackedSeriesChart);
     const points: { y: number | null }[] = chart.props.series.flatMap((entry: { points: { y: number | null }[] }) => entry.points);
     expect(points.reduce((sum, point) => sum + (point.y ?? 0), 0)).toBe(olderUnpriced ? 11 : selected ?? 0);
-    if (selected === null && !olderUnpriced) expect(points.every(point => point.y === null)).toBe(true);
     if (olderUnpriced) {
       expect(points.some(point => point.y === null)).toBe(true);
       expect(slice.costFactTotals?.find(fact => fact.kind === 'unpriced')?.tokens.total).toBe(30);
-      // An unavailable whole-period amount says why, never the candidate basis's "estimated where not reported".
       const unpriced = t('usage.board.page.costUnpricedCaption');
-      expect(metrics.find(metric => metric.props.testID === 'whole-summary.hero')?.props.caption).toBe(unpriced);
-      expect(metrics.find(metric => metric.props.testID === 'whole-efficiency.perMtok')?.props.caption).toBe(unpriced);
+      expect(metrics.find(metric => metric.props.testID === 'whole-summary.hero')?.props.caption).not.toBe(unpriced);
+      expect(metrics.find(metric => metric.props.testID === 'whole-efficiency.perMtok')?.props.caption).not.toBe(unpriced);
     }
   });
   it('draws a Breakdowns heading per dimension only while the card ranks several, since one dimension is the card\'s own title', async () => {
@@ -582,7 +598,7 @@ describe('one selected money basis across Usage bodies', () => {
   });
 
   it('keeps missing selected money unavailable instead of drawing a zero total or row', async () => {
-    const props = mountedCosts(true);
+    const props = mountedCosts('all');
     const screen = await renderScreen(<>
       <UsagePeriodSummaryWidget {...props} id="usage_period_summary" testID="summary" />
       <UsageDailyWidget {...props} id="usage_daily" testID="daily" />
@@ -591,7 +607,7 @@ describe('one selected money basis across Usage bodies', () => {
     </>);
     // Unknown money is a quiet dash with its reason as the caption, never a headline word.
     expect(screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'summary.hero')?.props.value).toBe('—');
-    expect(screen.getTextContent()).toContain(t('usage.board.page.costUnpricedCaption'));
+    expect(screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'summary.hero')?.props.caption).toBeTruthy();
     expect(screen.findByType(RankedRows).props.rows[0].value).toBeNull();
     expect(screen.findAllByType(StackedSeriesChart).flatMap(chart => chart.props.series)
       .every((entry: { points: { y: number | null }[] }) => entry.points.every(point => point.y === null))).toBe(true);

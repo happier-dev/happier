@@ -29,41 +29,6 @@ function clampTokenCountCostForForwarding(
   return Object.keys(breakdown).length === 0 ? semanticCost : { ...semanticCost, breakdown };
 }
 
-function clampTokenCountTokensForForwarding(tokens: Record<string, number>): Record<string, number> {
-  const MAX_KEYS = 32;
-  const out = Object.create(null) as Record<string, number>;
-  let count = 0;
-
-  const priority: ReadonlyArray<string> = ['total', 'input', 'output', 'cache_creation', 'cache_read', 'thought'];
-  for (const key of priority) {
-    const value = tokens[key];
-    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
-      out[key] = value;
-      count++;
-    }
-  }
-
-  const remaining = Object.keys(tokens)
-    .filter((k) => !(k in out))
-    .filter((k) => k.trim().length > 0 && k.length <= 64 && k !== '__proto__' && k !== 'constructor' && k !== 'prototype')
-    .sort();
-
-  for (const key of remaining) {
-    if (count >= MAX_KEYS) break;
-    const value = tokens[key];
-    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) continue;
-    out[key] = value;
-    count++;
-  }
-
-  if (out.total == null) {
-    out.total =
-      (out.input ?? 0) + (out.output ?? 0) + (out.cache_creation ?? 0) + (out.cache_read ?? 0) + (out.thought ?? 0);
-  }
-
-  return out;
-}
-
 export function buildTokenCountSessionMessageForForwarding(
   agentMessage: Record<string, unknown>,
 ): ReturnType<typeof buildTokenCountSessionMessageFromUsageObservation> | null {
@@ -75,13 +40,14 @@ export function buildTokenCountSessionMessageForForwarding(
 
   return buildTokenCountSessionMessageFromUsageObservation({
     ...observation,
-    tokens: observation.tokens ? (clampTokenCountTokensForForwarding(observation.tokens) as any) : null,
     cost: clampTokenCountCostForForwarding(observation.cost),
   });
 }
 
-function truncateNonNegative(value: number): number {
-  return Math.max(0, Math.trunc(value));
+function truncateNonNegative(value: number): number;
+function truncateNonNegative(value: number | null): number | null;
+function truncateNonNegative(value: number | null): number | null {
+  return value === null ? null : Math.max(0, Math.trunc(value));
 }
 
 /**

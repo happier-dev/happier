@@ -4,6 +4,19 @@ import { buildUsageEngineTimeline, buildUsageInsights, buildUsageModelTimeline }
 import { resolveScopedUsageContributions } from "./resolveScopedUsageContributions";
 
 describe("buildUsagePremiumSections", () => {
+    it("ranks a measured zero above an unknown model in insights", () => {
+        const base = { sessionId: "session", observedAt: new Date(100), agentId: "codex", backendMode: null,
+            projectKey: null, workspaceId: null, source: "runtime", contributingEventIds: ["event"],
+            tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+            cost: { reportedUsd: null, estimatedUsd: null, currency: "USD" } };
+        const result = buildUsageInsights([
+            { ...base, modelId: "a-unknown" },
+            { ...base, modelId: "z-zero", tokens: { ...base.tokens, input: 0, total: 0 } },
+        ], { messageCount: 0 });
+        expect(result.modelsTried).toBe(2);
+        expect(result.favoriteModel?.key).toBe("z-zero");
+    });
+
     it("defers timeline money reads until pricing, except to preserve a truncated token tie", () => {
         for (const count of [2, 128]) {
             let moneyReads = 0;
@@ -68,8 +81,8 @@ describe("buildUsagePremiumSections", () => {
         expect(automatic?.map((row) => row.key)).toEqual(["mixed", "known", "unknown"]);
         expect(automatic?.[0]?.cost).toMatchObject({ reportedUsd: 10, estimatedUsd: 10, effectiveUsd: 20, costSource: "none" });
         const reported = buildUsageModelTimeline(rows, "day", 10, 0, "reported")?.[0].leaders;
-        expect(reported?.map((row) => row.key)).toEqual(["known", "mixed", "unknown"]);
-        expect(reported?.find((row) => row.key === "mixed")?.cost?.effectiveUsd).toBeUndefined();
+        expect(reported?.map((row) => row.key)).toEqual(["mixed", "known", "unknown"]);
+        expect(reported?.find((row) => row.key === "mixed")?.cost?.effectiveUsd).toBe(10);
     });
     it("keeps aggregated tokens and cost on timeline leaders", () => {
         const rows = [

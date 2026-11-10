@@ -73,6 +73,17 @@ function evidence(
 }
 
 describe('Work display grouping of the canonical allocation', () => {
+  it('retains measured token amounts beside unknown allocations without fabricating unknown-only zeroes', () => {
+    const measured = contribution('known', 'session', 'turn-known');
+    const unknown = { ...contribution('unknown', 'session', 'turn-unknown'),
+      tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null } };
+    const summarize = (rows: UsageWorkContribution[]) => summarizeUsageWork(
+      allocateUsageOutcomes({ contributions: rows, evidence: [] }), { metric: 'tokens', costBasis: 'auto' });
+    expect(summarize([unknown]).total).toBeNull();
+    expect(summarize([unknown, measured]).total).toBe(14);
+    expect(summarize([unknown, measured]).sessions[0]?.amount).toBe(14);
+  });
+
   it('aggregates complete whole-call populations with linear contribution work', () => {
     const measure = (count: number) => {
       const rows = Array.from({ length: count }, (_, index) => {
@@ -211,14 +222,14 @@ describe('Work display grouping of the canonical allocation', () => {
     expect(autopsy.outcomes.map(row => row.pullRequest.number)).toEqual([7]);
     expect(summarizeUsageWorkSession(work, { metric: 'cost', costBasis: 'reported' }, 'missing').turns).toEqual([]);
   });
-  it('leaves cumulative cost unknown after an unpriced contribution and preserves witnessed zero', () => {
+  it('retains the known cumulative cost beside unpriced contributions and preserves witnessed zero', () => {
     const zero = { ...contribution('zero', 's1', 't1'), observedAtMs: 10, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'provider_reported' as const } };
     const unknown = { ...contribution('unknown', 's1', 't2'), observedAtMs: 20, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'none' as const } };
     const later = { ...contribution('later', 's1', 't3'), observedAtMs: 30 };
     const work = allocateUsageOutcomes({ contributions: [later, zero, unknown], evidence: [] });
     expect(summarizeUsageWorkSession(work, { metric: 'tokens', costBasis: 'reported' }, 's1').costTimeline)
-      .toEqual([{ id: 'zero', observedAtMs: 10, amount: 0 }, { id: 'unknown', observedAtMs: 20, amount: null },
-        { id: 'later', observedAtMs: 30, amount: null }]);
+      .toEqual([{ id: 'zero', observedAtMs: 10, amount: 0 }, { id: 'unknown', observedAtMs: 20, amount: 0 },
+        { id: 'later', observedAtMs: 30, amount: 3 }]);
   });
   it('labels best available mixed kinds and never combines different currencies in a cost curve', () => {
     const first = { ...contribution('first', 's1', 't1'), observedAtMs: 10 };
@@ -300,11 +311,11 @@ describe('Work display grouping of the canonical allocation', () => {
     const known = contribution('known', 'partial', 't3');
     const partlyPriced = { ...unknown, id: 'partial-unknown', sessionId: 'partial', turnId: 't4' };
     const summary = summarizeUsageWork(allocateUsageOutcomes({ contributions: [unknown, free, known, partlyPriced], evidence: [] }), { metric: 'cost', costBasis: 'reported' });
-    expect(summary.total).toBeNull();
+    expect(summary.total).toBe(3);
     expect(summary.sessions.find(row => row.sessionId === 'unpriced')?.amount).toBeNull();
-    expect(summary.sessions.find(row => row.sessionId === 'partial')?.amount).toBeNull();
+    expect(summary.sessions.find(row => row.sessionId === 'partial')?.amount).toBe(3);
     expect(summary.sessions.find(row => row.sessionId === 'free')?.amount).toBe(0);
-    expect(summary.unallocatedByReason.missing_evidence).toBeNull();
+    expect(summary.unallocatedByReason.missing_evidence).toBe(3);
     const independent = summarizeUsageWork(allocateUsageOutcomes({ contributions: [unknown, known],
       evidence: [evidence('unpriced', 't1', 1)] }), { metric: 'cost', costBasis: 'reported' });
     expect(independent.allocated).toBeNull();

@@ -221,7 +221,7 @@ describe("canonical usage result projection", () => {
     });
 
     it("distinguishes a proven zero price from defaults and separates invoice from vendor reported money", () => {
-        const free = { ...row("free", 10), cost: { ...createEmptyUsageCost(), costSource: "pricing_estimate" as const } };
+        const free = { ...row("free", 10), cost: { ...createEmptyUsageCost(), estimatedUsd: 0, costSource: "pricing_estimate" as const } };
         const paid = { ...row("paid", 20), cost: { ...createEmptyUsageCost(), reportedUsd: 2, invoiceUsd: 1, costSource: "provider_reported_api_equivalent" as const } };
         const result = buildUsageResultProjection({ contributions: [free, paid], evidenceRows: [free, paid], coverageReasons: [], request: { granularity: "day", timeZoneOffsetMinutes: 0, includeSeries: true, topLimit: 20 } });
         expect(result.costFacts.map((fact) => [fact.kind, fact.amountUsd])).toEqual(expect.arrayContaining([["estimated", 0], ["reported", 2], ["invoice", 1]]));
@@ -236,7 +236,7 @@ describe("canonical usage result projection", () => {
         expect(result.contributions[0].tokenCategories?.input).toBe(70);
         const unknown = row("unknown", 10);
         const partial = buildUsageResultProjection({ contributions: [inclusive, unknown], evidenceRows: [inclusive, unknown], coverageReasons: [], request: { granularity: "day", timeZoneOffsetMinutes: 0, includeSeries: true, topLimit: 20 } });
-        expect(partial.tokenCategories).toBeUndefined();
+        expect(partial.tokenCategories).toEqual(result.tokenCategories);
         expect(partial.coverage.reasons).toContain("unknown_token_categories");
     });
 });

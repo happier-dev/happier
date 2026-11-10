@@ -3,6 +3,7 @@ import { StyleSheet as RNStyleSheet, View } from 'react-native';
 import { describeHappierSeriesBucket, type HappierSeries, type HappierSeriesBucket, type StackedSeriesChartProps } from '@happier-dev/plugin-ui/presentation';
 
 import { resolveUsageBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
+import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
 import { resolveUsageCostBasis, resolveUsageCostForSelection } from '@happier-dev/protocol/usage/usageCostFacts';
 import { type UsagePageCostSelection, type UsageCostMode } from '@happier-dev/protocol/usage/usageCostFacts';
 import { type UsageAnalyticsCoverage, type UsageAnalyticsQueryResponse} from '@happier-dev/protocol/usage/usageAnalyticsContracts';
@@ -133,7 +134,7 @@ export function usageAxisTicks(labels: readonly string[], lastLabel?: string): r
 }
 
 export function usageMixSeries(mix: UsageCalendarMix, label: (value: string) => string, color: (index: number, key: string) => string, timeZoneOffsetMinutes = 0): readonly HappierSeries[] {
-    return mix.keys.map((key, index) => ({ id: key.key, label: label(key.label), color: color(index, key.key), detail: `${formatTokenCount(key.totalTokens)} · ${mix.total > 0 ? Math.round(key.totalTokens / mix.total * 100) : 0}%`, points: mix.buckets.map((bucket) => ({
+    return mix.keys.map((key, index) => ({ id: key.key, label: label(key.label), color: color(index, key.key), detail: `${formatTokenCount(key.totalTokens)} · ${mix.total === null || key.totalTokens === null ? '—' : `${mix.total > 0 ? Math.round(key.totalTokens / mix.total * 100) : 0}%`}`, points: mix.buckets.map((bucket) => ({
         id: String(bucket.startMs), x: bucket.startMs,
         label: formatUsageCalendarDate(bucket.startMs, timeZoneOffsetMinutes, { month: 'short', day: 'numeric' }),
         y: bucket.tokens[index] ?? null,
@@ -175,7 +176,7 @@ export function usageSourceTimelineSeries(input: Readonly<{
                 ? resolveUsageCostForSelection(leader.cost, input.costSelection)
                 : resolveUsageCostBasis(leader.cost, input.costMode)?.amountUsd ?? null : null;
             const previous = entry.values.get(bucket.bucketStartMs);
-            entry.values.set(bucket.bucketStartMs, value === null || previous === null ? null : (previous ?? 0) + value);
+            entry.values.set(bucket.bucketStartMs, addUsageMeasurements(previous ?? null, value));
         }
         for (const part of leader.sources ?? []) {
             if (part.execution !== 'outside') entry.allOutside = false;
@@ -185,7 +186,7 @@ export function usageSourceTimelineSeries(input: Readonly<{
                 ? resolveUsageCostForSelection(part.cost, input.costSelection) : resolveUsageCostBasis(part.cost, input.costMode)?.amountUsd ?? null;
             if (input.metric === 'tokens') {
                 const previous = entry.values.get(bucket.bucketStartMs);
-                entry.values.set(bucket.bucketStartMs, value === null || previous === null ? null : (previous ?? 0) + value);
+                entry.values.set(bucket.bucketStartMs, addUsageMeasurements(previous ?? null, value));
             }
             const details = entry.details[String(bucket.bucketStartMs)] ?? new Map<string, UsageSourceDetail>();
             const basisLabel = input.metric === 'cost' && input.costSelection !== undefined
@@ -195,7 +196,7 @@ export function usageSourceTimelineSeries(input: Readonly<{
             const id = JSON.stringify([key, part.source, part.path, part.execution]);
             const previous = details.get(id);
             details.set(id, { id, label: [execution, usageSourceTitle(part.source), basisLabel].filter(Boolean).join(' · '),
-                execution: part.execution, value: value === null || previous?.value === null ? null : (previous?.value ?? 0) + value });
+                execution: part.execution, value: addUsageMeasurements(previous?.value ?? null, value) });
             entry.details[String(bucket.bucketStartMs)] = details;
         }
         parts.set(key, entry);
@@ -255,7 +256,7 @@ export function usageVolumeLens(points: readonly (UsageTrendPoint & Readonly<{ r
 }
 
 export function usageSeriesValueFormatter(metric: 'tokens' | 'cost' | 'requests', currency: string) {
-    return metric === 'cost' ? (value: number) => formatUsageCost(value, currency) : formatTokenCount;
+    return metric === 'cost' ? (value: number | null) => formatUsageCost(value, currency) : formatTokenCount;
 }
 
 /** What choosing one series in the lens or the legend does (a drill), worded by its caller. */
@@ -304,7 +305,7 @@ export function SeriesPlotLens(props: SeriesLensOptions & Readonly<{ plot: Serie
         return { title: pointTitle ? pointTitle(bucket) : bucket.label, rows, ...(footer ? { footer } : {}),
             // Comparison overlays are independent observations, never additive parts.
             ...(known && bucket.values.length > 1 && !series?.some(entry => entry.overlay)
-                ? { total: format(bucket.values.reduce((sum, entry) => sum + (entry.value ?? 0), 0)) } : {}) };
+                ? { total: format(bucket.values.reduce((sum, entry) => sum + entry.value!, 0)) } : {}) };
     };
     // The chart's own keyboard selection: the lens shows where the viewer is reading.
     const focusIndex = plot.selectedBucketId === null ? -1 : plot.buckets.findIndex((bucket) => bucket.id === plot.selectedBucketId);

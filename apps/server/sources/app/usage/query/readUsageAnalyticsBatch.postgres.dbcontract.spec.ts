@@ -66,7 +66,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('U
                 .toEqual({ evidenceRows: eventCount + 1, bodyRows: 0 });
             const narrowResult = narrow.result.results[0]!;
             if (!('value' in narrowResult)) throw new Error('Narrow Usage query failed');
-            expect(narrowResult.value.totals.tokens.total).toBe(0);
+            expect(narrowResult.value.totals.tokens.total).toBeNull();
             expect(narrowResult.value.coverage?.sources.some(source => source.source === 'historical')).toBe(true);
         } finally {
             await db.account.delete({ where: { id: account.id } });

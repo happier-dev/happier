@@ -22,7 +22,7 @@ it('uses retained assistant API accounting once, including paid compaction, with
   expect(await contribution.resolveSource?.(request)).toMatchObject({ ok: true, value: { accountingSource: { accountingSources: ['opencode-native-accounting'] } } });
   expect(result).toMatchObject({ ok: true, value: { outcome: 'advanced', observations: [{ nativeSessionId: 'oc-session', inferenceId: 'oc-paid',
     project: { rootPath: '/native/opencode-project' },
-    observation: { source: 'opencode-native-accounting', cost: { estimatedUsd: 0.25, costSource: 'pricing_estimate' }, tokens: { total: 22, input: 10, output: 5, reasoning: 2, cacheRead: 3, cacheWrite: 4 } } }] } });
+    observation: { source: 'opencode-native-accounting', cost: { estimatedUsd: 0.25, costSource: 'pricing_estimate' }, tokens: { total: null, input: 10, output: 5, reasoning: 2, cacheRead: 3, cacheWrite: 4 } } }] } });
   if (!result?.ok || result.value.outcome !== 'advanced') return;
   expect(await contribution.readAccounting?.({ ...request, cursor: result.value.nextCursor, changedNativeSessionIds: [] })).toEqual({ ok: true, value: { outcome: 'unchanged' } });
   completed = 201;
@@ -64,7 +64,7 @@ it('reads only a changed Session among retained histories and no messages for an
   output = 6;
   const settled = await contribution.readAccounting!({ ...request, cursor: first.value.nextCursor, changedNativeSessionIds: ['s7'] });
   expect(settled).toMatchObject({ ok: true, value: { outcome: 'advanced', observations: [{ nativeSessionId: 's7', inferenceId: 's7-m29',
-    observation: { tokens: { input: 10, output: 6, total: 16 } } }] } });
+    observation: { tokens: { input: 10, output: 6, total: null } } }] } });
   if (!settled.ok || settled.value.outcome !== 'advanced') throw new Error('Settlement failed');
   expect(settled.value.observations).toHaveLength(1);
   expect(reads).toEqual(['s7']);
@@ -98,13 +98,13 @@ it('retains V2 paid compaction and disjoint reasoning through the shared wire no
   const result = await contribution.readAccounting?.(request);
   expect(result).toMatchObject({ ok: true, value: { outcome: 'advanced', observations: [{ inferenceId: 'v2-compaction',
     accounting: { outputIncludesReasoning: false, inputIncludesCache: false },
-    observation: { modelId: 'm', tokens: { total: 24, output: 5, reasoning: 2 }, cost: { estimatedUsd: 0.2 } } }] } });
+    observation: { modelId: 'm', tokens: { total: null, output: 5, reasoning: 2 }, cost: { estimatedUsd: 0.2 } } }] } });
   expect(JSON.stringify(result)).not.toContain('PRIVATE');
   if (!result?.ok || result.value.outcome !== 'advanced') throw new Error('Initial V2 capture failed');
   messageReads.length = 0;
   output = 6;
   expect(await contribution.readAccounting!({ ...request, cursor: result.value.nextCursor, changedNativeSessionIds: ['v2-session'] }))
-    .toMatchObject({ ok: true, value: { outcome: 'advanced', observations: [{ inferenceId: 'v2-compaction', observation: { tokens: { output: 6, total: 25 } } }] } });
+    .toMatchObject({ ok: true, value: { outcome: 'advanced', observations: [{ inferenceId: 'v2-compaction', observation: { tokens: { output: 6, total: null } } }] } });
   expect(messageReads).toEqual(['/api/session/v2-session/message']);
 });
 

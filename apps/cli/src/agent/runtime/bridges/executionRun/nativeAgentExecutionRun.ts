@@ -66,8 +66,8 @@ import {
     assertNativeAgentSessionModeAvailable,
     resolveNativeAgentSessionNativeHomeService,
     resolveAgentSessionMcpLaunchConfigs,
-    toNativeAgentUsageObservation,
 } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
+import { toNativeAgentUsageObservation, buildNativeAgentUsageAccountingMetadata } from '@/usage/nativeAgentUsageObservation';
 import type { NativeAgentSessionPublications } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionPublications';
 import type { UsageObservation } from '@/usage/usageObservation';
 import type { UsageObservationPublishResult } from '@/usage/createUsageObservationPublisher';
@@ -358,6 +358,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
                 status: 'canceled',
                 decision: 'abort',
                 reason,
+                extraCompletedFields: { responseTarget: undefined },
             });
         },
     });
@@ -1888,6 +1889,7 @@ export function createNativeAgentSessionExecutionRunHostRuntime(params: Readonly
                                         observation,
                                         turnId: event.turnId ?? null,
                                         externalKey: event.observationId,
+                                        metadata: buildNativeAgentUsageAccountingMetadata(event),
                                     })).catch(() => undefined);
                                 }
                             },

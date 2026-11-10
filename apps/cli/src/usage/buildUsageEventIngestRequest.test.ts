@@ -4,6 +4,42 @@ import { UsageEventIngestRequestSchema } from '@happier-dev/protocol';
 import { buildUsageEventIngestRequest } from './buildUsageEventIngestRequest';
 
 describe('buildUsageEventIngestRequest', () => {
+    it('retains a known native subject with unknown measurements and preserves measured zero separately', () => {
+        const subject = { kind: 'native' as const, machineId: 'machine-1',
+            agent: { pluginId: 'happier.agent.pi', localId: 'pi' },
+            sourceRootKey: 'root-1', nativeSessionKey: 'child-native-1' };
+        const observation = { provider: 'pi', source: 'native-statistics', scope: 'session_cumulative' as const,
+            key: null, modelId: null, tokens: null, cost: null, contextUsedTokens: null, contextWindowTokens: null };
+        const unknown = buildUsageEventIngestRequest({ subject, externalKey: 'identity-1', observedAt: 10, observation });
+        expect(unknown).toMatchObject({ subject, tokens: { input: null, output: null, reasoning: null,
+            cacheRead: null, cacheWrite: null, total: null }, cost: { reportedUsd: null, estimatedUsd: null } });
+        expect(UsageEventIngestRequestSchema.parse(unknown)).toMatchObject({ tokens: { total: null }, cost: { reportedUsd: null } });
+        const measuredZero = buildUsageEventIngestRequest({ sessionId: 'session-1', observedAt: 10,
+            observation: { ...observation, tokens: { total: 0 } } });
+        expect(measuredZero?.tokens).toEqual({ input: null, output: null, reasoning: null,
+            cacheRead: null, cacheWrite: null, total: 0 });
+    });
+
+    it('keeps raw child counters without inventing a counted total or cost', () => {
+        const request = buildUsageEventIngestRequest({ sessionId: 'session-1', observedAt: 10,
+            metadata: { usageAccounting: { path: 'runtime', status: 'partial', asOfMs: 10, nativeSessionId: 'child-native' } },
+            observation: { provider: 'pi', source: 'native-statistics', scope: 'session_cumulative',
+                key: null, modelId: null, tokens: { input: 8, cacheRead: 4, output: 2 }, cost: null,
+                contextUsedTokens: null, contextWindowTokens: null } });
+        expect(request?.tokens).toEqual({ input: 8, output: 2, cacheRead: 4, cacheWrite: null, reasoning: null, total: null });
+        expect(request?.cost).toMatchObject({ reportedUsd: null, estimatedUsd: null });
+        expect(request?.metadata).toMatchObject({ usageAccounting: { nativeSessionId: 'child-native' } });
+    });
+
+    it('retains measurement-less runtime native identity but rejects empty session junk', () => {
+        const params = { sessionId: 'session-1', observedAt: 10,
+            observation: { provider: 'pi', source: 'native-statistics', scope: 'session_cumulative' as const,
+                key: null, modelId: 'model-1', tokens: null, cost: null, contextUsedTokens: null, contextWindowTokens: null } };
+        expect(buildUsageEventIngestRequest(params)).toBeNull();
+        expect(buildUsageEventIngestRequest({ ...params, metadata: { usageAccounting: {
+            path: 'runtime', status: 'unknown', asOfMs: 10, nativeSessionId: 'child-native',
+        } } })).toMatchObject({ tokens: { total: null }, metadata: { usageAccounting: { nativeSessionId: 'child-native' } } });
+    });
     it.each([
         undefined,
         { lastUseAtMs: 0 },
@@ -114,7 +150,7 @@ describe('buildUsageEventIngestRequest', () => {
                 total: 120,
             },
             cost: {
-                reportedUsd: 0,
+                reportedUsd: null,
                 estimatedUsd: 1.25,
                 invoiceUsd: 1.1,
                 billingContext: 'unknown',
@@ -175,7 +211,7 @@ describe('buildUsageEventIngestRequest', () => {
         });
 
         expect(request?.cost).toEqual({
-            reportedUsd: 0,
+            reportedUsd: null,
             estimatedUsd: 0.4,
             billingContext: 'subscription_included',
             costSource: 'pricing_estimate',

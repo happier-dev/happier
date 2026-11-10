@@ -1,6 +1,12 @@
 import { expect, it } from 'vitest';
 import { resolveUsageTokenCategories } from './usageTokenCategories.js';
 
+it('does not treat unmeasured categories as disjoint zeroes', () => {
+  const tokens = { input: 100, output: 20, cacheRead: null, cacheWrite: 0, reasoning: 0, total: null };
+  expect(resolveUsageTokenCategories(tokens, { inputIncludesCache: true })).toBeNull();
+  expect(resolveUsageTokenCategories({ ...tokens, cacheRead: 0 }, { inputIncludesCache: true })).toEqual({ ...tokens, cacheRead: 0 });
+});
+
 it('projects inclusive counters once without changing vendor total', () => {
   const tokens = { input: 100, output: 20, cacheRead: 30, cacheWrite: 0, reasoning: 5, total: 120 };
   expect(resolveUsageTokenCategories(tokens, { inputIncludesCache: true, outputIncludesReasoning: true })).toEqual({ ...tokens, input: 70, output: 15 });

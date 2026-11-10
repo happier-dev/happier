@@ -253,7 +253,7 @@ export async function recordTeamCredentialExternalProviderTerminalUsageInTx(
             tokens: request.tokens,
             cost: request.reportedCostUsd === undefined ? null : {
                 reportedUsd: request.reportedCostUsd,
-                estimatedUsd: 0,
+                estimatedUsd: null,
                 currency: 'USD',
                 costSource: 'provider_reported',
                 billingContext: 'api_usage',

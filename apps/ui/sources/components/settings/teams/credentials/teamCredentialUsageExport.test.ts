@@ -148,7 +148,7 @@ describe('buildTeamCredentialUsageCsv', () => {
                     eventCount: 1,
                     requestCount: 3,
                     tokens: { ...NO_TOKENS, total: 100 },
-                    cost: { ...NO_COST },
+                    cost: { ...NO_COST, reportedUsd: null, estimatedUsd: null },
                 },
                 coverage: {
                     requestAdmissionCount: 3,

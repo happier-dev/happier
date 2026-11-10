@@ -1,6 +1,6 @@
 export { getUsageAnalyticsRankedDimensions, projectUsageAnalyticsCoverage, projectUsageAnalyticsResponseDemand } from './usageAnalyticsDemandProjection.js';
 import type { UsageAnalyticsBreakdownDimension, UsageAnalyticsBreakdownEntry, UsageAnalyticsContribution, UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse, UsageAnalyticsTimelineSource, UsageObservationCost, UsagePricingPopulation } from './usageAnalyticsContracts.js';
-import { aggregateUsageContributionCosts, aggregateUsageCostPartitionsSteps, resolveUsageContributionCosts, addUsageTokens, createEmptyUsageTokens, withEffectiveUsageCost } from './usageAggregation.js';
+import { aggregateUsageContributionCosts, aggregateUsageCostPartitionsSteps, resolveUsageContributionCosts, addUsageTokens, compareUsageMeasurementsDescending, createEmptyUsageTokens, withEffectiveUsageCost } from './usageAggregation.js';
 import { resolveEffectiveUsageCostUsd, resolveUsageContributionDimensionKey, type UsageCostMode } from './usageCostFacts.js';
 
 export type UsageLeaderDimension = Parameters<typeof resolveUsageContributionDimensionKey>[1];
@@ -80,17 +80,18 @@ function prepareUsageLeaderTokenFrontier<T extends UsageLeaderContribution>(rows
         group.value.eventCount += row.eventCount;
         group.value.tokens = addUsageTokens(group.value.tokens, row.tokens);
     }
-    const compare = (left: Group, right: Group) => right.value.tokens.total - left.value.tokens.total;
+    const compare = (left: Group, right: Group) => compareUsageMeasurementsDescending(left.value.tokens.total, right.value.tokens.total);
     const top = selectTop(groups.values(), topLimit, compare);
-    const frontier = top.at(-1)?.value.tokens.total ?? Infinity;
+    const frontier = top.at(-1)?.value.tokens.total;
     // Every frontier tie remains available for later private-price ordering.
-    return { totalEntries: groups.size, candidates: [...groups.values()].filter(group => group.value.tokens.total >= frontier).sort(compare) };
+    return { totalEntries: groups.size, candidates: frontier === undefined ? [] : [...groups.values()]
+        .filter(group => compareUsageMeasurementsDescending(group.value.tokens.total, frontier) <= 0).sort(compare) };
 }
 
 /** Token counts fix the frontier; prices, witnessed counts and key resolve ties. */
 export function compareUsageRankedLeaders(left: UsageRankedLeader, right: UsageRankedLeader, mode: UsageCostMode): number {
-    return right.tokens.total - left.tokens.total
-        || resolveEffectiveUsageCostUsd(right.cost, mode) - resolveEffectiveUsageCostUsd(left.cost, mode)
+    return compareUsageMeasurementsDescending(left.tokens.total, right.tokens.total)
+        || compareUsageMeasurementsDescending(resolveEffectiveUsageCostUsd(left.cost, mode), resolveEffectiveUsageCostUsd(right.cost, mode))
         || right.eventCount - left.eventCount || left.key.localeCompare(right.key);
 }
 

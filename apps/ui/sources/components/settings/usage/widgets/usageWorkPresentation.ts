@@ -1,4 +1,4 @@
-import { addUsageCostForMode, aggregateUsageContributionCosts, createEmptyUsageCost } from '@happier-dev/protocol/usage/usageAggregation';
+import { addUsageCostForMode, addUsageMeasurements, aggregateUsageContributionCosts, createEmptyUsageCost } from '@happier-dev/protocol/usage/usageAggregation';
 import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 import type { RepositoryCheckpointCommitEvidence } from '@happier-dev/protocol/sessions/changes/types';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
@@ -131,21 +131,21 @@ export type UsageWorkSummary = MoneyDisplay & Readonly<{
 const sorted = (values: Iterable<string>) => [...new Set(values)].sort();
 const byAmount = <T extends { amount: number | null }>(left: T, right: T) =>
   (right.amount ?? -1) - (left.amount ?? -1);
-const addAmount = (left: number | null, right: number | null) =>
-  left === null || right === null ? null : left + right;
 type AmountAccumulator = { amount: number | null;
   contributions?: UsageWorkAllocation['contribution'][]; moneyBasis: UsageWorkMoneyBasis | null };
 const newAmount = (): AmountAccumulator => ({ amount: 0, moneyBasis: null });
 function accumulate(target: AmountAccumulator, allocation: Pick<UsageWorkAllocation, 'contribution'>, basis: UsageWorkAmount): void {
-  if (basis.metric !== 'cost') { target.amount = addAmount(target.amount, allocation.contribution.tokens.total); return; }
   (target.contributions ??= []).push(allocation.contribution);
 }
 
 /** Display groups consume complete populations, unlike the Session's witnessed-prefix timeline. */
 function finishAmounts(amounts: Iterable<AmountAccumulator>, basis: UsageWorkAmount): void {
-  if (basis.metric !== 'cost') return;
   for (const target of amounts) {
     if (!target.contributions?.length) continue;
+    if (basis.metric !== 'cost') {
+      target.amount = target.contributions.reduce<number | null>((sum, contribution) => addUsageMeasurements(sum, contribution.tokens.total), null);
+      continue;
+    }
     const cost = aggregateUsageContributionCosts(target.contributions, basis.costBasis);
     const selected = resolveUsageCostBasis(cost, basis.costBasis);
     target.amount = selected?.amountUsd ?? null;
@@ -499,7 +499,7 @@ function groupUsageWorkTurns(
     const selected = basis.metric === 'cost'
       ? resolveUsageCostBasis(aggregateUsageContributionCosts(parts.map(part => contributionOf(part.contributionId)), basis.costBasis), basis.costBasis)
       : null;
-    const amount = basis.metric === 'cost' ? selected?.amountUsd ?? null : parts.reduce<number | null>((sum, part) => addAmount(sum, part.amount), 0);
+    const amount = basis.metric === 'cost' ? selected?.amountUsd ?? null : parts.reduce<number | null>((sum, part) => addUsageMeasurements(sum, part.amount), null);
     if (first.turnId === null && amount === 0) return [];
     const unique = <T,>(values: readonly T[]) => [...new Set(values)];
     const withOutcome = parts.find(part => part.outcome !== null);
@@ -527,7 +527,7 @@ export function summarizeUsageWorkSession(
   const branchByContribution = new Map(work.branchAllocations.map((row) => [row.contribution.id, row]));
   const marks = newMarks();
   const outcomes = new Map<string, UsageWorkOutcome>();
-  let amount: number | null = 0;
+  let amount: number | null = null;
   const contributionRows = work.allocations
     .filter((row) => row.contribution.sessionId === sessionId)
     .map((row): UsageWorkTurnRow => {
@@ -535,7 +535,7 @@ export function summarizeUsageWorkSession(
       const evidence = [...row.evidence, ...(branch?.evidence ?? [])];
       const turnAmount = usageWorkContributionAmount(row, basis);
       const turnBasis = basis.metric === 'cost' ? resolveUsageCostBasis(row.contribution.cost, basis.costBasis) : null;
-      amount = addAmount(amount, turnAmount);
+      amount = addUsageMeasurements(amount, turnAmount);
       witness(marks, row.contribution);
       if (row.outcome) outcomes.set(row.outcome.key, row.outcome);
       return {

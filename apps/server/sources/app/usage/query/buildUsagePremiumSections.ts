@@ -10,6 +10,7 @@ import { resolveUsageCostMode } from "./resolveUsageCostMode";
 import { resolveUsageDayStreaks } from '@happier-dev/protocol/usage/usageActivitySummary';
 import { canonicalUsageModelPriceId } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { projectUsageRecordedActivity } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
+import { addUsageMeasurements, compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
 
 type UsageEventRow = Pick<
     ScopedUsageContribution,
@@ -87,17 +88,14 @@ export function buildUsageActivity(
         eventCount: row.contributingEventIds.length })), resolution, timeZoneOffsetMinutes);
 }
 
-function buildTopKeyedLabel(values: Map<string, number>): { key: string; label: string } | undefined {
+function buildTopKeyedLabel(values: Map<string, number | null>): { key: string; label: string } | undefined {
     if (values.size === 0) {
         return undefined;
     }
 
     return Array.from(values.entries())
         .sort((left, right) => {
-            if (right[1] !== left[1]) {
-                return right[1] - left[1];
-            }
-            return left[0].localeCompare(right[0]);
+            return compareUsageMeasurementsDescending(left[1], right[1]) || left[0].localeCompare(right[0]);
         })
         .map(([key]) => ({ key, label: key }))[0];
 }
@@ -132,10 +130,10 @@ export function buildUsageInsights(
 ): UsageInsights {
     const activeDays = new Set<string>();
     const sessions = new Set<string>();
-    const models = new Map<string, number>();
-    const months = new Map<string, number>();
-    const days = new Map<string, number>();
-    const hours = new Map<string, number>();
+    const models = new Map<string, number | null>();
+    const months = new Map<string, number | null>();
+    const days = new Map<string, number | null>();
+    const hours = new Map<string, number | null>();
     let cacheSavingsUsd = 0;
 
     for (const row of rows) {
@@ -146,13 +144,13 @@ export function buildUsageInsights(
         }
         const modelId = resolveUsageContributionDimensionKey(row, 'model');
         if (modelId) {
-            models.set(modelId, (models.get(modelId) ?? 0) + row.tokens.total);
+            models.set(modelId, addUsageMeasurements(models.get(modelId) ?? null, row.tokens.total));
         }
         const monthKey = getLocalBucketKey(row.observedAt, "month", timeZoneOffsetMinutes);
-        months.set(monthKey, (months.get(monthKey) ?? 0) + row.tokens.total);
-        days.set(dateKey, (days.get(dateKey) ?? 0) + row.tokens.total);
+        months.set(monthKey, addUsageMeasurements(months.get(monthKey) ?? null, row.tokens.total));
+        days.set(dateKey, addUsageMeasurements(days.get(dateKey) ?? null, row.tokens.total));
         const hourKey = getLocalBucketKey(row.observedAt, "hour", timeZoneOffsetMinutes);
-        hours.set(hourKey, (hours.get(hourKey) ?? 0) + row.tokens.total);
+        hours.set(hourKey, addUsageMeasurements(hours.get(hourKey) ?? null, row.tokens.total));
         cacheSavingsUsd += row.cost.breakdown?.cacheSavingsUsd ?? 0;
     }
 

@@ -785,7 +785,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
     });
     expect(events.filter((event) => event.kind === 'usage-observed')).toEqual([
       expect.objectContaining({
-        tokens: { input: 100, output: 20, cacheRead: 40, cacheWrite: 0, reasoning: 5, total: 120 },
+        tokens: { input: 100, output: 20, cacheRead: 40, cacheWrite: null, reasoning: 5, total: 120 },
         accounting: { nativeSessionId: 'native-thread', inputIncludesCache: true, outputIncludesReasoning: true },
       }),
     ]);

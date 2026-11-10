@@ -47,6 +47,42 @@ describe('exact model-mix amounts', () => {
 });
 
 describe('buildUsageAnalyticsViewModel', () => {
+    it('preserves unknown measurements and does not invent cache ratios or category totals', () => {
+        const response: UsageAnalyticsQueryResponse = { v: 1,
+            totals: { eventCount: 1,
+                tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+                cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD' } },
+        };
+        const view = buildUsageAnalyticsViewModel(response, baseState);
+        expect(view.hero.totalTokens).toBeNull();
+        expect(view.overview.tokenBreakdown.input).toBeNull();
+        expect(view.composition.total).toBeNull();
+        expect(view.composition.segments.every(segment => segment.tokens === null)).toBe(true);
+        expect(view.efficiency).toMatchObject({ inputTokens: null, cachedReadTokens: null, cacheHitRatePct: null, costPerMtokUsd: null });
+        expect(view.costPresentation.effectiveUsd).toBeNull();
+    });
+
+    it('retains known weekly amounts beside unknown observations and keeps unknown-only weeks unknown', () => {
+        const start = Date.parse('2026-11-02T00:00:00Z') / 1000;
+        const rows = buildUsageWeeksBreakdown([
+            { timestamp: start, tokens: null, cost: null, reportCount: 1 },
+            { timestamp: start + 86400, tokens: 25, cost: 0, reportCount: 1 },
+            { timestamp: start + 7 * 86400, tokens: null, cost: null, reportCount: 1 },
+            { timestamp: start + 8 * 86400, tokens: null, cost: null, reportCount: 1 },
+        ]);
+        expect(rows.map(row => ({ tokens: row.totalTokens, cost: row.totalCost, count: row.reportCount })))
+            .toEqual([{ tokens: null, cost: null, count: 2 }, { tokens: 25, cost: 0, count: 2 }]);
+    });
+
+    it('retains the measured part of legacy money beside an unpriced observation', () => {
+        const view = buildUsageAnalyticsViewModel([
+            { timestamp: 1_700_000_000, tokens: { total: 10 }, cost: { total: 1 }, reportCount: 1 },
+            { timestamp: 1_700_000_001, tokens: {}, cost: {}, reportCount: 1 },
+        ], baseState);
+        expect(view.hero.totalTokens).toBe(10);
+        expect(view.hero.effectiveUsd).toBe(1);
+    });
+
     it('derives only requested sections from an admitted response and reuses them on later reads', () => {
         const tokens = { input: 10, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 };
         const cost = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' };
@@ -143,10 +179,10 @@ describe('buildUsageAnalyticsViewModel', () => {
             cost: { total: 1 }, reportCount: 1 }], baseState);
         expect(result.overview.totalTokens).toBe(120);
         expect(result.cacheSavings?.cachedReadTokens).toBe(30);
-        expect(result.composition.total).toBe(0);
+        expect(result.composition.total).toBeNull();
     });
     it('does not synthesize a price from a population without one cost basis', () => {
-        expect(resolveDisplayCost({ reportedUsd: 2, estimatedUsd: 3, costSource: 'none', currency: 'USD' })).toBe(0);
+        expect(resolveDisplayCost({ reportedUsd: 2, estimatedUsd: 3, costSource: 'none', currency: 'USD' })).toBeNull();
     });
     it('distinguishes missing legacy prices from explicitly observed zero prices', () => {
         const point: UsageDataPoint = { timestamp: 1_700_000_000, tokens: { total: 120 }, cost: {}, reportCount: 1 };
@@ -163,7 +199,7 @@ describe('buildUsageAnalyticsViewModel', () => {
         expect(result.composition.total).toBe(120);
         expect(result.composition.segments.find((segment) => segment.key === 'input')?.tokens).toBe(70);
         const { tokenCategories: _known, ...unknown } = source;
-        expect(buildUsageAnalyticsViewModel(unknown, baseState).composition.total).toBe(0);
+        expect(buildUsageAnalyticsViewModel(unknown, baseState).composition.total).toBeNull();
         expect(buildUsageAnalyticsViewModel(unknown, baseState).overview.totalTokens).toBe(120);
     });
     it('aggregates explicit totals and groups drilldowns by provider, model, session, project, and workspace', () => {
@@ -205,7 +241,7 @@ describe('buildUsageAnalyticsViewModel', () => {
 
         const viewModel = buildUsageAnalyticsViewModel(usage, baseState);
 
-        expect(viewModel.overview.totalTokens).toBe(165);
+        expect(viewModel.overview.totalTokens).toBe(150);
         expect(viewModel.overview.totalCost).toBeCloseTo(2.05);
         expect(viewModel.overview.reportCount).toBe(4);
         expect(viewModel.overview.activeDays).toBe(3);
@@ -457,10 +493,10 @@ describe('buildUsageAnalyticsViewModel', () => {
 
         const viewModel = buildUsageAnalyticsViewModel(response, baseState);
 
-        expect(viewModel.overview.totalCost).toBe(0);
-        expect(viewModel.trend[0]?.cost).toBe(0);
-        expect(viewModel.breakdowns.agents[0]?.totalCost).toBe(0);
-        expect(viewModel.modelTimeline[0]?.leaders[0]?.totalCost).toBe(0);
+        expect(viewModel.overview.totalCost).toBeNull();
+        expect(viewModel.trend[0]?.cost).toBeNull();
+        expect(viewModel.breakdowns.agents[0]?.totalCost).toBeNull();
+        expect(viewModel.modelTimeline[0]?.leaders[0]?.totalCost).toBeNull();
     });
 
     it('does not treat sparse older 30-day buckets as current-week summary usage', () => {
@@ -719,7 +755,7 @@ describe('buildUsageAnalyticsViewModel', () => {
             totals: {
                 eventCount: 2,
                 tokens: { input: 20, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 30 },
-                cost: { reportedUsd: 0, estimatedUsd: 9, currency: 'USD' },
+                cost: { reportedUsd: null, estimatedUsd: 9, currency: 'USD' },
             },
             breakdowns: {
                 agent: [
@@ -728,7 +764,7 @@ describe('buildUsageAnalyticsViewModel', () => {
                         label: 'OpenAI',
                         eventCount: 2,
                         tokens: { input: 20, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 30 },
-                        cost: { reportedUsd: 0, estimatedUsd: 9, currency: 'USD' },
+                        cost: { reportedUsd: null, estimatedUsd: 9, currency: 'USD' },
                     },
                 ],
             },
@@ -740,8 +776,8 @@ describe('buildUsageAnalyticsViewModel', () => {
             focus: null,
             costMode: 'reported',
         });
-        expect(reported.overview.totalCost).toBe(0);
-        expect(reported.breakdowns.agents[0]?.totalCost).toBe(0);
+        expect(reported.overview.totalCost).toBeNull();
+        expect(reported.breakdowns.agents[0]?.totalCost).toBeNull();
 
         const estimated = buildUsageAnalyticsViewModel(response, {
             period: '7days',

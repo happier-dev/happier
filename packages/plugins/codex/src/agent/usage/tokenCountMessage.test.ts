@@ -4,11 +4,30 @@ import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/ag
 import { buildCodexAppServerTokenCountObservationInput } from './tokenCountMessage.js';
 
 describe('buildCodexAppServerTokenCountObservationInput', () => {
+    it('preserves measured zero while leaving omitted counters and reported billing unknown', () => {
+        const partial = buildCodexAppServerTokenCountObservationInput({
+            modelId: 'gpt-5.4',
+            notificationParams: { tokenUsage: { last: { inputTokens: 0 } } },
+        });
+        expect(partial?.runtimeObservation?.tokens).toEqual({
+            input: 0, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null,
+        });
+        expect(partial?.runtimeObservation?.context).toBeUndefined();
+        expect(partial?.runtimeObservation?.cost).toBeUndefined();
+        const measured = buildCodexAppServerTokenCountObservationInput({
+            modelId: 'gpt-5.4',
+            notificationParams: { tokenUsage: { total: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0,
+                reasoningOutputTokens: 0, cacheWriteInputTokens: 0, totalTokens: 0 } } },
+        });
+        expect(measured?.runtimeObservation?.tokens).toEqual({ input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 });
+        expect(measured?.runtimeObservation?.cost?.reportedUsd).toBeNull();
+        expect(measured?.runtimeObservation?.cost?.estimatedUsd).toBe(0);
+    });
     it.each(['gpt-5.4', 'gpt-6-luna'])('admits priced %s cached usage at the runtime event boundary', modelId => {
         const input = buildCodexAppServerTokenCountObservationInput({ modelId,
             notificationParams: { tokenUsage: { total: {
                 inputTokens: 20_001, cachedInputTokens: 4_480,
-                outputTokens: 18, reasoningOutputTokens: 10, totalTokens: 20_019,
+                outputTokens: 18, reasoningOutputTokens: 10, totalTokens: 20_019, cacheWriteInputTokens: 0,
             } } } });
         const observation = input!.runtimeObservation!;
         expect(observation.cost?.breakdown?.cacheSavingsUsd).toBeGreaterThan(0);
@@ -20,7 +39,8 @@ describe('buildCodexAppServerTokenCountObservationInput', () => {
 
     it('uses the shared catalog for a model absent from the retired Codex table', () => {
         const observation = buildCodexAppServerTokenCountObservationInput({ modelId: 'gpt-4o',
-            notificationParams: { tokenUsage: { total: { inputTokens: 1_000_000, outputTokens: 0 } } } });
+            notificationParams: { tokenUsage: { total: { inputTokens: 1_000_000, outputTokens: 0,
+                cachedInputTokens: 0, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 } } } });
         expect(observation?.runtimeObservation?.cost?.estimatedUsd).toBe(2.5);
     });
     it('normalizes both counter vocabularies without adding inclusive cache or reasoning twice', () => {
@@ -36,7 +56,7 @@ describe('buildCodexAppServerTokenCountObservationInput', () => {
                 outputTokens: 20, reasoningOutputTokens: 5,
             } } },
         });
-        const expected = { input: 100, output: 20, cacheRead: 40, cacheWrite: 0, reasoning: 5, total: 120 };
+        const expected = { input: 100, output: 20, cacheRead: 40, cacheWrite: null, reasoning: 5, total: 120 };
         expect(snake?.runtimeObservation?.tokens).toEqual(expected);
         expect(camel?.runtimeObservation?.tokens).toEqual(expected);
         expect(snake?.runtimeObservation?.accounting).toEqual({ inputIncludesCache: true, outputIncludesReasoning: true });
@@ -88,6 +108,7 @@ describe('buildCodexAppServerTokenCountObservationInput', () => {
                         cachedInputTokens: 4_480,
                         outputTokens: 18,
                         reasoningOutputTokens: 10,
+                        cacheWriteInputTokens: 0,
                     },
                 },
             },
@@ -96,7 +117,7 @@ describe('buildCodexAppServerTokenCountObservationInput', () => {
 
         const cost = input?.runtimeObservation?.cost;
         expect(cost?.estimatedUsd).toBeCloseTo(0.0401925, 8);
-        expect(cost?.reportedUsd).toBe(0);
+        expect(cost?.reportedUsd).toBeNull();
         expect(cost?.costSource).toBe('pricing_estimate');
     });
 
@@ -109,6 +130,8 @@ describe('buildCodexAppServerTokenCountObservationInput', () => {
                         inputTokens: 100,
                         cachedInputTokens: 150,
                         outputTokens: 10,
+                        reasoningOutputTokens: 0,
+                        cacheWriteInputTokens: 0,
                     },
                 },
             },
@@ -129,6 +152,7 @@ describe('buildCodexAppServerTokenCountObservationInput', () => {
                         cached_input_tokens: 100_000,
                         output_tokens: 2_000_000,
                         reasoning_output_tokens: 250_000,
+                        cache_write_input_tokens: 0,
                     },
                     model_context_window: 258_400,
                 },

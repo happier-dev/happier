@@ -1,4 +1,5 @@
 import type { UsageEventIngestRequest, UsageNativeAccountingSubject, UsageNativeAccountingEvidence, UsageRequestAttribution } from '@happier-dev/protocol';
+import { readUsageAccountingMetadata } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 import {
     normalizeUsageObservation,
@@ -21,12 +22,12 @@ function inferIsCumulative(scope: UsageObservationScope): boolean {
 
 function resolveUsageTokens(observation: UsageObservation): UsageEventIngestRequest['tokens'] {
     return observation.tokens ?? {
-        input: 0,
-        output: 0,
-        reasoning: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        total: 0,
+        input: null,
+        output: null,
+        reasoning: null,
+        cacheRead: null,
+        cacheWrite: null,
+        total: null,
     };
 }
 
@@ -37,8 +38,8 @@ function resolveUsageCost(observation: UsageObservation): UsageEventIngestReques
               breakdown: observation.cost.breakdown ?? {},
           }
         : {
-              reportedUsd: 0,
-              estimatedUsd: 0,
+              reportedUsd: null,
+              estimatedUsd: null,
               currency: 'USD',
               breakdown: {},
           };
@@ -50,9 +51,10 @@ function hasUsageData(request: Readonly<{
     context: UsageEventIngestRequest['context'];
 }>): boolean {
     return (
-        request.tokens.total > 0 ||
-        request.cost.reportedUsd > 0 ||
-        request.cost.estimatedUsd > 0 ||
+        Object.values(request.tokens).some(value => value != null) ||
+        request.cost.reportedUsd != null ||
+        request.cost.estimatedUsd != null ||
+        request.cost.invoiceUsd != null ||
         request.context?.usedTokens != null ||
         request.context?.windowTokens != null
     );
@@ -96,7 +98,8 @@ export function buildUsageEventIngestRequest(params: Readonly<{
               }
             : undefined;
 
-    if (!hasUsageData({ tokens, cost, context })) {
+    if (!hasUsageData({ tokens, cost, context }) && !params.subject
+        && !readUsageAccountingMetadata(params.metadata)?.nativeSessionId) {
         return null;
     }
 

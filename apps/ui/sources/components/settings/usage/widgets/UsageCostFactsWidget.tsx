@@ -54,8 +54,8 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
   useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
   const facts = KIND_ORDER.flatMap((kind) => (props.slice.costFactTotals ?? []).filter((fact) => fact.kind === kind &&
       (fact.kind === 'unpriced'
-        ? fact.tokens.total > 0
-        : fact.eventCount > 0 || (fact.amountUsd ?? 0) > 0)
+        ? fact.eventCount > 0 || fact.tokens.total !== null && fact.tokens.total > 0
+        : fact.eventCount > 0 || fact.amountUsd !== null && fact.amountUsd > 0)
   ));
   // One qualifier, said once: when every fact is partial the band says so once, not under each figure (R9).
   const partialOnce = facts.length > 1 && facts.every((fact) => !fact.complete);
@@ -80,7 +80,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
     <View style={styles.body} testID={`${props.testID}.costFacts`}>
       <View style={styles.grid}>
         {facts.map((fact) => {
-          const exactTokens = formatHappierDataValue(fact.tokens.total, getPreferredLanguage());
+          const exactTokens = fact.tokens.total === null ? '—' : formatHappierDataValue(fact.tokens.total, getPreferredLanguage());
           const exactAmount = fact.amountUsd === null ? null : formatHappierDataValue(fact.amountUsd, getPreferredLanguage());
           const hiddenPrecision = !formatTokenCount(fact.tokens.total).includes(exactTokens)
             || exactAmount !== null && !formatUsageCost(fact.amountUsd!, fact.currency).includes(exactAmount);
@@ -90,7 +90,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
               size="stat"
               showLabel
               label={t(KIND_TITLE[fact.kind])}
-              value={fact.amountUsd ?? fact.tokens.total}
+              value={fact.amountUsd ?? fact.tokens.total ?? '—'}
               {...(fact.amountUsd === null
                 ? { unit: t('usage.board.page.tokensUnit') }
                 : {})}

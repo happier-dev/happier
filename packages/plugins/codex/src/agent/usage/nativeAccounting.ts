@@ -48,7 +48,7 @@ export async function readCodexNativeAccounting(request: AgentExternalSessionsRe
         ...(state.parentSessionId ? { parentNativeSessionId: state.parentSessionId } : {}),
         observation: { provider: 'codex', source: CODEX_NATIVE_ACCOUNTING_SOURCE, scope,
           key: inferenceId ?? `${createHash('sha256').update(filePath).digest('base64url')}:${recordOffsetBytes}:${createHash('sha256').update(JSON.stringify(record)).digest('base64url')}`, modelId, tokens,
-          cost: estimate ? { reportedUsd: 0, estimatedUsd: estimate.estimatedUsd, currency: 'USD', billingContext: 'unknown', costSource: 'pricing_estimate',
+          cost: estimate ? { reportedUsd: null, estimatedUsd: estimate.estimatedUsd, currency: 'USD', billingContext: 'unknown', costSource: 'pricing_estimate',
             ...(estimate.breakdown ? { breakdown: estimate.breakdown } : {}) } : null,
           contextUsedTokens: null, contextWindowTokens: null } };
       return { state, observations: [observation], ...(!inferenceId || !modelId ? { incomplete: true } : {}) };

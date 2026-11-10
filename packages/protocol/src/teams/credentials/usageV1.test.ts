@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildTeamCredentialUsageCsv } from './usageExportV1.js';
 
 import {
   TeamCredentialUsageCapabilitiesV1Schema,
@@ -129,6 +130,22 @@ describe('Team credential usage-limit paging contracts', () => {
 });
 
 describe('Team credential usage coverage contract', () => {
+  it('exports unknown measurements as blank cells and measured zero even with partial coverage', () => {
+    const tokens = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+    const cost = { reportedUsd: null, estimatedUsd: null, currency: 'USD', costSource: 'none' as const };
+    const result = TeamCredentialUsageQueryResultV1Schema.parse({ v: 1,
+      totals: { eventCount: 1, requestCount: 0, tokens, cost }, series: [], nextCursor: null, limits: [],
+      breakdown: [{ key: 'measured', totals: { eventCount: 1, requestCount: 0, tokens: { ...tokens, total: 0 },
+        cost: { ...cost, reportedUsd: 0, costSource: 'provider_reported' } } }],
+      coverage: { requestAdmissionCount: 0, agentObservationCount: 1, externalTerminalObservationCount: 0,
+        directRecordedUseOnly: false, requestCountCoverage: 'complete', tokenCoverage: 'partial', costCoverage: 'partial', unobservedExternalRequestCount: 0 } });
+    const lines = buildTeamCredentialUsageCsv({ resourceName: 'Shared provider', result, startMs: 0, endMs: 1000,
+      breakdown: 'member', breakdownComplete: true, costMode: 'auto' }).trim().split('\n').map(line => line.split(','));
+    const fields = ['tokens', 'cost', 'reported_cost', 'estimated_cost'];
+    const cells = (row: number) => fields.map(field => lines[row]![lines[0]!.indexOf(field)]);
+    expect(cells(1)).toEqual(['', '', '', '']);
+    expect(cells(2)).toEqual(['0', '0', '0', '']);
+  });
   it('requires independent completeness and disjoint observation counters', () => {
     const result = {
       v: 1,

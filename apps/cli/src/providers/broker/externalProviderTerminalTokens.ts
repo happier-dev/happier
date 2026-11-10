@@ -72,10 +72,10 @@ function anthropicTokens(usage: JsonObject): UsageObservationTokens | null {
     return Object.freeze({
         input,
         output,
-        reasoning: 0,
-        cacheRead: cacheRead ?? 0,
-        cacheWrite: cacheWrite ?? 0,
-        total: input + output + (cacheRead ?? 0) + (cacheWrite ?? 0),
+        reasoning: null,
+        cacheRead,
+        cacheWrite,
+        total: cacheRead === null || cacheWrite === null ? null : input + output + cacheRead + cacheWrite,
     });
 }
 
@@ -103,9 +103,9 @@ function openAiTokens(
     return Object.freeze({
         input,
         output,
-        reasoning: reasoning ?? 0,
-        cacheRead: cacheRead ?? 0,
-        cacheWrite: 0,
+        reasoning,
+        cacheRead,
+        cacheWrite: null,
         total,
     });
 }
@@ -245,8 +245,10 @@ export function createExternalProviderTerminalTokenReader(input: Readonly<{
                     tokens = Object.freeze({
                         ...anthropicInitialTokens,
                         output: anthropicFinalOutput,
-                        total: anthropicInitialTokens.input + anthropicFinalOutput
-                            + anthropicInitialTokens.cacheRead + anthropicInitialTokens.cacheWrite,
+                        total: anthropicInitialTokens.input === null || anthropicInitialTokens.cacheRead === null
+                            || anthropicInitialTokens.cacheWrite === null ? null
+                            : anthropicInitialTokens.input + anthropicFinalOutput
+                                + anthropicInitialTokens.cacheRead + anthropicInitialTokens.cacheWrite,
                     });
                 }
             } else {

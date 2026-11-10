@@ -276,7 +276,7 @@ const UsageModelPriceRow = React.memo(function UsageModelPriceRow(
           {...state.headerProps}
           testID={`${props.testID}.set`}
           title={usageDimensionLabel('model', modelId)}
-          subtitle={price === null && unpricedTokens > 0 ? `${source} · ${formatTokenCount(unpricedTokens)}` : source}
+          subtitle={price === null && (unpricedTokens === null || unpricedTokens > 0) ? `${source} · ${formatTokenCount(unpricedTokens)}` : source}
           {...(price === null ? { subtitleLeading: <View style={collectionListStyles.troubleDot} /> } : {})}
           {...(price ? { detail: t('usage.board.page.priceRates', {
             input: formatUsageCost(price.rates.inputUsdPerMillion, 'USD'),

@@ -99,13 +99,17 @@ function selectionMode(selection: UsagePageCostSelection): UsageCostMode {
   return selection.mode ?? (selection.kind === 'invoice' || selection.kind === 'mixed' ? 'auto' : selection.kind);
 }
 
-export function resolveUsageCostBasisForSelection(cost: UsageObservationCost, selection: UsagePageCostSelection | null): UsageSelectedCostBasis | null {
+function readUsageCostBasisForSelection(cost: UsageObservationCost, selection: UsagePageCostSelection | null): UsageSelectedCostBasis | null {
   if (!selection) return null;
   const fact = selection.mode === 'auto' || selection.kind === 'mixed' ? resolveUsageCostBasis(cost, 'auto')
     : selection.kind === 'invoice' ? resolveUsageCostFacts(cost).find(fact => fact.kind === 'invoice')
     : resolveUsageCostBasis(cost, selectionMode(selection));
-  return fact && (selection.mode === 'auto' || selection.kind === 'mixed' || fact.kind === selection.kind)
-    && fact.currency === selection.currency ? fact : null;
+  return fact && (selection.mode === 'auto' || selection.kind === 'mixed' || fact.kind === selection.kind) ? fact : null;
+}
+
+export function resolveUsageCostBasisForSelection(cost: UsageObservationCost, selection: UsagePageCostSelection | null): UsageSelectedCostBasis | null {
+  const fact = readUsageCostBasisForSelection(cost, selection);
+  return fact && fact.currency === selection?.currency ? fact : null;
 }
 
 export function resolveUsageCostForSelection(cost: UsageObservationCost, selection: UsagePageCostSelection | null): number | null {
@@ -166,8 +170,8 @@ export function projectUsagePageCost(response: UsageAnalyticsQueryResponse, mode
     && fact.amountUsd !== null && (mode === 'auto' || fact.kind === mode)) : undefined;
   const selection = selected === undefined ? resolveUsagePageCostSelection(costs, mode)
     ?? (availableFact ? { kind: mode === 'auto' ? 'mixed' as const : mode, currency: availableFact.currency, mode } : null) : selected;
-  const amounts = costs.map(cost => resolveUsageCostBasisForSelection(cost, selection));
-  const amountUsd = selection && amounts.length > 0 && amounts.every(amount => amount !== null)
+  const amounts = costs.flatMap(cost => { const amount = readUsageCostBasisForSelection(cost, selection); return amount ? [amount] : []; });
+  const amountUsd = selection && amounts.length > 0 && amounts.every(amount => amount.currency === selection.currency)
     ? usageMoneyToNumber(amounts.reduce((sum, amount) => addUsageMoney(sum,
       readUsageMoney(amount!, 'amountUsd', amount!.amountUsd)), usageMoneyFromNumber(0))) : null;
   if (!rows || !selection) return retain({ selection, amountUsd, accounting: response });
@@ -177,7 +181,7 @@ export function projectUsagePageCost(response: UsageAnalyticsQueryResponse, mode
       .filter(cost => !(cost as AggregatedUsageCost)[usageCostAggregationBasis]?.covered);
     const amounts = selectedCosts.map(cost => resolveUsageCostForSelection(cost, selection));
     const { effectiveUsd: _old, selectedBasis: _selectedBasis, ...original } = raw;
-    if (selectedCosts.length === 0 || amounts.some(amount => amount === null)) {
+    if (selectedCosts.length === 0 || amounts.every(amount => amount === null)) {
       const unavailable: AggregatedUsageCost = { ...original, costSource: 'none',
         [usageCostAggregationBasis]: { mode: selectedMode, available: false } };
       return unavailable;
@@ -197,16 +201,22 @@ function readUsageCostFact(cost: UsageObservationCost, kind: UsageCostBasis['kin
   let source: string;
   let field: string;
   if (kind === 'reported') {
-    amountUsd = cost.reportedUsd;
+    const value = cost.reportedUsd;
+    if (value === null) return undefined;
+    amountUsd = value;
     if (!(amountUsd > 0 || cost.costSource === 'provider_reported' || cost.costSource === 'provider_reported_api_equivalent')) return undefined;
     source = cost.costSource === 'provider_reported_api_equivalent' ? 'provider_reported_api_equivalent' : 'provider_reported';
     field = 'reportedUsd';
   } else if (kind === 'estimated') {
-    amountUsd = cost.estimatedUsd;
+    const value = cost.estimatedUsd;
+    if (value === null) return undefined;
+    amountUsd = value;
     if (!(amountUsd > 0 || cost.costSource === 'pricing_estimate')) return undefined;
     source = 'pricing_estimate'; field = 'estimatedUsd';
   } else if (kind === 'invoice') {
-    amountUsd = cost.invoiceUsd ?? 0;
+    const value = cost.invoiceUsd;
+    if (value == null) return undefined;
+    amountUsd = value;
     if (!(amountUsd > 0 || cost.costSource === 'invoice')) return undefined;
     source = 'invoice'; field = 'invoiceUsd';
   } else {
@@ -253,9 +263,9 @@ export function serializeUsageCostBasis(cost: UsageObservationCost, mode: UsageC
     : { ...observed, selectedBasis: { mode, value: null } };
 }
 
-/** Legacy numeric adapter; absence is represented by the result's omitted presentation. */
-export function resolveEffectiveUsageCostUsd(cost: UsageObservationCost, mode: UsageCostMode): number {
-  return resolveUsageCostBasis(cost, mode)?.amountUsd ?? 0;
+/** Numeric presentation preserves an unmeasured selected basis. */
+export function resolveEffectiveUsageCostUsd(cost: UsageObservationCost, mode: UsageCostMode): number | null {
+  return resolveUsageCostBasis(cost, mode)?.amountUsd ?? null;
 }
 
 export function resolveUsageCostPresentationSource(cost: UsageObservationCost, mode: UsageCostMode): string {

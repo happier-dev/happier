@@ -138,17 +138,14 @@ function normalizeTokensMap(raw: unknown): UsageNumberMap | null {
     if (!anyPresent) return null;
 
     const canonical = {
-        input: input ?? 0,
-        output: output ?? 0,
-        reasoning: reasoning ?? 0,
-        cacheRead: cacheRead ?? 0,
-        cacheWrite: cacheWrite ?? 0,
-        total: totalExplicit ??
-            (input ?? 0) +
-            (output ?? 0) +
-            (reasoning ?? 0) +
-            (cacheRead ?? 0) +
-            (cacheWrite ?? 0),
+        input,
+        output,
+        reasoning,
+        cacheRead,
+        cacheWrite,
+        // Provider counters can overlap (cache/input and reasoning/output).
+        // Only the provider's explicit total establishes a counted total.
+        total: totalExplicit,
     } satisfies UsageObservationTokens;
     return canonical;
 }
@@ -219,7 +216,7 @@ function normalizeCostMap(raw: unknown, source: string): UsageCostMap | null {
     const direct = asFiniteNonNegativeNumber(raw);
     if (direct != null) {
         return {
-            reportedUsd: 0,
+            reportedUsd: null,
             estimatedUsd: direct,
             currency: 'USD',
         };
@@ -234,23 +231,20 @@ function normalizeCostMap(raw: unknown, source: string): UsageCostMap | null {
         asFiniteNonNegativeNumber(record.reported);
     const reportedUsd =
         reportedUsdExplicit ??
-        (source === 'claude-sdk-result' ? total : null) ??
-        0;
+        (source === 'claude-sdk-result' ? total : null);
     const estimatedUsd =
         asFiniteNonNegativeNumber(record.estimatedUsd) ??
         asFiniteNonNegativeNumber(record.estimated_usd) ??
         asFiniteNonNegativeNumber(record.estimated) ??
-        (reportedUsd > 0 ? 0 : total) ??
-        0;
+        (reportedUsd != null ? null : total);
     const invoiceUsd = asFiniteNonNegativeNumber(record.invoiceUsd);
     const effectiveUsd = asFiniteNonNegativeNumber(record.effectiveUsd);
     const billingContext = asUsageBillingContext(record.billingContext);
     const costSource = asUsageCostSource(record.costSource);
     const breakdown = normalizeCostBreakdown(record);
     const hasCostData =
-        reportedUsdExplicit != null ||
-        reportedUsd > 0 ||
-        estimatedUsd > 0 ||
+        reportedUsd != null ||
+        estimatedUsd != null ||
         invoiceUsd != null ||
         effectiveUsd != null ||
         billingContext != null ||
@@ -282,6 +276,8 @@ export function extractUsageObservationFromTokenCountMessage(params: Readonly<{
     body: unknown;
     defaultSource?: string;
     defaultScope?: UsageObservationScope;
+    /** Typed observations may describe known accounting identity without measurements. */
+    allowUnknownMeasurements?: boolean;
 }>): UsageObservation | null {
     const record = asRecord(params.body);
     if (!record) return null;
@@ -322,7 +318,7 @@ export function extractUsageObservationFromTokenCountMessage(params: Readonly<{
     const contextSnapshot = parsedContextSnapshot.success ? parsedContextSnapshot.data : null;
     const parsedPromptCache = record.promptCache === undefined ? null : UsagePromptCacheSchema.safeParse(record.promptCache);
     const hasData = tokens != null || cost != null || contextUsedTokens != null || contextWindowTokens != null;
-    if (!hasData) return null;
+    if (!hasData && !params.allowUnknownMeasurements) return null;
 
     return {
         provider: params.provider,
@@ -352,6 +348,7 @@ export function normalizeUsageObservation(
         body: input,
         defaultSource: input.source,
         defaultScope: input.scope,
+        allowUnknownMeasurements: true,
     });
     if (!normalized) return null;
     const availability = asRecord(asRecord(input)?.availability);

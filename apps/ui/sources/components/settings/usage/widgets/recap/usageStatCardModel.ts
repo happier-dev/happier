@@ -2,6 +2,7 @@ import type {
   UsageRecapComposeResult,
   UsageRecapField,
 } from '@happier-dev/protocol/usage/usageRecap';
+import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
 import { t } from '@/text';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 import { formatUsageCalendarPeriod } from '@/sync/domains/usage/usageCalendarPresentation';
@@ -108,14 +109,14 @@ function mixGroup(
   rows: NonNullable<UsageRecapComposed['facts']['agentMix']>,
   named: boolean,
 ): UsageStatCardMixGroup {
-  const totalTokens = rows.reduce((sum, row) => sum + row.tokens, 0);
+  const totalTokens = rows.reduce<number | null>((sum, row) => addUsageMeasurements(sum, row.tokens), rows.length === 0 ? 0 : null);
   return {
     kind,
     totalTokens,
-    rows: totalTokens <= 0
+    rows: totalTokens === null || totalTokens <= 0
       ? []
       : rows
-          .filter((row) => row.tokens > 0)
+          .filter((row): row is typeof row & { tokens: number } => row.tokens !== null && row.tokens > 0)
           .sort((a, b) => b.tokens - a.tokens)
           .map((row, index) => ({
             id: `${kind}-${index}`,
@@ -193,7 +194,7 @@ export function buildUsageStatCardModel(
     stats.push({ id: 'cacheReadTokens', value: formatTokenCount(facts.cache.readTokens), label: t('usage.tokenMix.cacheRead') });
     stats.push({ id: 'cacheWriteTokens', value: formatTokenCount(facts.cache.writeTokens), label: t('usage.tokenMix.cacheWrite') });
   }
-  if (facts.cache && facts.tokens && facts.tokens.total > 0) {
+  if (facts.cache && facts.cache.readTokens !== null && facts.tokens && facts.tokens.total !== null && facts.tokens.total > 0) {
     stats.push({
       id: 'cacheShare',
       value: `${Math.round((facts.cache.readTokens / facts.tokens.total) * 100)}%`,

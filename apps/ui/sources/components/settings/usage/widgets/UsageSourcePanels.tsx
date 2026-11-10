@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { HappierDataMetric, UsageSourceCoverageBody } from '@happier-dev/plugin-ui/presentation';
 import type { UsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { t } from '@/text';
@@ -69,7 +70,7 @@ export function UsageUnpricedWidget(props: UsageBodyProps) {
   useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
   if (!props.slice.accounting) return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
   const facts = props.slice.costFactTotals?.filter(fact => fact.kind === 'unpriced');
-  const total = facts?.reduce((sum, fact) => sum + fact.tokens.total, 0);
+  const total = facts?.reduce<number | null>((sum, fact) => addUsageMeasurements(sum, fact.tokens.total), facts.length === 0 ? 0 : null);
   return <View testID={`${props.testID}.facts`}>
     <HappierDataMetric theme={theme} testID={`${props.testID}.tokens`} size="stat" showLabel
       label={t('usage.board.sources.unpricedPurpose')} value={total ?? '—'} unit={t('usage.board.page.tokensUnit')}

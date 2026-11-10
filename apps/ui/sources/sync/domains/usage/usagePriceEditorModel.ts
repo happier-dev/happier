@@ -2,6 +2,7 @@ import { bundledUsageModelPriceCatalog, canonicalUsageModelPriceId, readUsageMod
     type ResolvedUsageModelPrice, type UsageModelPriceCatalog, type UsageModelPriceOverridesV1 } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { estimateUsageModelCost } from '@happier-dev/protocol/usage/usageCost';
 import { resolveUsageTokenCategories } from '@happier-dev/protocol/usage/usageTokenCategories';
+import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
 export interface UsagePriceEditorRow {
@@ -9,7 +10,7 @@ export interface UsagePriceEditorRow {
     override: UsageModelPriceOverridesV1[string] | null;
     catalogPrice: UsageModelPriceCatalog['models'][string] | null;
     effectivePrice: ResolvedUsageModelPrice | null;
-    unpricedTokens: number;
+    unpricedTokens: number | null;
 }
 
 export interface UsagePriceEditorModel {
@@ -26,18 +27,20 @@ export function buildUsagePriceEditorModel(slice: UsageQueryResultSlice, overrid
     const modelIds = new Set<string | null>([...(contributions ?? groups).map(row => row.modelId),
         ...(slice.accounting?.breakdowns?.model ?? []).map(row => row.key === 'unknown' ? null : row.key), ...Object.keys(overrides)]
         .map(id => canonicalUsageModelPriceId(id)));
-    const rows = [...modelIds].sort((left, right) => (left ?? '').localeCompare(right ?? '')).map(modelId => ({
+    const rows = [...modelIds].sort((left, right) => (left ?? '').localeCompare(right ?? '')).map(modelId => {
+        const unpriced = contributions !== undefined
+            ? contributions.filter(row => canonicalUsageModelPriceId(row.modelId) === modelId
+                && !estimateUsageModelCost(row.modelId, row.tokenCategories ?? resolveUsageTokenCategories(row.tokens, null), catalog, overrides))
+            : groups.filter(group => canonicalUsageModelPriceId(group.modelId) === modelId
+                && !estimateUsageModelCost(group.modelId, group.categories, catalog, overrides));
+        return {
         modelId,
         override: readUsageModelPriceOverride(modelId, overrides),
         catalogPrice: resolveUsageModelPrice(modelId, catalog)?.rates ?? null,
         effectivePrice: resolveUsageModelPrice(modelId, catalog, overrides),
-        unpricedTokens: contributions !== undefined
-            ? contributions.reduce((sum, row) => sum + (canonicalUsageModelPriceId(row.modelId) === modelId && row.tokens.total > 0
-                && !estimateUsageModelCost(row.modelId, row.tokenCategories ?? resolveUsageTokenCategories(row.tokens, null), catalog, overrides)
-                ? row.tokens.total : 0), 0)
-            : groups.reduce((sum, group) => sum + (canonicalUsageModelPriceId(group.modelId) === modelId && group.tokens.total > 0
-                && !estimateUsageModelCost(group.modelId, group.categories, catalog, overrides) ? group.tokens.total : 0), 0),
-    }));
+        unpricedTokens: unpriced.reduce<number | null>((sum, row) => addUsageMeasurements(sum, row.tokens.total), unpriced.length === 0 ? 0 : null),
+        };
+    });
     return { provenance: catalog.provenance, rows,
         mappingTargets: [...new Set([...Object.keys(catalog.models), ...Object.keys(overrides)]
             .map(id => canonicalUsageModelPriceId(id)!))].sort() };

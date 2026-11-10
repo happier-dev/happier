@@ -74,14 +74,14 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
     return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
   }
   const { composition } = view;
-  const totalTokens = props.slice.accounting?.totals.tokens.total ?? 0;
+  const totalTokens = props.slice.accounting?.totals.tokens.total ?? null;
   const efficiency = { ...view.efficiency,
-    costPerMtokUsd: totalTokens > 0 && view.pageCost.amountUsd !== null
+    costPerMtokUsd: totalTokens !== null && totalTokens > 0 && view.pageCost.amountUsd !== null
       ? view.pageCost.amountUsd / totalTokens * 1e6 : null,
     currency: view.pageCost.selection?.currency ?? 'USD' };
   const previous = props.slice.comparison?.accounting;
   const previousPerMtok =
-    previous && previous.totals.tokens.total > 0 && previousCost !== null
+    previous && previous.totals.tokens.total !== null && previous.totals.tokens.total > 0 && previousCost !== null
       ? (previousCost /
           previous.totals.tokens.total) *
         1e6
@@ -112,12 +112,12 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
       : t('usage.board.page.cacheReadTokens', { tokens: formatTokenCount(efficiency.cachedReadTokens) });
   const exactCacheRate = efficiency.cacheHitRatePct === null ? null : formatHappierDataExactShare(efficiency.cacheHitRatePct / 100, getPreferredLanguage());
   const exactCacheBasis = view.cacheSavings?.cacheSavingsUsd != null
-    ? `USD ${formatHappierDataValue(view.cacheSavings.cacheSavingsUsd, getPreferredLanguage())}` : `${formatHappierDataValue(efficiency.cachedReadTokens, getPreferredLanguage())} ${t('usage.board.page.tokensUnit')}`;
+    ? `USD ${formatHappierDataValue(view.cacheSavings.cacheSavingsUsd, getPreferredLanguage())}` : `${formatTokenCountLong(efficiency.cachedReadTokens)} ${t('usage.board.page.tokensUnit')}`;
   const cacheFigure = <HappierDataMetric testID={`${props.testID}.cacheHit`} theme={chartTheme} size="stat" showLabel
     label={t('usage.board.page.cacheHit')} value={efficiency.cacheHitRatePct ?? UNKNOWN_VALUE}
     valueFormatter={value => `${Math.round(value)}%`} caption={cacheCaption} />;
   const cacheHidden = exactCacheRate !== null && (`${Math.round(efficiency.cacheHitRatePct!)}%` !== exactCacheRate
-    || !cacheCaption.includes(formatHappierDataValue(view.cacheSavings?.cacheSavingsUsd ?? efficiency.cachedReadTokens, getPreferredLanguage())));
+    || !cacheCaption.includes(formatHappierDataValue(view.cacheSavings?.cacheSavingsUsd ?? efficiency.cachedReadTokens!, getPreferredLanguage())));
   return (
     <View style={styles.body} testID={`${props.testID}.efficiency`}>
       {/* The lab's four figures keep their slots: an unknown is a quiet dash with its reason beneath. */}

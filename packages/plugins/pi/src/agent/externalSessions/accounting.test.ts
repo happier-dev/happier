@@ -26,6 +26,26 @@ async function setup() {
   return { file, contribution, request };
 }
 describe('Pi source accounting through the external-session contribution', () => {
+  it('keeps failed-request zero placeholders unknown while preserving successful zero and partial paid failures', async () => {
+    const { file, contribution, request } = await setup();
+    const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { total: 0 } };
+    for (const [id, stopReason, usage] of [
+      ['failed-placeholder', 'error', zero], ['aborted-placeholder', 'aborted', zero],
+      ['measured-zero', 'stop', zero], ['partial-failure', 'error', { ...zero, input: 12, totalTokens: 12 }],
+    ] as const) {
+      const entry = message(id, null, 0);
+      await appendFile(file, line({ ...entry, message: { ...entry.message, usage, stopReason } }));
+    }
+    const result = await contribution.readAccounting?.(request);
+    if (!result?.ok || result.value.outcome !== 'advanced') throw new Error('Accounting capture failed');
+    const observations = result.value.observations;
+    const observed = (id: string) => observations.find(row => row.inferenceId === id)?.observation;
+    for (const id of ['failed-placeholder', 'aborted-placeholder']) expect(observed(id)).toMatchObject({
+      tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null }, cost: null,
+    });
+    expect(observed('measured-zero')).toMatchObject({ tokens: { input: 0, total: 0 }, cost: { estimatedUsd: 0, reportedUsd: null } });
+    expect(observed('partial-failure')).toMatchObject({ tokens: { input: 12, total: 12 }, cost: { estimatedUsd: 0 } });
+  });
   it('preserves an already witnessed child append frontier after parent cleanup', async () => {
     const { file, contribution, request } = await setup();
     const child = join(file, '..', 'child.jsonl');

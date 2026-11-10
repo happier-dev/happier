@@ -46,6 +46,17 @@ unavailable result rather than silently dropping behavior.
 `dispose` is idempotent and releases only Agent-owned session resources. It
 does not delete host session state, queued input, or transcript state.
 
+## Usage measurements (0.3 development)
+
+The SDK's `usage-observed` payload comes from the shared
+`@happier-dev/protocol/runtime/agentUsageObservedPayloadV1` contract, also used by
+finite Runs. Report a child Session's own witnessed `accounting.nativeSessionId`
+even when its counted prompt or total is unavailable. Omit unavailable token or
+cost objects; within a supplied object, use `null` for unavailable numeric fields.
+Keep measured zero as `0`. Raw input, output and cache counts do not establish a
+counted total, and absent counter semantics remain absent. Usage retains the
+source identity and presents incomplete measurements through accounting coverage.
+
 ## Idle compaction (0.3 development)
 
 Declare `sessions.compaction.idle.mode: 'host'` when the runtime implements

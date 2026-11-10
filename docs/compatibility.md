@@ -1,5 +1,24 @@
 # Compatibility and version skew
 
+## Database copy and reference components (unreleased 0.3)
+
+The public restore input's optional `copy` identifies a source Environment/Link
+and a destination service/database. Ordinary recovery omits it and keeps its
+same-Environment contract. The installed source member consumes the existing
+source grant through `copySourceRead`; no credential transfer format is added.
+
+An Environment variable reference can optionally select `component: 'host'` or
+`'port'`. Existing references without that field still resolve to the complete
+endpoint. This changes the closed development binding shape: matching Home,
+CLI and UI readers must reload together, and older strict development readers
+reject the new selector. There is no new envelope, grant kind or wire epoch.
+
+The existing Environment content update can carry a reviewed binding patch
+alongside its definition. The client prepares ordinary Saved Secret grants and
+the server stores the combined content and grants under the same revision
+compare-and-swap. Matching development readers reload together for this closed
+patch shape; separate ordinary binding updates retain their existing contract.
+
 ## Voice ending presentation (unreleased 0.3)
 
 The existing local Voice teardown projects `ending` through the closed read-only
@@ -6178,6 +6197,13 @@ deadlines; they are not a second scheduling authority. The owners are
 `apps/server/sources/app/automations/`.
 
 ### Workflow Session input admission (development)
+
+Development Action field bindings support a flat `object` of existing value
+references alongside `list`. The preview caller uses this to combine the saved
+credential principal with a branch Action's returned native identity for the
+existing target-link writer. Protocol validation, materialization, daemon
+resolution and editor readers change together; reload these development
+consumers together. This adds no predecessor migration or result-capture store.
 
 Workflow collaboration patterns and the public plugin-ui Run band are unreleased
 0.3 source contracts. The Run band's React props are in-process presentation,

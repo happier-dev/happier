@@ -450,7 +450,7 @@ function toUsageEventCreateInput(
         totalTokens: request.tokens.total,
         reportedCostUsd: request.cost.reportedUsd,
         estimatedCostUsd: request.cost.estimatedUsd,
-        invoiceCostUsd: request.cost.invoiceUsd ?? 0,
+        invoiceCostUsd: request.cost.invoiceUsd ?? null,
         billingContext: request.cost.billingContext ?? null,
         costSource: request.cost.costSource ?? null,
         currency: request.cost.currency,
@@ -626,7 +626,8 @@ function buildLegacyDeltaRequest(
 
     const nextCost = normalizeLegacyUsageCost(params.nextUsage.cost);
     const previousCost = normalizeLegacyUsageCost(params.previousUsage?.cost ?? {});
-    const treatAsReset = nextTokens.total < previousTokens.total || nextCost.reportedUsd < previousCost.reportedUsd;
+    const treatAsReset = (nextTokens.total !== null && previousTokens.total !== null && nextTokens.total < previousTokens.total)
+        || (nextCost.reportedUsd !== null && previousCost.reportedUsd !== null && nextCost.reportedUsd < previousCost.reportedUsd);
     const deltaTokens = treatAsReset ? nextTokens : subtractUsageTokens(nextTokens, previousTokens);
     const deltaCost = treatAsReset ? nextCost : subtractUsageCost(nextCost, previousCost);
 
@@ -658,24 +659,17 @@ function buildLegacyDeltaRequest(
     };
 }
 
+function knownUsageMeasurements(values: Readonly<Record<string, number | null | undefined>>): Record<string, number> {
+    return Object.fromEntries(Object.entries(values).filter((entry): entry is [string, number] => typeof entry[1] === 'number'));
+}
+
 function toLegacyUsageEphemeralTokens(tokens: UsageObservationTokens): Record<string, number> {
-    return {
-        total: tokens.total,
-        input: tokens.input,
-        output: tokens.output,
-        reasoning: tokens.reasoning,
-        cacheRead: tokens.cacheRead,
-        cacheWrite: tokens.cacheWrite,
-    };
+    return knownUsageMeasurements(tokens);
 }
 
 function toLegacyUsageEphemeralCost(cost: UsageObservationCost): Record<string, number> {
-    return {
-        total: cost.reportedUsd,
-        reportedUsd: cost.reportedUsd,
-        estimatedUsd: cost.estimatedUsd,
-        invoiceUsd: cost.invoiceUsd ?? 0,
-    };
+    return knownUsageMeasurements({ total: cost.reportedUsd, reportedUsd: cost.reportedUsd,
+        estimatedUsd: cost.estimatedUsd, invoiceUsd: cost.invoiceUsd });
 }
 
 function emitUsageEventAfterTransaction(
@@ -891,15 +885,15 @@ export async function recordTeamCredentialAdmissionUsageEventInTx(
             credentialDeliveryMode: params.authority.deliveryMode,
             requestCount: 1,
             isCumulative: false,
-            inputTokens: 0,
-            outputTokens: 0,
-            reasoningTokens: 0,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
-            totalTokens: 0,
-            reportedCostUsd: 0,
-            estimatedCostUsd: 0,
-            invoiceCostUsd: 0,
+            inputTokens: null,
+            outputTokens: null,
+            reasoningTokens: null,
+            cacheReadTokens: null,
+            cacheWriteTokens: null,
+            totalTokens: null,
+            reportedCostUsd: null,
+            estimatedCostUsd: null,
+            invoiceCostUsd: null,
             billingContext: null,
             costSource: null,
             currency: "USD",
@@ -1019,15 +1013,15 @@ export async function recordTeamCredentialExternalTerminalUsageEventInTx(
         throw new Error("team credential reported terminal usage requires tokens");
     }
     const tokens = params.tokens ?? {
-        input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0,
+        input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null,
     };
     const tokenValues = [tokens.input, tokens.output, tokens.reasoning, tokens.cacheRead, tokens.cacheWrite, tokens.total];
-    if (tokenValues.some((value) => !Number.isSafeInteger(value) || value < 0)) {
+    if (tokenValues.some((value) => value !== null && (!Number.isSafeInteger(value) || value < 0))) {
         throw new Error("invalid team credential terminal token usage");
     }
     const cost = params.cost;
-    const costValues = cost ? [cost.reportedUsd, cost.estimatedUsd, cost.invoiceUsd ?? 0] : [];
-    if (costValues.some((value) => !Number.isFinite(value) || value < 0)) {
+    const costValues = cost ? [cost.reportedUsd, cost.estimatedUsd, cost.invoiceUsd] : [];
+    if (costValues.some((value) => value != null && (!Number.isFinite(value) || value < 0))) {
         throw new Error("invalid team credential terminal cost usage");
     }
     const source = "team_credential_external_terminal";
@@ -1058,9 +1052,9 @@ export async function recordTeamCredentialExternalTerminalUsageEventInTx(
         cacheReadTokens: tokens.cacheRead,
         cacheWriteTokens: tokens.cacheWrite,
         totalTokens: tokens.total,
-        reportedCostUsd: cost?.reportedUsd ?? 0,
-        estimatedCostUsd: cost?.estimatedUsd ?? 0,
-        invoiceCostUsd: cost?.invoiceUsd ?? 0,
+        reportedCostUsd: cost?.reportedUsd ?? null,
+        estimatedCostUsd: cost?.estimatedUsd ?? null,
+        invoiceCostUsd: cost?.invoiceUsd ?? null,
         billingContext: cost?.billingContext ?? null,
         costSource: cost?.costSource ?? null,
         currency: cost?.currency ?? "USD",

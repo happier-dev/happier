@@ -44,6 +44,27 @@ function result(evidence?: readonly UsageWorkEvidence[], complete = false, agent
 }
 
 describe('public-profile snapshot computation from canonical Usage', () => {
+  it.each([false, true])('retains unknown measurements and partial coverage in public rich and compact facts (known subtotal %s)', hasKnown => {
+    const original = result();
+    const unknown = { ...original.accounting!.contributions![1]!, tokens: createEmptyUsageTokens(),
+      cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD' } };
+    const rows = hasKnown ? [original.accounting!.contributions![0]!, unknown] : [unknown];
+    const accounting = UsageAnalyticsQueryResponseSchema.parse({ ...original.accounting, contributions: rows,
+      totals: { eventCount: rows.reduce((sum, row) => sum + row.eventCount, 0),
+        tokens: rows.reduce((sum, row) => addUsageTokens(sum, row.tokens), createEmptyUsageTokens()),
+        cost: unknown.cost } });
+    const built = [accounting, projectUsageAnalyticsSummary(accounting, usageQueryToAnalyticsRequest(query, endMs))]
+      .map(value => buildPublicProfileSnapshot({ queryResult: { ...original, accounting: value }, policy, nowMs: endMs }));
+    expect(built[0]).toEqual(built[1]);
+    for (const value of built) {
+      expect(value.kind).toBe('ready');
+      if (value.kind !== 'ready') throw new Error('Expected admitted partial public facts');
+      expect(value.snapshot.facts.tokens).toBe(hasKnown ? 10 : undefined);
+      expect(value.snapshot.fieldCoverage?.tokens?.status).toBe('partial');
+      expect(value.snapshot.facts.sourceSplit?.some(group => group.tokens === 0)).toBe(false);
+    }
+  });
+
   it.each([false, true])('keeps bounded All artifact metadata while rich and compact calendars follow observations (relative %s)', relative => {
     const original = result();
     const selected = normalizeUsageQuery({ ...query, period: relative ? { relative: 'all' } : { endMs }, includeActivity: !relative });

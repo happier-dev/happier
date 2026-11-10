@@ -3,6 +3,7 @@ import { resolveUsageBucketBounds, resolveUsageCalendarInstant } from '@happier-
 import { resolveUsageDayStreaks } from '@happier-dev/protocol/usage/usageActivitySummary';
 import { resolveUsageTokenCategories } from '@happier-dev/protocol/usage/usageTokenCategories';
 import { normalizeLegacyUsageTokens } from '@happier-dev/protocol/usage/legacyUsageTokens';
+import { addUsageMeasurements, createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import type { UsageAccountingMetric } from '@happier-dev/protocol/inputs/usageQuery';
 import { agentIdFromEngineKey } from '@happier-dev/protocol/usage/usageFilterOptions';
 import type {
@@ -49,8 +50,8 @@ export interface UsageFilterState {
 
 export interface UsageTrendPoint {
     timestamp: number;
-    tokens: number;
-    cost: number;
+    tokens: number | null;
+    cost: number | null;
     reportCount: number;
 }
 
@@ -58,8 +59,8 @@ export interface UsageBreakdownRow {
     dimension: UsageDimension | 'bucket' | 'week';
     key: string;
     label: string;
-    totalTokens: number;
-    totalCost: number;
+    totalTokens: number | null;
+    totalCost: number | null;
     reportCount: number;
     firstSeenAt: number;
     lastSeenAt: number;
@@ -122,8 +123,8 @@ export interface UsageAnalyticsLeaderRow {
 }
 
 export interface UsageAnalyticsTimelineLeaderRow extends UsageAnalyticsLeaderRow {
-    totalTokens: number;
-    totalCost: number;
+    totalTokens: number | null;
+    totalCost: number | null;
 }
 
 export interface UsageAnalyticsTimelineBucket {
@@ -147,9 +148,9 @@ export interface UsageAnalyticsLeaderSections {
  * Hero section reads these instead of re-deriving from raw totals.
  */
 export interface UsageHeroViewModel {
-    totalTokens: number;
+    totalTokens: number | null;
     /** Effective (auto) cost for the period, independent of the metric toggle. */
-    effectiveUsd: number;
+    effectiveUsd: number | null;
     currency: string;
     sessions: number;
     events: number;
@@ -165,16 +166,16 @@ export interface UsageHeroViewModel {
  * summed by the server; the UI never derives pricing from token counts.
  */
 export interface UsageCacheSavingsViewModel {
-    cachedReadTokens: number;
+    cachedReadTokens: number | null;
     cacheSavingsUsd: number | null;
 }
 
 export interface UsageContextTokenMix {
-    input: number;
-    output: number;
-    reasoning: number;
-    cacheRead: number;
-    cacheWrite: number;
+    input: number | null;
+    output: number | null;
+    reasoning: number | null;
+    cacheRead: number | null;
+    cacheWrite: number | null;
 }
 
 /**
@@ -203,7 +204,7 @@ export interface UsageTrendDelta {
 /** Hero micro-sparkline + delta, both derived from the period series halves. */
 export interface UsageHeroTrend {
     /** Per-bucket token totals across the period. */
-    sparkline: number[];
+    sparkline: (number | null)[];
     delta: UsageTrendDelta;
 }
 
@@ -225,23 +226,23 @@ export type UsageCompositionKey = 'input' | 'output' | 'cacheRead' | 'cacheWrite
 
 export interface UsageCompositionSegment {
     key: UsageCompositionKey;
-    tokens: number;
+    tokens: number | null;
     /** Share of the total token mix (0–100); 0 when there is no volume. */
-    pct: number;
+    pct: number | null;
 }
 
 /** Ordered 100%-stacked token mix for the Band 5 composition strip. */
 export interface UsageComposition {
     segments: UsageCompositionSegment[];
-    total: number;
+    total: number | null;
 }
 
 /** Per-leader token sparklines keyed by leader id, for the Band 5 leader rows. */
 export interface UsageLeaderTrends {
-    models: Record<string, number[]>;
-    engines: Record<string, number[]>;
+    models: Record<string, (number | null)[]>;
+    engines: Record<string, (number | null)[]>;
     /** Keyed by `agentId` — the same key space as the agents breakdown rows. */
-    agents: Record<string, number[]>;
+    agents: Record<string, (number | null)[]>;
 }
 
 /**
@@ -256,9 +257,9 @@ export type UsagePivotDimension = typeof USAGE_PIVOT_DIMENSIONS[number];
 export interface UsagePivotRow {
     row: UsageBreakdownRow;
     /** Share of the dimension's total tokens (0–100). */
-    sharePct: number;
+    sharePct: number | null;
     /** Per-row token sparkline (empty for dimensions without a timeline). */
-    trend: number[];
+    trend: (number | null)[];
     /** The single leader row (the true max) carries the accent; others stay neutral. */
     isLeader: boolean;
 }
@@ -267,7 +268,7 @@ export interface UsagePivotView {
     dimension: UsagePivotDimension;
     rows: UsagePivotRow[];
     /** Total tokens across every row of the dimension (share denominator). */
-    total: number;
+    total: number | null;
     /** Whether this dimension carries a per-row trend column at all. */
     hasTrend: boolean;
 }
@@ -281,8 +282,8 @@ export interface UsagePivotView {
 export interface UsageEfficiencyViewModel {
     /** cacheRead / (input + cacheRead) as a percentage, or null without an input+cache basis. */
     cacheHitRatePct: number | null;
-    cachedReadTokens: number;
-    inputTokens: number;
+    cachedReadTokens: number | null;
+    inputTokens: number | null;
     /** effectiveUsd / totalTokens × 1e6, or null without tokens and cost. */
     costPerMtokUsd: number | null;
     currency: string;
@@ -317,7 +318,7 @@ export interface UsageAnalyticsViewModel {
     modelTimeline: UsageAnalyticsTimelineBucket[];
     engineTimeline: UsageAnalyticsTimelineBucket[];
     availableCostModes: UsageCostMode[];
-    costPresentation: NonNullable<UsageAnalyticsQueryResponse['costPresentation']>;
+    costPresentation: Omit<NonNullable<UsageAnalyticsQueryResponse['costPresentation']>, 'effectiveUsd'> & { effectiveUsd: number | null };
     filteredUsageCount: number;
     focus: UsageFocus | null;
 }
@@ -325,18 +326,18 @@ export interface UsageAnalyticsViewModel {
 export interface UsageSummaryActivityPoint {
     timestamp: number;
     active: boolean;
-    tokens: number;
-    cost: number;
+    tokens: number | null;
+    cost: number | null;
 }
 
 export interface UsageAnalyticsSummaryViewModel {
     activeDays: number | null;
     currentStreakDays: number | null;
-    totalTokens: number;
-    totalCost: number;
+    totalTokens: number | null;
+    totalCost: number | null;
     currency: string;
-    weekTokens: number;
-    weekCost: number;
+    weekTokens: number | null;
+    weekCost: number | null;
     topModel: UsageBreakdownRow | null;
     topEngine: UsageBreakdownRow | null;
     busiestWindowLabel: string | null;
@@ -367,21 +368,21 @@ const dimensionKeys: Record<UsageDimension, keyof UsageDataPoint> = {
  * field would make the same events read differently in two places, which is
  * exactly the kind of divergence a shared usage owner exists to prevent.
  */
-export function resolveDisplayCost(cost: ProtocolUsageAnalyticsTotals['cost']): number {
+export function resolveDisplayCost(cost: ProtocolUsageAnalyticsTotals['cost']): number | null {
     return resolveEffectiveUsageCostUsd(cost, 'auto');
 }
 
 function resolveCostForMode(
     cost: ProtocolUsageAnalyticsTotals['cost'],
     mode: UsageCostMode,
-): number {
+): number | null {
     return resolveEffectiveUsageCostUsd(cost, mode);
 }
 
 function resolveAnalyticsCost(
     cost: ProtocolUsageAnalyticsTotals['cost'],
     modeOrPresentation?: UsageCostMode | NonNullable<UsageAnalyticsViewModel['costPresentation']> | null,
-): number {
+): number | null {
     if (typeof modeOrPresentation === 'string') {
         return resolveCostForMode(cost, modeOrPresentation);
     }
@@ -408,20 +409,20 @@ export function resolveAvailableCostModes(cost: ProtocolUsageAnalyticsTotals['co
         return modes;
     }
 
-    if (cost.reportedUsd > 0) {
+    if (cost.reportedUsd !== null && cost.reportedUsd > 0) {
         modes.push('reported');
     }
-    if (cost.estimatedUsd > 0) {
+    if (cost.estimatedUsd !== null && cost.estimatedUsd > 0) {
         modes.push('estimated');
     }
-    if ((cost.apiEquivalentUsd ?? 0) > 0) {
+    if (cost.apiEquivalentUsd != null && cost.apiEquivalentUsd > 0) {
         modes.push('api_equivalent');
     }
 
     return modes;
 }
 
-function resolveEffectiveCost(cost: ProtocolUsageAnalyticsTotals['cost'], mode: UsageCostMode): number {
+function resolveEffectiveCost(cost: ProtocolUsageAnalyticsTotals['cost'], mode: UsageCostMode): number | null {
     return resolveCostForMode(cost, mode);
 }
 
@@ -440,7 +441,7 @@ function createCostPresentation(
 function createLegacyCostPresentation(cost: ProtocolUsageAnalyticsTotals['cost']): NonNullable<UsageAnalyticsViewModel['costPresentation']> {
     return {
         mode: 'auto',
-        effectiveUsd: cost.reportedUsd > 0 ? cost.reportedUsd : cost.estimatedUsd,
+        effectiveUsd: cost.reportedUsd !== null && cost.reportedUsd > 0 ? cost.reportedUsd : cost.estimatedUsd,
         currency: cost.currency,
         source: 'legacy_total_synthesized',
     };
@@ -476,10 +477,10 @@ function isSeriesBucketWithinWindow(
 function sortBreakdownRows(rows: UsageBreakdownRow[]): UsageBreakdownRow[] {
     return [...rows].sort((left, right) => {
         if (right.totalTokens !== left.totalTokens) {
-            return right.totalTokens - left.totalTokens;
+            return (right.totalTokens ?? -1) - (left.totalTokens ?? -1);
         }
         if (right.totalCost !== left.totalCost) {
-            return right.totalCost - left.totalCost;
+            return (right.totalCost ?? -1) - (left.totalCost ?? -1);
         }
         return left.label.localeCompare(right.label);
     });
@@ -498,24 +499,20 @@ function buildLegacyRowsForDimension(
             continue;
         }
 
-        const tokenTotal = getRecordTotal(dataPoint.tokens);
+        const tokenTotal = normalizeLegacyUsageTokens(dataPoint.tokens).total;
         const costTotal = getRecordTotal(dataPoint.cost);
         const current = grouped.get(groupKey);
 
         if (current) {
-            current.totalTokens += tokenTotal;
-            current.totalCost += costTotal;
+            current.totalTokens = addUsageMeasurements(current.totalTokens, tokenTotal);
+            current.totalCost = addUsageMeasurements(current.totalCost, costTotal);
             current.reportCount += Number.isFinite(dataPoint.reportCount) ? dataPoint.reportCount : 0;
             current.firstSeenAt = Math.min(current.firstSeenAt, dataPoint.timestamp);
             current.lastSeenAt = Math.max(current.lastSeenAt, dataPoint.timestamp);
-            current.contextWindowTokens = Math.max(
-                current.contextWindowTokens ?? 0,
-                dataPoint.contextWindowTokens ?? 0,
-            ) || null;
-            current.contextUsedTokens = Math.max(
-                current.contextUsedTokens ?? 0,
-                dataPoint.contextUsedTokens ?? 0,
-            ) || null;
+            if (dataPoint.contextWindowTokens != null) current.contextWindowTokens = current.contextWindowTokens === null
+                ? dataPoint.contextWindowTokens : Math.max(current.contextWindowTokens, dataPoint.contextWindowTokens);
+            if (dataPoint.contextUsedTokens != null) current.contextUsedTokens = current.contextUsedTokens === null
+                ? dataPoint.contextUsedTokens : Math.max(current.contextUsedTokens, dataPoint.contextUsedTokens);
             continue;
         }
 
@@ -544,8 +541,8 @@ function buildLegacyBucketRows(totals: Pick<UsageTotals, 'tokenBreakdown' | 'cos
         dimension: 'bucket' as const,
         key,
         label: key,
-        totalTokens: totals.tokenBreakdown[key] ?? 0,
-        totalCost: totals.costBreakdown[key] ?? 0,
+        totalTokens: totals.tokenBreakdown[key] ?? null,
+        totalCost: totals.costBreakdown[key] ?? null,
         reportCount: 0,
         firstSeenAt: 0,
         lastSeenAt: 0,
@@ -553,10 +550,10 @@ function buildLegacyBucketRows(totals: Pick<UsageTotals, 'tokenBreakdown' | 'cos
         contextUsedTokens: null,
     })).sort((left, right) => {
         if (right.totalTokens !== left.totalTokens) {
-            return right.totalTokens - left.totalTokens;
+            return (right.totalTokens ?? -1) - (left.totalTokens ?? -1);
         }
         if (right.totalCost !== left.totalCost) {
-            return right.totalCost - left.totalCost;
+            return (right.totalCost ?? -1) - (left.totalCost ?? -1);
         }
         return left.label.localeCompare(right.label);
     });
@@ -567,7 +564,7 @@ function buildLegacyTrend(usage: UsageDataPoint[]): UsageTrendPoint[] {
         .sort((left, right) => left.timestamp - right.timestamp)
         .map((dataPoint) => ({
             timestamp: dataPoint.timestamp,
-            tokens: getRecordTotal(dataPoint.tokens),
+            tokens: normalizeLegacyUsageTokens(dataPoint.tokens).total,
             cost: getRecordTotal(dataPoint.cost),
             reportCount: Number.isFinite(dataPoint.reportCount) ? dataPoint.reportCount : 0,
         }));
@@ -580,9 +577,9 @@ function buildLegacyCalendarDays(usage: UsageDataPoint[], timeZoneOffsetMinutes:
         if (!Number.isFinite(timestampMs)) continue;
         const calendar = resolveUsageCalendarInstant(timestampMs, timeZoneOffsetMinutes);
         const day = days.get(calendar.date) ?? { date: calendar.date, timestamp: calendar.bucketStartMs / 1000,
-            tokens: 0, cost: 0, reportCount: 0 };
-        day.tokens += point.tokens;
-        day.cost += point.cost;
+            tokens: null, cost: null, reportCount: 0 };
+        day.tokens = addUsageMeasurements(day.tokens, point.tokens);
+        day.cost = addUsageMeasurements(day.cost, point.cost);
         day.reportCount += point.reportCount;
         days.set(calendar.date, day);
     }
@@ -591,7 +588,7 @@ function buildLegacyCalendarDays(usage: UsageDataPoint[], timeZoneOffsetMinutes:
 
 function resolveLegacyDayStreaks(days: ReturnType<typeof buildLegacyCalendarDays>, nowMs: number, timeZoneOffsetMinutes: number) {
     return resolveUsageDayStreaks({ days: days.map(day => ({ date: day.date,
-        eventCount: day.reportCount > 0 || day.tokens > 0 || day.cost > 0 ? 1 : 0 })),
+        eventCount: day.reportCount > 0 || day.tokens !== null && day.tokens > 0 || day.cost !== null && day.cost > 0 ? 1 : 0 })),
         referenceMs: nowMs, timeZoneOffsetMinutes, coverage: 'partial' });
 }
 
@@ -808,19 +805,8 @@ function mapTimelineLeaderEntry(
     costPresentation: UsageCostMode | NonNullable<UsageAnalyticsViewModel['costPresentation']>,
     dimension?: 'backendMode' | 'source',
 ): UsageAnalyticsTimelineLeaderRow {
-    const tokens = entry.tokens ?? {
-        input: 0,
-        output: 0,
-        reasoning: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        total: 0,
-    };
-    const cost = entry.cost ?? {
-        reportedUsd: 0,
-        estimatedUsd: 0,
-        currency: 'USD',
-    };
+    const tokens = entry.tokens ?? createEmptyUsageTokens();
+    const cost = entry.cost ?? createEmptyUsageCost();
 
     return {
         key: entry.key,
@@ -875,7 +861,7 @@ function buildTotalsFromResponse(
             ? 'reportedUsd'
             : costMode === 'estimated'
                 ? 'estimatedUsd'
-                : totals.cost.reportedUsd > 0
+                : totals.cost.reportedUsd !== null && totals.cost.reportedUsd > 0
                     ? 'reportedUsd'
                     : 'estimatedUsd',
     };
@@ -944,7 +930,7 @@ function buildSummaryFromResponse(response: UsageAnalyticsQueryResponse, timeZon
         : null;
     const recentActivity = series.slice(-14).map((bucket) => ({
         timestamp: Math.floor(bucket.bucketStartMs / 1000),
-        active: bucket.tokens.total > 0 || resolveAnalyticsCost(bucket.cost, costPresentation) > 0,
+        active: bucket.eventCount > 0,
         tokens: bucket.tokens.total,
         cost: resolveAnalyticsCost(bucket.cost, costPresentation),
     }));
@@ -958,16 +944,16 @@ function buildSummaryFromResponse(response: UsageAnalyticsQueryResponse, timeZon
         totalTokens: response.totals.tokens.total,
         totalCost: resolveAnalyticsCost(response.totals.cost, costPresentation),
         currency: response.totals.cost.currency,
-        weekTokens: weekBuckets.reduce((sum, bucket) => sum + bucket.tokens.total, 0),
-        weekCost: weekBuckets.reduce((sum, bucket) => sum + resolveAnalyticsCost(bucket.cost, costPresentation), 0),
+        weekTokens: weekBuckets.reduce<number | null>((sum, bucket) => addUsageMeasurements(sum, bucket.tokens.total), weekBuckets.length === 0 ? 0 : null),
+        weekCost: weekBuckets.reduce<number | null>((sum, bucket) => addUsageMeasurements(sum, resolveAnalyticsCost(bucket.cost, costPresentation)), weekBuckets.length === 0 ? 0 : null),
         topModel: response.breakdowns?.model?.[0] ? mapBreakdownEntry(response.breakdowns.model[0], 'model', costMode) : null,
         topEngine: topEngineLeader
             ? {
                 dimension: 'backendMode',
                 key: topEngineLeader.key,
                 label: formatUsageDimensionLabel('backendMode', topEngineLeader.key, topEngineLeader.label ?? topEngineLeader.key),
-                totalTokens: matchingEngineBreakdown?.tokens.total ?? 0,
-                totalCost: matchingEngineBreakdown ? resolveAnalyticsCost(matchingEngineBreakdown.cost, costMode) : 0,
+                totalTokens: matchingEngineBreakdown?.tokens.total ?? null,
+                totalCost: matchingEngineBreakdown ? resolveAnalyticsCost(matchingEngineBreakdown.cost, costMode) : null,
                 reportCount: topEngineLeader.eventCount,
                 firstSeenAt: 0,
                 lastSeenAt: 0,
@@ -994,7 +980,7 @@ function buildSummaryFromLegacyUsage(usage: UsageDataPoint[], timeZoneOffsetMinu
     const recentWindowStartSeconds = Math.floor((nowMs - USAGE_SUMMARY_RECENT_WINDOW_MS) / 1000);
     const recentActivity = days.slice(-14).map((point) => ({
         timestamp: point.timestamp,
-        active: point.reportCount > 0 || point.tokens > 0 || point.cost > 0,
+        active: point.reportCount > 0 || point.tokens !== null && point.tokens > 0 || point.cost !== null && point.cost > 0,
         tokens: point.tokens,
         cost: point.cost,
     }));
@@ -1006,8 +992,8 @@ function buildSummaryFromLegacyUsage(usage: UsageDataPoint[], timeZoneOffsetMinu
         totalTokens: totals.totalTokens,
         totalCost: totals.totalCost,
         currency: 'USD',
-        weekTokens: weekPoints.reduce((sum, point) => sum + point.tokens, 0),
-        weekCost: weekPoints.reduce((sum, point) => sum + point.cost, 0),
+        weekTokens: weekPoints.reduce<number | null>((sum, point) => addUsageMeasurements(sum, point.tokens), weekPoints.length === 0 ? 0 : null),
+        weekCost: weekPoints.reduce<number | null>((sum, point) => addUsageMeasurements(sum, point.cost), weekPoints.length === 0 ? 0 : null),
         topModel: null,
         topEngine: null,
         busiestWindowLabel: null,
@@ -1100,11 +1086,11 @@ export function buildUsageCacheSavings(
     overview: UsageTotals,
     cacheSavingsUsd?: number,
 ): UsageCacheSavingsViewModel | null {
-    const cachedReadTokens = overview.tokenBreakdown.cacheRead ?? 0;
+    const cachedReadTokens = overview.tokenBreakdown.cacheRead ?? null;
     const usd = typeof cacheSavingsUsd === 'number' && Number.isFinite(cacheSavingsUsd) && cacheSavingsUsd > 0
         ? cacheSavingsUsd
         : null;
-    if (!(cachedReadTokens > 0) && usd === null) {
+    if (!(cachedReadTokens !== null && cachedReadTokens > 0) && usd === null) {
         return null;
     }
     return { cachedReadTokens, cacheSavingsUsd: usd };
@@ -1118,11 +1104,11 @@ export function buildUsageCacheSavings(
  */
 export function buildUsageTrendDelta(trend: readonly UsageTrendPoint[]): UsageTrendDelta {
     const half = Math.floor(trend.length / 2);
-    if (half < 1) {
+    if (half < 1 || trend.some(point => point.tokens === null)) {
         return { deltaPct: null, direction: 'flat' };
     }
     const sum = (points: readonly UsageTrendPoint[]): number =>
-        points.reduce((total, point) => total + Math.max(0, point.tokens), 0);
+        points.reduce((total, point) => total + Math.max(0, point.tokens!), 0);
     const prior = sum(trend.slice(0, half));
     const recent = sum(trend.slice(trend.length - half));
     if (prior <= 0) {
@@ -1180,10 +1166,10 @@ const USAGE_COMPOSITION_ORDER: readonly UsageCompositionKey[] = [
  */
 export function buildUsageComposition(overview: UsageTotals): UsageComposition {
     const mix = buildContextTokenMix(overview);
-    const total = USAGE_COMPOSITION_ORDER.reduce((sum, key) => sum + (mix[key] ?? 0), 0);
+    const total = USAGE_COMPOSITION_ORDER.reduce<number | null>((sum, key) => addUsageMeasurements(sum, mix[key]), null);
     const segments: UsageCompositionSegment[] = USAGE_COMPOSITION_ORDER.map((key) => {
-        const tokens = mix[key] ?? 0;
-        return { key, tokens, pct: total > 0 ? (tokens / total) * 100 : 0 };
+        const tokens = mix[key];
+        return { key, tokens, pct: tokens === null || total === null ? null : total > 0 ? (tokens / total) * 100 : 0 };
     });
     return { segments, total };
 }
@@ -1192,7 +1178,7 @@ export function buildUsageComposition(overview: UsageTotals): UsageComposition {
 export function buildUsageLeaderTrend(
     timeline: readonly UsageAnalyticsTimelineBucket[],
     key: string,
-): number[] {
+): (number | null)[] {
     return timeline.map((bucket) => {
         const leader = bucket.leaders.find((entry) => entry.key === key);
         return leader ? leader.totalTokens : 0;
@@ -1201,14 +1187,14 @@ export function buildUsageLeaderTrend(
 
 export function buildUsageLeaderTrends(
     timeline: readonly UsageAnalyticsTimelineBucket[],
-): Record<string, number[]> {
+): Record<string, (number | null)[]> {
     const keys = new Set<string>();
     for (const bucket of timeline) {
         for (const leader of bucket.leaders) {
             keys.add(leader.key);
         }
     }
-    const trends: Record<string, number[]> = {};
+    const trends: Record<string, (number | null)[]> = {};
     for (const key of keys) {
         trends[key] = buildUsageLeaderTrend(timeline, key);
     }
@@ -1243,8 +1229,8 @@ export function buildUsageAgentTimeline(
                 byAgent.set(agentId, {
                     ...existing,
                     label: leader.key === agentId ? leader.label : existing.label,
-                    totalTokens: existing.totalTokens + leader.totalTokens,
-                    totalCost: existing.totalCost + leader.totalCost,
+                    totalTokens: addUsageMeasurements(existing.totalTokens, leader.totalTokens),
+                    totalCost: addUsageMeasurements(existing.totalCost, leader.totalCost),
                 });
             } else {
                 byAgent.set(agentId, { ...leader, key: agentId });
@@ -1256,20 +1242,18 @@ export function buildUsageAgentTimeline(
 
 export function buildUsageAgentTrends(
     engineTimeline: readonly UsageAnalyticsTimelineBucket[],
-): Record<string, number[]> {
+): Record<string, (number | null)[]> {
     const agentIds = new Set<string>();
     for (const bucket of engineTimeline) {
         for (const leader of bucket.leaders) {
             agentIds.add(agentIdFromEngineKey(leader.key));
         }
     }
-    const trends: Record<string, number[]> = {};
+    const trends: Record<string, (number | null)[]> = {};
     for (const agentId of agentIds) {
         trends[agentId] = engineTimeline.map((bucket) =>
-            bucket.leaders.reduce(
-                (sum, leader) => (agentIdFromEngineKey(leader.key) === agentId ? sum + leader.totalTokens : sum),
-                0,
-            ),
+            bucket.leaders.filter(leader => agentIdFromEngineKey(leader.key) === agentId)
+                .reduce<number | null>((sum, leader) => addUsageMeasurements(sum, leader.totalTokens), null),
         );
     }
     return trends;
@@ -1290,8 +1274,8 @@ export function buildUsageWeeksBreakdown(trend: readonly UsageTrendPoint[], time
         const key = resolveUsageCalendarInstant(bounds.bucketStartMs, timeZoneOffsetMinutes).date;
         const existing = byWeekStart.get(weekStartSeconds);
         if (existing) {
-            existing.totalTokens += point.tokens;
-            existing.totalCost += point.cost;
+            existing.totalTokens = addUsageMeasurements(existing.totalTokens, point.tokens);
+            existing.totalCost = addUsageMeasurements(existing.totalCost, point.cost);
             existing.reportCount += Number.isFinite(point.reportCount) ? point.reportCount : 0;
             continue;
         }
@@ -1344,7 +1328,7 @@ export function selectUsageBreakdownRows(
 export function selectUsagePivotTrends(
     leaderTrends: UsageLeaderTrends,
     dimension: UsagePivotDimension,
-): Record<string, number[]> | null {
+): Record<string, (number | null)[]> | null {
     if (dimension === 'model') {
         return leaderTrends.models;
     }
@@ -1371,18 +1355,18 @@ export function buildUsagePivotView(
     // instead of ranking by tokens; every other dimension is a leaderboard.
     const ranked = dimension === 'week'
         ? [...source]
-        : [...source].sort((left, right) => right.totalTokens - left.totalTokens);
-    const total = ranked.reduce((sum, row) => sum + row.totalTokens, 0);
+        : [...source].sort((left, right) => (right.totalTokens ?? -1) - (left.totalTokens ?? -1));
+    const total = ranked.reduce<number | null>((sum, row) => addUsageMeasurements(sum, row.totalTokens), null);
     // The accent marks the single busiest row (true max), even when the order
     // is chronological rather than ranked.
     const leaderKey = ranked.reduce<{ key: string | null; tokens: number }>(
-        (best, row) => (row.totalTokens > best.tokens ? { key: row.key, tokens: row.totalTokens } : best),
+        (best, row) => (row.totalTokens !== null && row.totalTokens > best.tokens ? { key: row.key, tokens: row.totalTokens } : best),
         { key: null, tokens: -1 },
     ).key;
     const hasTrend = trends !== null && ranked.some((row) => (trends[row.key]?.length ?? 0) > 1);
     const rows: UsagePivotRow[] = ranked.map((row) => ({
         row,
-        sharePct: total > 0 ? (row.totalTokens / total) * 100 : 0,
+        sharePct: row.totalTokens === null || total === null ? null : total > 0 ? (row.totalTokens / total) * 100 : 0,
         trend: trends?.[row.key] ?? [],
         isLeader: row.key === leaderKey,
     }));
@@ -1397,21 +1381,21 @@ export interface UsageModelMixSeriesKey {
     /** Display label; empty for the synthetic "other" tail (the consumer translates). */
     label: string;
     /** Total tokens across the whole timeline (the legend's overall share basis). */
-    totalTokens: number;
+    totalTokens: number | null;
 }
 
 export interface UsageModelMixBucket {
     startMs: number;
     endMs: number;
-    total: number;
+    total: number | null;
     /** Original per-key amounts, before share normalization, aligned with `keys`. */
-    tokens: number[];
+    tokens: (number | null)[];
     /**
      * Share (0..1) per series key, aligned index-for-index with `keys`. Sums to
      * ~1 in a non-empty bucket; all-zero for an empty bucket (renders as a gap in
      * the 100%-stacked area, never a fabricated flat band).
      */
-    shares: number[];
+    shares: (number | null)[];
 }
 
 /**
@@ -1425,7 +1409,7 @@ export interface UsageModelMix {
     keys: UsageModelMixSeriesKey[];
     buckets: UsageModelMixBucket[];
     /** Grand total tokens across the timeline (legend share denominator). */
-    total: number;
+    total: number | null;
     /** Enough shape to draw an area: ≥2 buckets, ≥1 key, and some volume. */
     hasData: boolean;
 }
@@ -1437,12 +1421,12 @@ export function buildUsageModelMix(
     maxSeries: number = USAGE_MODEL_MIX_DEFAULT_MAX_SERIES,
 ): UsageModelMix {
     // 1) Rank keys by total tokens across the whole timeline.
-    const totalsByKey = new Map<string, { label: string; tokens: number }>();
+    const totalsByKey = new Map<string, { label: string; tokens: number | null }>();
     for (const bucket of timeline) {
         for (const leader of bucket.leaders) {
             const existing = totalsByKey.get(leader.key);
             if (existing) {
-                existing.tokens += leader.totalTokens;
+                existing.tokens = addUsageMeasurements(existing.tokens, leader.totalTokens);
             } else {
                 totalsByKey.set(leader.key, { label: leader.label, tokens: leader.totalTokens });
             }
@@ -1450,9 +1434,9 @@ export function buildUsageModelMix(
     }
     const ranked = [...totalsByKey.entries()]
         .map(([key, value]) => ({ key, label: value.label, totalTokens: value.tokens }))
-        .sort((left, right) => right.totalTokens - left.totalTokens || left.key.localeCompare(right.key));
+        .sort((left, right) => (right.totalTokens ?? -1) - (left.totalTokens ?? -1) || left.key.localeCompare(right.key));
 
-    const grandTotal = ranked.reduce((sum, entry) => sum + entry.totalTokens, 0);
+    const grandTotal = ranked.reduce<number | null>((sum, entry) => addUsageMeasurements(sum, entry.totalTokens), null);
     const cap = Math.max(1, maxSeries);
     const topEntries = ranked.slice(0, cap);
     const tailEntries = ranked.slice(cap);
@@ -1467,35 +1451,35 @@ export function buildUsageModelMix(
         keys.push({
             key: USAGE_MODEL_MIX_OTHER_KEY,
             label: '',
-            totalTokens: tailEntries.reduce((sum, entry) => sum + entry.totalTokens, 0),
+            totalTokens: tailEntries.reduce<number | null>((sum, entry) => addUsageMeasurements(sum, entry.totalTokens), null),
         });
     }
 
     // 2) Normalize each bucket into per-key shares (largest first; tail → other).
     const buckets: UsageModelMixBucket[] = timeline.map((bucket) => {
-        const tokensByKey = new Map<string, number>();
-        let bucketTotal = 0;
+        const tokensByKey = new Map<string, number | null>();
+        let bucketTotal: number | null = bucket.leaders.length === 0 ? 0 : null;
         for (const leader of bucket.leaders) {
-            tokensByKey.set(leader.key, (tokensByKey.get(leader.key) ?? 0) + leader.totalTokens);
-            bucketTotal += leader.totalTokens;
+            tokensByKey.set(leader.key, addUsageMeasurements(tokensByKey.get(leader.key) ?? null, leader.totalTokens));
+            bucketTotal = addUsageMeasurements(bucketTotal, leader.totalTokens);
         }
         const tokens = keys.map((seriesKey) => {
             if (seriesKey.key === USAGE_MODEL_MIX_OTHER_KEY) {
-                let otherTokens = 0;
+                let otherTokens: number | null = null;
                 for (const [key, tokens] of tokensByKey) {
                     if (!topKeys.has(key)) {
-                        otherTokens += tokens;
+                        otherTokens = addUsageMeasurements(otherTokens, tokens);
                     }
                 }
                 return otherTokens;
             }
-            return tokensByKey.get(seriesKey.key) ?? 0;
+            return tokensByKey.has(seriesKey.key) ? tokensByKey.get(seriesKey.key)! : 0;
         });
-        const shares = tokens.map((amount) => bucketTotal > 0 ? amount / bucketTotal : 0);
+        const shares = tokens.map((amount) => bucketTotal === null || amount === null ? null : bucketTotal > 0 ? amount / bucketTotal : 0);
         return { startMs: bucket.bucketStartMs, endMs: bucket.bucketEndMs, total: bucketTotal, tokens, shares };
     });
 
-    const nonEmptyBuckets = buckets.filter((bucket) => bucket.total > 0).length;
+    const nonEmptyBuckets = buckets.filter((bucket) => bucket.total !== null && bucket.total > 0).length;
     return {
         keys,
         buckets,
@@ -1553,13 +1537,13 @@ export function buildUsageEfficiency(
     overview: UsageTotals,
     costPresentation: NonNullable<UsageAnalyticsViewModel['costPresentation']>,
 ): UsageEfficiencyViewModel {
-    const inputTokens = overview.tokenBreakdown.input ?? 0;
-    const cachedReadTokens = overview.tokenBreakdown.cacheRead ?? 0;
-    const cacheBasis = inputTokens + cachedReadTokens;
-    const cacheHitRatePct = cacheBasis > 0 ? (cachedReadTokens / cacheBasis) * 100 : null;
+    const inputTokens = overview.tokenBreakdown.input ?? null;
+    const cachedReadTokens = overview.tokenBreakdown.cacheRead ?? null;
+    const cacheBasis = inputTokens === null || cachedReadTokens === null ? null : inputTokens + cachedReadTokens;
+    const cacheHitRatePct = cacheBasis !== null && cacheBasis > 0 && cachedReadTokens !== null ? (cachedReadTokens / cacheBasis) * 100 : null;
     const totalTokens = overview.totalTokens;
     const effectiveUsd = costPresentation.effectiveUsd;
-    const costPerMtokUsd = totalTokens > 0 && effectiveUsd > 0
+    const costPerMtokUsd = totalTokens !== null && totalTokens > 0 && effectiveUsd !== null && effectiveUsd >= 0
         ? (effectiveUsd / totalTokens) * 1_000_000
         : null;
     return {
@@ -1581,11 +1565,11 @@ function resolveContextUsedPct(usedTokens: number | null, windowTokens: number |
 function buildContextTokenMix(overview: UsageTotals): UsageContextTokenMix {
     const breakdown = overview.tokenBreakdown;
     return {
-        input: breakdown.input ?? 0,
-        output: breakdown.output ?? 0,
-        reasoning: breakdown.reasoning ?? 0,
-        cacheRead: breakdown.cacheRead ?? 0,
-        cacheWrite: breakdown.cacheWrite ?? 0,
+        input: breakdown.input ?? null,
+        output: breakdown.output ?? null,
+        reasoning: breakdown.reasoning ?? null,
+        cacheRead: breakdown.cacheRead ?? null,
+        cacheWrite: breakdown.cacheWrite ?? null,
     };
 }
 
@@ -1596,8 +1580,7 @@ export function buildUsageContextViewModel(
 ): UsageContextViewModel | null {
     const tokenMix = buildContextTokenMix(overview);
     const hasContext = usedTokens !== null || windowTokens !== null;
-    const hasTokenMix = tokenMix.input > 0 || tokenMix.output > 0 || tokenMix.reasoning > 0
-        || tokenMix.cacheRead > 0 || tokenMix.cacheWrite > 0;
+    const hasTokenMix = Object.values(tokenMix).some(value => value !== null && value > 0);
     if (!hasContext && !hasTokenMix) {
         return null;
     }
@@ -1647,7 +1630,7 @@ export function buildUsageAnalyticsViewModel(
         const categoryOverview = memoizeViewSection(() => {
             const categoryTokens = source.tokenCategories ?? resolveUsageTokenCategories(source.totals.tokens, null);
             const displayTotals = { ...source.totals, tokens: categoryTokens ?? {
-                input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: source.totals.tokens.total,
+                ...createEmptyUsageTokens(), total: source.totals.tokens.total,
             } };
             return buildTotalsFromResponse(displayTotals, insights().activeDays, filters.costMode);
         });
@@ -1712,9 +1695,9 @@ export function buildUsageAnalyticsViewModel(
     const filteredUsage = source.filter((dataPoint) => matchesFocus(dataPoint, filters.focus));
     const totals = calculateTotals(filteredUsage, timeZoneOffsetMinutes);
     const canonicalTokens = filteredUsage.map((point) => normalizeLegacyUsageTokens(point.tokens));
-    totals.tokenBreakdown = canonicalTokens.reduce<Record<string, number>>((sum, tokens) => {
+    const canonicalTokenBreakdown = canonicalTokens.reduce<Record<string, number | null>>((sum, tokens) => {
         for (const [key, value] of Object.entries(tokens)) {
-            if (key !== 'total') sum[key] = (sum[key] ?? 0) + value;
+            if (key !== 'total') sum[key] = addUsageMeasurements(sum[key] ?? null, value);
         }
         return sum;
     }, {});
@@ -1722,20 +1705,20 @@ export function buildUsageAnalyticsViewModel(
     const activity = buildActivityFromLegacyUsage(days);
     const insights = buildInsightsFromLegacyUsage(filteredUsage, days, timeZoneOffsetMinutes);
     const leaders = buildLeadersFromLegacyUsage(filteredUsage);
-    const hasLegacyPrice = filteredUsage.length > 0 && filteredUsage.every((point) =>
-        Object.values(point.cost).some((value) => Number.isFinite(value)));
+    const hasLegacyPrice = filteredUsage.length > 0 && totals.totalCost !== null;
     const costPresentation = hasLegacyPrice
         ? createLegacyCostPresentation({ reportedUsd: totals.totalCost, estimatedUsd: totals.totalCost, currency: 'USD' })
-        : createCostPresentation({ reportedUsd: 0, estimatedUsd: 0, costSource: 'none', currency: 'USD' }, 'auto');
+        : createCostPresentation(createEmptyUsageCost(), 'auto');
     const legacyOverview: UsageTotals = {
         ...totals,
+        tokenBreakdown: canonicalTokenBreakdown,
         activeDays: insights.activeDays,
         eventCount: totals.reportCount,
         costSource: 'legacy',
     };
     const legacyCategoryOverview: UsageTotals = {
         ...legacyOverview,
-        tokenBreakdown: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        tokenBreakdown: createEmptyUsageTokens(),
     };
     const legacyContextUsed = resolveLegacyContextExtent(filteredUsage, 'contextUsedTokens');
     const legacyContextWindow = resolveLegacyContextExtent(filteredUsage, 'contextWindowTokens');

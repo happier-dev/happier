@@ -59,8 +59,11 @@ function createUsageCostFactGroups(separateSources: boolean) {
           tokens, eventCount: fact.eventCount, asOfMs: fact.asOfMs, complete: fact.complete, sources, combined: contributionCount > 1 });
         return;
       }
-      if (fact.amountUsd === null) previous.amount = null;
-      else previous.amount?.add(readUsageMoney(fact, 'amountUsd', fact.amountUsd));
+      if (fact.amountUsd !== null) {
+        const operand = readUsageMoney(fact, 'amountUsd', fact.amountUsd);
+        if (previous.amount) previous.amount.add(operand);
+        else previous.amount = createUsageMoneyAccumulator(operand);
+      }
       previous.tokens = addUsageTokens(previous.tokens, fact.tokens);
       previous.eventCount += fact.eventCount;
       previous.asOfMs = Math.min(previous.asOfMs, fact.asOfMs);

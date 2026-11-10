@@ -35,7 +35,7 @@ export async function readPiNativeAccounting(request: AgentExternalSessionsReadA
         && (record.message.role === 'assistant' || record.message.role === 'toolResult') ? record.message : null;
       const paidSummary = record.type === 'compaction' || record.type === 'branch_summary';
       if (!message && !paidSummary) return { state, observations: [] };
-      const usage = normalizePiPaidUsage(message?.usage ?? record.usage);
+      const usage = normalizePiPaidUsage(message?.usage ?? record.usage, message?.stopReason);
       const observedAt = parseTimestampMs(message?.timestamp ?? record.timestamp);
       const inferenceId = readString(record.id);
       if (!usage) return { state, observations: [], ...(paidSummary ? { incomplete: true } : {}) };

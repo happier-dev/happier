@@ -16489,6 +16489,7 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
             });
             expect(published[1].metadata).toEqual({ usageAccounting: {
                 path: 'runtime', status: 'unknown', asOfMs: 11,
+                nativeSessionId: 'other-session', inferenceId: 'native-inference',
                 runtimeEventOrder: { runtimeIncarnationId: expect.any(String), sequence: 3 },
             } });
             expect(published[2].metadata).toMatchObject({
@@ -16503,6 +16504,28 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
             expect(serialized).not.toContain('/private/native');
             expect(serialized).not.toContain('native-session');
             expect(serialized).not.toContain('native-inference');
+            await runtime.resetOrDisposeRuntime('runtime_recovery');
+        });
+    });
+
+    it('keeps a child native identity through the runtime bridge without borrowing the parent accounting witness', async () => {
+        await withTempDir('usage-child-identity-', async directory => {
+            const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+            const { emit, published, runtime } = createUsagePublishHarness({
+                authority: { serverId: 'home', accountId: 'account', machineId: 'machine' }, storage,
+                agent: { pluginId: 'acme.native', localId: 'assistant' }, sourceKey: 'parent-root', nativeSessionId: 'parent-native',
+            });
+            emit(AgentSessionRuntimeEventSchema.parse({ sequence: 1, sessionId: 'session-usage', emittedAtMs: 10,
+                kind: 'usage-observed', observationId: 'child-identity', source: 'native-statistics', scope: 'session_cumulative',
+                accounting: { nativeSessionId: 'child-native', historyComplete: false } }));
+            expect(published).toHaveLength(1);
+            const request = buildUsageEventIngestRequest({ sessionId: 'session-usage', ...published[0] });
+            expect(request).toMatchObject({ tokens: { total: null, input: null, cacheRead: null },
+                cost: { reportedUsd: null, estimatedUsd: null },
+                metadata: { usageAccounting: { nativeSessionId: 'child-native', historyComplete: false } } });
+            expect(request?.metadata).not.toHaveProperty('accountingSubject');
+            expect(request?.metadata?.usageAccounting).not.toHaveProperty('inputIncludesCache');
+            expect(request?.metadata?.usageAccounting).not.toHaveProperty('outputIncludesReasoning');
             await runtime.resetOrDisposeRuntime('runtime_recovery');
         });
     });

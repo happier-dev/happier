@@ -58,10 +58,10 @@ export function projectUsageContributionTotals(rows: readonly Pick<UsageAnalytic
     return { eventCount, tokens, cost, context };
 }
 
-/** Unknown category evidence remains unknown for the whole selected population. */
+/** Category totals include only witnessed nonoverlapping measurements. */
 export function projectUsageContributionTokenCategories(rows: readonly Pick<UsageAnalyticsContribution, 'tokenCategories'>[]): UsageObservationTokens | undefined {
-    return rows.length > 0 && rows.every(row => row.tokenCategories != null)
-        ? rows.reduce((sum, row) => addUsageTokens(sum, row.tokenCategories!), createEmptyUsageTokens()) : undefined;
+    const known = rows.flatMap(row => row.tokenCategories ? [row.tokenCategories] : []);
+    return known.length > 0 ? known.reduce(addUsageTokens, createEmptyUsageTokens()) : undefined;
 }
 
 /** Recorded activity and retained hour facts share this count/bucket reducer. */

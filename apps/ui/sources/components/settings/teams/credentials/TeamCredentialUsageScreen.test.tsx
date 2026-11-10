@@ -35,14 +35,14 @@ const GROUPS_LIST_PATH = '/v1/teams/groups/list';
 const MEMBERS_LIST_PATH = '/v1/teams/members/list';
 
 const NO_TOKENS = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
-const NO_COST = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' };
+const NO_COST = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'pricing_estimate' };
 
 function usageResult(overrides?: Readonly<{
     requestCount?: number;
     totalTokens?: number;
     costIncomplete?: boolean;
-    estimatedUsd?: number;
-    reportedUsd?: number;
+    estimatedUsd?: number | null;
+    reportedUsd?: number | null;
     apiEquivalentUsd?: number;
     directRecordedUseOnly?: boolean;
     requestCountCoverage?: 'complete' | 'brokered_only';
@@ -62,8 +62,8 @@ function usageResult(overrides?: Readonly<{
             tokens: { ...NO_TOKENS, total: overrides?.totalTokens ?? 4200 },
             cost: {
                 ...NO_COST,
-                estimatedUsd: overrides?.estimatedUsd ?? 0,
-                reportedUsd: overrides?.reportedUsd ?? 0,
+                estimatedUsd: overrides?.estimatedUsd === undefined ? 0 : overrides.estimatedUsd,
+                reportedUsd: overrides?.reportedUsd === undefined ? 0 : overrides.reportedUsd,
                 ...(overrides?.apiEquivalentUsd === undefined ? {} : { apiEquivalentUsd: overrides.apiEquivalentUsd }),
             },
         },
@@ -382,7 +382,7 @@ describe('TeamCredentialUsageScreen', () => {
     it('reports an unpriced period as unavailable rather than as nothing spent', async () => {
         const serverId = await addHome();
         harness.answer(serverId, USAGE_QUERY_PATH, {
-            body: usageResult({ costIncomplete: true, estimatedUsd: 0 }),
+            body: usageResult({ costIncomplete: true, estimatedUsd: null, reportedUsd: null }),
         });
 
         const screen = await renderUsage(serverId);
@@ -449,6 +449,18 @@ describe('TeamCredentialUsageScreen', () => {
 
         expect(screen.getTextContent()).toContain('$0.00');
         expect(screen.getTextContent()).toContain('teams.credentials.usage.recordedByHappier');
+    });
+
+    it('retains a measured zero beside incomplete coverage', async () => {
+        const serverId = await addHome();
+        harness.answer(serverId, USAGE_QUERY_PATH, {
+            body: usageResult({ costIncomplete: true, estimatedUsd: 0, totalTokens: 0, tokenCoverage: 'partial' }),
+        });
+        const screen = await renderUsage(serverId);
+        await waitForTestId(screen, 'team-credential-usage-cost');
+        expect(screen.getTextContent()).toContain('$0.00');
+        expect(screen.findAllByTestId('team-credential-usage-tokens')[0]?.props.detail).toBe('0');
+        expect(screen.getTextContent()).toContain('teams.credentials.usage.costIncomplete');
     });
 
     it('says direct use is missing from the totals when the audience receives material', async () => {
@@ -662,12 +674,18 @@ describe('TeamCredentialUsageScreen', () => {
         expect(screen.getTextContent()).toContain('teams.credentials.usage.externalObservationsIncomplete');
     });
 
-    it('does not offer a recipient the dimensions the Home withholds from them', async () => {
+    it('reads recipient usage without treating the manager-only 404 as resource unavailability or exposing withheld dimensions', async () => {
         const serverId = await addRecipientHome();
         harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult() });
 
         const screen = await renderUsage(serverId);
         await waitForTestId(screen, 'team-credential-usage-breakdown-trigger');
+        expect(harness.requestsFor(CREDENTIAL_GET_PATH)).toHaveLength(1);
+        expect(harness.requestsFor(TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1)).toHaveLength(1);
+        expect(harness.requestsFor(USAGE_QUERY_PATH)).toHaveLength(1);
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-resource-error');
+        expect(harness.requestsFor(GROUPS_LIST_PATH)).toHaveLength(0);
+        expect(harness.requestsFor(MEMBERS_LIST_PATH)).toHaveLength(0);
         await screen.pressByTestIdAsync('team-credential-usage-breakdown-trigger');
         await waitForTestId(screen, 'team-credential-usage-breakdown:member');
 
@@ -681,6 +699,18 @@ describe('TeamCredentialUsageScreen', () => {
         expect(screen.getTextContent()).toContain('teams.credentials.usage.breakdownRestricted');
         expect(screen.findAllByTestId('team-credential-usage-recipient-limit')[0]?.props.detail).toBe('0');
         expect(screen.getTextContent()).toContain('teams.credentials.limits.resetsUtc');
+    });
+
+    it('retains the recipient usage refusal when discovery still includes the resource', async () => {
+        const serverId = await addRecipientHome();
+        harness.answer(serverId, USAGE_QUERY_PATH, { status: 403, body: { error: 'forbidden' } });
+
+        const screen = await renderUsage(serverId);
+        await waitForTestId(screen, 'team-credential-usage-error');
+
+        expect(screen.findAllByTestId('team-credential-usage-error').some(node => node.props.kind === 'denied')).toBe(true);
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-tokens');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-export');
     });
 
     it('offers every dimension to the viewer who administers the resource', async () => {

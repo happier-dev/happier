@@ -14,6 +14,23 @@ function contribution(row: ScopedUsageEventRow, tokens = row.tokens, cost = row.
     return { ...row, tokens, cost, contributingEventIds };
 }
 
+/** A missing category is no new counter reading, so retain its last measured baseline. */
+function retainSnapshotMeasurements(row: ScopedUsageEventRow, previous?: ScopedUsageEventRow): ScopedUsageEventRow {
+    if (!previous) return row;
+    return { ...row, tokens: {
+        input: row.tokens.input ?? previous.tokens.input,
+        output: row.tokens.output ?? previous.tokens.output,
+        reasoning: row.tokens.reasoning ?? previous.tokens.reasoning,
+        cacheRead: row.tokens.cacheRead ?? previous.tokens.cacheRead,
+        cacheWrite: row.tokens.cacheWrite ?? previous.tokens.cacheWrite,
+        total: row.tokens.total ?? previous.tokens.total,
+    }, cost: { ...row.cost,
+        reportedUsd: row.cost.reportedUsd ?? previous.cost.reportedUsd,
+        estimatedUsd: row.cost.estimatedUsd ?? previous.cost.estimatedUsd,
+        invoiceUsd: row.cost.invoiceUsd ?? previous.cost.invoiceUsd,
+    } };
+}
+
 /** The canonical one-shot accounting fold shared by scalar and batch reads. */
 export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[],
     ranks: Map<string, number>): ResolvedScopedUsageContributions {
@@ -64,6 +81,15 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
             if (!row.accountingEvidence?.accounting?.inferenceId) uncorrelatedSources.add(row.source);
             continue;
         }
+        const hasMeasuredTokens = row.tokens.input !== null || row.tokens.output !== null || row.tokens.reasoning !== null
+            || row.tokens.cacheRead !== null || row.tokens.cacheWrite !== null || row.tokens.total !== null;
+        if (!hasMeasuredTokens
+            && row.cost.reportedUsd === null && row.cost.estimatedUsd === null && row.cost.invoiceUsd == null) {
+            // An observation without measurements still witnesses coverage and
+            // its own subject. It cannot replace a measured counter baseline.
+            base.push(contribution(row));
+            continue;
+        }
         if ((row.contextUsedTokens != null || row.contextWindowTokens != null)
             && !usageHasAnyValue(row.tokens, row.cost)) {
             // Occupancy is a presentation fact, not an inference counter or money baseline.
@@ -76,26 +102,31 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
         const intervalCost = pending.reduce((sum, delta) => addUsageCost(sum, delta.cost),
             createEmptyUsageCost(row.cost.currency));
         pending = [];
-        const hasTokenSnapshot = (row.contextUsedTokens == null && row.contextWindowTokens == null)
-            || usageHasAnyValue(row.tokens, createEmptyUsageCost(row.cost.currency));
+        const hasTokenSnapshot = hasMeasuredTokens
+            && ((row.contextUsedTokens == null && row.contextWindowTokens == null)
+                || usageHasAnyValue(row.tokens, createEmptyUsageCost(row.cost.currency)));
         pendingTokenDeltas = addUsageTokens(pendingTokenDeltas, intervalTokens);
         const epoch = row.accountingEvidence?.accounting?.counterEpoch;
         const previousEpoch = previousSnapshot?.accountingEvidence?.accounting?.counterEpoch;
         const witnessedReset = previousSnapshot && epoch !== undefined && previousEpoch !== undefined && epoch !== previousEpoch;
         const tokenReset = hasTokenSnapshot && previousTokenSnapshot
+            && row.tokens.total !== null && previousTokenSnapshot.tokens.total !== null
             && row.tokens.total < previousTokenSnapshot.tokens.total;
         const reset = previousSnapshot && (witnessedReset || tokenReset);
         if (reset) reportedCoverageStartIndex = intervalStartIndex;
         if (reset && !witnessedReset) snapshotReasons.add('counter_discontinuity');
         const baselineTokens = previousTokenSnapshot && !reset ? previousTokenSnapshot.tokens : createEmptyUsageTokens();
         const baselineCost = previousSnapshot && !reset ? previousSnapshot.cost : createEmptyUsageCost(row.cost.currency);
-        const missingBaseline = hasTokenSnapshot && !previousTokenSnapshot && row.tokens.total > pendingTokenDeltas.total
+        const missingBaseline = hasTokenSnapshot && !previousTokenSnapshot
+            && row.tokens.total !== null
+            && (pendingTokenDeltas.total === null ? row.tokens.total > 0 : row.tokens.total > pendingTokenDeltas.total)
             && row.accountingEvidence?.accounting?.historyComplete !== true;
         const increaseTokens = subtractUsageTokens(row.tokens, baselineTokens);
-        if (hasTokenSnapshot && increaseTokens.total < pendingTokenDeltas.total) snapshotReasons.add('ambiguous_overlap');
-        const tokens = hasTokenSnapshot ? subtractUsageTokens(increaseTokens, pendingTokenDeltas) : createEmptyUsageTokens();
+        if (hasTokenSnapshot && increaseTokens.total !== null && pendingTokenDeltas.total !== null
+            && increaseTokens.total < pendingTokenDeltas.total) snapshotReasons.add('ambiguous_overlap');
+        const tokens = hasTokenSnapshot ? subtractUsageTokens(increaseTokens, pendingTokenDeltas) : row.tokens;
         const cost = subtractUsageCost(subtractUsageCost(row.cost, baselineCost), intervalCost);
-        const hasReportedTotal = row.cost.reportedUsd > 0 || row.cost.costSource === 'provider_reported'
+        const hasReportedTotal = (row.cost.reportedUsd !== null && row.cost.reportedUsd > 0) || row.cost.costSource === 'provider_reported'
             || row.cost.costSource === 'provider_reported_api_equivalent';
         const coveredIds: string[] = [];
         const hasResidual = usageHasAnyValue(tokens, { ...cost, reportedUsd: 0, invoiceUsd: 0 });
@@ -104,7 +135,7 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
         if (hasReportedTotal) {
             for (let index = reportedCoverageStartIndex; index < base.length; index++) {
                 const item = base[index]!;
-                const reported = item.cost.reportedUsd > 0 || item.cost.costSource === 'provider_reported'
+                const reported = (item.cost.reportedUsd !== null && item.cost.reportedUsd > 0) || item.cost.costSource === 'provider_reported'
                     || item.cost.costSource === 'provider_reported_api_equivalent';
                 if (!reported && item.cost.currency === row.cost.currency) {
                     coveredIds.push(item.id);
@@ -118,7 +149,7 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
                 coveredIds.push(row.id);
                 const residual = contribution({ ...row, modelId: null, turnId: null }, tokens,
                     { ...cost, reportedUsd: 0, invoiceUsd: 0,
-                        costSource: cost.estimatedUsd > 0 ? 'pricing_estimate' : 'none', reportedTotalId: totalId });
+                        costSource: cost.estimatedUsd !== null && cost.estimatedUsd > 0 ? 'pricing_estimate' : 'none', reportedTotalId: totalId });
                 const item = { ...residual, coverageReasons };
                 base.push(item);
             }
@@ -126,17 +157,26 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
                 { ...cost, estimatedUsd: 0, reportedTotalContributionIds: coveredIds }, hasResidual ? [] : [row.id]);
             const item = { ...total, coverageReasons };
             base.push(item);
-        } else if (usageHasAnyValue(tokens, cost)) {
+        } else if (usageHasAnyValue(tokens, cost)
+            || tokens.input !== null && previousTokenSnapshot?.tokens.input == null
+            || tokens.output !== null && previousTokenSnapshot?.tokens.output == null
+            || tokens.reasoning !== null && previousTokenSnapshot?.tokens.reasoning == null
+            || tokens.cacheRead !== null && previousTokenSnapshot?.tokens.cacheRead == null
+            || tokens.cacheWrite !== null && previousTokenSnapshot?.tokens.cacheWrite == null
+            || tokens.total !== null && previousTokenSnapshot?.tokens.total == null
+            || cost.reportedUsd !== null && previousSnapshot?.cost.reportedUsd == null
+            || cost.estimatedUsd !== null && previousSnapshot?.cost.estimatedUsd == null
+            || cost.invoiceUsd != null && previousSnapshot?.cost.invoiceUsd == null) {
             const residual = contribution({ ...row, modelId: null, turnId: null }, tokens, cost);
             const item = { ...residual, coverageReasons };
             base.push(item);
         }
         if (hasReportedTotal) reportedCoverageStartIndex = base.length;
         if (hasTokenSnapshot || witnessedReset) {
-            previousTokenSnapshot = hasTokenSnapshot ? row : undefined;
+            previousTokenSnapshot = hasTokenSnapshot ? retainSnapshotMeasurements(row, reset ? undefined : previousTokenSnapshot) : undefined;
             pendingTokenDeltas = createEmptyUsageTokens();
         }
-        previousSnapshot = row;
+        previousSnapshot = retainSnapshotMeasurements(row, reset ? undefined : previousSnapshot);
         intervalStartIndex = base.length;
     }
     const globalReasons = new Set<UsageAccountingCoverageReason>();

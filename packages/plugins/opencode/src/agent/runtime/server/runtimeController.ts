@@ -461,7 +461,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       ...(promptCache ? { promptCache } : {}),
       // Native compaction sizes the latest assistant aggregate, not the paid
       // Session ledger. The normalizer already resolves dialect overlap.
-      ...(ownsLiveInference ? { context: {
+      ...(ownsLiveInference && usage.tokens.total !== null ? { context: {
         v: 1,
         modelId: modelId ?? null,
         usedTokens: usage.tokens.total,

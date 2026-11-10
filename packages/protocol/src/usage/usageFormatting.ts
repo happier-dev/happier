@@ -1,23 +1,23 @@
-function isValidUsageNumber(value: number): boolean {
-    return Number.isFinite(value) && value >= 0;
+function isValidUsageNumber(value: number | null): value is number {
+    return value !== null && Number.isFinite(value) && value >= 0;
 }
 
 function trimTrailingZero(value: string): string {
     return value.endsWith('.0') ? value.slice(0, -2) : value;
 }
 
-export function formatTokenCount(value: number, locales?: Intl.LocalesArgument): string {
+export function formatTokenCount(value: number | null, locales?: Intl.LocalesArgument): string {
     if (!isValidUsageNumber(value)) return '—';
 
     return new Intl.NumberFormat(locales, { notation: 'compact', maximumFractionDigits: 1 }).format(Math.trunc(value));
 }
 
-export function formatTokenCountLong(value: number, locales?: Intl.LocalesArgument): string {
+export function formatTokenCountLong(value: number | null, locales?: Intl.LocalesArgument): string {
     if (!isValidUsageNumber(value)) return '—';
     return new Intl.NumberFormat(locales).format(Math.trunc(value));
 }
 
-export function formatUsageCost(usd: number, currency: string, locales?: Intl.LocalesArgument): string {
+export function formatUsageCost(usd: number | null, currency: string, locales?: Intl.LocalesArgument): string {
     if (!isValidUsageNumber(usd)) return '—';
 
     // Cents from a dime up; smaller amounts keep the digits that show them.

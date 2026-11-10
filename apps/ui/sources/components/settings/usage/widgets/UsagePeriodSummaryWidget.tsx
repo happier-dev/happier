@@ -81,7 +81,7 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   // unavailable, so the column shows the tokens and the one cost message is said once (R135 N2).
   if (cost)
     stats.push(
-      { id: 'tokens', label: t('usage.tokens'), value: view.hero.totalTokens, valueFormatter: formatTokenCount },
+      { id: 'tokens', label: t('usage.tokens'), value: view.hero.totalTokens ?? UNKNOWN_VALUE, valueFormatter: formatTokenCount },
     );
   else if (invoice?.amountUsd != null)
     stats.push(

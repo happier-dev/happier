@@ -18,6 +18,13 @@ const slice: UsageQueryResultSlice = { key: getUsageQueryKey(query), requestedQu
     accounting: { v: 1, totals: { eventCount: 1, tokens, cost: contribution.cost }, contributions: [contribution] } };
 
 describe('Usage model price editor projection', () => {
+    it('keeps unknown unpriced token populations unknown and retains their known portion', () => {
+        const unknown = { ...contribution, tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null } };
+        const unknownSlice = { ...slice, accounting: { ...slice.accounting!, contributions: [unknown] } };
+        expect(buildUsagePriceEditorModel(unknownSlice, {}, catalog).rows[0]?.unpricedTokens).toBeNull();
+        expect(buildUsagePriceEditorModel({ ...unknownSlice, accounting: { ...unknownSlice.accounting,
+            contributions: [unknown, contribution] } }, {}, catalog).rows[0]?.unpricedTokens).toBe(15);
+    });
     it('preserves model identities and unpriced tokens from grouped evidence through edits, mappings and clearing', () => {
         const rich = { ...slice, accounting: { ...slice.accounting!, priceCatalog: catalog,
             contributions: [contribution, { ...contribution, id: 'null-model', modelId: null },

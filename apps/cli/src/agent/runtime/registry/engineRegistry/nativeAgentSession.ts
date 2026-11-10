@@ -1,5 +1,4 @@
 import { SessionGoalControlFailureV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
-import type { AgentUsageObservedPayloadV1 } from '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1';
 import { readSessionGoalControlDiagnosticDetails } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isSessionModeSelectionUnavailable } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { isForegroundTurnRuntimeTranscriptEvent } from '@/agent/runtime/session/events/runtimeTranscriptScope';
@@ -201,6 +200,7 @@ import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaq
 import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
 import { bindAcpReplaySessionToolSource } from '@/agent/acp/sessionClient';
 import type { UsageObservation } from '@/usage/usageObservation';
+import { toNativeAgentUsageObservation, buildNativeAgentUsageAccountingMetadata } from '@/usage/nativeAgentUsageObservation';
 import type { UsageObservationPublishResult } from '@/usage/createUsageObservationPublisher';
 import { deriveNativeUsageAccountingIdentity, type NativeUsageAccountingIdentityInput } from '@/usage/collector/nativeUsageAccountingIdentity';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
@@ -1768,33 +1768,7 @@ function hasConnectedServiceProfileSourceInstances(agent: EngineResolutionAgent)
     ) === true;
 }
 
-export function toNativeAgentUsageObservation(
-    event: AgentUsageObservedPayloadV1,
-    provider: string,
-): UsageObservation {
-    const reportedCostUsd = event.cost !== undefined
-        && event.cost.currency === 'USD'
-        && (event.cost.costSource === 'provider_reported'
-            || event.cost.costSource === 'provider_reported_api_equivalent');
-    return {
-        provider,
-        source: event.source,
-        scope: event.scope,
-        key: null,
-        modelId: event.modelId ?? event.context?.modelId ?? null,
-        tokens: event.tokens ?? null,
-        cost: event.cost ?? null,
-        contextUsedTokens: event.context?.usedTokens ?? null,
-        contextWindowTokens: event.context?.windowTokens ?? null,
-        availability: {
-            inputTokens: event.tokens !== undefined,
-            outputTokens: event.tokens !== undefined,
-            reportedCostUsd,
-        },
-        ...(event.context ? { contextSnapshot: event.context } : {}),
-        ...(event.promptCache ? { promptCache: event.promptCache } : {}),
-    };
-}
+export { toNativeAgentUsageObservation } from '@/usage/nativeAgentUsageObservation';
 
 type NativeInputCorrelation = Readonly<{
     discussionAddressing?: DiscussionAddressingV1;
@@ -2797,17 +2771,11 @@ export function createNativeAgentSessionOperations(
                 const accountingIdentity = witness && event.accounting?.nativeSessionId === witness.nativeSessionId
                     ? deriveNativeUsageAccountingIdentity({ ...witness, inferenceId: event.accounting.inferenceId })
                     : null;
-                const counterSemantics = {
-                    runtimeEventOrder: { runtimeIncarnationId, sequence: event.sequence },
-                    ...(event.accounting?.inputIncludesCache === undefined ? {} : { inputIncludesCache: event.accounting.inputIncludesCache }),
-                    ...(event.accounting?.outputIncludesReasoning === undefined ? {} : { outputIncludesReasoning: event.accounting.outputIncludesReasoning }),
-                    ...(event.accounting?.historyComplete === undefined ? {} : { historyComplete: event.accounting.historyComplete }),
-                };
                 const fallbackAccounting = {
-                    ...counterSemantics,
-                    ...(!witness && !usagePublisher.accountingWitness && !usagePublisher.boundNativeSessionId && event.accounting?.nativeSessionId ? { nativeSessionId: event.accounting.nativeSessionId } : {}),
-                    ...(!witness && !usagePublisher.accountingWitness && !usagePublisher.boundNativeSessionId && event.accounting?.inferenceId ? { inferenceId: event.accounting.inferenceId } : {}),
+                    ...buildNativeAgentUsageAccountingMetadata(event).usageAccounting,
+                    runtimeEventOrder: { runtimeIncarnationId, sequence: event.sequence },
                 };
+                const { nativeSessionId: _nativeSessionId, inferenceId: _inferenceId, ...counterSemantics } = fallbackAccounting;
                 void Promise.resolve(usagePublisher.publish({
                     observedAt: event.emittedAtMs,
                     observation: toNativeAgentUsageObservation(event, usagePublisher.provider),
@@ -2822,20 +2790,13 @@ export function createNativeAgentSessionOperations(
                                 nativeSessionKey: accountingIdentity.nativeSessionKey,
                             },
                             usageAccounting: {
-                                path: 'runtime',
+                                ...counterSemantics,
                                 status: event.accounting?.historyComplete === false || !accountingIdentity.externalKey ? 'partial' : 'available',
-                                asOfMs: event.emittedAtMs,
                                 nativeSessionId: accountingIdentity.nativeSessionKey,
                                 ...(accountingIdentity.externalKey ? { inferenceId: accountingIdentity.externalKey } : {}),
-                                ...counterSemantics,
                             },
                         },
-                    } : Object.keys(fallbackAccounting).length > 0 ? {
-                        metadata: { usageAccounting: {
-                            path: 'runtime', status: event.accounting?.historyComplete === false ? 'partial' : 'unknown', asOfMs: event.emittedAtMs,
-                            ...fallbackAccounting,
-                        } },
-                    } : {}),
+                    } : { metadata: { usageAccounting: fallbackAccounting } }),
                 })).catch(() => {
                     logger.debug('[NativeAgentSession] failed to publish usage observation (non-fatal)');
                 });
