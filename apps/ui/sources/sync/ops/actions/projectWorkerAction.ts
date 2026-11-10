@@ -1,5 +1,6 @@
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ProjectWorkerActionInputSchemasV1, ProjectWorkerActionOutputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -49,6 +50,7 @@ export function createUiProjectWorkerActionV1(account: LazyActionAccountContext)
                 retirement.dispose();
             }
             account.assertResultCurrent(spec.sideEffectClass);
+            raw = readMachineActionRpcResult(raw);
             const failure = ActionExecuteFailureSchema.safeParse(raw);
             if (failure.success) return failure.data;
             const approval = ActionApprovalRequestCreatedResultSchema.safeParse(raw);
