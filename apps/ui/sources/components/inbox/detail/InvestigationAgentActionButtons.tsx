@@ -20,6 +20,8 @@ export function InvestigationAgentActionButtons(props: Readonly<{
   actions: readonly InvestigationAgentActionButtonModel[];
   pending: boolean;
   compact: boolean;
+  /** The surrounding view's primary action decides whether these lead; default filled, the failure pages' one action. */
+  emphasis?: 'primary' | 'secondary';
   onLaunch: (mode: 'start' | 'review', actionId: string | undefined) => void;
 }>): React.ReactElement | null {
   const navigation = usePluginSurfaceDestinationNavigationBinding();
@@ -38,6 +40,7 @@ export function InvestigationAgentActionButtons(props: Readonly<{
       } })}
       disabled={props.pending}
       compact={props.compact}
+      emphasis={props.emphasis}
     />
   ));
   // Core draws the public presenter inside the core Happier UI scope, as every other core consumer does.

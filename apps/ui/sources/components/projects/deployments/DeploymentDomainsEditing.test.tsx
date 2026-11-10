@@ -334,18 +334,23 @@ describe('Environment → Domains: add form (P6)', () => {
 describe('Environment → Domains: Service never starts on the database (PAGE-ACCEPT-100 D7)', () => {
   const withDatabase = (definition: Detail['content']['definition']) => {
     const base = createDeploymentEnvironmentDetailV1();
-    return { ...base, content: { ...base.content, ingress: undefined, definition,
-      template: { data: [{ service: 'database', engine: 'postgres' }] } as never } };
+    // A real default PostgreSQL template's provenance: the database is the template's data service.
+    const template = { templateRef: { sourceId: 'store', itemId: 'postgres', version: '17.0.0',
+      ref: { kind: 'content' as const, digest: `sha256:${'c'.repeat(64)}` } }, services: ['database'],
+      definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+      data: [{ service: 'database', engine: 'postgres' as const, port: 5432 }] };
+    return { ...base, content: { ...base.content, ingress: undefined, definition, template } };
   };
 
-  it('leaves Service to the person when Compose\'s primary service is the database and no other service is known', async () => {
+  it('starts a typed Service on the app that runs when Compose\'s primary service is the database', async () => {
     const detail = withDatabase({ kind: 'repository', ref: 'main',
       compose: { path: 'compose.yaml', profiles: [], services: [], primaryService: 'database' } });
     const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail));
     try {
       expect(await settle(id)).not.toBeNull();
       await screen.pressByTestIdAsync(id);
-      expect(screen.findByTestId(`${id}.service`)?.props.value).toBe('');
+      // The fixture's serving receipt runs `app`.
+      expect(screen.findByTestId(`${id}.service`)?.props.value).toBe('app');
     } finally { await screen.unmount(); controller.retire(); }
   });
 

@@ -270,7 +270,8 @@ function DeploymentDispositionSheet(
             }
           }}
           minimumTileWidth={240}
-          subtitleLines={6}
+          // The consequence is read whole before a destructive choice; a tile never cuts it short.
+          subtitleLines={0}
           options={[
             {
               id: 'remove',
@@ -293,7 +294,7 @@ function DeploymentDispositionSheet(
         />
       ) : null}
       {choice === 'remove' && props.reviewVolumes ? <ItemGroup title={t('projects.deployments.factData')}
-        description={t('projects.deployments.factDataValue')}>
+        {...(volumeReview?.length ? { description: t('projects.deployments.factDataValue') } : {})}>
         {volumeReview === null ? <SurfaceStateCard size="line" kind={volumeError ? 'error' : 'loading'}
           testID={volumeError ? 'project-deployments.disposition.volumes.error' : undefined}
           title={volumeError ? t('projects.deployments.volumeReviewError') : t('projects.deployments.loading')}

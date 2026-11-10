@@ -136,13 +136,16 @@ export function EnvironmentLogsCompanion(
   );
 }
 
-/** One service's runtime log from the Machine's admitted services list; read only while shown. */
+/**
+ * One service's runtime log, from the same Environment services list the Overview's rows read (one read, found by
+ * its Compose service the way the rows find theirs); read only while shown.
+ */
 function EnvironmentRuntimeLogs(
   props: Readonly<{ serverId: string; machineId: string; machineName: string; environmentId: string; service: string }>,
 ) {
   const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId,
-    environmentId: props.environmentId, composeService: props.service, active: true });
-  const row = list.rows?.[0] ?? null;
+    environmentId: props.environmentId, active: true });
+  const row = list.rows?.find((candidate) => candidate.deployment?.service.composeService === props.service) ?? null;
   if (!row) {
     return list.pending ? <PageLoadingRows testID="environment-logs.loading" /> : (
       <SurfaceStateCard

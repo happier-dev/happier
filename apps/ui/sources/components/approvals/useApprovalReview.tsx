@@ -700,7 +700,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const sections = (
     <>
         {deploymentReview ? (
-          <DeploymentReviewApprovalFacts approval={deploymentReview} serverId={approvalServerId} testID="approvals.deployment-review" />
+          <DeploymentReviewApprovalFacts approval={deploymentReview} serverId={approvalServerId} testID="approvals.deployment-review"
+            decided={parsed.request.status !== 'open' || answeredWhileOpen !== null} />
         ) : null}
 
         {computerAction ? (

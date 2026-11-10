@@ -62,7 +62,8 @@ describe('DeploymentReviewApprovalFacts', () => {
   });
 
   it('says a redeploy of the running version as that, not "replaces" itself (PAGE-ACCEPT-100 D10)', async () => {
-    const revision = { kind: 'stored' as const, contentRevision: 2 };
+    const revision = { kind: 'stored' as const, contentRevision: 2, composeDigest: `sha256:${'a'.repeat(64)}` };
+    const other = { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` };
     const screen = await renderScreen(
       <DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, risks: [], revision, replaces: { revision } } as never, promotion: null }}
         serverId={getActiveServerSnapshot().serverId} testID="same" />,
@@ -70,6 +71,11 @@ describe('DeploymentReviewApprovalFacts', () => {
     const text = screen.getTextContent();
     expect(text).toContain('projects.deployments.review.replacesSame');
     expect(text).not.toContain('projects.deployments.review.replacesNote');
+    const older = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, risks: [], revision, replaces: { revision: other } } as never, promotion: null }}
+        serverId={getActiveServerSnapshot().serverId} testID="older" />,
+    );
+    expect(older.getTextContent()).toContain('projects.deployments.review.replacesNote');
   });
 
   it('stops asking to check once the request is decided, and keeps what it flagged (PAGE-ACCEPT-100 D10)', async () => {

@@ -119,6 +119,11 @@ function revisionText(revision: DeploymentReviewRevisionV1): string {
     : t('projects.deployments.review.versionStored', { revision: revision.contentRevision });
 }
 
+function sameRevision(a: DeploymentReviewRevisionV1, b: DeploymentReviewRevisionV1): boolean {
+  return a.kind === 'repository' ? b.kind === 'repository' && a.sha === b.sha
+    : b.kind === 'stored' && a.contentRevision === b.contentRevision && a.composeDigest === b.composeDigest;
+}
+
 const selectSentenceName = (machine: Machine | null): string | null =>
   machine ? getMachineSentenceName(machine) : null;
 
@@ -208,8 +213,10 @@ function describeReviewFields(
     // What it replaces finishes the version's line (lab d3: "Replaces #38 · b81e0d4"); alone it keeps its own row.
     ...(revision ? field('version', t('projects.deployments.review.version'), revisionText(revision), {
       note: replaces === undefined ? undefined
-        : replaces ? t('projects.deployments.review.replacesNote', { revision: revisionText(replaces.revision) })
-          : t('projects.deployments.review.replacesNothing'),
+        // Deploying the version that already serves is a redeploy; it does not "replace" itself.
+        : replaces && sameRevision(replaces.revision, revision) ? t('projects.deployments.review.replacesSame')
+          : replaces ? t('projects.deployments.review.replacesNote', { revision: revisionText(replaces.revision) })
+            : t('projects.deployments.review.replacesNothing'),
     }) : field('replaces', t('projects.deployments.review.replaces'), replaces === undefined ? null
       : replaces ? revisionText(replaces.revision) : t('projects.deployments.review.replacesNothing'))),
     ...field('secrets', t('projects.deployments.review.secrets'), secretBindingNames?.length ? secretBindingNames.join(', ') : null, {
@@ -294,7 +301,7 @@ export function useDeploymentReviewDecision(
 }
 
 /** Changed references and settings worth checking share one amber callout after the facts. */
-function MachineRisks(props: Readonly<{ machine: ReviewMachine; name: string | null; multiple: boolean; testID: string }>) {
+function MachineRisks(props: Readonly<{ machine: ReviewMachine; name: string | null; multiple: boolean; decided: boolean; testID: string }>) {
   const { review } = props.machine;
   const risks = RISK_KINDS.flatMap((kind) => {
     const services = review.risks.filter((risk) => risk.kind === kind).map((risk) => risk.service);
@@ -310,8 +317,10 @@ function MachineRisks(props: Readonly<{ machine: ReviewMachine; name: string | n
   return (
     <AttentionBanner
       testID={props.testID}
-      tone="warning"
-      title={on ? t('projects.deployments.review.risksOn', on) : t('projects.deployments.review.risksTitle')}
+      // Once decided there is nothing left to check: the same points stay, as what this review flagged.
+      tone={props.decided ? 'neutral' : 'warning'}
+      title={props.decided ? t('projects.deployments.review.risksNotedTitle')
+        : on ? t('projects.deployments.review.risksOn', on) : t('projects.deployments.review.risksTitle')}
       points={[
         ...referenceChanges.map(change => [
           { code: change.name }, ' · ',
@@ -346,6 +355,8 @@ export const DeploymentReviewApprovalFacts = React.memo(
       approval: DeploymentReviewApproval;
       serverId: string | null;
       testID: string;
+      /** The request is decided: the facts stay as a record and stop asking for a check. */
+      decided?: boolean;
     }>,
   ) {
     const machines = React.useMemo(() => readMachines(props.approval.review), [props.approval.review]);
@@ -360,7 +371,7 @@ export const DeploymentReviewApprovalFacts = React.memo(
       <NamedMachines serverId={props.serverId} ids={ids}>
         {(names) => (
           <ReviewFields approval={props.approval} machines={machines} names={names}
-            serverId={props.serverId} testID={props.testID} />
+            serverId={props.serverId} testID={props.testID} decided={props.decided === true} />
         )}
       </NamedMachines>
     );
@@ -373,6 +384,7 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
   names: MachineNames;
   serverId: string | null;
   testID: string;
+  decided: boolean;
 }>) {
   const presentation = React.useMemo(
     () => describeReviewFields(props.approval, props.machines, props.names),
@@ -384,7 +396,7 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
       <ActionApprovalFieldsCard presentation={presentation} anatomy="page" serverId={props.serverId}
         title={t('projects.deployments.review.whatTitle')} testID={`${props.testID}.fields`} />
       {props.machines.map((machine, index) => (
-        <MachineRisks key={machine.id ?? 'host'} machine={machine} multiple={multiple}
+        <MachineRisks key={machine.id ?? 'host'} machine={machine} multiple={multiple} decided={props.decided}
           name={machine.id ? props.names[machine.id] ?? null : null}
           testID={multiple ? `${props.testID}.${index}.risks` : `${props.testID}.risks`} />
       ))}

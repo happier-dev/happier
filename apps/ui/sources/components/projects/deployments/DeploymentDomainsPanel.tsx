@@ -46,6 +46,8 @@ export type DeploymentDomainEditing = Readonly<{
   actions: DomainActions;
   environmentRevision: number;
   recordedIngress?: DeploymentEnvironmentContentV1['ingress'];
+  /** The Compose services the serving receipt runs, by name: what Service starts on when the definition lists none. */
+  deployedServices?: readonly string[];
   /** The runtime target the addresses route to; Add domain needs one. */
   targetLink: Readonly<{ id: string; revision: number }> | null;
   review: DeploymentReviewHandle;
@@ -149,7 +151,7 @@ export function DeploymentDomainsPanel(
           recordedIngress={editing.recordedIngress}
           inspect={editing.actions.inspectPlatformTarget}
           services={services}
-          primaryService={content ? primaryComposeService(content) : null}
+          initialService={content ? initialDomainService(content, services.length > 0 ? services : editing.deployedServices ?? NO_SERVICES) : null}
           machine={editing.machine}
           routeExports={routeExports}
           credentials={setBindings !== undefined}
@@ -210,12 +212,20 @@ export function DeploymentDomainsPanel(
   );
 }
 
-/** The Compose services the definition selects; an empty selection (every service) names none, so Service stays typed. */
-/** Compose's primary service, as the definition names it. */
-function primaryComposeService(content: EnvironmentContent): string | null {
+/**
+ * Where a new address points first: Compose's primary service, unless it is one of the Environment's databases; then
+ * the one app among the known services. A public address never starts on a database (PAGE-ACCEPT-100 D7).
+ */
+function initialDomainService(content: EnvironmentContent, known: readonly string[]): string | null {
   const { definition } = content;
-  return (definition.kind === 'stored' ? definition.primaryService : definition.compose?.primaryService) ?? null;
+  const primary = (definition.kind === 'stored' ? definition.primaryService : definition.compose?.primaryService) ?? null;
+  const databases = new Set(content.template?.data?.map((data) => data.service) ?? []);
+  if (primary && !databases.has(primary)) return primary;
+  const apps = known.filter((name) => !databases.has(name));
+  return apps.length === 1 ? apps[0]! : null;
 }
+
+/** The Compose services the definition selects; an empty selection (every service) names none, so Service stays typed. */
 
 function composeServices(content: EnvironmentContent): readonly string[] {
   const { definition } = content;
@@ -255,8 +265,8 @@ function DomainAddForm(
     inspect?: DomainIngressInspection;
     /** The definition's selected Compose services; empty means Service is typed. */
     services: readonly string[];
-    /** Compose's primary service, which a typed Service starts with. */
-    primaryService: string | null;
+    /** The service a new address starts on (never a database); null leaves Service to the person. */
+    initialService: string | null;
     /** The Machine the Environment's own route (Caddy) serves from. */
     machine: string;
     /** Ports the Environment declares per service; a service without one keeps Port typed. */
@@ -268,8 +278,13 @@ function DomainAddForm(
   }>,
 ) {
   const [hostname, setHostname] = React.useState('');
-  const [service, setService] = React.useState(() => props.services.length === 0 ? props.primaryService ?? '' : '');
-  const [port, setPort] = React.useState('');
+  const [service, setService] = React.useState(() => props.services.length === 0 || props.services.includes(props.initialService ?? '')
+    ? props.initialService ?? '' : '');
+  // The starting service's one declared port fills Port, as choosing that service does.
+  const [port, setPort] = React.useState(() => {
+    const ports = props.routeExports.filter(item => item.service === service);
+    return ports.length === 1 ? String(ports[0]!.containerPort) : '';
+  });
   const [path, setPath] = React.useState('');
   const [checkPath, setCheckPath] = React.useState('/');
   const [redirectTo, setRedirectTo] = React.useState('');
