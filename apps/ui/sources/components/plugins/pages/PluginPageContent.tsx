@@ -41,6 +41,7 @@ import {
 import { createPluginPageLocationOwner, type PluginPageLocationOwner } from '@/components/plugins/pages/pluginPageLocation';
 import { pluginPageTargetKey } from './pluginPageRoute';
 import { FloatingChromeClearedFrame } from '@/components/ui/layout/FloatingChromeClearedFrame';
+import { PagePinnedBarGutterContext } from '@/components/ui/layout/PagePinnedBar';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import {
     PluginPageHeaderActions,
@@ -452,6 +453,7 @@ export function PluginPageContent(props: Readonly<{
         <RetainedPanelSurface isActive={isVisible}>
                 <FloatingChromeClearedFrame testID="plugin-app-page-host" style={pageContentFrameStyle}>
                     <HappierColumnEdgeContext.Provider value={PLUGIN_PAGE_COLUMN_EDGE_PX}>
+                    <PagePinnedBarGutterContext.Provider value={pageContentFrameStyle.paddingHorizontal}>
                     <PluginPageBackStepProvider owner={locationOwner}>
                     <NavigationLargeTitleProvider largeTitle={largeTitle}>
                     <PluginPageIdentityHeaderProvider pluginId={props.pluginId} title={headerTitle} description={page.description} headerStyle={page.headerStyle}
@@ -482,6 +484,7 @@ export function PluginPageContent(props: Readonly<{
                     </PluginPageIdentityHeaderProvider>
                     </NavigationLargeTitleProvider>
                     </PluginPageBackStepProvider>
+                    </PagePinnedBarGutterContext.Provider>
                     </HappierColumnEdgeContext.Provider>
                 </FloatingChromeClearedFrame>
         </RetainedPanelSurface>

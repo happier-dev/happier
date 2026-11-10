@@ -74,4 +74,17 @@ describe('PagePinnedBar', () => {
     it('does not reserve a tab bar that a modal covers', async () => {
         expect(await bottomPadding({ chromeHeight: 84, inModal: true })).toBe(34);
     });
+
+    it('spans the page gutter it stands in, so the pinned bar meets the window edges', async () => {
+        // Live READY172 (390): a plugin page's pinned footer stood inside the page gutter, inset twice on each side,
+        // and its primary truncated ("Fix with Cla…") beside the folded More.
+        const { PagePinnedBarGutterContext } = await import('./PagePinnedBar');
+        const screen = await renderScreen(
+            <PagePinnedBarGutterContext.Provider value={16}><PagePinnedBar testID="bar" /></PagePinnedBarGutterContext.Provider>,
+        );
+        expect(StyleSheet.flatten(screen.findByTestId('bar')!.props.style).marginHorizontal).toBe(-16);
+        const plain = await renderScreen(<PagePinnedBar testID="plain-bar" />);
+        expect(StyleSheet.flatten(plain.findByTestId('plain-bar')!.props.style).marginHorizontal ?? 0).toBe(0);
+    });
 });
+

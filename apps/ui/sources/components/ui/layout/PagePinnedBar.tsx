@@ -8,6 +8,12 @@ import { FloatingChromeClearanceReservedContext, useFloatingChromeClearanceReser
 import { PageBarFoldedChrome, useClaimPhoneBottomForPageBar } from '@/components/navigation/mobile/chrome/PageBarFoldedChrome';
 
 /**
+ * The page gutter a pinned bar stands in (a plugin page's frame pads its content by it): the bar spans it, so it
+ * meets the window edges like a core page's bar, and its contents keep the bar's own inset.
+ */
+export const PagePinnedBarGutterContext = React.createContext(0);
+
+/**
  * A page's pinned action bar: a sibling below the page's scroll, never scrolled off, on the page's
  * material under a hairline. It owns how that bar clears the bottom of the screen, so no page does the
  * arithmetic itself:
@@ -25,11 +31,13 @@ export function PagePinnedBar(props: Readonly<Pick<ViewProps, 'testID' | 'childr
     const insets = useChromeSafeAreaInsets();
     const { clearance, reserved } = useFloatingChromeClearanceReservation();
     const claimsBottom = useClaimPhoneBottomForPageBar();
+    const gutter = React.useContext(PagePinnedBarGutterContext);
     const paddingBottom = reserved
         ? theme.space.s12 + clearance
         : Math.max(theme.space.s12, insets.bottom);
     return (
-        <View testID={props.testID} style={[styles.bar, { paddingBottom, backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
+        <View testID={props.testID} style={[styles.bar, { paddingBottom, backgroundColor: materialColor(theme.colors.surface.base, 'transparent') },
+            gutter === 0 ? null : { marginHorizontal: -gutter }]}>
             <View style={styles.row}>
                 {claimsBottom ? <PageBarFoldedChrome style={styles.folded} /> : null}
                 <View style={[styles.content, props.style]}>
