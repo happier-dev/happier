@@ -26,7 +26,8 @@ import { useInlineLevelFocusReturn } from '@/keyboard/focusReturn';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useActiveServerAccountScope, } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useSettingMutable } from '@/sync/domains/state/storage';
+import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import {
     selectWorkflowProjectMachine,
@@ -412,6 +413,7 @@ function EditableProjectTarget(props: Readonly<{
         currentUiContextCommandScope={props.currentUiContextCommandScope}
         workspaceRefs={workspaceRefs} machineHomeDir={machineHomeDir} machinePlatform={machinePlatform}
         onChange={onChange} testIDPrefix={testIDPrefix} checkout
+        recentPaths={target === null ? EMPTY_RECENT_PATHS : resolveRecentPathsForMachine(target.machineId)}
         machineControl={<MachineSelector purpose={props.purpose} serverId={serverId} machines={machines}
             currentUiContextCommandScope={props.currentUiContextCommandScope === undefined ? undefined : `${props.currentUiContextCommandScope}.machine`}
             currentUiContextForegroundOverlay={props.currentUiContextCommandScope !== undefined}
@@ -419,7 +421,10 @@ function EditableProjectTarget(props: Readonly<{
             showFavorites={false} showRecent={false} showCliGlyphs={false} testIdPrefix={`${testIDPrefix}-machine`} />} />;
 }
 
-/** The same folder browser serves editable placement and a host's fixed Machine. */
+const EMPTY_RECENT_PATHS: readonly string[] = [];
+const IGNORE_SEARCH_QUERY = (): void => {};
+
+/** The same folder choice serves editable placement and a host's fixed Machine. */
 function ProjectDirectoryControl(props: Readonly<{
     currentUiContextCommandScope?: string;
     inline?: boolean;
@@ -432,8 +437,15 @@ function ProjectDirectoryControl(props: Readonly<{
     testIDPrefix: string;
     checkout?: boolean;
     machineControl?: React.ReactNode;
+    /** This Machine's recent folders (the Account's authoring memory), offered first by the path picker. */
+    recentPaths?: readonly string[];
 }>) {
     const { target, serverId, machineHomeDir, machinePlatform, testIDPrefix } = props;
+    // A person chooses the folder with the one path picker (the new-session one: type a path, suggestions,
+    // favourites, browse), pushed in place; the mounted `browse` command keeps the browser itself.
+    const [picking, setPicking] = React.useState<WorkflowAuthoringTarget | null>(null);
+    const [favoriteDirectoriesSetting, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
+    const favoriteDirectories = Array.isArray(favoriteDirectoriesSetting) ? favoriteDirectoriesSetting : EMPTY_RECENT_PATHS;
     const { theme } = useUnistyles();
     const CommandBridge = useCurrentUiContextCommandBridge();
     const [browsing, setBrowsing] = React.useState<Readonly<{
@@ -441,7 +453,7 @@ function ProjectDirectoryControl(props: Readonly<{
         callerContext?: ActionExecutorContext;
     }> | null>(null);
     // Back (or a choice) returns focus to the folder control the inline browser replaced.
-    const directoryFocus = useInlineLevelFocusReturn(browsing !== null);
+    const directoryFocus = useInlineLevelFocusReturn(browsing !== null || picking !== null);
     const targetRef = React.useRef(target);
     targetRef.current = target;
     const latest = React.useRef(props);
@@ -481,6 +493,27 @@ function ProjectDirectoryControl(props: Readonly<{
         ? formatPathRelativeToHome(target.directory, machineHomeDir, { homeLabel: t('workspacePresentation.homeFolder') })
         : t('newSession.folder.noFolder');
 
+    if (picking) return <View>
+        <View style={styles.back}>
+            <TextLinkButton testID="workflow-target-directory-back" label={t('common.back')}
+                onPress={() => setPicking(null)} controlRef={directoryFocus.attachEntry} />
+        </View>
+        <NewSessionPathSelectionContent
+            machineHomeDir={machineHomeDir ?? ''}
+            selectedPath={isWorkflowProjectTarget(picking) ? picking.directory : ''}
+            initialSuggestionMode="history"
+            onChangeSelectedPath={(directory) => { moveToDirectory(picking, directory); setPicking(null); }}
+            recentPaths={props.recentPaths ?? EMPTY_RECENT_PATHS}
+            usePickerSearch={false}
+            searchQuery=""
+            onChangeSearchQuery={IGNORE_SEARCH_QUERY}
+            favoriteDirectories={favoriteDirectories}
+            onChangeFavoriteDirectories={setFavoriteDirectories}
+            machineBrowse={{ enabled: true, machineId: picking.machineId, serverId }}
+            machinePlatform={machinePlatform}
+        />
+    </View>;
+
     if (browsing) return <View>
         {/* The same inline Back as the recipe body and participant picker (one look for a pushed level). */}
         <View style={styles.back}>
@@ -508,7 +541,7 @@ function ProjectDirectoryControl(props: Readonly<{
                         controlRef={directoryFocus.attachOrigin}
                         accessibilityRole="button"
                         accessibilityLabel={`${t('workflows.workspace.projectCheckout')}: ${directoryLabel}`}
-                        onPress={scope === undefined ? () => browseDirectory() : () => { void commands.invoke('browse'); }}
+                        onPress={() => setPicking(target)}
                         style={(state) => [
                             workflowEditorStyles.actionTarget,
                             styles.control,

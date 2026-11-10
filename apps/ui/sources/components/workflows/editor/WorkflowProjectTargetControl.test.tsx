@@ -11,6 +11,7 @@ import { DaemonFilesystemListDirectoryRequestSchema, DaemonFilesystemListDirecto
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePathBrowserView } from '@/components/ui/pathBrowser/MachinePathBrowserModal';
+import { PathSelectionList } from '@/components/ui/pathPicker/PathSelectionList';
 import { getPathBrowserRowTestId } from '@/components/ui/pathBrowser/pathBrowserTestIds';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
@@ -374,18 +375,20 @@ describe('workflow project target control', () => {
         expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-2', directory: '/home/me/service' });
     });
 
-    it('browses inline and returns without changing the retained target or opening a modal', async () => {
+    it('chooses the folder through the one path picker in place and returns without changing the target', async () => {
         const onChange = vi.fn();
         const { Modal } = await import('@/modal');
         const show = vi.spyOn(Modal, 'show');
         const screen = await renderControl({ target: { machineId: 'machine-1', directory: '/repo/payments' }, onChange });
         const before = show.mock.calls.length;
         await screen.pressByTestIdAsync('workflow-editor-project-directory');
-        expect(screen.findAllByType(MachinePathBrowserView)).toHaveLength(1);
-        expect(show.mock.calls).toHaveLength(before);
-        await act(async () => screen.findByType(MachinePathBrowserView).props.onRequestClose());
-        expect(onChange).not.toHaveBeenCalled();
+        // The new-session path picker (type a path, suggestions, favourites, browse), never a second folder control.
+        expect(screen.findAllByType(PathSelectionList)).toHaveLength(1);
         expect(screen.findAllByType(MachinePathBrowserView)).toHaveLength(0);
+        expect(show.mock.calls).toHaveLength(before);
+        await screen.pressByTestIdAsync('workflow-target-directory-back');
+        expect(onChange).not.toHaveBeenCalled();
+        expect(screen.findAllByType(PathSelectionList)).toHaveLength(0);
         expect(screen.findAllByType(MachineSelector)).toHaveLength(1);
         show.mockRestore();
     });
@@ -396,12 +399,10 @@ describe('workflow project target control', () => {
         const screen = await renderControl({ target: opened, onChange });
 
         await screen.pressByTestIdAsync('workflow-editor-project-directory');
-        // The real browser is owned by the real modal host, and its published
-        // selection callback settles the opener's promise for the captured target.
-        const browsers = screen.findAllByType(MachinePathBrowserView);
-        expect(browsers).toHaveLength(1);
-        const browser = browsers[0];
-        expect(browser.props.machineId).toBe('machine-1');
+        const pickers = screen.findAllByType(PathSelectionList);
+        expect(pickers).toHaveLength(1);
+        const picker = pickers[0];
+        expect(picker.props.machineId).toBe('machine-1');
         const { WorkflowProjectTargetControl } = await import('./WorkflowProjectTargetControl');
         // The host moved to another target while the browser was open.
         await screen.update(React.createElement(WorkflowProjectTargetControl, {
@@ -412,7 +413,7 @@ describe('workflow project target control', () => {
             onChange,
         } as never));
         await act(async () => {
-            browser.props.onPickPath('/repo/other');
+            picker.props.onCommit('/repo/other');
         });
 
         expect(onChange).not.toHaveBeenCalled();
@@ -426,9 +427,9 @@ describe('workflow project target control', () => {
         });
 
         await screen.pressByTestIdAsync('workflow-editor-project-directory');
-        expect(screen.findAllByType(MachinePathBrowserView)).toHaveLength(1);
+        expect(screen.findAllByType(PathSelectionList)).toHaveLength(1);
         await act(async () => {
-            screen.findByType(MachinePathBrowserView).props.onPickPath('/Users/me/unbound');
+            screen.findByType(PathSelectionList).props.onCommit('/Users/me/unbound');
         });
 
         expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-1', directory: '/Users/me/unbound' });
