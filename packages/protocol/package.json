@@ -920,6 +920,11 @@
       "types": "./dist/actions/executor/agents/acp.d.ts",
       "default": "./dist/actions/executor/agents/acp.js"
     },
+    "./actions/executor/agents/agentBackendReadiness": {
+      "happier-source": "./src/actions/executor/agents/agentBackendReadiness.ts",
+      "types": "./dist/actions/executor/agents/agentBackendReadiness.d.ts",
+      "default": "./dist/actions/executor/agents/agentBackendReadiness.js"
+    },
     "./actions/executor/agents/catalog": {
       "happier-source": "./src/actions/executor/agents/catalog.ts",
       "types": "./dist/actions/executor/agents/catalog.d.ts",
@@ -3490,6 +3495,11 @@
       "types": "./dist/automations/automationRunStateV3.d.ts",
       "default": "./dist/automations/automationRunStateV3.js"
     },
+    "./automations/automationSchedule": {
+      "happier-source": "./src/automations/automationSchedule.ts",
+      "types": "./dist/automations/automationSchedule.d.ts",
+      "default": "./dist/automations/automationSchedule.js"
+    },
     "./automations/automationSessionLifecycle": {
       "happier-source": "./src/automations/automationSessionLifecycle.ts",
       "types": "./dist/automations/automationSessionLifecycle.d.ts",
@@ -4990,6 +5000,11 @@
       "types": "./dist/deployments/deploymentBackupRestoreV1.d.ts",
       "default": "./dist/deployments/deploymentBackupRestoreV1.js"
     },
+    "./deployments/deploymentBackupRetentionV1": {
+      "happier-source": "./src/deployments/deploymentBackupRetentionV1.ts",
+      "types": "./dist/deployments/deploymentBackupRetentionV1.d.ts",
+      "default": "./dist/deployments/deploymentBackupRetentionV1.js"
+    },
     "./deployments/deploymentBindingPatchV1": {
       "happier-source": "./src/deployments/deploymentBindingPatchV1.ts",
       "types": "./dist/deployments/deploymentBindingPatchV1.d.ts",
@@ -6375,6 +6390,11 @@
       "types": "./dist/llm/tasks/llmTaskRunnerConfigV1.d.ts",
       "default": "./dist/llm/tasks/llmTaskRunnerConfigV1.js"
     },
+    "./llm/tasks/llmTaskRunnerSelection": {
+      "happier-source": "./src/llm/tasks/llmTaskRunnerSelection.ts",
+      "types": "./dist/llm/tasks/llmTaskRunnerSelection.d.ts",
+      "default": "./dist/llm/tasks/llmTaskRunnerSelection.js"
+    },
     "./local/index": {
       "happier-source": "./src/local/index.ts",
       "types": "./dist/local/index.d.ts",
@@ -7229,6 +7249,11 @@
       "happier-source": "./src/machines/setup/machineSetupObservationV1.ts",
       "types": "./dist/machines/setup/machineSetupObservationV1.d.ts",
       "default": "./dist/machines/setup/machineSetupObservationV1.js"
+    },
+    "./machines/setup/machineSetupOperationV1": {
+      "happier-source": "./src/machines/setup/machineSetupOperationV1.ts",
+      "types": "./dist/machines/setup/machineSetupOperationV1.d.ts",
+      "default": "./dist/machines/setup/machineSetupOperationV1.js"
     },
     "./machines/setup/machineSetupSourcesV1": {
       "happier-source": "./src/machines/setup/machineSetupSourcesV1.ts",
@@ -9244,6 +9269,11 @@
       "happier-source": "./src/projects/projectWorkspaceActionsV1.ts",
       "types": "./dist/projects/projectWorkspaceActionsV1.d.ts",
       "default": "./dist/projects/projectWorkspaceActionsV1.js"
+    },
+    "./projects/readinessInputV1": {
+      "happier-source": "./src/projects/readinessInputV1.ts",
+      "types": "./dist/projects/readinessInputV1.d.ts",
+      "default": "./dist/projects/readinessInputV1.js"
     },
     "./projects/readinessV1": {
       "happier-source": "./src/projects/readinessV1.ts",

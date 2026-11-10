@@ -8427,6 +8427,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     },
     copyDiagnostics: "Копировать диагностику",
     diagnosticsCopied: "Диагностика скопирована",
+    syncedAgo: ({ when }: { when: string }) => `Синхронизировано ${when}`,
   },
 
   time: {
@@ -18818,7 +18819,7 @@ settingsSession: {
         empty: "Строки не возвращены",
         incomplete: "Результаты могут быть неполными",
         roleUnavailable: "Базе нужна отдельная роль только для чтения. Проверьте настройку или попросите владельца настроить права схемы.",
-        nativeParameters: "Используйте PostgreSQL :'name' или MySQL/MariaDB @name. Значения JSON — текст.",
+            nativeParameters: "PostgreSQL :'name'; MySQL @name. Имена начинаются с a-z и содержат a-z, 0-9 или _. Префикс happier_ зарезервирован. Значения JSON — текст.",
         password: "Пароль",
         description: ({ name }: { name: string }) => `SQL только для чтения для ${name}.`,
         row: ({ number }: { number: number }) => `Строка ${number}`,

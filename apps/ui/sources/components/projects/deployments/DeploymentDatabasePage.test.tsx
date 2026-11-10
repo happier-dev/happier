@@ -14,6 +14,7 @@ import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1 } from 
 import {
   act,
   standardCleanup,
+  changeTextTestInstance,
   waitForTestEvent,
 } from '@/dev/testkit';
 import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
@@ -29,6 +30,7 @@ import { DeploymentTemplateV1Schema, BUILT_IN_REGISTRY_SOURCES_V1, projectPlugin
   REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
 import { listHappierAppCatalogV1, readHappierAppCatalogItemV1 } from '@happier-dev/protocol/registries/formats/happierAppCatalog';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -113,6 +115,7 @@ function manifest(environmentId: string, id: string, time: string) {
 
 type Answers = Readonly<{
   history?: unknown;
+  query?: unknown;
   bindingRefusal?: string;
   missedSchedule?: boolean;
 }>;
@@ -209,6 +212,10 @@ async function renderDatabase(
     ...('machines' in row.targetLink && Array.isArray(row.targetLink.machines) ? { machines: [machineId] } : {}),
     ...('members' in row.targetLink && Array.isArray(row.targetLink.members)
       ? { members: row.targetLink.members.map((member) => ({ ...member, machineId })) } : {}) } })) } as typeof authored;
+  homes.answer(serverId, `GET /v1/deployments/environments/${environmentId}`, { body: {
+    ok: true, environment: { ...detail.environment, controllerMachineId: machineId },
+    targetLinks: detail.targetLinks.map(row => row.targetLink),
+  } });
   const moved = createDeploymentEnvironmentDetailV1({
     environment: { ...detail.environment, id: 'database-dedicated', revision: 3, runtimeTargetLinkId: 'target-database-dedicated' },
     targetLinks: detail.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink,
@@ -286,7 +293,7 @@ async function renderDatabase(
   const effects: Array<{ actionId: string; input: Record<string, unknown> }> =
     [];
   if (input.answers?.missedSchedule) {
-    const { deploymentDataTargetOperands } = await import('./deploymentRestore');
+    const { deploymentDataTargetOperands } = await import('@happier-dev/deployments');
     const runtimeTargetLink = detail.targetLinks[0]?.targetLink ?? null;
     const target = deploymentDataTargetOperands({ environment: detail.environment, runtimeTargetLink });
     if (!target || !runtimeTargetLink?.activeDeploymentId) throw new Error('Expected deployed backup target');
@@ -360,6 +367,14 @@ async function renderDatabase(
       },
     });
   }
+  await answerExternalActionAccountForHome(homes, serverId, {
+    machineId, installationId: 'installation-a', actionId: 'deployments.data.query', tokenEpoch: 0,
+    execute: raw => {
+      const operand = DeploymentActionInputSchemasV1['deployments.data.query'].parse(raw);
+      effects.push({ actionId: 'deployments.data.query', input: operand });
+      return input.answers?.query ?? { ok: true, columns: [], rows: [], complete: true };
+    },
+  });
   let setBindings = input.setBindings ?? null;
   if (input.moveDestination) {
     await answerExternalActionAccountForHome(homes, serverId, {
@@ -480,6 +495,152 @@ async function renderDatabase(
     },
   };
 }
+
+describe('Environment → Database → Private console', () => {
+  it('adds a console through the shared catalog picker and leads to Domains for its private route', async () => {
+    const view = await renderDatabase({ storedDefinition: true });
+    try {
+      expect(await view.settle(`${page}.console.domains`)).not.toBeNull();
+      expect(view.screen.findByTestId(`${page}.console.open`)).toBeNull();
+      await view.screen.pressByTestIdAsync(`${page}.console.domains`);
+      expect(view.navigate).toHaveBeenCalledWith({ tab: 'domains' });
+      await view.screen.pressByTestIdAsync(`${page}.console.add`);
+      expect(await view.settle('project-deployments.add.picker')).not.toBeNull();
+      const { StoreRegistryItemPicker } = await import('@/components/store/StoreKindPage');
+      expect(view.screen.root.findAllByType(StoreRegistryItemPicker)[0]?.props.initialFilters)
+        .toEqual({ category: { include: ['administration-tool'], exclude: [] } });
+      expect(view.effects.some(effect => effect.actionId === 'deployments.templates.instantiate')).toBe(false);
+    } finally { await view.dispose(); }
+  });
+});
+
+describe('Environment → Database → Read-only query', () => {
+  it('runs a linked managed query through its qualified Action with the recorded credential principal', async () => {
+    const { definePlugin, DeploymentTargetRoleInputProtocolSchemasV1 } = await import('@happier-dev/plugin-sdk');
+    const { DeploymentDataQuerySuccessV1ProtocolSchema } = await import('@happier-dev/deployment-protocol');
+    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+    const pluginId = 'com.example.query-database';
+    const execution = { target: 'account', account: { artifactId: 'query-runtime', exportName: 'activate' } } as const;
+    const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+    const plugin = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Managed SQL', actions: {
+      query: { title: 'Read SQL', execution, surfaces: ['ui'], readOnly: true, dangerLevel: 'safe',
+        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['query.readOnly'].jsonSchema,
+        resultSchema: DeploymentDataQuerySuccessV1ProtocolSchema.jsonSchema,
+        inputHints: { fields: [{ path: 'sql', title: 'SQL', widget: 'textarea', description: 'Bind values with $1 and parameter key 1.' }] },
+        run: async () => ({ ok: true, columns: [], rows: [], complete: true }) },
+    }, deploymentTargets: { database: { role: 'data', title: 'Managed SQL', targetKind: 'database', icon: 'server-outline',
+      targetSchema: closed, linkSchema: closed, dataV1: { query: { readOnly: 'query' } } } } });
+    const serverId = await homes.addHome({ name: 'Managed query', serverUrl: 'https://managed-query.test',
+      serverIdentityId: 'srv_managed_query', accountId: 'owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
+      activate: api => plugin.activateAccount(api, execution.account), accountLifetime: account.accountLifetime, publishProjection: true });
+    const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'managed-query', role: 'data', targetKind: 'database', machines: [], members: [],
+      source: { kind: 'plugin', contribution: { pluginId, localId: 'database' } } });
+    const principal = { kind: 'account' as const, accountId: 'original-owner',
+      purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'deploy-manage' },
+      target: { kind: 'account' as const, account: { service: { pluginId, localId: 'database' }, accountId: 'original-token' } } };
+    const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId, runtimeTargetLinkId: null }),
+      targetLinks: [{ targetLink, content: { credentialPrincipal: principal,
+        providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
+        providerEnvironment: { kind: 'custom', id: 'main' } } }] });
+    const calls: unknown[] = [];
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
+      environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+      actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required', execute: raw => {
+        const invocation = getActionSpec('action.invoke').inputSchema.parse(raw);
+        expect(invocation.action).toEqual({ pluginId, localId: 'query' });
+        calls.push(invocation.input);
+        return { ok: true, columns: [{ name: 'value' }], rows: [[null]], complete: false,
+          diagnostic: { code: 'provider_completeness_unknown' } };
+      } });
+    const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'owner', projectSourceId: detail.environment.projectSourceId },
+      transport: { listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+        readEnvironment: async () => ({ ok: true, value: detail }),
+        listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }) } });
+    const screen = await renderScreen(<ModalProvider><DeploymentDatabasePage controller={controller}
+      environmentId={detail.environment.id} database={targetLink.id} demand={shown} phone={false}
+      lifetime={account.accountLifetime} review={noReview} restore={null} setBindings={null} onBack={() => {}} onNavigate={() => {}} /></ModalProvider>);
+    try {
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findByTestId(`${page}.query`)?.props.onPress).toBeTypeOf('function'); });
+      await screen.pressByTestIdAsync(`${page}.query`);
+      expect(calls).toEqual([]);
+      await act(async () => {
+        screen.changeTextByTestId('project-deployments.query.sql', 'SELECT $1 AS value');
+        screen.changeTextByTestId('project-deployments.query.params', '{"1":"private value"}');
+      });
+      await screen.pressByTestIdAsync('project-deployments.query.run');
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findByTestId('project-deployments.query.incomplete')).not.toBeNull(); });
+      expect(calls).toEqual([expect.objectContaining({ targetLinkId: targetLink.id, expectedTargetLinkRevision: targetLink.revision,
+        credentialPrincipal: principal, credentialRef: principal.target.account, sql: 'SELECT $1 AS value', params: { '1': 'private value' } })]);
+      expect(screen.findByTestId('project-deployments.query.cell.0.0')?.props.children).toBe('NULL');
+    } finally { await screen.unmount(); controller.retire(); await installed.dispose(); account.dispose(); }
+  });
+  it('keeps invalid parameter JSON local and shows a complete empty result without inventing rows', async () => {
+    const view = await renderDatabase({ answers: { query: { ok: true, columns: [{ name: 'value' }], rows: [], complete: true } } });
+    try {
+      await view.settle(`${page}.query`);
+      await view.screen.pressByTestIdAsync(`${page}.query`);
+      await view.settle('project-deployments.query.sql');
+      await act(async () => {
+        view.screen.changeTextByTestId('project-deployments.query.sql', 'SELECT 1 WHERE false');
+        view.screen.changeTextByTestId('project-deployments.query.params', '{');
+      });
+      await view.screen.pressByTestIdAsync('project-deployments.query.run');
+      expect(await view.settle('project-deployments.query.refused')).not.toBeNull();
+      expect(view.effects.filter(effect => effect.actionId === 'deployments.data.query')).toHaveLength(0);
+      await act(async () => view.screen.changeTextByTestId('project-deployments.query.params', '{}'));
+      await view.screen.pressByTestIdAsync('project-deployments.query.run');
+      expect(await view.settle('project-deployments.query.empty')).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.query.incomplete')).toBeNull();
+      expect(view.screen.findByTestId('project-deployments.query.cell.0.0')).toBeNull();
+    } finally { await view.dispose(); }
+  });
+  it('opens the shared SQL sheet from the exact database page without running a query on open', async () => {
+    const view = await renderDatabase();
+    try {
+      expect(await view.settle(`${page}.query`)).not.toBeNull();
+      await view.screen.pressByTestIdAsync(`${page}.query`);
+      expect(await view.settle('project-deployments.query.sql')).not.toBeNull();
+      expect(view.effects.some(effect => effect.actionId === 'deployments.data.query')).toBe(false);
+    } finally { await view.dispose(); }
+  });
+  it('preserves null, empty text, duplicate columns and explicit incompleteness from the real query Action', async () => {
+    const view = await renderDatabase({ answers: { query: { ok: true, columns: [{ name: 'value' }, { name: 'value' }],
+      rows: [[null, '']], complete: false, diagnostic: { code: 'native_output_truncated' } } } });
+    try {
+      await view.settle(`${page}.query`);
+      await view.screen.pressByTestIdAsync(`${page}.query`);
+      await view.settle('project-deployments.query.sql');
+      await act(async () => { view.screen.changeTextByTestId('project-deployments.query.sql', 'SELECT NULL AS value, \'\' AS value'); });
+      await view.screen.pressByTestIdAsync('project-deployments.query.run');
+      expect(await view.settle('project-deployments.query.incomplete')).not.toBeNull();
+      expect(await view.settle('project-deployments.query.cell.0.0')).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.query.cell.0.0')?.props.children).toBe('NULL');
+      expect(view.screen.findByTestId('project-deployments.query.cell.0.1')?.props.children).toBe('""');
+      expect(view.effects.find(effect => effect.actionId === 'deployments.data.query')?.input).toMatchObject({ service: 'postgres', params: {} });
+    } finally { await view.dispose(); }
+  });
+  it('shows a role setup refusal without retrying or falling back to another connection', async () => {
+    const view = await renderDatabase({ answers: { query: { ok: false, error: 'deployment_unavailable',
+      diagnostic: { code: 'read_role_setup_required' } } } });
+    try {
+      await view.settle(`${page}.query`);
+      await view.screen.pressByTestIdAsync(`${page}.query`);
+      await view.settle('project-deployments.query.sql');
+      await act(async () => { view.screen.changeTextByTestId('project-deployments.query.sql', 'SELECT 1'); });
+      await view.screen.pressByTestIdAsync('project-deployments.query.run');
+      expect(await view.settle('project-deployments.query.refused')).not.toBeNull();
+      expect(view.effects.filter(effect => effect.actionId === 'deployments.data.query')).toHaveLength(1);
+    } finally { await view.dispose(); }
+  });
+});
 
 describe('Environment → Database → Move', () => {
   it('requires destination backups before copying into an already provisioned database', async () => {
@@ -653,8 +814,14 @@ describe('Environment → Data → Add (P10)', () => {
     } finally { await screen.unmount(); account.dispose(); }
   });
 
-  it.each(['applied', 'template_service_conflict', 'partial'] as const)('applies the reviewed database from the Add button through the confirmed Action front door (%s)', async outcome => {
-    const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
+  it.each([{ outcome: 'applied', update: false, choices: false }, { outcome: 'template_service_conflict', update: false, choices: false },
+    { outcome: 'partial', update: false, choices: false }, { outcome: 'applied', update: true, choices: false },
+    { outcome: 'applied', update: false, choices: true }, { outcome: 'applied', update: false, choices: false, repository: true },
+    { outcome: 'partial', update: false, choices: false, repository: true },
+    { outcome: 'partial', update: true, choices: false, repository: true }] as const)('applies the reviewed template through the confirmed Action front door ($outcome, update=$update, choices=$choices, repository=$repository)', async testCase => {
+    const { outcome, update, choices } = testCase;
+    const repository = 'repository' in testCase && testCase.repository;
+    const { showDeploymentAddSheet, showDeploymentTemplateUpdateSheet } = await import('./DeploymentDatabasePage');
     const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const serverUrl = `https://database-add-${outcome}.test`;
     const catalogUrl = `${serverUrl}/apps.json`;
@@ -682,29 +849,58 @@ describe('Environment → Data → Add (P10)', () => {
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1(), memberVersions: {},
-      content: { ...base.content, definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
+      content: { ...base.content, definition: repository ? { kind: 'repository' as const, ref: 'main', compose: { path: 'deploy/compose.yaml', profiles: [], services: ['app'] } } : { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
         document: 'services:\n  app:\n    image: app:1\n', profiles: [], services: ['app'], primaryService: 'app' } } };
     const link = detail.runtimeTargetLink;
     if (link.targetKind !== 'ownServer') throw new Error('Expected own server');
     const member = link.members[0]!;
+    const checkoutMachineId = repository ? 'checkout-machine' : member.machineId;
+    if (repository) {
+      const identity = { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/app' };
+      const checkout = { id: 'checkout', serverId, machineId: checkoutMachineId, rootPath: '/project', createdAtMs: 1,
+        repositoryIdentity: identity, source: { sourceId: detail.environment.projectSourceId, revision: 2 } };
+      applyProjectAccountRowsFixture(storage, { workspaceRefs: [checkout] });
+      storage.getState().updateWorkspaceScmSnapshot(checkout, { projectKey: 'checkout-machine:/project', fetchedAt: Date.now(),
+        repo: { isRepo: true, rootPath: checkout.rootPath },
+        branch: { head: 'main', headOid: 'a'.repeat(40), upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
+        stashCount: 0, hasConflicts: false, entries: [], totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0,
+          includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 } });
+      homes.answer(serverId, `/v1/projects/sources/${detail.environment.projectSourceId}`, { body: { ok: true, canManage: true,
+        source: { id: detail.environment.projectSourceId, revision: 2, name: 'App', audience: [], createdByAccountId: account.accountId,
+          repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+            repository: { nameWithOwner: identity.repository }, protocol: 'https' } } } });
+    }
     homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: {
       ok: true, environment: { ...detail.environment, controllerMachineId: member.machineId }, targetLinks: [] } });
     const applied: unknown[] = [];
+    const previews: unknown[] = [];
     const receivedApplyResults: Array<Readonly<{ ok: boolean; errorCode?: string }>> = [];
     const templateHost = (raw: unknown) => {
         const input = DeploymentTemplateInstantiateInputV1Schema.parse(raw);
-        if (input.mode === 'preview') return DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'preview',
-          review: { templateRef: input.templateRef, profiles: app.compose.profiles, services: app.compose.services, bindings: [],
+        if (input.mode === 'preview') {
+          previews.push(input);
+          return DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'preview',
+          review: { templateRef: input.templateRef, connectToServices: ['app'], document: 'services:\n  app:\n    image: app:2\n', profiles: app.compose.profiles, services: app.compose.services, bindings: [],
             generatedSecrets: app.generatedSecrets.map(secret => ({ name: secret.key, phase: 'runtime', key: secret.key, profile: secret.profile })),
-            domains: [], ...(input.deploy ? { deploy: input.deploy } : {}) } });
+            domains: [], ...(input.deploy ? { deploy: input.deploy } : {}),
+            ...(input.destination.kind === 'repositoryPullRequest' ? { repositoryChange: { ...input.destination,
+              files: [{ path: input.destination.composePath, before: 'services: {}\n', content: 'services:\n  app:\n    image: app:2\n' },
+                ...(update ? [{ path: 'deploy/obsolete.conf', before: 'legacy-setting=true\n', content: null }] : [])] } } : {}) } });
+        }
         applied.push(input);
         if (outcome === 'partial') return DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'partial',
           environmentId: detail.environment.id, revision: 2, targetLinkId: link.id,
-          definition: { kind: 'stored', contentRevision: 2, composeDigest: `sha256:${'c'.repeat(64)}` },
+          ...(repository ? { repositoryChange: { kind: 'partial', stage: 'pullRequest', errorCode: 'FEATURE_UNSUPPORTED',
+            worktree: { path: '/checkout/.worktrees/add-database', branchName: 'add-database' }, headCommit: 'b'.repeat(40), writtenPaths: ['deploy/compose.yaml'] } }
+            : { definition: { kind: 'stored', contentRevision: 2, composeDigest: `sha256:${'c'.repeat(64)}` } }),
           savedSecrets: [{ name: 'DB_PASSWORD', phase: 'runtime', source: {
             kind: 'secret', ref: 'happier:shared-secret:v1:database-password', resourceRevision: 7,
-          } }], phase: 'deploy', errorCode: 'deployment_access_denied' });
+          } }], phase: repository ? 'repository' : 'deploy', errorCode: repository ? 'FEATURE_UNSUPPORTED' : 'deployment_access_denied' });
         if (outcome !== 'applied') return ActionExecuteFailureSchema.parse({ ok: false, errorCode: outcome, error: outcome });
+        if (repository) return DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'pullRequest', environmentId: detail.environment.id,
+          revision: 2, savedSecrets: [], headCommit: 'b'.repeat(40), branchName: 'add-database', pullRequest: {
+            provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' }, title: 'Add PostgreSQL',
+            url: 'https://github.com/acme/app/pull/42', number: 42, baseBranch: 'main', headBranch: 'add-database', state: 'open' } });
         return DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'applied', environmentId: detail.environment.id,
           revision: 2, targetLinkId: link.id, savedSecrets: [], definition: { kind: 'stored', contentRevision: 2,
             composeDigest: `sha256:${'c'.repeat(64)}` } });
@@ -728,7 +924,7 @@ describe('Environment → Data → Add (P10)', () => {
       deploymentTemplateInstantiate: async input => templateHost(input),
     }));
     const boundary = await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.templates.instantiate',
-      machineId: member.machineId, installationId: member.installationId, tokenEpoch: 0,
+      machineId: checkoutMachineId, installationId: member.installationId, tokenEpoch: 0,
       failure: result => ActionExecuteFailureSchema.safeParse(result).data ?? null,
       execute: async (input, transport) => {
         if (!('authentication' in transport.authorization.binding) || !account.serverIdentityId)
@@ -756,23 +952,75 @@ describe('Environment → Data → Add (P10)', () => {
     const review = { ...noReview, request: vi.fn() };
     const screen = await renderScreen(<ModalProvider />);
     try {
-      await act(async () => showDeploymentAddSheet({ detail, review, machineName: () => 'vps-2',
-        catalogFilters: {}, lifetime: account.accountLifetime, onOpenRecovery: destination => opened.push(destination), onNavigate: navigate }));
+      await act(async () => update ? showDeploymentTemplateUpdateSheet({ detail, review, machineName: () => 'vps-2',
+        catalogFilters: {}, lifetime: account.accountLifetime, template: { sourceId, itemId: 'postgresql' },
+        onOpenRecovery: destination => opened.push(destination), onNavigate: navigate })
+        : showDeploymentAddSheet({ detail, review, machineName: () => 'vps-2',
+          catalogFilters: {}, lifetime: account.accountLifetime, onOpenRecovery: destination => opened.push(destination), onNavigate: navigate }));
       const rowId = `store.kind.app.row.app|${sourceId}|postgresql`;
-      await waitForHomeGovernance(() => expect(screen.findByTestId(rowId)).not.toBeNull());
-      await screen.pressByTestIdAsync(rowId);
+      if (repository) {
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.workspace')).not.toBeNull());
+        const choice = screen.findAll(node => node.props.testID === 'project-deployments.add.workspace' && typeof node.props.onSelect === 'function')[0];
+        if (!choice) throw new Error('Expected checkout choice');
+        await act(async () => { choice.props.onSelect(serverId + ':checkout'); });
+      }
+      if (!update) {
+        await waitForHomeGovernance(() => expect(screen.findByTestId(rowId)).not.toBeNull());
+        await screen.pressByTestIdAsync(rowId);
+      }
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(false));
+      if (choices) {
+        const prefix = 'project-deployments.add.choices';
+        const before = previews.length;
+        const user = screen.findHostByTestId(`${prefix}.variable.DB_USER`);
+        expect(user).not.toBeNull();
+        await act(async () => { changeTextTestInstance(user!, 'alice'); });
+        await act(async () => { changeTextTestInstance(screen.findHostByTestId(`${prefix}.volume.postgres-data`)!, 'chosen-data'); });
+        const connect = screen.findAll(node => node.props.testID === `${prefix}.connectTo` && typeof node.props.onSelect === 'function')[0];
+        expect(connect).toBeTruthy();
+        await act(async () => { connect!.props.onSelect('app'); });
+        for (const key of ['DATABASE_URL', 'DIRECT_URL']) {
+          const replace = screen.findAll(node => node.props.testID === `${prefix}.replace.${key}` && typeof node.props.onValueChange === 'function')[0];
+          expect(replace).toBeTruthy();
+          await act(async () => { replace!.props.onValueChange(true); });
+        }
+        expect(previews).toHaveLength(before);
+        expect(applied).toEqual([]);
+        expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('project-deployments.add.reviewChoices');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(false));
+        expect(previews).toHaveLength(before + 1);
+      }
+      if (update && !repository) {
+        expect(screen.findByTestId('project-deployments.template.diff')).not.toBeNull();
+        expect(screen.getTextContent()).toMatch(/image: app:\s*2/);
+      }
       await screen.pressByTestIdAsync('project-deployments.add.confirm');
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.added')
         ?? screen.findByTestId('project-deployments.add.refused')
         ?? screen.findByTestId('project-deployments.add.progress')).not.toBeNull());
       expect(receivedApplyResults).toEqual([outcome === 'template_service_conflict'
         ? { ok: false, errorCode: outcome } : { ok: true }]);
-      expect(applied).toEqual([expect.objectContaining({ mode: 'apply', intent: 'add', environment: { kind: 'existing',
+      expect(applied).toEqual([expect.objectContaining({ mode: 'apply', ...(update ? {} : { intent: 'add' }), environment: { kind: 'existing',
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision },
         templateRef: expect.objectContaining({ sourceId, itemId: 'postgresql' }),
-        bindings: [{ purpose: 'variable', name: 'DB_PASSWORD', phase: 'runtime', source: { kind: 'generated', key: 'DB_PASSWORD' } }],
-        generatedSecretAudience: { accountGrants: [], teamGrants: [], groupGrants: [] } })]);
+        bindings: update ? [] : [...(choices ? [{ purpose: 'variable', name: 'DB_USER', phase: 'runtime', source: { kind: 'value', value: 'alice' } }] : []), { purpose: 'variable', name: 'DB_PASSWORD', phase: 'runtime', source: { kind: 'generated', key: 'DB_PASSWORD' } }],
+        ...(update ? {} : { generatedSecretAudience: { accountGrants: [], teamGrants: [], groupGrants: [] } }) })]);
+      if (choices) expect(applied[0]).toMatchObject({ connectTo: { service: 'app' }, replace: ['DATABASE_URL', 'DIRECT_URL'],
+        volumeBindings: [{ templateVolumeId: 'postgres-data', source: 'chosen-data' }] });
+      if (update || repository) expect(applied[0]).not.toHaveProperty('deploy');
+      if (repository) {
+        expect(applied[0]).toMatchObject({ destination: { kind: 'repositoryPullRequest', workspace: { kind: 'workspace-ref', serverId, id: 'checkout' },
+          composePath: 'deploy/compose.yaml', baseCommit: 'a'.repeat(40), sourceRevision: 2 } });
+        expect(screen.findByTestId('project-deployments.template.repositoryDiff')).not.toBeNull();
+        if (update) {
+          const { DiffViewer } = await import('@/components/ui/code/diff/DiffViewer');
+          expect(screen.findAllByType(DiffViewer).map(view => view.props)).toContainEqual(expect.objectContaining({
+            oldText: 'legacy-setting=true\n', newText: '',
+          }));
+        }
+        expect(screen.getTextContent()).toContain(outcome === 'partial' ? 'add-database' : 'github.com/acme/app/pull/42');
+      }
       expect(review.request).not.toHaveBeenCalled();
       expect(homes.artifacts(serverId).list()).toEqual([]);
       if (outcome === 'applied') expect(screen.findByTestId('project-deployments.add.refused')).toBeNull();
@@ -786,7 +1034,8 @@ describe('Environment → Data → Add (P10)', () => {
         const { DeploymentPartialProgress } = await import('./DeploymentPartialProgress');
         expect(screen.findByType(DeploymentPartialProgress)?.props.progress).toMatchObject({
           environmentId: detail.environment.id, revision: 2, targetLinkId: link.id,
-          definition: { contentRevision: 2 }, phase: 'deploy',
+          ...(repository ? { phase: 'repository', repositoryChange: { headCommit: 'b'.repeat(40) } }
+            : { definition: { contentRevision: 2 }, phase: 'deploy' }),
           savedSecrets: [{ name: 'DB_PASSWORD', source: { resourceRevision: 7 } }],
         });
         await screen.pressByTestIdAsync('project-deployments.add.done');
@@ -839,6 +1088,27 @@ describe('Environment → Data → Add (P10)', () => {
       // No second page frame (header, project scope chip, page ⋯) inside the sheet.
       expect(screen.findByTestId('store.kind.app')).toBeNull();
     } finally { await screen.unmount(); }
+  });
+
+  it('opens managed database preparation even when this Environment keeps its services in its repository', async () => {
+    const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
+    const serverId = await homes.addHome({ name: 'Managed Add', serverUrl: 'https://managed-add.test',
+      serverIdentityId: 'srv_managed_add', accountId: 'owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+    const detail = { ...base, runtimeTargetLink: null,
+      content: { ...base.content, definition: { kind: 'repository' as const, ref: 'main' } } };
+    const screen = await renderScreen(<ModalProvider />);
+    try {
+      await act(async () => showDeploymentAddSheet({ detail, review: noReview, machineName: () => 'Controller',
+        catalogFilters: { category: { include: ['database'], exclude: [] } }, lifetime: account.accountLifetime }));
+      expect(screen.findByTestId('project-deployments.add.managed')).not.toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.add.managed');
+      await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        expect(screen.findByTestId('managed-data')).not.toBeNull();
+      });
+    } finally { await screen.unmount(); account.dispose(); }
   });
 
   it('gives an Environment defined in its repository one real next step: the Store catalog picker on its Machine', async () => {
@@ -1057,6 +1327,20 @@ describe('Environment → Data → Database page (P9)', () => {
     } finally {
       await view.dispose();
     }
+  });
+
+  it('offers an authored upload destination without guessing the database from its backup source id', async () => {
+    const restore = vi.fn();
+    const view = await renderDatabase({ retainedBackup: false, restore });
+    try {
+      expect(await view.settle(`${page}.restore`)).not.toBeNull();
+      await view.screen.pressByTestIdAsync(`${page}.restore`);
+      const database = await view.settle('project-deployments.restore.uploadDatabase');
+      expect(database).not.toBeNull();
+      expect(database?.props.value).toBe('');
+      expect(view.screen.findByTestId('project-deployments.restore.upload')).not.toBeNull();
+      expect(restore).not.toHaveBeenCalled();
+    } finally { await view.dispose(); }
   });
 
   it('restores the kept backup from the page and shows each step the running restore pushes', async () => {

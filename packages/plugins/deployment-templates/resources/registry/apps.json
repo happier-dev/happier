@@ -10,7 +10,7 @@
         "category": "database",
         "documentationUrl": "https://www.postgresql.org/docs/17/",
         "compose": {
-          "document": "services:\n  database:\n    image: postgres:17\n    environment:\n      POSTGRES_USER: ${DB_USER}\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n      POSTGRES_DB: ${DB_NAME}\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\n    healthcheck:\n      test: [CMD-SHELL, 'pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\"']\n      interval: 10s\n      timeout: 5s\n      retries: 5\nvolumes:\n  postgres-data: {}\n",
+          "document": "services:\n  database:\n    image: postgres:17\n    environment:\n      POSTGRES_USER: ${DB_USER}\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n      POSTGRES_DB: ${DB_NAME}\n    ports:\n      - target: 5432\n        host_ip: 127.0.0.1\n        protocol: tcp\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\n    healthcheck:\n      test: [CMD-SHELL, 'pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\"']\n      interval: 10s\n      timeout: 5s\n      retries: 5\nvolumes:\n  postgres-data: {}\n",
           "profiles": [],
           "services": [
             "database"
@@ -67,6 +67,24 @@
                 ]
               }
             ]
+          },
+          {
+            "key": "DB_HOST",
+            "label": "Database host",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "default": "database",
+            "sites": []
+          },
+          {
+            "key": "DB_PORT",
+            "label": "Database port",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "default": "5432",
+            "sites": []
           }
         ],
         "generatedSecrets": [
@@ -104,7 +122,9 @@
           "variables": {
             "username": "DB_USER",
             "password": "DB_PASSWORD",
-            "database": "DB_NAME"
+            "database": "DB_NAME",
+            "host": "DB_HOST",
+            "port": "DB_PORT"
           },
           "logicalBackup": {
             "adapter": "postgres-v1",
@@ -374,8 +394,8 @@
       "app": {
         "schemaVersion": 1,
         "title": "pgweb",
-        "description": "Browse PostgreSQL through a private console. Connect a database and add a private route before opening it. Console queries use the connected database account\u2019s permissions.",
-        "category": "database",
+        "description": "Browse PostgreSQL through a private console. Connect a database and add a private route before opening it. Console queries use the connected database account’s permissions.",
+        "category": "administration-tool",
         "documentationUrl": "https://github.com/sosedoff/pgweb/tree/v0.16.2",
         "compose": {
           "document": "services:\n  pgweb:\n    image: sosedoff/pgweb:0.16.2\n    environment:\n      PGWEB_DATABASE_URL: ${CONSOLE_DATABASE_URL}\n    restart: unless-stopped\n    healthcheck:\n      test: [CMD, curl, --fail, --silent, http://127.0.0.1:8081/]\n",
@@ -429,7 +449,7 @@
         "schemaVersion": 1,
         "title": "Adminer",
         "description": "Manage PostgreSQL or MySQL through a private console. Add a private route, then sign in with the database account you want to use.",
-        "category": "database",
+        "category": "administration-tool",
         "documentationUrl": "https://hub.docker.com/_/adminer/",
         "compose": {
           "document": "services:\n  adminer:\n    image: adminer:5.5.1-standalone\n    environment:\n      ADMINER_DEFAULT_SERVER: ${CONSOLE_DATABASE_HOST}\n    restart: unless-stopped\n    healthcheck:\n      test: [CMD, php, -r, \"exit(@file_get_contents('http://127.0.0.1:8080/') === false ? 1 : 0);\"]\n",

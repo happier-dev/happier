@@ -2986,6 +2986,7 @@ export const zhHans: TranslationStructure = {
     },
     copyDiagnostics: "复制诊断信息",
     diagnosticsCopied: "已复制诊断信息",
+    syncedAgo: ({ when }: { when: string }) => `${when}已同步`,
   },
 
   time: {
@@ -18484,7 +18485,7 @@ settingsSession: {
         empty: "未返回任何行",
         incomplete: "结果可能不完整",
         roleUnavailable: "数据库需要专用只读角色。请审核设置，或让所有者配置所需的架构权限。",
-        nativeParameters: "使用 PostgreSQL :'name' 或 MySQL/MariaDB @name 参数。JSON 值为文本。",
+            nativeParameters: "PostgreSQL 使用 :'name'，MySQL 使用 @name。名称以 a-z 开头，仅含 a-z、0-9 或 _。happier_ 前缀为保留前缀。JSON 值为文本。",
         password: "密码",
         description: ({ name }: { name: string }) => `${name} 的只读 SQL。`,
         row: ({ number }: { number: number }) => `行 ${number}`,

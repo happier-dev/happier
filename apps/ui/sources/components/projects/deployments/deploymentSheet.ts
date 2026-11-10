@@ -20,6 +20,9 @@ export function showDeploymentSheet<C extends CustomModalComponentType<any>>(
     testID: string;
     /** A sheet whose step has an effect in flight (Restore) keeps the backdrop from closing it. */
     closeOnBackdrop?: boolean;
+    /** A virtualized body owns its scroll viewport. */
+    bodyScroll?: 'none' | 'auto';
+    scrollHost?: 'bounded' | 'body';
   }>,
 ): void {
   Modal.show({
@@ -30,8 +33,8 @@ export function showDeploymentSheet<C extends CustomModalComponentType<any>>(
       title: input.title,
       testID: input.testID,
       phonePresentation: 'sheet',
-      scrollHost: 'bounded',
-      bodyScroll: 'auto',
+      scrollHost: input.scrollHost ?? 'bounded',
+      bodyScroll: input.bodyScroll ?? 'auto',
       dimensions: {
         width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide,
         maxHeightRatio: 0.9,

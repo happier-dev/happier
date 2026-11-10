@@ -1,3 +1,4 @@
+import { summarizeDeploymentRestoreReviewV1 } from '../../deployments/deploymentBackupRestoreV1.js';
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { deploymentTeardownOperationReentryV1 } from '../operations/v1.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from './definition.js';
@@ -6,8 +7,9 @@ import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type D
 import { deploymentBindingSelectionNarrowing } from '../../deployments/deploymentBindingSelectionNarrowing.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { actionInputServerId } from './definition.js';
-import { isDeploymentBackupActionIdV1, isDeploymentBackupReadActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { isDeploymentBackupActionIdV1, isDeploymentBackupReadActionIdV1, isDeploymentDataQueryActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 import { isDeploymentNativeReadActionIdV1 } from '../../deployments/deploymentReadAdmissionV1.js';
+import { DEPLOYMENT_BACKUP_CONFIGURE_INTENT_OPTIONS_V1 } from '../../deployments/deploymentBackupConfigureV1.js';
 
 const deploymentDeployActionCompletionV1 = createDeploymentDeployActionCompletionV1(DeploymentActionOutputSchemasV1['deployments.deploy']);
 const deploymentDeployDescription = 'Deploy an existing saved Environment to a linked target. Discover the named Environment with deployments.environments.list, then use deployments.environments.get to choose its linked target. To deploy that saved definition, supply only serverId, environmentId and targetLinkId from those results. The Action prepares the exact deployment candidate, revisions and hashes for review. The contentArtifactId/contentHeaderVersion/contentBodyVersion input branch accepts an already prepared deployment candidate; Environment and target content Artifacts are not deployment candidates. No caller-authored candidate or shell hash calculation is needed.';
@@ -22,17 +24,26 @@ type DeploymentActionSpec<TId extends DeploymentActionIdV1> = ActionSpecProjecti
 
 function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string, path: string | undefined, read = false): DeploymentActionSpec<TId> {
   const backup = isDeploymentBackupActionIdV1(id);
+  const query = isDeploymentDataQueryActionIdV1(id);
+  const backupConfigure = id === 'deployments.backups.configure';
   const irreversible = id === 'deployments.backups.prune' || id === 'deployments.backups.restore' || id === 'deployments.teardown' || id === 'deployments.targets.unlink' || id === 'deployments.environments.delete' || id === 'deployments.domains.remove';
   const preparedContentRequired = id !== 'deployments.environments.create' && id !== 'deployments.targets.link'
-    && id !== 'deployments.rollback' && id !== 'deployments.teardown' && id !== 'deployments.domains.add' && !isDeploymentPromoteActionIdV1(id);
-  const previewForInput = id === 'deployments.templates.instantiate' || id === 'deployments.environments.create' || id === 'deployments.teardown'
+    && id !== 'deployments.rollback' && id !== 'deployments.teardown' && id !== 'deployments.domains.add' && !backupConfigure && !isDeploymentPromoteActionIdV1(id);
+  const previewForInput = id === 'deployments.templates.instantiate' || id === 'deployments.environments.create' || id === 'deployments.environments.update' || id === 'deployments.environments.moveToRepository' || id === 'deployments.teardown'
     ? (input: unknown): boolean => {
       const parsed = DeploymentActionInputSchemasV1[id].safeParse(input);
       return parsed.success && 'mode' in parsed.data && parsed.data.mode === 'preview';
     } : undefined;
   const secretPath = id === 'deployments.bindings.set' ? 'set.[].source.ref'
     : id === 'deployments.templates.instantiate' || id === 'deployments.environments.create' ? 'bindings.[].source.ref' : null;
-  const inputHints = backup ? { fields: [
+  const inputHints = backupConfigure ? { fields: [
+      { path: 'serverId', title: 'Home', widget: 'text', required: true },
+      { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
+      { path: 'intent', title: 'Backup setup action', widget: 'select', required: true,
+        options: DEPLOYMENT_BACKUP_CONFIGURE_INTENT_OPTIONS_V1 },
+      { path: 'configuration', title: 'Destination and included sources', widget: 'json' },
+    ] } as const : backup ? { fields: [
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
       { path: 'machineId', title: 'Runtime Machine', widget: 'text', required: true },
@@ -57,7 +68,10 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'installationId', title: 'Machine installation', widget: 'text', required: true },
       { path: 'targetLinkId', title: 'Current deployment target', widget: 'text', required: true },
       { path: 'deploymentId', title: 'Backup capture receipt', widget: 'text', required: true },
-      { path: 'restoreBackupId', title: 'Backup', widget: 'text', required: true },
+      { path: 'source', title: 'Repository snapshot or uploaded backup', widget: 'json', required: true },
+      { path: 'destination', title: 'Database or named volume destination', widget: 'json' },
+      { path: 'snapshot', title: 'Take a Machine snapshot before replacing data', widget: 'boolean' },
+      { path: 'snapshotReview', title: 'Provider snapshot facts retained by preparation', widget: 'json' },
       { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
       { path: 'prepareOperationId', title: 'Prepared restore operation', widget: 'text' },
     ] } as const : id === 'deployments.publish.prepare' ? { fields: [
@@ -69,8 +83,28 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'newProject', title: 'New repository-free Project and owner', widget: 'json' },
       { path: 'templateRef', title: 'Pinned catalog app', widget: 'json', required: true },
       { path: 'explicit', title: 'Your creation choices', widget: 'json' },
-    ] } as const : id === 'deployments.templates.instantiate' ? {
-      description: 'Preview the complete installation before applying. A new Environment with domainBindings deploys automatically even when deploy is omitted. If review.deploy is present, apply starts the app as well as saving its definition, bindings and routes; do not describe that preview as definition-only. An existing Environment deploys only when deploy is supplied.',
+    ] } as const : id === 'deployments.environments.moveToRepository' ? {
+      description: 'Export the captured stored Compose definition through a repository pull request. Preview the existing-file diff first. Stored Compose remains active while the pull request is open. Continue with the original returned references after merge; changed merged or stored content requires explicit useMergedVersion review.',
+      fields: [
+        { path: 'mode', title: 'Preview or apply', widget: 'text', required: true },
+        { path: 'serverId', title: 'Home', widget: 'text', required: true },
+        { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
+        { path: 'definition', title: 'Captured stored definition', widget: 'json', required: true },
+        { path: 'path', title: 'Repository Compose path', widget: 'text', required: true },
+        { path: 'repository', title: 'Existing repository', widget: 'json' },
+        { path: 'sourceRepository', title: 'Project repository attachment', widget: 'json' },
+        { path: 'createRepository', title: 'Create repository', widget: 'json' },
+        { path: 'workspace', title: 'Workspace reference', widget: 'json' },
+        { path: 'baseCommit', title: 'Exact repository base', widget: 'text' },
+        { path: 'baseBranch', title: 'Pull request base branch', widget: 'text' },
+        { path: 'selectors', title: 'Compose selection', widget: 'json' },
+        { path: 'continuation', title: 'Original pull request', widget: 'json' },
+        { path: 'pullRequestReference', title: 'Reopen existing pull request', widget: 'json' },
+        { path: 'repositoryWork', title: 'Acknowledged repository work', widget: 'json' },
+        { path: 'useMergedVersion', title: 'Reviewed merged contents', widget: 'json' },
+      ],
+    } as const : id === 'deployments.templates.instantiate' ? {
+      description: 'Preview the complete installation before applying. To add another service or database to an existing Environment, use intent: "add" and destination: { kind: "stored" }; the Action reads its saved definition and preserves existing services. Discover the Environment revision and target with deployments.environments.get; no internal Artifact read or caller-computed digest is needed. For each template generatedSecrets key, select bindings: [{ purpose: "variable", name: key, phase: "runtime", source: { kind: "generated", key } }]. Omitted generatedSecretAudience keeps new credentials private to their creator; explicit grants are reviewed. A new Environment with domainBindings deploys automatically even when deploy is omitted. If review.deploy is present, apply starts the app as well as saving its definition, bindings and routes; do not describe that preview as definition-only. An existing Environment deploys only when deploy is supplied.',
       fields: [
       { path: 'mode', title: 'Preview or apply', widget: 'text', required: true },
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
@@ -113,6 +147,16 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       ...(id === 'deployments.environments.list'
         ? [{ path: 'machineId', title: 'Machine', widget: 'text' as const },
           { path: 'environmentIds', title: 'Exact Environment headers', widget: 'json' as const }] : []),
+      ...(query ? [
+        { path: 'deploymentId', title: 'Active deployment', widget: 'text' as const, required: true },
+        { path: 'targetLinkId', title: 'Deployment target', widget: 'text' as const, required: true },
+        { path: 'machineId', title: 'Runtime Machine', widget: 'text' as const, required: true },
+        { path: 'installationId', title: 'Machine installation', widget: 'text' as const, required: true },
+        { path: 'expectedRevision', title: 'Environment revision', widget: 'number' as const, required: true },
+        { path: 'service', title: 'Database service', widget: 'text' as const, required: true },
+        { path: 'sql', title: 'Read-only SQL', widget: 'text' as const, required: true },
+        { path: 'params', title: 'Bound string parameters', widget: 'json' as const, required: true },
+      ] : []),
       ...(isDeploymentNativeReadActionIdV1(id) || id === 'deployments.restart' ? [
         { path: 'deploymentId', title: 'Active deployment', widget: 'text' as const, required: true },
         { path: 'targetLinkId', title: 'Deployment target', widget: 'text' as const, required: true },
@@ -190,7 +234,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ...(id === 'deployments.bindings.set' ? { approvalNarrowing: deploymentBindingSelectionNarrowing } : {}),
     ...(id !== 'deployments.environments.create' && id !== 'deployments.environments.list' && id !== 'deployments.publish.prepare'
       ? { approvalScope: 'environment' } : {}),
-    executionPlacement: backup || id === 'deployments.prepare' || id === 'deployments.publish.prepare' || id === 'deployments.templates.instantiate' || id === 'deployments.restart' || id === 'deployments.backups.restore' || id === 'deployments.receipts.observe' || id === 'deployments.observation.get' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
+    executionPlacement: query || backup || backupConfigure || id === 'deployments.prepare' || id === 'deployments.publish.prepare' || id === 'deployments.templates.instantiate' || id === 'deployments.environments.moveToRepository' || id === 'deployments.restart' || id === 'deployments.backups.restore' || id === 'deployments.receipts.observe' || id === 'deployments.observation.get' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
     ...(id === 'deployments.environments.create' ? {
       executionPlacements: ['account', 'machine'],
       executionPlacementForInput: (input: unknown): 'account' | 'machine' => {
@@ -202,7 +246,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       executionPlacementForInput: (input: unknown): 'account' | 'machine' =>
         readRecord(input).detachKeepRunning === true ? 'account' : 'machine' } : {}),
     ...(id === 'deployments.environments.create'
-      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : backup || id === 'deployments.backups.restore' || id === 'deployments.templates.instantiate'
+      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : backup || backupConfigure || id === 'deployments.backups.restore' || id === 'deployments.templates.instantiate' || id === 'deployments.environments.moveToRepository'
         ? { originalExecution: { daemonIngressSurfaces: ['ui'] as const } } : {}),
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
@@ -223,13 +267,14 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     // A restore is approved by its consequence; every id only correlates the request with the Environment, the
     // capture receipt and the prepared operation, so they read under Technical details. The Machine stays named.
     ...(id === 'deployments.backups.restore' ? { approvalPresentation: {
-      summary: (input: unknown) => readRecord(input).mode === 'confirm'
-        ? 'Replace this Environment\'s data with the checked backup. The running code stays as it is.'
-        : 'Check the backup and take a safety backup first. Nothing is replaced yet.',
+      summary: (input: unknown) => {
+        const parsed = DeploymentActionInputSchemasV1['deployments.backups.restore'].safeParse(input);
+        return parsed.success ? summarizeDeploymentRestoreReviewV1(parsed.data) : null;
+      },
       technicalInputPaths: ['mode', 'serverId', 'environmentId', 'installationId', 'targetLinkId', 'deploymentId',
-        'restoreBackupId', 'expectedRevision', 'prepareOperationId'] } } : {}),
+        'source', 'destination', 'snapshot', 'snapshotReview', 'expectedRevision', 'prepareOperationId'] } } : {}),
     inputHints,
-    ...(backup && !isDeploymentBackupReadActionIdV1(id) || id === 'deployments.backups.restore' || id === 'deployments.domains.add' || id === 'deployments.domains.remove' || id === 'deployments.templates.instantiate' || id === 'deployments.deploy' || id === 'deployments.rollback' || id === 'deployments.restart' || id === 'deployments.promote' || id === 'deployments.teardown' ? {
+    ...(backupConfigure || backup && !isDeploymentBackupReadActionIdV1(id) || id === 'deployments.backups.restore' || id === 'deployments.domains.add' || id === 'deployments.domains.remove' || id === 'deployments.templates.instantiate' || id === 'deployments.environments.moveToRepository' || id === 'deployments.deploy' || id === 'deployments.rollback' || id === 'deployments.restart' || id === 'deployments.promote' || id === 'deployments.teardown' ? {
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },
     } : {}),
     // Review describes the stored ref string; the interactive picker selects a ref/revision pair.
@@ -254,11 +299,13 @@ function createDeploymentActionSpecsV1() {
   deploymentSpec('deployments.domains.list', 'List deployment domains', '/v1/deployments/environments/:environmentId/domains', true),
   { ...deploymentSpec('deployments.publish.prepare', 'Prepare catalog app publishing', undefined, true), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec('deployments.templates.instantiate', 'Instantiate deployment template', undefined), requesterAccountContentDemandForInput: () => true },
+  { ...deploymentSpec('deployments.environments.moveToRepository', 'Move Environment to a repository', undefined), requesterAccountContentDemandForInput: () => true },
   deploymentSpec('deployments.prepare', 'Ask an agent to prepare deployment', undefined),
   { ...deploymentSpec('deployments.health.read', 'Read deployed service health', undefined, true), requesterAccountContentDemandForInput: () => true },
   deploymentSpec('deployments.health.current', 'Read current Environment edge health', undefined, true),
   { ...deploymentSpec('deployments.drift.read', 'Read deployed service drift', undefined, true), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec('deployments.logs.read', 'Read deployment logs', undefined, true), requesterAccountContentDemandForInput: (input: unknown) => readRecord(input).kind === 'build' },
+  { ...deploymentSpec('deployments.data.query', 'Query database read-only', undefined, true), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec('deployments.environments.create', 'Create deployment environment', '/v1/deployments/environments'), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec('deployments.environments.update', 'Update deployment environment', '/v1/deployments/environments/:environmentId'), requesterAccountContentDemandForInput: () => true },
   deploymentSpec('deployments.environments.controller.set', 'Change environment controller', '/v1/deployments/environments/:environmentId/controller'),
@@ -269,7 +316,8 @@ function createDeploymentActionSpecsV1() {
   { ...deploymentSpec('deployments.rollback', 'Roll back deployment', '/v1/deployments/environments/:environmentId/rollback'), requesterAccountContentDemandForInput: () => true },
   deploymentSpec('deployments.restart', 'Restart deployed service', undefined),
   { ...deploymentSpec('deployments.backups.restore', 'Restore deployment backup', undefined), requesterAccountContentDemandForInput: () => true },
-  { ...deploymentSpec('deployments.backups.test', 'Test backup destination', undefined, true), requesterAccountContentDemandForInput: () => true },
+  { ...deploymentSpec('deployments.backups.configure', 'Configure deployment backups', undefined), requesterAccountContentDemandForInput: () => true },
+  { ...deploymentSpec('deployments.backups.test', 'Test backup destination', undefined), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec('deployments.backups.history', 'Read backup history', undefined, true), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec('deployments.backups.inventory', 'List deployment backups', undefined, true), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec('deployments.backups.run', 'Back up deployment', undefined), requesterAccountContentDemandForInput: () => true },

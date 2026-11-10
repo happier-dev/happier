@@ -3536,6 +3536,7 @@ export const ja: TranslationStructure = {
 	    },
 	    copyDiagnostics: "診断をコピー",
 	    diagnosticsCopied: "診断をコピーしました",
+	    syncedAgo: ({ when }: { when: string }) => `${when}に同期`,
 	  },
 
   time: {
@@ -18779,7 +18780,7 @@ settingsSession: {
         empty: "行が返されませんでした",
         incomplete: "結果が不完全な可能性があります",
         roleUnavailable: "データベースには読み取り専用ロールが必要です。設定をレビューするか、所有者にスキーマ権限の設定を依頼してください。",
-        nativeParameters: "PostgreSQL :'name' または MySQL/MariaDB @name を使用します。JSON 値は文字列です。",
+            nativeParameters: "PostgreSQL は :'name'、MySQL は @name を使用します。名前は a-z で始まり、a-z、0-9、_ を使います。happier_ 接頭辞は予約済みです。JSON 値は文字列です。",
         password: "パスワード",
         description: ({ name }: { name: string }) => `${name} の読み取り専用 SQL。`,
         row: ({ number }: { number: number }) => `行 ${number}`,

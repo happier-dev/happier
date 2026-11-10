@@ -10,6 +10,7 @@ import { deploymentCreationReviewTranslations } from './deploymentCreationReview
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
 import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
 import { deploymentEditorsTranslations } from './deploymentEditorsTranslations';
+import { deploymentPreparationTranslations } from './deploymentPreparationTranslations';
 import { deploymentSettingsTranslations } from './deploymentSettingsTranslations';
 import { deploymentPlatformLinkTranslations } from './deploymentPlatformLinkTranslations';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
@@ -34,6 +35,7 @@ import { mediaKeyboardTranslations } from './mediaKeyboardTranslations';
 import { quickOpenTranslations } from './quickOpenTranslations';
 import { paneMainColumnTranslations } from './paneMainColumnTranslations';
 import { paneEmptyEditorTranslations, paneShortcutsSheetTranslations } from './paneEmptyEditorTranslations';
+import { llmTaskRunnerTranslations } from './llmTaskRunnerTranslations';
 import { reviewKeyboardTranslations } from './reviewKeyboardTranslations.shared';
 import { actionSettingsResourcesTranslations } from './actionSettingsResourcesTranslations.shared';
 import { resourceProposalTranslations } from './resourceProposalTranslations.shared';
@@ -1302,6 +1304,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         invalidNextStep: '原則檔案修復後，請重新啟動 Happier。',
         guide: '原則指南',
     },
+  llmTaskRunner: llmTaskRunnerTranslations['zh-Hant'],
   panes: { mainColumn: paneMainColumnTranslations['zh-Hant'], emptyEditor: paneEmptyEditorTranslations['zh-Hant'], shortcutsSheet: paneShortcutsSheetTranslations['zh-Hant'] },
   capabilities: capabilityKitTranslations.zhHant,
     resourceProposal: resourceProposalTranslations.zhHant,
@@ -3471,6 +3474,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         copyDiagnostics: '複製診斷資訊',
         diagnosticsCopied: '已複製診斷資訊',
+        syncedAgo: ({ when }: { when: string }) => `${when}已同步`,
     },
 
     time: {
@@ -6206,6 +6210,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         agentIsolationMemberSetupOpenSecurity: "開啟此機器的「安全性」頁面，檢查獨立使用者設定。",
         pluginCodeUnreadableAskManager: "你的獨立使用者無法存取外掛程式碼。請讓機器管理員設定獨立使用者並重新啟動機器上的 Happier，然後重試。",
         pluginCodeUnreadableOpenSecurity: "你的獨立使用者無法存取外掛程式碼。請開啟此機器的「安全性」頁面，設定獨立使用者，然後重新啟動機器上的 Happier 並重試。",
+        requesterSessionCustodyUnavailable: "無法還原此工作階段請求者的存取權限。請從原本的帳戶重新開啟，或請機器管理員檢查存取權限。",
         agentIsolationUnavailable:
             '這台機器上的智慧體隔離尚未就緒。請讓機器擁有者檢查設定，然後重試。',
         tryAgain: '請重試',
@@ -7899,9 +7904,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         markSessionReadSubtitle: '清除此工作階段的未讀提醒',
         markSessionUnread: '標為未讀',
         markSessionUnreadSubtitle: '將此工作階段保留在未讀清單中',
-        keepInAttention: '保留在需要注意',
+        keepInAttention: "保留在需要你",
         keepInAttentionSubtitle: '即使已讀，也會留在這裡',
-        removeFromAttention: '從需要注意中移除',
+        removeFromAttention: "從需要你中移除",
         removeFromAttentionSubtitle: '已讀後可以重新排回清單下方',
         executionRunsSubtitle: '查看此工作階段的執行',
         automationsTitle: '工作流程',
@@ -8060,6 +8065,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         agent: {
             sectionTitle: '代理',
             unselected: '選擇代理',
+            sameAsSession: '與工作階段相同',
+            sameAsParent: '與上層工作階段相同',
             noLongerAvailableOn: ({ machine }: { machine: string }) => `${machine} 上已無法使用 · 選擇其他`,
             noLongerAvailable: '已無法使用 · 選擇其他',
             claude: 'Claude',
@@ -10550,8 +10557,8 @@ settingsSession: {
 	              backgroundWorkAttentionKeepWorkingSubtitle: "保留工作狀態，並在有未讀回覆時顯示藍色中心圓點",
 	              backgroundWorkAttentionKeepWorkingUnreadTitle: "在「正在工作」中顯示未讀狀態",
 	              backgroundWorkAttentionKeepWorkingUnreadSubtitle: "將工作階段保留在「正在工作」，在你閱讀回覆前顯示未讀狀態",
-	              backgroundWorkAttentionShowUnreadTitle: "將未讀工作階段移至「需要注意」",
-	              backgroundWorkAttentionShowUnreadSubtitle: "背景工作持續進行時，將有未讀回覆的工作階段移至「需要注意」",
+	              backgroundWorkAttentionShowUnreadTitle: "將未讀工作階段移至「需要你」",
+	              backgroundWorkAttentionShowUnreadSubtitle: "背景工作持續進行時，將有未讀回覆的工作階段移至「需要你」",
 	              attentionPromotionModeTitle: '需要注意的工作階段',
 	              attentionPromotionModeSubtitle: '選擇等待你處理或可供檢視的工作階段顯示位置',
 	              attentionPromotionModeOffTitle: '保留在一般位置',
@@ -10562,7 +10569,7 @@ settingsSession: {
 	              attentionPromotionModeWithinGroupsSubtitle: '將工作階段保留在其資料夾或工作區內',
 	              reminderAutoClearOnOpenTitle: "開啟時清除提醒",
 	              reminderAutoClearOnOpenSubtitle: "關閉後需手動移除已到期的提醒。未來的提醒仍按計畫保留。",
-	              attentionStandingDefaultTitle: '將工作階段保留在需要注意',
+	              attentionStandingDefaultTitle: '將工作階段保留在需要你',
 	              attentionStandingDefaultEnabledSubtitle: '每個工作階段都會一直保留，直到你移除它',
 	              attentionStandingDefaultDisabledSubtitle: '逐個保留工作階段',
 	              attentionStandingDefaultUnavailableSubtitle: '請先在「需要注意的工作階段」中選擇顯示位置',
@@ -13528,6 +13535,23 @@ settingsSession: {
 
   projects: {
         deployments: {
+            databaseQuery: {
+                title: "唯讀查詢", run: "執行查詢", sql: "SQL", parameters: "參數 (JSON)",
+                setup: "唯讀登入", password: "密碼", reviewSetup: "審核設定", working: "執行中…",
+                setupDescription: "為專用唯讀密碼選擇已儲存的密鑰。設定會在修改資料庫角色及其環境綁定之前開啟一般審核。",
+                unavailable: "查詢無法使用", empty: "未傳回任何資料列", incomplete: "結果可能不完整",
+                roleUnavailable: "資料庫需要專用唯讀角色。請審核設定，或讓擁有者設定所需的結構描述權限。",
+            nativeParameters: "PostgreSQL 使用 :'name'，MySQL 使用 @name。名稱以 a-z 開頭，僅含 a-z、0-9 或 _。happier_ 前綴為保留前綴。JSON 值為文字。",
+                description: ({ name }: { name: string }) => `${name} 的唯讀 SQL。`,
+                row: ({ number }: { number: number }) => `資料列 ${number}`,
+            },
+            managedData: {
+                title: '託管資料庫', empty: '尚未安裝託管資料庫提供者', operation: '你想做什麼？',
+                unknown: '提供者的操作結果不確定', recover: '請查看提供者的專案或分支並連結準確的資源。再次建立前，請先確認上次建立的結果。',
+                partial: '部分連線仍需儲存', link: '連結此資料庫', linked: '資料庫已連結',
+                connections: '已儲存的連線', saved: '已安全儲存', bind: '在變數中使用這些連線',
+                bound: '連線已加入變數', result: '提供者詳細資料', reviewCreate: '查看建立選項', add: '託管資料庫', manage: '管理資料庫',
+            },
             chooseRecovery: '選擇復原方式',
             chooseRecoveryBody: '還原移轉前的備份和上一版本，取代目前資料；或僅回復程式碼並保留目前資料。',
             restoreBackupAndCode: '還原備份和上一版本',
@@ -13538,6 +13562,7 @@ settingsSession: {
             copy: deploymentCopyTranslations['zh-Hant'],
             overviewStatus: deploymentOverviewTranslations['zh-Hant'],
             editors: deploymentEditorsTranslations['zh-Hant'],
+      preparation: deploymentPreparationTranslations['zh-Hant'],
             settingsSections: deploymentSettingsTranslations['zh-Hant'],
             platformLink: deploymentPlatformLinkTranslations['zh-Hant'],
             review: {
@@ -14563,6 +14588,7 @@ settingsSession: {
           thisApp: '此應用程式',
           thisComputer: '此電腦',
           machine: '機器',
+          offlineMachines: ({ count }: { count: number }) => `此 Home 上的其他 ${count} 台機器`,
       },
       offline: '離線',
       pill: {
@@ -14808,6 +14834,7 @@ settingsSession: {
       integrityFailed: 'Happier 無法驗證此外掛檢視。請開啟外掛設定以修復所選安裝。',
       incompatible: '此檢視需要相容的 Happier 或外掛版本。',
       installationConflict: '你的機器上安裝了此外掛的不同版本。請選擇要執行它的機器。',
+      localArtifactFailure: "這個外掛程式檢視在這台裝置上發生問題。請嘗試重新載入。",
       authorFailure: '此檢視無法啟動，因為其可執行介面無效。請聯絡外掛作者重新建置。',
       retired: '此外掛檢視已不再啟用。請開啟外掛設定以啟用或重新安裝。',
   },

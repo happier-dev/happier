@@ -1,5 +1,5 @@
-import { DeploymentTeardownInputV1Schema, type DeploymentTeardownInputV1,
-  type DeploymentArtifactContentReferenceV1 } from './deploymentActionsV1.js';
+import { DeploymentTeardownInputV1Schema, type DeploymentTeardownInputV1 } from './deploymentTeardownRequestV1.js';
+import type { DeploymentArtifactContentReferenceV1 } from './deploymentArtifactContentReferenceV1.js';
 import type { DeploymentTeardownRequestInputV1 } from './deploymentTeardownRequestV1.js';
 
 /** UI, CLI and agent requests share the receiving controller's prepared input builder. */

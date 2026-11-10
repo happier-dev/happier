@@ -166,7 +166,7 @@ export function deploymentChildEffectActionIdForRootV1(value: string, admission?
     && requestedEffectActionId === 'deployments.domains.add') return requestedEffectActionId;
   if (value === 'deployments.teardown' && requestedEffectActionId === 'deployments.domains.remove') return requestedEffectActionId;
   if (value === 'deployments.environments.create' && admission?.operation === 'create'
-    && admission.mode === 'apply' && admission.catalogApp) return requestedEffectActionId === 'deployments.deploy'
+    && admission.mode === 'apply' && (admission.catalogApp || admission.preview)) return requestedEffectActionId === 'deployments.deploy'
       ? 'deployments.deploy' : 'deployments.domains.add';
   const operation = deploymentOperationForRootActionV1(value, admission);
   return operation ? `deployments.${operation}` as const : undefined;
@@ -179,7 +179,7 @@ export function deploymentOperationForRootActionV1(value: string,
   if (value === 'deployments.promote') return 'promote';
   if (value === 'deployments.teardown') return 'teardown';
   if (value === 'deployments.environments.create' && admission?.operation === 'create'
-    && admission.mode === 'apply' && admission.catalogApp) return 'deploy';
+    && admission.mode === 'apply' && (admission.catalogApp || admission.preview)) return 'deploy';
   return value === 'deployments.templates.instantiate' && admission?.operation === 'template'
     && admission.mode === 'apply' && admission.deploy !== undefined ? 'deploy' : undefined;
 }

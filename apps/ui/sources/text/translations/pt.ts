@@ -3222,6 +3222,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       },
       copyDiagnostics: "Copiar diagnóstico",
       diagnosticsCopied: "Diagnóstico copiado",
+      syncedAgo: ({ when }: { when: string }) => `Sincronizado ${when}`,
     },
 
   time: {
@@ -18971,7 +18972,7 @@ settingsSession: {
         empty: "Nenhuma linha retornada",
         incomplete: "Os resultados podem estar incompletos",
         roleUnavailable: "O banco precisa de uma função dedicada de somente leitura. Revise a configuração ou peça ao proprietário para configurar as permissões do esquema.",
-        nativeParameters: "Use PostgreSQL :'name' ou MySQL/MariaDB @name. Os valores JSON são texto.",
+            nativeParameters: "PostgreSQL :'name'; MySQL @name. Os nomes começam por a-z e contêm a-z, 0-9 ou _. O prefixo happier_ é reservado. Os valores JSON são texto.",
         password: "Senha",
         description: ({ name }: { name: string }) => `SQL somente leitura para ${name}.`,
         row: ({ number }: { number: number }) => `Linha ${number}`,

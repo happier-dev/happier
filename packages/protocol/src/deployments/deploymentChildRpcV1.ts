@@ -7,8 +7,9 @@ import { sameStrictJsonValue, StrictJsonValueSchema } from '../json/strictJsonVa
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1, EnvironmentSecretBindingV1Schema } from './storedAppInputV1.js';
-import { DeploymentBindingsSetInputV1Schema } from './deploymentActionsV1.js';
-import { DeploymentDeployInputV1Schema, DeploymentDeployIntentInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentRollbackIntentInputV1Schema, DeploymentPromoteInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema } from './deploymentActionsV1.js';
+import { DeploymentBindingsSetInputV1Schema } from './deploymentBindingPatchV1.js';
+import { DeploymentDeployInputV1Schema, DeploymentDeployIntentInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentRollbackIntentInputV1Schema } from './deploymentDeployIntentV1.js';
+import { DeploymentEnvironmentCreateIntentInputV1Schema } from './deploymentTemplateInstantiationV1.js';
 import { deploymentChildEffectActionIdForRootV1, isDeploymentDomainRemoveActionIdV1, isDeploymentDomainAddActionIdV1,
     isDeploymentMembershipActionIdV1,
     DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
@@ -17,9 +18,9 @@ import { DeploymentDomainAddInputV1Schema, DeploymentDomainAddPreparedInputV1Sch
     DeploymentDomainPlacementV1Schema, DeploymentDomainTopologyV1Schema } from './deploymentDomainV1.js';
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
 import { DeploymentTemplateInstantiateInputV1Schema, readDeploymentTemplateDeployIntentV1 } from './deploymentTemplateInstantiationV1.js';
-import { DeploymentPromoteIntentInputV1Schema } from './deploymentPromoteIntentV1.js';
+import { DeploymentPromoteInputV1Schema, DeploymentPromoteIntentInputV1Schema } from './deploymentPromoteIntentV1.js';
 import { DeploymentBackupRestoreConfirmInputV1Schema, DeploymentNativeSnapshotOfferV1Schema } from './deploymentBackupRestoreV1.js';
-import { DeploymentTeardownInputV1Schema, DeploymentTeardownActionInputV1Schema, DeploymentTeardownStepV1Schema } from './deploymentActionsV1.js';
+import { DeploymentTeardownInputV1Schema, DeploymentTeardownActionInputV1Schema, DeploymentTeardownStepV1Schema } from './deploymentTeardownRequestV1.js';
 import { matchesDeploymentDomainPreparedInputV1,
     isDeploymentDomainNativeAdmissionV1, projectDeploymentNativeAdmissionV1 } from './deploymentCandidatePublicationV1.js';
 export { isDeploymentChildRootActionIdV1, isDeploymentChildEffectActionIdV1, deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1,

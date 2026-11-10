@@ -2868,6 +2868,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         },
         copyDiagnostics: 'Diagnose kopieren',
         diagnosticsCopied: 'Diagnose kopiert',
+        syncedAgo: ({ when }: { when: string }) => `Synchronisiert ${when}`,
     },
 
     time: {
@@ -18971,7 +18972,7 @@ settingsSession: {
         empty: "Keine Zeilen zurückgegeben",
         incomplete: "Ergebnisse sind möglicherweise unvollständig",
         roleUnavailable: "Die Datenbank benötigt eine separate schreibgeschützte Rolle. Prüfe die Einrichtung oder bitte den Eigentümer, die nötigen Schemarechte zu konfigurieren.",
-        nativeParameters: "Nutze PostgreSQL :'name' oder MySQL/MariaDB @name. JSON-Werte sind Text.",
+            nativeParameters: "PostgreSQL :'name'; MySQL @name. Namen beginnen mit a-z und enthalten a-z, 0-9 oder _. Das Präfix happier_ ist reserviert. JSON-Werte sind Text.",
         password: "Passwort",
         description: ({ name }: { name: string }) => `Schreibgeschütztes SQL für ${name}.`,
         row: ({ number }: { number: number }) => `Zeile ${number}`,

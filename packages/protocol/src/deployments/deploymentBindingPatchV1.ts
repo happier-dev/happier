@@ -1,11 +1,20 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { DeploymentEnvironmentContentCasV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
 import { EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema,
     environmentSecretBindingIdentityV1, type EnvironmentSecretBindingIdentityV1,
     type EnvironmentSecretBindingV1 } from './storedAppInputV1.js';
+
+/** Value-free coverage of current required Environment grants, under Environment read admission. */
+export const DeploymentEnvironmentSecretScopeV1Schema = lazyZodSchema(() => z.strictObject({
+    status: z.enum(['ready', 'actionNeeded', 'unavailable']), reason: DeploymentIdentifierV1Schema,
+    requiredGrantCount: z.number().check(z.int(), z.nonnegative()),
+    missingGrantCount: z.number().check(z.int(), z.nonnegative()),
+}));
+export type DeploymentEnvironmentSecretScopeV1 = z.infer<typeof DeploymentEnvironmentSecretScopeV1Schema>;
 
 /** Server-visible routing only; binding names, origins and service selectors stay private. */
 export const EnvironmentSecretBindingRoutingV1Schema = lazyZodSchema(() => z.union([
@@ -120,5 +129,19 @@ export const DeploymentBindingsPatchV1Schema = lazyZodSchema(() => z.strictObjec
 export const DeploymentBindingsPatchInputV1Schema = lazyZodSchema(() => z.strictObject({
     serverId: DeploymentIdentifierV1Schema, environmentId: DeploymentIdentifierV1Schema,
     expectedRevision: DeploymentRevisionV1Schema, ...bindingPatchShape(),
+    providerVariables: z.optional(z.strictObject({
+        useOurs: z.array(DeploymentIdentifierV1Schema), keepTheirs: z.array(DeploymentIdentifierV1Schema),
+    })),
 }).check(z.refine(uniqueBindingPatchIdentities, { message: 'Each binding identity may occur once in a patch.' })));
 export type DeploymentBindingsPatchInputV1 = z.infer<typeof DeploymentBindingsPatchInputV1Schema>;
+
+/** Prepared callers retain the complete Artifact/capture contract. */
+export const DeploymentBindingsPreparedInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...DeploymentEnvironmentContentCasV1Schema.shape,
+  referencedSavedSecretRevisions: DeploymentBindingSavedSecretRevisionsV1Schema,
+}));
+export type DeploymentBindingsPreparedInputV1 = z.infer<typeof DeploymentBindingsPreparedInputV1Schema>;
+export const DeploymentBindingsSetInputV1Schema = lazyZodSchema(() => z.union([
+  DeploymentBindingsPreparedInputV1Schema, DeploymentBindingsPatchInputV1Schema,
+]));
+export type DeploymentBindingsSetInputV1 = z.infer<typeof DeploymentBindingsSetInputV1Schema>;

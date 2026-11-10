@@ -1,5 +1,19 @@
+import { DeploymentBindingsSetInputV1Schema } from './deploymentBindingPatchV1.js';
+export { DeploymentBindingsPreparedInputV1Schema, DeploymentBindingsSetInputV1Schema, type DeploymentBindingsPreparedInputV1, type DeploymentBindingsSetInputV1 } from './deploymentBindingPatchV1.js';
+import { DeploymentDeployInputV1Schema, DeploymentDeployActionInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentRollbackActionInputV1Schema } from './deploymentDeployIntentV1.js';
+export { DeploymentDeployInputV1Schema, DeploymentDeployActionInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentRollbackIntentInputV1Schema, DeploymentRollbackActionInputV1Schema, type DeploymentDeployInputV1, type DeploymentDeployActionInputV1, type DeploymentRollbackInputV1, type DeploymentRollbackIntentInputV1, type DeploymentRollbackActionInputV1 } from './deploymentDeployIntentV1.js';
+import { DeploymentPromoteInputV1Schema, DeploymentPromoteActionInputV1Schema } from './deploymentPromoteIntentV1.js';
+export { DeploymentPromoteInputV1Schema, DeploymentPromoteActionInputV1Schema, type DeploymentPromoteActionInputV1, type DeploymentPromoteInputV1 } from './deploymentPromoteIntentV1.js';
+import { DeploymentTargetUnlinkInputV1Schema, DeploymentTeardownDispositionV1Schema, DeploymentTeardownActionInputV1Schema } from './deploymentTeardownRequestV1.js';
+export { DEPLOYMENT_TEARDOWN_STEPS_V1, DeploymentTeardownStepV1Schema, DeploymentTargetUnlinkInputV1Schema, DeploymentTeardownReasonV1Schema, DeploymentTeardownDispositionV1Schema, DeploymentTeardownInputV1Schema, DeploymentDataCreationReferenceV1Schema, DeploymentTeardownIntentInputV1Schema, DeploymentTeardownDetachInputV1Schema, DeploymentTeardownNothingDeployedInputV1Schema, DeploymentTeardownPreparedInputV1Schema, DeploymentTeardownActionInputV1Schema, DeploymentTeardownAdmissionInputV1Schema, DeploymentTeardownActionAdmissionInputV1Schema, type DeploymentTargetUnlinkInputV1, type DeploymentDataCreationReferenceV1, type DeploymentTeardownIntentInputV1, type DeploymentTeardownNothingDeployedInputV1, type DeploymentTeardownPreparedInputV1, type DeploymentTeardownActionInputV1, type DeploymentTeardownInputV1, type DeploymentTeardownAdmissionInputV1 } from './deploymentTeardownRequestV1.js';
+import { DeploymentEnvironmentCreateIntentInputV1Schema } from './deploymentTemplateInstantiationV1.js';
+export { DeploymentEnvironmentCreateIntentInputV1Schema, type DeploymentEnvironmentCreateIntentInputV1 } from './deploymentTemplateInstantiationV1.js';
 import { z } from 'zod/mini';
+import { DeploymentTargetVariablesReadResultV1Schema, DeploymentTargetVariablesSyncResultV1Schema } from '../plugins/contributions/deploymentTargetVariablesV1.js';
+import { DeploymentCreationDefaultsV1Schema, ResolvedDeploymentCreationDefaultsV1Schema, DeploymentConfigurationDefaultsForV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { DeploymentControllerAvailabilityV1Schema } from './deploymentControllerAvailabilityV1.js';
+import { DeploymentPreviewForkEligibilityV1Schema } from './deploymentPreviewTemplateV1.js';
+import { EnvironmentVariableBindingV1Schema } from './storedAppInputV1.js';
 export * from './deploymentControllerAvailabilityV1.js';
 import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 export { buildDeploymentTargetLinkInputV1 } from './targetLinkInput.js';
@@ -13,14 +27,17 @@ export { DeploymentInvalidV1Schema, type DeploymentInvalidV1 } from './deploymen
 export { buildDeploymentPromoteInputV1 } from './promoteInput.js';
 export * from './deploymentReceiptEventsV1.js';
 import { DeploymentReceiptFailureSummaryV1Schema, PlatformFailureEnrollmentReadBackV1Schema, PlatformFailureEnrollmentV1Schema } from './deploymentReceiptEventsV1.js';
-import { WorkflowRunIdV1Schema, WorkflowInvocationRecordIdSchema } from '../workflows/workflowIdsV1.js';
+
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from './deploymentReceiptResultV1.js';
 import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
 import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestoreResultV1Schema } from './deploymentBackupRestoreV1.js';
 export * from './deploymentBackupRestoreV1.js';
-import { DeploymentBackupActionInputSchemasV1, DeploymentBackupActionResultSchemasV1 } from './deploymentBackupActionsV1.js';
+import { DeploymentBackupActionInputSchemasV1, DeploymentBackupActionResultSchemasV1, DeploymentBackupSourceV1Schema,
+  DeploymentBackupPolicyV1Schema, DeploymentBackupRunInputV1Schema } from './deploymentBackupActionsV1.js';
 export * from './deploymentBackupActionsV1.js';
+import { DeploymentBackupConfigureInputV1Schema, DeploymentBackupConfigureResultV1Schema } from './deploymentBackupConfigureV1.js';
+export * from './deploymentBackupConfigureV1.js';
 export { DEPLOYMENT_BACKUP_ACTION_IDS_V1, isDeploymentBackupActionIdV1, type DeploymentBackupActionIdV1,
   DEPLOYMENT_BACKUP_HISTORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_INVENTORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1,
   DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1, DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
@@ -41,23 +58,24 @@ import { ArtifactQuotaExceededV1Schema } from '../artifacts/artifactActionsV1.js
 import { isDeploymentChildEffectActionIdV1, type DeploymentTransportActionIdV1 } from './deploymentActionIdsV1.js';
 import { DeploymentEnvironmentRefV1Schema } from './deploymentEnvironmentRefV1.js';
 import { DeploymentDeployIntentInputV1Schema } from './deploymentDeployIntentV1.js';
-import { DeploymentOnFailureV1Schema, DeploymentServiceSubsetV1Schema } from './storedAppInputV1.js';
+
 import { DeploymentPromoteIntentInputV1Schema } from './deploymentPromoteIntentV1.js';
 export { DeploymentPromoteIntentInputV1Schema, type DeploymentPromoteIntentInputV1 } from './deploymentPromoteIntentV1.js';
-import { DeploymentEnvironmentCopyFromV1Schema, DeploymentEnvironmentCopyReviewV1Schema } from './deploymentEnvironmentCopyV1.js';
+import { DeploymentEnvironmentCopyReviewV1Schema } from './deploymentEnvironmentCopyV1.js';
 export * from './deploymentEnvironmentCopyV1.js';
 export { DeploymentDeployIntentInputV1Schema, type DeploymentDeployIntentInputV1 } from './deploymentDeployIntentV1.js';
 export { DeploymentDeploySemanticInputV1Schema, type DeploymentDeploySemanticInputV1 } from './deploymentDeployIntentV1.js';
 export { DeploymentEnvironmentRefV1Schema, type DeploymentEnvironmentRefV1 } from './deploymentEnvironmentRefV1.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema, DeploymentTimestampV1Schema } from './deploymentIdentifiersV1.js';
-import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
+import { DeploymentArtifactContentReferenceV1Schema, DeploymentEnvironmentContentCasV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import { DeploymentPreviewPullRequestIdV1Schema as deploymentPreviewPullRequestIdV1Schema,
   DeploymentPreviewReferenceV1Schema } from './deploymentPreviewReferenceV1.js';
-import { DeploymentPreviewProvenanceV1Schema } from './deploymentPreviewProvenanceV1.js';
-import { ScmCommitOidSchema } from '../scm/commitPublication.js';
+
+
 import { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetLinkProviderContentV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
-import { DeploymentBindingSavedSecretRevisionsV1Schema, DeploymentBindingsPatchInputV1Schema } from './deploymentBindingPatchV1.js';
-export { DeploymentBindingsPatchInputV1Schema, type DeploymentBindingsPatchInputV1 } from './deploymentBindingPatchV1.js';
+import { DeploymentBindingSavedSecretRevisionsV1Schema, DeploymentEnvironmentSecretScopeV1Schema } from './deploymentBindingPatchV1.js';
+export { DeploymentBindingsPatchInputV1Schema, type DeploymentBindingsPatchInputV1,
+  DeploymentEnvironmentSecretScopeV1Schema, type DeploymentEnvironmentSecretScopeV1 } from './deploymentBindingPatchV1.js';
 export * from './deploymentDomainV1.js';
 import { DeploymentDomainHeaderV1Schema, DeploymentDomainAddInputV1Schema, DeploymentDomainRemoveInputV1Schema,
   DeploymentDomainVerifyInputV1Schema, DeploymentDomainGetInputV1Schema, DeploymentDomainListInputV1Schema } from './deploymentDomainV1.js';
@@ -65,16 +83,14 @@ import { DeploymentAcceptedExecutionV1Schema } from './deploymentAcceptedExecuti
 import { DeploymentPendingAdmissionV1Schema } from './deploymentPendingAdmissionV1.js';
 export { DeploymentPendingAdmissionV1Schema, type DeploymentPendingAdmissionV1 } from './deploymentPendingAdmissionV1.js';
 export { DeploymentAcceptedExecutionV1Schema, type DeploymentAcceptedExecutionV1 } from './deploymentAcceptedExecutionV1.js';
-import { DeploymentEnvironmentCreateBaseInputV1Schema, DeploymentEnvironmentCreateInputV1Schema,
-  DeploymentTargetMachinesV1Schema, DeploymentOwnServerTargetMachinesV1Schema, DeploymentTargetLinkMachineV1Schema } from './deploymentEnvironmentCreateV1.js';
+import { DeploymentEnvironmentCreateInputV1Schema, DeploymentTargetMachinesV1Schema, DeploymentTargetLinkMachineV1Schema } from './deploymentEnvironmentCreateV1.js';
 export { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema,
   DeploymentTargetLinkMachineV1Schema, DeploymentOwnServerTargetMachinesV1Schema } from './deploymentEnvironmentCreateV1.js';
 export type { DeploymentEnvironmentCreateInputV1, DeploymentEnvironmentCreateStorageInputV1 } from './deploymentEnvironmentCreateV1.js';
 import { DeploymentEnvironmentDeployerPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
 export { DeploymentEnvironmentDeployerPrincipalV1Schema, DeploymentEnvironmentDeployerPrincipalsV1Schema, type DeploymentEnvironmentDeployerPrincipalV1 } from './deploymentEnvironmentDeployerV1.js';
 import { DeploymentPendingDeployV1Schema } from './storedAppInputV1.js';
-import { DeploymentStoredDefinitionInputV1Schema, DeploymentTextV1Schema, DeploymentCatalogAppDefinitionInputV1Schema,
-  DeploymentNewProjectV1Schema, hasOneDeploymentProjectV1 } from './storedAppInputV1.js';
+import { DeploymentStoredDefinitionInputV1Schema, DeploymentNewProjectV1Schema } from './storedAppInputV1.js';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { DeploymentEnvironmentContentPatchV1Schema } from './deploymentEnvironmentContentPatchV1.js';
 export { DeploymentEnvironmentContentPatchV1Schema, hasDeploymentEnvironmentContentPatchV1,
@@ -84,9 +100,14 @@ export { DeploymentPreviewTemplateV1Schema, DeploymentPreviewDataSelectionV1Sche
 import { DeploymentIngressV1Schema } from './storedAppInputV1.js';
 export { DeploymentIngressV1Schema, type DeploymentIngressV1 } from './storedAppInputV1.js';
 import { DeploymentTargetManagedRetentionV1Schema } from './storedAppInputV1.js';
-import { DeploymentRepositoryComposeV1Schema, DeploymentStoredDefinitionV1Schema, DeploymentSourceMethodV1Schema,
-  DeploymentSourceIntentV1Schema } from './storedAppInputV1.js';
+import { DeploymentStoredDefinitionV1Schema, DeploymentSourceMethodV1Schema, DeploymentSourceIntentV1Schema } from './storedAppInputV1.js';
 import { DeploymentPrepareInputV1Schema, DeploymentPrepareResultV1Schema } from './deploymentPreparationV1.js';
+import { DeploymentMoveToRepositoryInputV1Schema, DeploymentMoveToRepositoryResultV1Schema } from './deploymentMoveToRepositoryV1.js';
+export * from './deploymentMoveToRepositoryV1.js';
+export { ScmRepositoryFilesPullRequestPartialV1Schema, type ScmRepositoryFilesPullRequestPartialV1 } from '../scm/repositoryFilesPullRequest.js';
+export { REPOSITORY_FILES_PULL_REQUEST_CHILDREN_V1, REPOSITORY_FILES_PULL_REQUEST_READ_CHILDREN_V1, repositoryFilesPullRequestChildRoleV1,
+  deploymentMoveToRepositoryReviewedChildrenV1, deploymentMoveToRepositoryChildRoleV1, DEPLOYMENT_MOVE_DEFINITION_CHILD_ROLE_V1,
+  type DeploymentMoveToRepositoryChildActionIdV1, type RepositoryFilesPullRequestChildActionIdV1 } from '../scm/repositoryFilesPullRequestActionIds.js';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiateResultV1Schema,
   DeploymentTemplateInstantiationReviewV1Schema, readDeploymentTemplateCreationOperationRequestIdV1 } from './deploymentTemplateInstantiationV1.js';
 import { DeploymentPublishPrepareInputV1Schema, DeploymentPublishPrepareResultV1Schema } from './deploymentPublishPreparationV1.js';
@@ -94,6 +115,7 @@ export * from './deploymentPublishPreparationV1.js';
 import { DeploymentHealthCurrentInputV1Schema, DeploymentHealthCurrentSuccessV1Schema,
   DeploymentHealthReadInputV1Schema, DeploymentDriftReadInputV1Schema, DeploymentLogsReadInputV1Schema,
   DeploymentHealthReadSuccessV1Schema, DeploymentDriftReadSuccessV1Schema, DeploymentLogsReadSuccessV1Schema } from './deploymentReadsV1.js';
+import { DeploymentDataQueryInputV1Schema, DeploymentDataQuerySuccessV1Schema, DeploymentDataQueryUnavailableV1Schema } from './deploymentReadsV1.js';
 export * from './deploymentReadsV1.js';
 export * from './deploymentPreparationV1.js';
 export * from './deploymentPreviewProvenanceV1.js';
@@ -107,7 +129,7 @@ export { DEPLOYMENT_ACTION_IDS_V1, isDeploymentActionIdV1, type DeploymentAction
 
 /** Storage transport leaves. Private deployment records remain deployment-protocol owned. */
 export { DeploymentStateV1Schema, deploymentInProgressStates } from './deploymentStateV1.js';
-import { DeploymentStateV1Schema, DeploymentCancellationConsequenceV1Schema } from './deploymentStateV1.js';
+import { DeploymentStateV1Schema, DeploymentCancellationConsequenceV1Schema, DeploymentReceiptOperationV1Schema } from './deploymentStateV1.js';
 export const DeploymentEnvironmentOwnerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('account'), accountId: DeploymentIdentifierV1Schema }),
   z.strictObject({ kind: z.literal('team'), teamId: DeploymentIdentifierV1Schema }),
@@ -120,11 +142,14 @@ export const DeploymentEnvironmentCapabilitiesV1Schema = lazyZodSchema(() => z.s
 export function hasCompleteDeploymentPreviewRelationV1(environment: Readonly<{
   purpose: 'standard' | 'preview'; previewTemplateEnvironmentId?: string | undefined; previewRepositoryId?: string | undefined;
   previewPullRequestId?: string | undefined; previewTargetLinkId?: string | undefined;
+  previewCompanionOfEnvironmentId?: string | undefined;
 }>): boolean {
   const relations = [environment.previewTemplateEnvironmentId, environment.previewRepositoryId,
     environment.previewPullRequestId, environment.previewTargetLinkId];
-  return environment.purpose === 'standard' ? relations.every(value => value === undefined)
-    : relations.every(value => value !== undefined);
+  if (environment.purpose === 'preview') return environment.previewCompanionOfEnvironmentId === undefined
+    && relations.every(value => value !== undefined);
+  return environment.previewCompanionOfEnvironmentId === undefined ? relations.every(value => value === undefined)
+    : environment.previewTemplateEnvironmentId !== undefined && relations.slice(1).every(value => value === undefined);
 }
 export const DeploymentEnvironmentHeaderV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1), id: DeploymentIdentifierV1Schema, serverId: DeploymentIdentifierV1Schema,
@@ -139,19 +164,19 @@ export const DeploymentEnvironmentHeaderV1Schema = lazyZodSchema(() => z.strictO
   previewRepositoryId: z.optional(DeploymentIdentifierV1Schema),
   previewPullRequestId: z.optional(deploymentPreviewPullRequestIdV1Schema),
   previewTargetLinkId: z.optional(DeploymentIdentifierV1Schema),
+  previewCompanionOfEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
   ...DeploymentArtifactContentReferenceV1Schema.shape, capabilities: DeploymentEnvironmentCapabilitiesV1Schema,
   createdByAccountId: DeploymentIdentifierV1Schema,
   createdAtMs: DeploymentTimestampV1Schema, updatedAtMs: DeploymentTimestampV1Schema,
   deletedAtMs: z.optional(DeploymentTimestampV1Schema),
 }).check(z.refine(hasCompleteDeploymentPreviewRelationV1,
-  { message: 'Preview relationships are complete and absent on standard Environments.' })));
-const deploymentReceiptOperationV1Schema = z.enum(['deploy', 'rollback', 'promote', 'teardown']);
+  { message: 'Preview relationships identify a preview or its named standard companion.' })));
 /** Portable projection of the receipt owner's exact operation vocabulary. */
-export const DeploymentReceiptOperationV1ProtocolSchema = projectZodProtocolSchema(deploymentReceiptOperationV1Schema);
+export const DeploymentReceiptOperationV1ProtocolSchema = projectZodProtocolSchema(DeploymentReceiptOperationV1Schema);
 export const DeploymentReceiptMetadataV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1), id: DeploymentIdentifierV1Schema, environmentId: DeploymentIdentifierV1Schema,
   targetLinkId: DeploymentIdentifierV1Schema, revision: DeploymentRevisionV1Schema,
-  operation: deploymentReceiptOperationV1Schema, state: DeploymentStateV1Schema,
+  operation: DeploymentReceiptOperationV1Schema, state: DeploymentStateV1Schema,
   requestKey: DeploymentIdentifierV1Schema, requestedByAccountId: DeploymentIdentifierV1Schema,
   actionOperationId: DeploymentIdentifierV1Schema,
   acceptedExecution: z.optional(DeploymentAcceptedExecutionV1Schema),
@@ -172,42 +197,6 @@ const home = { serverId: DeploymentIdentifierV1Schema };
 const environment = { ...home, environmentId: DeploymentIdentifierV1Schema, expectedRevision: DeploymentRevisionV1Schema };
 const intent = { requestKey: DeploymentIdentifierV1Schema };
 
-/** Authored create is resolved for review by the host; Home still accepts only the prepared CreateInput. */
-export const DeploymentEnvironmentCreateIntentInputV1Schema = lazyZodSchema(() => z.extend(z.omit(DeploymentEnvironmentCreateBaseInputV1Schema, {
-  contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true, firstTargetLink: true,
-  controllerMachineId: true, buildMachineId: true,
-  preview: true, previewDataTargetLinks: true,
-}), {
-  /** Preview derives its name; the normalized omission must survive review parsing. */
-  name: z._default(z.union([DeploymentTextV1Schema, z.literal('')]), ''),
-  /** Authored PR intent; the controller reads the selected template and protects child content. */
-  preview: z.optional(z.extend(DeploymentPreviewReferenceV1Schema, {
-    provenance: DeploymentPreviewProvenanceV1Schema, headSha: ScmCommitOidSchema,
-  })),
-  mode: z.optional(z.enum(['preview', 'apply'])),
-  definition: z.optional(z.union([DeploymentStoredDefinitionInputV1Schema, DeploymentCatalogAppDefinitionInputV1Schema,
-    z.strictObject({ from: z.literal('repository'), ref: DeploymentTextV1Schema, compose: z.optional(DeploymentRepositoryComposeV1Schema) })])),
-  copyFrom: z.optional(DeploymentEnvironmentCopyFromV1Schema),
-  controllerMachineId: z.optional(DeploymentIdentifierV1Schema), buildMachineId: z.optional(DeploymentIdentifierV1Schema),
-  retainPreviousDeployments: z.optional(DeploymentRetainPreviousDeploymentsV1Schema),
-  bindings: z.optional(DeploymentTemplateInstantiateInputV1Schema.shape.bindings),
-  generatedSecretAudience: DeploymentTemplateInstantiateInputV1Schema.shape.generatedSecretAudience,
-  domainBindings: DeploymentTemplateInstantiateInputV1Schema.shape.domainBindings,
-  firstTargetLink: z.optional(z.strictObject({ machines: DeploymentOwnServerTargetMachinesV1Schema })),
-}).check(z.refine(input => hasOneDeploymentProjectV1(input.projectSourceId, input.newProject), { message: 'Select an existing or reviewed new Project.' }),
-  z.refine(input => input.purpose === 'preview' ? input.preview !== undefined && input.projectSourceId !== undefined
-    && input.newProject === undefined && input.copyFrom === undefined && input.definition === undefined && input.firstTargetLink === undefined
-    && input.protection === 'nonProduction' : input.preview === undefined && input.name.trim().length > 0,
-    { message: 'Preview creation selects one template and existing Source; standard creation requires a name.' }),
-  z.refine(input => input.newProject === undefined || input.definition?.from !== 'repository', { message: 'A new repository-free Project needs a stored definition.' }),
-  z.refine(input => input.newProject === undefined || input.copyFrom === undefined, { message: 'A new repository-free Project selects its stored definition.' }),
-  z.refine(input => input.definition?.from === 'catalogApp'
-    || input.bindings === undefined && input.generatedSecretAudience === undefined && input.domainBindings === undefined,
-    { message: 'Catalog variables and generation are prepared by the template owner.' }),
-  z.refine(input => input.firstTargetLink === undefined || input.definition?.from !== 'repository' || input.definition.compose !== undefined,
-    { message: 'An own-server first target requires repository Compose selectors.' }),
-  z.refine(input => input.preview !== undefined || input.copyFrom !== undefined || input.definition !== undefined,
-  { message: 'Create selects an authored definition or an exact source copy.' })));
 export const DeploymentEnvironmentCreateActionInputV1Schema = lazyZodSchema(() => z.union([
   DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema,
 ]));
@@ -220,21 +209,24 @@ export const DeploymentEnvironmentUpdatePatchV1Schema = lazyZodSchema(() => z.st
     deployerPrincipals: z.optional(DeploymentEnvironmentDeployerPrincipalsV1Schema),
 }));
 /** Content CAS and reviewed build/ingress placement share one manager-owned update. */
-export const DeploymentEnvironmentUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...environment, ...DeploymentArtifactContentReferenceV1Schema.shape,
+export const DeploymentEnvironmentUpdateInputV1BaseSchema = lazyZodSchema(() => z.strictObject({
+  ...DeploymentEnvironmentContentCasV1Schema.shape,
   patch: z.optional(DeploymentEnvironmentUpdatePatchV1Schema),
+  /** First setup reads the same owner preparation for UI and agents; it writes no content. */
+  mode: z.optional(z.literal('preview')),
+  defaultsFor: z.optional(DeploymentConfigurationDefaultsForV1Schema),
+  creationDefaults: z.optional(DeploymentCreationDefaultsV1Schema),
 }));
+export const DeploymentEnvironmentUpdateInputV1Schema = lazyZodSchema(() => DeploymentEnvironmentUpdateInputV1BaseSchema.check(z.refine(input => input.mode === 'preview'
+  ? input.defaultsFor !== undefined && input.patch === undefined
+    || input.defaultsFor === undefined && input.creationDefaults === undefined && input.patch?.previewTemplate != null
+      && Object.keys(input.patch).every(key => key === 'previewTemplate' || key === 'buildMachineId')
+  : input.defaultsFor === undefined && input.creationDefaults === undefined,
+{ message: 'Defaults preparation is a preview without an Environment patch.' })));
 /** Manager-owned controller reassignment changes records and future assignments, never workload content. */
 export const DeploymentEnvironmentControllerSetInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...environment, controllerMachineId: DeploymentIdentifierV1Schema,
 }));
-/** Record-only final disposition. Native cleanup remains the signed teardown owner's effect. */
-export const DeploymentTargetUnlinkInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...environment, ...intent,
-  targetLinkId: DeploymentIdentifierV1Schema, expectedTargetLinkRevision: DeploymentRevisionV1Schema,
-  detachKeepRunning: z.optional(z.boolean()), teardownDeploymentId: z.optional(DeploymentIdentifierV1Schema),
-}).check(z.refine(input => input.detachKeepRunning !== true || input.teardownDeploymentId === undefined,
-  { message: 'Choose a teardown receipt or explicit detach.' })));
 export const DeploymentEnvironmentDeleteInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...environment, ...intent,
   detachKeepRunning: z.optional(z.boolean()),
@@ -242,7 +234,6 @@ export const DeploymentEnvironmentDeleteInputV1Schema = lazyZodSchema(() => z.st
     z.refine(ids => new Set(ids).size === ids.length, { message: 'Teardown receipts must be unique.' }))),
 }).check(z.refine(input => input.detachKeepRunning !== true || input.teardownDeploymentIds === undefined,
   { message: 'Choose teardown receipts or explicit detach.' })));
-export type DeploymentTargetUnlinkInputV1 = z.infer<typeof DeploymentTargetUnlinkInputV1Schema>;
 export type DeploymentEnvironmentDeleteInputV1 = z.infer<typeof DeploymentEnvironmentDeleteInputV1Schema>;
 const deploymentHostTargetSourceV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('host'), id: DeploymentIdentifierV1Schema,
@@ -315,6 +306,8 @@ export const DeploymentTargetLinkProviderIntentInputV1Schema = lazyZodSchema(() 
     source: deploymentPluginTargetSourceV1Schema,
     targetKind: DeploymentIdentifierV1Schema,
     provider: DeploymentTargetLinkProviderContentV1Schema,
+    /** Selected resource presentation, written only to the private TargetLink Artifact header. */
+    title: z.optional(z.string()),
   },
 ));
 export type DeploymentTargetLinkProviderIntentInputV1 = z.infer<typeof DeploymentTargetLinkProviderIntentInputV1Schema>;
@@ -323,38 +316,6 @@ export const DeploymentTargetLinkActionInputV1Schema = lazyZodSchema(() => z.uni
   z.safeExtend(DeploymentTargetLinkIntentInputV1Schema, { source: z.optional(deploymentHostTargetSourceV1Schema) }),
   DeploymentTargetLinkProviderIntentInputV1Schema,
 ]));
-const deploymentIntent = {
-  ...environment, ...intent,
-  targetLinkId: DeploymentIdentifierV1Schema, expectedTargetLinkRevision: DeploymentRevisionV1Schema,
-};
-export const DeploymentDeployInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...deploymentIntent, ...DeploymentArtifactContentReferenceV1Schema.shape,
-  whenBusy: z.optional(z.enum(['refuse', 'supersede'])),
-  onFailure: z.optional(DeploymentOnFailureV1Schema),
-  services: z.optional(DeploymentServiceSubsetV1Schema),
-  pendingDeploy: z.optional(DeploymentPendingDeployV1Schema),
-}).check(z.refine(input => input.pendingDeploy === undefined || input.whenBusy === 'supersede',
-  { message: 'Retaining a pending intent requires explicit supersession.' }),
-  z.refine(input => input.pendingDeploy?.t !== 'plain'
-    || (input.pendingDeploy.v.requestKey === input.requestKey && input.pendingDeploy.v.targetLinkId === input.targetLinkId),
-  { message: 'Pending intent must match the admitted deploy identity.' })));
-export const DeploymentDeployActionInputV1Schema = lazyZodSchema(() => z.union([
-  DeploymentDeployInputV1Schema, DeploymentDeployIntentInputV1Schema,
-]));
-export const DeploymentRollbackInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...deploymentIntent, ...DeploymentArtifactContentReferenceV1Schema.shape,
-  deploymentId: DeploymentIdentifierV1Schema,
-  restoreBackupId: z.optional(DeploymentIdentifierV1Schema),
-}));
-export const DeploymentRollbackIntentInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...home, environmentId: DeploymentIdentifierV1Schema, deploymentId: DeploymentIdentifierV1Schema,
-  requestKey: z.optional(DeploymentIdentifierV1Schema), restoreBackupId: z.optional(DeploymentIdentifierV1Schema),
-}));
-export const DeploymentRollbackActionInputV1Schema = lazyZodSchema(() => z.union([
-  DeploymentRollbackInputV1Schema, DeploymentRollbackIntentInputV1Schema,
-]));
-export const DEPLOYMENT_TEARDOWN_STEPS_V1 = ['admit', 'settleDeploy', 'removeTarget', 'removeDomain', 'removeRelease', 'withdrawBindings', 'verify'] as const;
-export const DeploymentTeardownStepV1Schema = lazyZodSchema(() => z.enum(DEPLOYMENT_TEARDOWN_STEPS_V1));
 /** Native admission may refuse teardown before a receipt exists. */
 export const DeploymentTeardownRefusalDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   reason: DeploymentIdentifierV1Schema,
@@ -371,56 +332,6 @@ export const DeploymentTeardownEnvironmentPartialDetailsV1Schema = lazyZodSchema
   remedy: z.string().check(z.minLength(1)),
 }));
 export type DeploymentTeardownEnvironmentPartialDetailsV1 = z.infer<typeof DeploymentTeardownEnvironmentPartialDetailsV1Schema>;
-export const DeploymentTeardownReasonV1Schema = lazyZodSchema(() => z.enum(['manual', 'previewClosed', 'move', 'decommission']));
-/** Captured at teardown admission and retained alongside its final signed proof. */
-export const DeploymentTeardownDispositionV1Schema = lazyZodSchema(() => z.object({ removeEnvironment: z.literal(true) }));
-export const DeploymentTeardownInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...deploymentIntent, ...DeploymentArtifactContentReferenceV1Schema.shape,
-  reason: DeploymentTeardownReasonV1Schema,
-  volumes: z.optional(DeploymentTeardownVolumesV1Schema),
-  removeEnvironment: z.optional(DeploymentTeardownDispositionV1Schema.shape.removeEnvironment),
-  machines: z.optional(z.array(DeploymentIdentifierV1Schema).check(z.minLength(1),
-    z.refine(values => new Set(values).size === values.length, { message: 'Teardown Machines must be unique.' }))),
-}));
-export const DeploymentDataCreationReferenceV1Schema = lazyZodSchema(() => z.strictObject({
-  runId: WorkflowRunIdV1Schema, invocationId: WorkflowInvocationRecordIdSchema,
-}));
-export type DeploymentDataCreationReferenceV1 = z.infer<typeof DeploymentDataCreationReferenceV1Schema>;
-/** The host resolves exact authenticated creation custody before review. */
-export const DeploymentTeardownIntentInputV1Schema = lazyZodSchema(() => z.extend(z.omit(DeploymentTeardownInputV1Schema, {
-  contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true,
-}), { dataCreation: DeploymentDataCreationReferenceV1Schema }));
-export type DeploymentTeardownIntentInputV1 = z.infer<typeof DeploymentTeardownIntentInputV1Schema>;
-/** A target without a teardown role uses the existing record-only detach disposition. */
-export const DeploymentTeardownDetachInputV1Schema = lazyZodSchema(() => z.safeExtend(DeploymentTargetUnlinkInputV1Schema, {
-  detachKeepRunning: z.literal(true), reason: DeploymentTeardownReasonV1Schema,
-}));
-/** Complete empty History needs only the existing Environment disposition, never a deployment content artifact. */
-export const DeploymentTeardownNothingDeployedInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...deploymentIntent, reason: DeploymentTeardownReasonV1Schema,
-  nothingDeployed: z.literal(true), removeEnvironment: z.literal(true),
-  volumes: z.optional(z.tuple([])),
-}));
-export type DeploymentTeardownNothingDeployedInputV1 = z.infer<typeof DeploymentTeardownNothingDeployedInputV1Schema>;
-export const DeploymentTeardownPreparedInputV1Schema = lazyZodSchema(() => z.union([
-  DeploymentTeardownInputV1Schema, DeploymentTeardownDetachInputV1Schema, DeploymentTeardownNothingDeployedInputV1Schema,
-]));
-export type DeploymentTeardownPreparedInputV1 = z.infer<typeof DeploymentTeardownPreparedInputV1Schema>;
-export const DeploymentTeardownActionInputV1Schema = lazyZodSchema(() => z.union([
-  DeploymentTeardownPreparedInputV1Schema, DeploymentTeardownIntentInputV1Schema,
-  DeploymentTeardownRequestInputV1Schema,
-  // Native inventory belongs to the own-server owner, never the caller.
-  z.omit(DeploymentTeardownInputV1Schema, { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true }),
-]));
-export type DeploymentTeardownActionInputV1 = z.infer<typeof DeploymentTeardownActionInputV1Schema>;
-export const DeploymentTeardownAdmissionInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTeardownInputV1Schema, {
-  actionOperationId: DeploymentIdentifierV1Schema,
-}));
-export const DeploymentTeardownActionAdmissionInputV1Schema = lazyZodSchema(() => z.union([
-  DeploymentTeardownAdmissionInputV1Schema, DeploymentTeardownDetachInputV1Schema, DeploymentTeardownNothingDeployedInputV1Schema,
-]));
-export type DeploymentTeardownInputV1 = z.infer<typeof DeploymentTeardownInputV1Schema>;
-export type DeploymentTeardownAdmissionInputV1 = z.infer<typeof DeploymentTeardownAdmissionInputV1Schema>;
 /** Only the installation-signed settlement writer can assert owned-resource absence. */
 export const DeploymentTeardownProofV1Schema = lazyZodSchema(() => z.strictObject({
   removeEnvironment: z.optional(DeploymentTeardownDispositionV1Schema.shape.removeEnvironment),
@@ -448,16 +359,6 @@ export const DeploymentPendingCancelInputV1Schema = lazyZodSchema(() => z.strict
   ...environment, actionOperationId: DeploymentIdentifierV1Schema, pendingDeploy: DeploymentPendingDeployV1Schema,
 }));
 export type DeploymentPendingCancelInputV1 = z.infer<typeof DeploymentPendingCancelInputV1Schema>;
-/** The prepared destination content is committed by the sole Environment writer before admission. */
-export const DeploymentPromoteInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...deploymentIntent, ...DeploymentArtifactContentReferenceV1Schema.shape,
-  sourceEnvironmentId: DeploymentIdentifierV1Schema, sourceDeploymentId: DeploymentIdentifierV1Schema,
-  artifact: z.enum(['image', 'rebuild']), destinationContent: DeploymentArtifactContentReferenceV1Schema,
-}));
-export const DeploymentPromoteActionInputV1Schema = lazyZodSchema(() => z.union([
-  DeploymentPromoteInputV1Schema, DeploymentPromoteIntentInputV1Schema,
-]));
-export type DeploymentPromoteActionInputV1 = z.infer<typeof DeploymentPromoteActionInputV1Schema>;
 /** Only the installed host can supply an operation association to storage admission. */
 export const DeploymentDeployAdmissionInputV1Schema = lazyZodSchema(() => z.extend(DeploymentDeployInputV1Schema, {
   actionOperationId: DeploymentIdentifierV1Schema,
@@ -526,6 +427,8 @@ export const DeploymentEnvironmentCreateResultV1Schema = lazyZodSchema(() => z.u
   z.strictObject({ ...result, projectSourceId: z.optional(DeploymentIdentifierV1Schema),
     runtimeTargetLinkId: z.optional(DeploymentIdentifierV1Schema),
     previewDataTargets: z.optional(DeploymentPreviewDataTargetsV1Schema),
+    previewCompanionRequired: z.optional(z.literal(true)),
+    previewNativeBindings: z.optional(z.array(EnvironmentVariableBindingV1Schema)),
     previewNativeData: z.optional(z.array(z.strictObject({ service: DeploymentIdentifierV1Schema,
       database: DeploymentIdentifierV1Schema }))),
   }), DeploymentActionFailureV1Schema,
@@ -539,11 +442,17 @@ export type DeploymentPreviewEnrollmentV1 = z.infer<typeof DeploymentPreviewEnro
 /** Enrollment follows the persisted edit; a source refusal cannot undo that edit. */
 export const DeploymentEnvironmentUpdateResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...result, projectSourceId: z.optional(DeploymentIdentifierV1Schema),
+    creationDefaults: z.optional(ResolvedDeploymentCreationDefaultsV1Schema),
+    backupSourceChoices: z.optional(z.array(DeploymentBackupSourceV1Schema)),
+    forkEligibility: z.optional(DeploymentPreviewForkEligibilityV1Schema),
     previewEnrollment: z.optional(DeploymentPreviewEnrollmentV1Schema) }), DeploymentActionFailureV1Schema,
 ]));
 /** The preparing host returns its exact candidate for the Team Move sharing consumer. */
 export const DeploymentBindingsSetResultV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ...result, preparedArtifact: z.optional(DeploymentArtifactContentReferenceV1Schema) }),
+  z.strictObject({ ...result, preparedArtifact: z.optional(DeploymentArtifactContentReferenceV1Schema),
+    providerVariables: z.optional(z.strictObject({ v: z.literal(1),
+        variables: DeploymentTargetVariablesReadResultV1Schema.shape.variables,
+        failures: DeploymentTargetVariablesSyncResultV1Schema.shape.failures, persisted: z.boolean() })) }),
   DeploymentActionFailureV1Schema,
 ]));
 export type DeploymentBindingsSetResultV1 = z.infer<typeof DeploymentBindingsSetResultV1Schema>;
@@ -580,6 +489,7 @@ const deploymentEnvironmentReadAddress = {
 };
 export const DeploymentEnvironmentGetInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...deploymentEnvironmentReadAddress, includeRetainedTargetLinkCleanup: z.optional(z.literal(true)),
+  backupPolicy: z.optional(DeploymentBackupPolicyV1Schema),
 }));
 /** Host-private authority projection; no content availability or native-effect authority is implied. */
 export const DeploymentEnvironmentAccessInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -603,17 +513,20 @@ export const DeploymentReceiptObserveInputV1Schema = lazyZodSchema(() => z.stric
 /** Native projection of private deployment observation facts; never an Artifact reader. */
 export const DeploymentObservationGetInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...deploymentEnvironmentReadAddress, targetLinkId: DeploymentIdentifierV1Schema,
-  deploymentId: z.optional(DeploymentIdentifierV1Schema),
+  deploymentId: z.optional(DeploymentIdentifierV1Schema), variables: z.optional(z.literal(true)),
 }));
 export const DeploymentObservationGetResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), environment: DeploymentEnvironmentHeaderV1Schema,
     targetLink: DeploymentTargetLinkHeaderV1Schema, credentialPrincipal: DeploymentTargetCredentialPrincipalV1Schema,
+    providerVariables: z.optional(DeploymentTargetVariablesReadResultV1Schema),
     receipt: z.optional(z.strictObject({ deployment: DeploymentReceiptHeaderV1Schema,
       providerDeploymentId: DeploymentIdentifierV1Schema })) }), DeploymentActionFailureV1Schema,
 ]));
 export const DeploymentEnvironmentGetResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), environment: DeploymentEnvironmentHeaderV1Schema,
+    backupTarget: z.optional(DeploymentBackupRunInputV1Schema), backupPolicy: z.optional(DeploymentBackupPolicyV1Schema),
     savedSecretRevisions: z.optional(DeploymentBindingSavedSecretRevisionsV1Schema),
+    secretScope: z.optional(DeploymentEnvironmentSecretScopeV1Schema),
     controller: z.optional(DeploymentControllerAvailabilityV1Schema),
     targetLinks: z.array(DeploymentTargetLinkHeaderV1Schema), pendingDeploy: z.optional(DeploymentPendingDeployV1Schema),
     retainedTargetLinkCleanupCompleteIds: z.optional(z.array(DeploymentIdentifierV1Schema)),
@@ -629,7 +542,7 @@ export const DeploymentReceiptGetResultV1Schema = lazyZodSchema(() => z.union([
 ]));
 export const DeploymentEnvironmentListInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...home, projectSourceId: z.optional(DeploymentIdentifierV1Schema), machineId: z.optional(DeploymentIdentifierV1Schema),
-  // A Source move needs retained history; ordinary inventory stays live-only.
+  // Source moves and one exact PR's retained previews need history; ordinary inventory stays live-only.
   includeDeleted: z.optional(z.literal(true)),
   /** Metadata-only Account/Source summary, independent of inventory continuation. */
   projection: z.optional(z.literal('activity')),
@@ -640,13 +553,17 @@ export const DeploymentEnvironmentListInputV1Schema = lazyZodSchema(() => z.stri
   previewRepository: z.optional(ScmHostingRepositoryIdentityV1Schema),
   previewPullRequestIds: z.optional(z.array(deploymentPreviewPullRequestIdV1Schema).check(z.minLength(1))),
   previewTemplateEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
+  previewCompanionOfEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
   cursor: ProjectSourcesListInputV1Schema.shape.cursor, limit: ProjectSourcesListInputV1Schema.shape.limit,
-}).check(z.refine(input => input.includeDeleted !== true || input.projectSourceId !== undefined),
+}).check(z.refine(input => input.includeDeleted !== true || input.projectSourceId !== undefined
+    || input.previewRepository !== undefined && input.previewPullRequestIds !== undefined
+    || input.previewCompanionOfEnvironmentId !== undefined),
   z.refine(input => (input.previewRepositoryId !== undefined || input.previewRepository !== undefined) === (input.previewPullRequestIds !== undefined)
     && !(input.previewRepositoryId !== undefined && input.previewRepository !== undefined),
     { message: 'Preview reads select one repository relation or identity and exact pull request ids together.' }),
   z.refine(input => input.projection !== 'activity' || (input.machineId === undefined && input.environmentIds === undefined
     && input.previewRepositoryId === undefined && input.previewRepository === undefined && input.previewTemplateEnvironmentId === undefined
+    && input.previewCompanionOfEnvironmentId === undefined
     && input.cursor === undefined && input.limit === undefined && input.includeDeleted === undefined),
     { message: 'Activity selects one Home or Source, without an inventory page or Machine filter.' })));
 export const DeploymentReceiptListInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -695,15 +612,6 @@ export const DeploymentTargetLinksListResultV1Schema = lazyZodSchema(() => z.uni
   }), DeploymentActionFailureV1Schema,
 ]));
 export type DeploymentTargetLinksListResultV1 = z.infer<typeof DeploymentTargetLinksListResultV1Schema>;
-/** Prepared callers retain the complete Artifact/capture contract. */
-export const DeploymentBindingsPreparedInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...environment, ...DeploymentArtifactContentReferenceV1Schema.shape,
-  referencedSavedSecretRevisions: DeploymentBindingSavedSecretRevisionsV1Schema,
-}));
-export type DeploymentBindingsPreparedInputV1 = z.infer<typeof DeploymentBindingsPreparedInputV1Schema>;
-export const DeploymentBindingsSetInputV1Schema = lazyZodSchema(() => z.union([
-  DeploymentBindingsPreparedInputV1Schema, DeploymentBindingsPatchInputV1Schema,
-]));
 export const DeploymentHealthCurrentResultV1Schema = lazyZodSchema(() => z.union([DeploymentHealthCurrentSuccessV1Schema, DeploymentActionFailureV1Schema]));
 export type DeploymentHealthCurrentResultV1 = z.infer<typeof DeploymentHealthCurrentResultV1Schema>;
 export const DeploymentHealthReadResultV1Schema = lazyZodSchema(() => z.union([DeploymentHealthReadSuccessV1Schema, DeploymentActionFailureV1Schema]));
@@ -712,10 +620,13 @@ export const DeploymentLogsReadResultV1Schema = lazyZodSchema(() => z.union([Dep
 export type DeploymentHealthReadResultV1 = z.infer<typeof DeploymentHealthReadResultV1Schema>;
 export type DeploymentDriftReadResultV1 = z.infer<typeof DeploymentDriftReadResultV1Schema>;
 export type DeploymentLogsReadResultV1 = z.infer<typeof DeploymentLogsReadResultV1Schema>;
+export const DeploymentDataQueryResultV1Schema = lazyZodSchema(() => z.union([DeploymentDataQuerySuccessV1Schema, DeploymentDataQueryUnavailableV1Schema, DeploymentActionFailureV1Schema]));
+export type DeploymentDataQueryResultV1 = z.infer<typeof DeploymentDataQueryResultV1Schema>;
 // Domain leaf imports legitimately reach this catalog through installation and
 // access-provider contracts. Admit catalog bindings on first use, not ESM load.
 export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
   ...DeploymentBackupActionInputSchemasV1,
+  'deployments.backups.configure': DeploymentBackupConfigureInputV1Schema,
   'deployments.domains.add': DeploymentDomainAddInputV1Schema,
   'deployments.domains.remove': DeploymentDomainRemoveInputV1Schema,
   'deployments.domains.verify': DeploymentDomainVerifyInputV1Schema,
@@ -723,10 +634,12 @@ export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
   'deployments.domains.list': DeploymentDomainListInputV1Schema,
   'deployments.publish.prepare': DeploymentPublishPrepareInputV1Schema,
   'deployments.templates.instantiate': DeploymentTemplateInstantiateInputV1Schema,
+  'deployments.environments.moveToRepository': DeploymentMoveToRepositoryInputV1Schema,
   'deployments.health.read': DeploymentHealthReadInputV1Schema,
   'deployments.health.current': DeploymentHealthCurrentInputV1Schema,
   'deployments.drift.read': DeploymentDriftReadInputV1Schema,
   'deployments.logs.read': DeploymentLogsReadInputV1Schema,
+  'deployments.data.query': DeploymentDataQueryInputV1Schema,
   'deployments.prepare': DeploymentPrepareInputV1Schema,
   'deployments.environments.create': DeploymentEnvironmentCreateActionInputV1Schema,
   'deployments.environments.update': DeploymentEnvironmentUpdateInputV1Schema,
@@ -766,6 +679,7 @@ export const DeploymentEnvironmentCreateActionResultV1Schema = lazyZodSchema(() 
 ]));
 export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
   ...DeploymentBackupActionResultSchemasV1,
+  'deployments.backups.configure': DeploymentBackupConfigureResultV1Schema,
   'deployments.domains.add': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.remove': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.verify': DeploymentDomainMutationResultV1Schema,
@@ -773,10 +687,12 @@ export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
   'deployments.domains.list': DeploymentDomainListResultV1Schema,
   'deployments.publish.prepare': DeploymentPublishPrepareResultV1Schema,
   'deployments.templates.instantiate': DeploymentTemplateInstantiateResultV1Schema,
+  'deployments.environments.moveToRepository': DeploymentMoveToRepositoryResultV1Schema,
   'deployments.health.read': DeploymentHealthReadResultV1Schema,
   'deployments.health.current': DeploymentHealthCurrentResultV1Schema,
   'deployments.drift.read': DeploymentDriftReadResultV1Schema,
   'deployments.logs.read': DeploymentLogsReadResultV1Schema,
+  'deployments.data.query': DeploymentDataQueryResultV1Schema,
   'deployments.prepare': DeploymentPrepareResultV1Schema,
   'deployments.environments.create': DeploymentEnvironmentCreateActionResultV1Schema,
   'deployments.environments.update': DeploymentEnvironmentUpdateResultV1Schema,
@@ -799,23 +715,15 @@ export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
   'deployments.environments.list': DeploymentEnvironmentListResultV1Schema,
   'deployments.receipts.list': DeploymentReceiptListResultV1Schema,
 } as const));
-export type DeploymentEnvironmentCreateIntentInputV1 = z.infer<typeof DeploymentEnvironmentCreateIntentInputV1Schema>;
 export type DeploymentEnvironmentCreateActionInputV1 = z.infer<typeof DeploymentEnvironmentCreateActionInputV1Schema>;
 export type DeploymentEnvironmentUpdateInputV1 = z.infer<typeof DeploymentEnvironmentUpdateInputV1Schema>;
 export type DeploymentEnvironmentControllerSetInputV1 = z.infer<typeof DeploymentEnvironmentControllerSetInputV1Schema>;
 export type DeploymentTargetLinkInputV1 = z.infer<typeof DeploymentTargetLinkInputV1Schema>;
 export type DeploymentTargetLinkIntentInputV1 = z.infer<typeof DeploymentTargetLinkIntentInputV1Schema>;
 export type DeploymentTargetLinkActionInputV1 = z.infer<typeof DeploymentTargetLinkActionInputV1Schema>;
-export type DeploymentDeployInputV1 = z.infer<typeof DeploymentDeployInputV1Schema>;
-export type DeploymentDeployActionInputV1 = z.infer<typeof DeploymentDeployActionInputV1Schema>;
-export type DeploymentRollbackInputV1 = z.infer<typeof DeploymentRollbackInputV1Schema>;
-export type DeploymentRollbackIntentInputV1 = z.infer<typeof DeploymentRollbackIntentInputV1Schema>;
-export type DeploymentRollbackActionInputV1 = z.infer<typeof DeploymentRollbackActionInputV1Schema>;
-export type DeploymentPromoteInputV1 = z.infer<typeof DeploymentPromoteInputV1Schema>;
 export type DeploymentReceiptResultV1 = z.infer<typeof DeploymentReceiptResultV1Schema>;
 export type DeploymentEnvironmentGetInputV1 = z.infer<typeof DeploymentEnvironmentGetInputV1Schema>;
 export type DeploymentReceiptGetInputV1 = z.infer<typeof DeploymentReceiptGetInputV1Schema>;
-export type DeploymentBindingsSetInputV1 = z.infer<typeof DeploymentBindingsSetInputV1Schema>;
 export type DeploymentEnvironmentListInputV1 = z.infer<typeof DeploymentEnvironmentListInputV1Schema>;
 export type DeploymentReceiptListInputV1 = z.infer<typeof DeploymentReceiptListInputV1Schema>;
 export type DeploymentActionInputV1 = z.infer<typeof DeploymentActionInputSchemasV1[DeploymentTransportActionIdV1]>;

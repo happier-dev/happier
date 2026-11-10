@@ -2,6 +2,8 @@ import { DeploymentActionOutputSchemasV1, DeploymentEnvironmentCreateResultV1Sch
 import type { DeploymentBindingsPatchInputV1, DeploymentTeardownActionInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { type DeploymentDeployIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import type { DeploymentPromoteIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentPromoteIntentV1';
+import { type DeploymentDataQueryInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
+import { DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { WorkflowTriggerListResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -12,15 +14,19 @@ import { buildDeploymentBackupActionInputV1, DeploymentBackupActionResultSchemas
 import { type DeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { createFrontDoorActionExecute, createFrontDoorUiActionExecutor, requireActionSuccess,
+import { createFrontDoorActionExecute, createFrontDoorUiActionExecutor, requireActionSuccess, readActionApprovalRequestCreatedError,
     type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { HappyError } from '@/utils/errors/errors';
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol/v1';
 import { type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
+import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { prepareDatabaseMoveCutoverPatch, type DatabaseMoveCutoverSelection } from './databaseMoveCutover';
+import { DeploymentMoveToRepositoryResultV1Schema, type DeploymentMoveToRepositoryInputV1 } from '@happier-dev/protocol/deployments/deploymentMoveToRepositoryV1';
+import { DeploymentPrepareResultV1Schema, type DeploymentPrepareInputV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 
 type PreparedCreate = Omit<DeploymentEnvironmentCreateInputV1, 'serverId' | 'projectSourceId'>;
 export type DeploymentUiCreateInput = Omit<DeploymentEnvironmentCreateIntentInputV1,
@@ -39,6 +45,8 @@ export type DeploymentUiRollbackInput = Pick<PreparedRollback, 'environmentId' |
 /** A restore step's operands; the Action owner checks them against the retained capture receipt. */
 export type DeploymentUiRestoreInput = DeploymentBackupRestoreInputV1 extends infer T ? T extends unknown ? Omit<T, 'serverId'> : never : never;
 export type DeploymentUiBindingsInput = Omit<DeploymentBindingsPatchInputV1, 'serverId'>;
+export type DeploymentUiBackupConfigureInput = DeploymentBackupConfigureInputV1 extends infer T
+    ? T extends unknown ? Omit<T, 'serverId' | 'environmentId' | 'expectedRevision'> : never : never;
 
 export type DeploymentUiDomainAddInput = Readonly<{
     environmentId: string; expectedRevision: number; targetLinkId: string; expectedTargetLinkRevision: number;
@@ -70,7 +78,43 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             throw error;
         }
     }
+    async function updateEnvironment(environment: DeploymentEnvironmentHeaderV1,
+        patch: NonNullable<DeploymentEnvironmentUpdateInputV1['patch']>, operation?: UiActionOperation) {
+        assertCurrent();
+        return DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(await invoke('deployments.environments.update', {
+            serverId: lifetime.scope.serverId, environmentId: environment.id, expectedRevision: environment.revision,
+            contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
+            contentBodyVersion: environment.contentBodyVersion, patch,
+        }, operation));
+    }
     return {
+        /** This sheet's person gesture confirms only the normal Session handoff, on its chosen checkout Machine. */
+        async prepare(input: DeploymentPrepareInputV1, workspaceMachineId: string) {
+            assertCurrent();
+            return DeploymentPrepareResultV1Schema.parse(await execute('deployments.prepare', input, {
+                confirmed: true, externalActionTarget: { kind: 'machine', machineId: workspaceMachineId },
+            }));
+        },
+        async moveToRepository(input: Omit<DeploymentMoveToRepositoryInputV1, 'serverId'>, operation?: UiActionOperation) {
+            assertCurrent();
+            return DeploymentMoveToRepositoryResultV1Schema.parse(await execute('deployments.environments.moveToRepository',
+                { ...input, serverId: lifetime.scope.serverId }, operation));
+        },
+        /** Resolve only on setup intent; the editor keeps this review while defaults change elsewhere. */
+        async prepareConfigurationDefaults(environment: DeploymentEnvironmentHeaderV1,
+            defaultsFor: NonNullable<DeploymentEnvironmentUpdateInputV1['defaultsFor']>) {
+            assertCurrent();
+            const result = DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(await invoke(
+                'deployments.environments.update', { serverId: lifetime.scope.serverId, environmentId: environment.id,
+                    expectedRevision: environment.revision, contentArtifactId: environment.contentArtifactId,
+                    contentHeaderVersion: environment.contentHeaderVersion, contentBodyVersion: environment.contentBodyVersion,
+                    mode: 'preview', defaultsFor }));
+            assertCurrent();
+            if (!result.ok) throw new HappyError(result.error, false, result);
+            if (!result.creationDefaults) throw new HappyError('invalid_action_output', false);
+            return { ...result.creationDefaults,
+                ...(result.backupSourceChoices !== undefined ? { backupSourceChoices: result.backupSourceChoices } : {}) };
+        },
         /** Verified copy precedes one review and one ordinary Environment update. */
         prepareDatabaseMoveCutover(environment: DeploymentEnvironmentHeaderV1, content: DeploymentEnvironmentContentV1,
             selection: DatabaseMoveCutoverSelection, restored: DeploymentBackupRestoreResultV1) {
@@ -85,6 +129,11 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                     contentBodyVersion: environment.contentBodyVersion, patch: prepared.patch,
                 }, operation));
             } };
+        },
+        async queryDatabase(input: Omit<DeploymentDataQueryInputV1, 'serverId'>) {
+            assertCurrent();
+            return DeploymentActionOutputSchemasV1[DEPLOYMENT_DATA_QUERY_ACTION_ID_V1].parse(await invoke(
+                DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, { ...input, serverId: lifetime.scope.serverId }));
         },
         async runBackup(input: Omit<DeploymentBackupInventoryInputV1, 'serverId'>) {
             assertCurrent();
@@ -135,7 +184,7 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                     ...input, serverId: lifetime.scope.serverId,
                 })));
         },
-        /** A read-only probe of the saved destination; it never initializes or writes the repository. */
+        /** Tests the saved repository with one owned write/read/delete probe; initialization stays explicit. */
         async testBackupDestination(input: Omit<DeploymentBackupInventoryInputV1, 'serverId'>) {
             assertCurrent();
             return DeploymentBackupActionResultSchemasV1['deployments.backups.test'].parse(await invoke(
@@ -240,18 +289,25 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                 ...input, serverId: lifetime.scope.serverId,
             }, operation));
         },
+        /** Candidate testing and the reserved backup leaf share the controller's configure owner. */
+        async configureBackup(environment: Pick<DeploymentEnvironmentHeaderV1, 'id' | 'revision'>,
+            input: DeploymentUiBackupConfigureInput, operation?: UiActionOperation) {
+            assertCurrent();
+            return DeploymentActionOutputSchemasV1['deployments.backups.configure'].parse(await invoke(
+                'deployments.backups.configure', { ...input, serverId: lifetime.scope.serverId,
+                    environmentId: environment.id, expectedRevision: environment.revision }, operation));
+        },
         /**
          * One manager-owned Environment setting (build Machine, who may deploy), admitted against the read revision and
          * content the row showed. The controller re-checks the patch; the row only names what changes.
          */
-        async updateEnvironment(environment: DeploymentEnvironmentHeaderV1,
-            patch: NonNullable<DeploymentEnvironmentUpdateInputV1['patch']>, operation?: UiActionOperation) {
-            assertCurrent();
-            return DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(await invoke('deployments.environments.update', {
-                serverId: lifetime.scope.serverId, environmentId: environment.id, expectedRevision: environment.revision,
-                contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
-                contentBodyVersion: environment.contentBodyVersion, patch,
-            }, operation));
+        updateEnvironment,
+        async setPreviewBindings(environment: DeploymentEnvironmentHeaderV1,
+            template: NonNullable<DeploymentEnvironmentContentV1['previewTemplate']>,
+            input: DeploymentUiBindingsInput, operation?: UiActionOperation) {
+            const bindingBlueprints = applyEnvironmentSecretBindingsPatchV1(template.bindingBlueprints, input)
+                .filter(binding => binding.purpose === 'variable');
+            return updateEnvironment(environment, { previewTemplate: { ...template, bindingBlueprints } }, operation);
         },
         /** Move scheduled jobs, alerts and outside checks to another Machine; workload content does not change. */
         async setController(environment: Pick<DeploymentEnvironmentHeaderV1, 'id' | 'revision'>, controllerMachineId: string,
@@ -325,10 +381,12 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                 // The host Action admits the plugin declaration's placement, schema and custody.
                 return { ok: true as const, value: await execute('action.invoke', { action, input }, operation) };
             } catch (error) {
+                const approval = readActionApprovalRequestCreatedError(error);
                 const code = (error as { code?: unknown } | null)?.code;
                 const details = error instanceof HappyError ? error.details : undefined;
                 const failureCause = error instanceof HappyError ? error.failureCause : undefined;
                 return { ok: false as const, code: typeof code === 'string' && code ? code : 'unknown_error',
+                    ...(approval ? { approvalArtifactId: approval.artifactId } : {}),
                     ...(details !== undefined ? { details } : {}),
                     ...(failureCause !== undefined ? { failureCause } : {}) };
             }
@@ -341,7 +399,7 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
         },
         async deploy(input: Omit<DeploymentDeployInputV1, 'serverId'>
             | Pick<DeploymentDeployInputV1, 'environmentId' | 'targetLinkId'>
-            | Pick<DeploymentDeployIntentInputV1, 'environmentId' | 'targetLinkId' | 'sha' | 'whenBusy'>, operation?: UiActionOperation) {
+            | Pick<DeploymentDeployIntentInputV1, 'environmentId' | 'targetLinkId' | 'sha' | 'whenBusy' | 'sourceMethod'>, operation?: UiActionOperation) {
             assertCurrent();
             return DeploymentActionOutputSchemasV1['deployments.deploy'].parse(await invoke(
                 'deployments.deploy', { ...input, serverId: lifetime.scope.serverId }, operation));

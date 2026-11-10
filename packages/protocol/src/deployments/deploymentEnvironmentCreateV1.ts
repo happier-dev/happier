@@ -26,6 +26,8 @@ export const DeploymentEnvironmentCreateBaseInputV1Schema = lazyZodSchema(() => 
   managedRetention: z.optional(DeploymentTargetManagedRetentionV1Schema),
   /** Prepared storage relation only; copying and SCM admission remain host-owned. */
   preview: z.optional(DeploymentPreviewReferenceV1Schema),
+  /** One ordinary data Environment belongs to the actual preview child. */
+  previewCompanionOfEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
   previewDataTargetLinks: z.optional(z.array(DeploymentPreviewDataTargetLinkCreateV1Schema).check(z.refine(links =>
     new Set(links.map(link => link.templateDataTargetLinkId)).size === links.length
       && new Set(links.map(link => link.contentArtifactId)).size === links.length,
@@ -36,6 +38,12 @@ export const DeploymentEnvironmentCreateBaseInputV1Schema = lazyZodSchema(() => 
     machines: DeploymentOwnServerTargetMachinesV1Schema,
   })),
 }));
+function hasPreparedPreviewReference(input: Pick<z.infer<typeof DeploymentEnvironmentCreateBaseInputV1Schema>,
+  'purpose' | 'preview' | 'previewCompanionOfEnvironmentId' | 'previewDataTargetLinks'>): boolean {
+  if (input.purpose === 'preview') return input.preview !== undefined && input.previewCompanionOfEnvironmentId === undefined;
+  return input.previewDataTargetLinks === undefined && (input.previewCompanionOfEnvironmentId === undefined
+    ? input.preview === undefined : input.preview !== undefined);
+}
 // A 32-byte commitment, never the selected private copy operands.
 const deploymentEnvironmentCopyIntentCommitmentV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/)));
 export const DeploymentEnvironmentCreateStorageInputV1Schema = lazyZodSchema(() => z.extend(DeploymentEnvironmentCreateBaseInputV1Schema, {
@@ -45,18 +53,16 @@ export const DeploymentEnvironmentCreateStorageInputV1Schema = lazyZodSchema(() 
   z.refine(input => hasOneDeploymentProjectV1(input.projectSourceId, input.newProject), { message: 'Select an existing or reviewed new Project.' }),
   z.refine(input => (input.copyFrom === undefined) === (input.copyIntentCommitment === undefined),
     { message: 'Stored copies retain their reviewed retry identity.' }),
-  z.refine(input => input.purpose === 'preview' ? input.preview !== undefined
-    : input.preview === undefined && input.previewDataTargetLinks === undefined,
-  { message: 'Only preview children carry a prepared template relationship.' })));
+  z.refine(hasPreparedPreviewReference,
+  { message: 'A prepared template relationship belongs to a preview or its named standard companion.' })));
 export type DeploymentEnvironmentCreateStorageInputV1 = z.infer<typeof DeploymentEnvironmentCreateStorageInputV1Schema>;
 export const DeploymentEnvironmentCreateInputV1Schema = lazyZodSchema(() => z.extend(DeploymentEnvironmentCreateBaseInputV1Schema, {
   copyFrom: z.optional(DeploymentEnvironmentCopyFromV1Schema), copyPlan: z.optional(DeploymentEnvironmentCopyPlanV1Schema),
   copyIntentCommitment: z.optional(deploymentEnvironmentCopyIntentCommitmentV1Schema),
 }).check(
   z.refine(input => hasOneDeploymentProjectV1(input.projectSourceId, input.newProject), { message: 'Select an existing or reviewed new Project.' }),
-  z.refine(input => input.purpose === 'preview' ? input.preview !== undefined
-    : input.preview === undefined && input.previewDataTargetLinks === undefined,
-    { message: 'Only preview children carry a prepared template relationship.' }),
+  z.refine(hasPreparedPreviewReference,
+    { message: 'A prepared template relationship belongs to a preview or its named standard companion.' }),
   z.refine(input => (input.copyFrom === undefined) === (input.copyPlan === undefined)
     && (input.copyFrom === undefined) === (input.copyIntentCommitment === undefined),
     { message: 'Prepared copies retain their exact selected binding plan and retry identity.' })));

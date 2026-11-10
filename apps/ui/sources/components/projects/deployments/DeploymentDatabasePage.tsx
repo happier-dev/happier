@@ -1,3 +1,9 @@
+import { DeploymentAddReview, showDeploymentAppSourcesSheet } from './DeploymentAddReview';
+import { ProjectSourceWorkspaceChoice, useProjectSourceWorkspaceChoice } from '@/components/projects/sources/ProjectSourceWorkspaceChoice';
+import type { ProjectAccountWorkspaceRefKeyV1 } from '@happier-dev/protocol/projects/workspaceRefKeyV1';
+import { randomUUID } from '@/platform/randomUUID';
+import type { DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+export { DeploymentAddRefusal, showDeploymentAppSourcesSheet } from './DeploymentAddReview';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -44,32 +50,33 @@ import {
   DeployOutcomeBanner,
   type DeploymentReviewHandle,
 } from './DeploymentEnvironmentDetail';
-import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
+import { DeploymentDataQueryResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { readDeploymentTargetActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { showDeploymentDataQuerySheet } from './DeploymentDataQuerySheet';
+import { buildPreviewBranchReadInput } from './previewDatabaseBranches';
+import { useDeploymentTargetDeclarations, useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
 import { StoreRegistryItemPicker } from '@/components/store/StoreKindPage';
 import type { SettingsCollectionFilter } from '@/components/settings/shell/settingsCollectionAdapter';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
-import { useStoreAppListing } from '@/components/store/useStoreAppListing';
 import { StoreMachineScopeContext } from '@/components/settings/plugins/model/useStoreMachineScope';
-import { describeRegistrySourceFailure } from '@/registries/describeRegistrySourceStatus';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
-import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection';
 import { showDeploymentDatabaseMoveSheet } from './DeploymentDatabaseMoveSheet';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { isPrivateServiceExport, privateServiceExportAuthoring } from './privateServiceExport';
 import { privateServiceExportReachLabel, privateServiceExportUnavailableReason } from './DeploymentPrivateServiceExports';
-import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
-import { deploymentPartialRecoveryTab, readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
-import { DeploymentPartialProgress } from './DeploymentPartialProgress';
+import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { createDeploymentActions } from './deploymentActions';
-import { buildCatalogAppTemplateBindings } from '@/sync/ops/actions/deploymentPublishActions';
 import {
-  deploymentDataTargetOperands,
   deploymentRestoreOperands,
   retainedBackupFromSummary,
 } from './deploymentRestore';
+import { deploymentDataTargetOperands } from '@happier-dev/deployments';
 import {
   showDeploymentRestoreSheet,
   type DeploymentRestoreChoice,
@@ -181,6 +188,7 @@ export function DeploymentDatabasePage(
     lifetime,
     database?.kind === 'managed',
   );
+  const queryDeclarations = useDeploymentTargetDeclarations(database?.kind === 'managed' ? lifetime : null);
   const catalog = useSavedSecretCatalogEntries({
     scope: lifetime?.scope ?? null,
   });
@@ -269,6 +277,51 @@ export function DeploymentDatabasePage(
         ]
       : [{ key: 'where', text: database.link.targetLink.targetKind }];
 
+  const openQuery = actions && lifetime
+    && (database.kind === 'selfHosted' || queryDeclarations.state.status !== 'loading') ? () => {
+    if (database.kind === 'selfHosted') {
+      showDeploymentDataQuerySheet({ name: title, parameterHint: t('projects.deployments.databaseQuery.nativeParameters'),
+        run: async statement => target && activeId
+          ? actions.queryDatabase({ ...target, deploymentId: activeId, expectedRevision: detail.environment.revision,
+            service: database.data.service, ...statement })
+          : { ok: false, error: 'deployment_unavailable', diagnostic: { code: 'active_deployment_required' } },
+        ...(target && detail.environment.capabilities.manage ? { setup: {
+          lifetime, machineId: target.machineId,
+          configure: async source => {
+            const result = await actions.setBindings({ environmentId: detail.environment.id,
+              expectedRevision: detail.environment.revision,
+              set: [{ purpose: 'dataRole', service: database.data.service, role: 'readOnlyPassword', source }], remove: [] });
+            if (result.ok) void record.refresh();
+            return result;
+          }, onApproval: (artifactId: string) => props.review.request(artifactId),
+        } } : {}),
+      });
+      return;
+    }
+    const source = database.link.targetLink.source;
+    const declarations = queryDeclarations.state.status === 'ready' ? queryDeclarations.state.declarations : [];
+    const manifest = source.kind === 'plugin'
+      ? declarations.find(entry => entry.manifest.id === source.contribution.pluginId)?.manifest : undefined;
+    const contribution = source.kind === 'plugin'
+      ? manifest?.contributes.deploymentTargets?.find(entry => entry.id === source.contribution.localId) : undefined;
+    const binding = contribution ? readDeploymentTargetActionRolesV1(contribution).find(entry => entry.role === 'query.readOnly') : undefined;
+    const action = manifest?.contributes.actions?.find(entry => entry.id === binding?.action);
+    const input = buildPreviewBranchReadInput(detail, database.link);
+    const sqlHint = action?.inputHints?.fields?.find(field => field.path === 'sql')?.description;
+    showDeploymentDataQuerySheet({ name: title,
+      parameterHint: sqlHint ? resolvePluginLocalizedStringV2Text(sqlHint) : '',
+      run: async statement => {
+        if (!manifest || !action || !input) return { ok: false, error: 'deployment_unavailable',
+          diagnostic: { code: queryDeclarations.state.status === 'failed' ? queryDeclarations.state.code
+            : !input ? 'managed_query_custody_unavailable' : 'managed_query_action_unavailable' } };
+        const result = await actions.inspectPlatformTarget(formatQualifiedPluginActionId({ pluginId: manifest.id, localId: action.id }),
+          { ...input, ...statement });
+        return result.ok ? DeploymentDataQueryResultV1Schema.parse(result.value)
+          : { ok: false, error: 'deployment_unavailable', diagnostic: { code: result.code } };
+      },
+    });
+  } : null;
+
   const runBackup =
     factsInput && actions
       ? () =>
@@ -303,7 +356,8 @@ export function DeploymentDatabasePage(
         return { snapshotId: entry.snapshot.snapshotId, takenAtMs, kind: 'scheduled', restore: run ? {
           backup: { deploymentId: activeId, restoreBackupId: entry.snapshot.snapshotId, takenAtMs,
             service: database.data.service, database: dump?.sourceId ?? database.data.service, versionLabel: null },
-          operands: { ...target, deploymentId: activeId, restoreBackupId: entry.snapshot.snapshotId, backupOperationId: run },
+          operands: { ...target, deploymentId: activeId,
+            source: { kind: 'repository', snapshotId: entry.snapshot.snapshotId, backupOperationId: run } },
         } : null };
       });
       const all = retainedChoice && !listed.includes(retainedChoice) ? [retainedChoice, ...listed] : listed;
@@ -349,6 +403,9 @@ export function DeploymentDatabasePage(
     title: t('projects.deployments.databaseConnectTitle'),
     testID: 'project-deployments.connect.modal',
   }) : null;
+  const openConsole = database.kind === 'selfHosted' && detail.environment.capabilities.manage && lifetime
+    ? () => showDeploymentAddSheet({ detail, catalogFilters: DEPLOYMENT_CONSOLE_CATALOG_FILTER, lifetime,
+      review: props.review, machineName, onNavigate: props.onNavigate }) : null;
   const openMove = database.kind === 'selfHosted' && database.data.engine === 'postgres' && controller && actions && factsInput
     && detail.environment.capabilities.manage ? () => showDeploymentDatabaseMoveSheet({
       controller, source: detail, data: database.data, actions, backupTarget: factsInput,
@@ -381,6 +438,13 @@ export function DeploymentDatabasePage(
             {...(openConnect && connectExports.length === 0 ? { actions: <SectionActionButton testID={`${id}.connect`}
               title={t('projects.deployments.databaseConnectTitle')} onPress={openConnect} /> } : {})}
           />
+          <ItemGroup header="none">
+            <Item testID={`${id}.query`} title={t('projects.deployments.databaseQuery.title')}
+              {...(database.kind === 'managed' && queryDeclarations.state.status === 'loading'
+                ? { subtitle: t('projects.deployments.loading') } : {})}
+              icon={<Icon name="terminal" size={18} color={theme.colors.text.secondary} />}
+              {...(openQuery ? { onPress: openQuery } : { mode: 'info' as const })} />
+          </ItemGroup>
           {missed ? (
             <AttentionBanner
               testID={`${id}.missed`}
@@ -426,6 +490,28 @@ export function DeploymentDatabasePage(
               {...(openSharing ? { onShare: openSharing } : {})}
               {...(sharingBlocked ? { sharingBlocked } : {})}
             />
+          ) : null}
+
+          {database.kind === 'selfHosted' ? (
+            <ItemGroup
+              testID={`${id}.console`}
+              title={t('projects.deployments.overviewStatus.consoleTitle')}
+              description={t('projects.deployments.overviewStatus.consoleNeedsPrivateRoute')}
+              action={openConsole ? (
+                <SectionActionButton
+                  testID={`${id}.console.add`}
+                  title={t('projects.deployments.overviewStatus.consoleAdd')}
+                  onPress={openConsole}
+                />
+              ) : undefined}
+            >
+              <Item
+                testID={`${id}.console.domains`}
+                title={t('projects.deployments.tabDomains')}
+                icon={<Icon name="globe" size={18} color={theme.colors.text.secondary} />}
+                onPress={() => props.onNavigate({ tab: 'domains' })}
+              />
+            </ItemGroup>
           ) : null}
 
           {database.kind === 'selfHosted' && !backupConfiguration ? (
@@ -595,6 +681,10 @@ export const DEPLOYMENT_DATABASE_CATALOG_FILTER: SettingsCollectionFilter = Obje
   category: Object.freeze({ include: ['database'], exclude: [] }),
 });
 
+const DEPLOYMENT_CONSOLE_CATALOG_FILTER: SettingsCollectionFilter = Object.freeze({
+  category: Object.freeze({ include: ['administration-tool'], exclude: [] }),
+});
+
 /** P10: Add a service or database to this Environment, in place over it. Never routes to Store. */
 export type DeploymentAddSheetInput = Readonly<{
   detail: Detail;
@@ -617,9 +707,50 @@ export function showDeploymentAddSheet(input: DeploymentAddSheetInput): void {
   });
 }
 
+/** Updating reuses Add's pinned registry read and the same template Action, without another instance or deploy. */
+export function showDeploymentTemplateUpdateSheet(input: DeploymentAddSheetInput & Readonly<{
+  template: Readonly<{ sourceId: string; itemId: string }>;
+}>): void {
+  showDeploymentSheet({ component: DeploymentAddSheet, props: { ...input, update: input.template },
+    title: t('projects.deployments.overviewStatus.catalogUpdateReview'), testID: 'project-deployments.template.update' });
+}
+
 /** Choose (Store's own catalog list, its row press routed here) → review with preflight → Add. */
-function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjectedProps) {
-  const [chosen, setChosen] = React.useState<RegistryCatalogItemSummary | null>(null);
+type AddSheetProps = DeploymentAddSheetInput & CustomModalInjectedProps & Readonly<{
+  update?: Readonly<{ sourceId: string; itemId: string }>;
+}>;
+function DeploymentAddSheet(props: AddSheetProps) {
+  return props.detail.content.definition.kind === 'repository'
+    ? <DeploymentRepositoryAddSheet {...props} /> : <DeploymentAddSheetContent {...props} />;
+}
+
+function DeploymentRepositoryAddSheet(props: AddSheetProps) {
+  const [workspaceKey, setWorkspaceKey] = React.useState<ProjectAccountWorkspaceRefKeyV1 | null>(null);
+  const [branchName] = React.useState(() => `happier-template-${randomUUID()}`);
+  const selection = useProjectSourceWorkspaceChoice({ lifetime: props.lifetime,
+    sourceId: props.detail.environment.projectSourceId, value: workspaceKey });
+  const definition = props.detail.content.definition;
+  if (definition.kind !== 'repository') return null;
+  if (!selection.source || !selection.repository || !selection.workspace || !workspaceKey || !selection.baseCommit
+    || !selection.baseBranch || !definition.compose?.path) return <ListPresentationProvider value="page" pageInsets="contained">
+    <View testID="project-deployments.add.repository" style={deploymentSheetStyles.body}>
+      <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.overviewStatus.catalogRepositoryBody')}</Text>
+      <ProjectSourceWorkspaceChoice model={selection} value={workspaceKey} onChange={setWorkspaceKey} testID="project-deployments.add.workspace" />
+      {!definition.compose?.path ? <SurfaceStateCard size="line" kind="unavailable"
+        title={t('projects.deployments.addRepositoryDefined')} /> : null}
+    </View>
+  </ListPresentationProvider>;
+  return <DeploymentAddSheetContent {...props} repositoryDestination={{ kind: 'repositoryPullRequest', workspace: workspaceKey,
+    sourceRevision: selection.source.revision, repository: selection.repository, baseCommit: selection.baseCommit,
+    baseBranch: selection.baseBranch, branchName, composePath: definition.compose.path,
+    title: props.update ? t('projects.deployments.overviewStatus.catalogUpdateReview') : t('projects.deployments.addTitle') }} />;
+}
+
+function DeploymentAddSheetContent(props: AddSheetProps & Readonly<{
+  repositoryDestination?: Extract<DeploymentTemplateInstantiateInputV1['destination'], { kind: 'repositoryPullRequest' }>;
+}>) {
+  const [chosen, setChosen] = React.useState<RegistryCatalogItemSummary | null>(() => props.update
+    ? { kind: 'app', sourceId: props.update.sourceId, itemId: props.update.itemId, title: props.detail.content.name } : null);
   const select = React.useCallback((item: RegistryCatalogItemSummary) => setChosen(item), []);
   const { detail } = props;
   const machineScope = React.useMemo(() => ({ serverId: props.lifetime.scope.serverId,
@@ -627,14 +758,13 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
   const link = detail.runtimeTargetLink;
   const member = link?.targetKind === 'ownServer' ? link.members[0] : undefined;
   const definition = detail.content.definition;
-  const blocked = definition.kind !== 'stored' ? t('projects.deployments.addRepositoryDefined')
-    : !link || !member ? t('projects.deployments.addNeedsMachine') : null;
+  const blocked = !link || !member ? t('projects.deployments.addNeedsMachine') : null;
   const { setChrome, onClose } = props;
   const router = useRouter();
   const back = chosen ? () => setChosen(null) : null;
-  if (blocked || !link || !member || definition.kind !== 'stored') {
-    // This Environment can't take a template in place: its services live in its repository's Compose file. The
-    // other way forward is a full app of its own from Store, on the same Machine, connected through Variables.
+  if (blocked || !link || !member) {
+    // An inline addition needs an own-server runtime. Store remains available for
+    // creating a separate app when this Environment has no selected runtime.
     const openStore = () => {
       onClose();
       // The Store app catalog picker: the same list Add embeds, not a text search.
@@ -662,171 +792,17 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
   return (
     <StoreMachineScopeContext.Provider value={machineScope}>
     <DeploymentAddReview item={chosen} detail={detail} lifetime={props.lifetime} review={props.review}
-      machine={props.machineName(member.machineId)} onBack={back!} onClose={onClose} setChrome={setChrome}
+      machine={props.machineName(member.machineId)} onBack={back!} onClose={onClose} setChrome={setChrome} update={Boolean(props.update)}
+      onManageSource={() => showDeploymentAppSourcesSheet(chosen.sourceId)}
       {...(props.onOpenRecovery ? { onOpenRecovery: props.onOpenRecovery } : {})}
       {...(props.onNavigate ? { onNavigate: props.onNavigate } : {})}
-      operands={{ intent: 'add', machineId: member.machineId, projectSourceId: detail.environment.projectSourceId,
+      operands={{ ...(props.update ? {} : { intent: 'add' }), machineId: member.machineId, projectSourceId: detail.environment.projectSourceId,
         environment: { kind: 'existing', environmentId: detail.environment.id, expectedRevision: detail.environment.revision },
         target: { kind: 'existing', targetLinkId: link.id, expectedRevision: link.revision, installationId: member.installationId },
-        destination: { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest } }} />
+        destination: definition.kind === 'stored' ? { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest }
+          : props.repositoryDestination! }} />
     </StoreMachineScopeContext.Provider>
   );
-}
-
-type AddOperands = Omit<Parameters<ReturnType<typeof createDeploymentActions>['instantiateTemplate']>[0],
-  'mode' | 'templateRef' | 'bindings' | 'generatedSecretAudience'>;
-type Preflight =
-  | Readonly<{ status: 'checking' }>
-  | Readonly<{ status: 'ready'; shortOn: readonly ('memoryBytes' | 'freeDiskBytes')[]; firstRun: boolean }>
-  | Readonly<{ status: 'failed'; code: string }>;
-
-function DeploymentAddReview(props: Readonly<{
-  item: RegistryCatalogItemSummary;
-  detail: Detail;
-  lifetime: ServerAccountScopeLifetime;
-  review: DeploymentReviewHandle;
-  machine: string;
-  operands: AddOperands;
-  onBack: () => void;
-  onClose: () => void;
-  onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
-  onNavigate?: (destination: DeploymentEnvironmentDestinationV1) => void;
-  setChrome: CustomModalInjectedProps['setChrome'];
-}>) {
-  const read = useStoreAppListing({ selection: props.item, lifetime: props.lifetime, demand: { presented: true } });
-  const templateRef = read.kind === 'ready' ? read.templateRef : null;
-  const needsReview = read.kind === 'needs_review';
-  const app = read.kind === 'ready' ? read.app : null;
-  const operands = app ? { ...props.operands, ...buildCatalogAppTemplateBindings(app) } : null;
-  const actions = React.useMemo(() => createDeploymentActions(props.lifetime, props.detail.environment.projectSourceId),
-    [props.lifetime, props.detail.environment.projectSourceId]);
-  const [preflight, setPreflight] = React.useState<Preflight>({ status: 'checking' });
-  const [added, setAdded] = React.useState(false);
-  const refKey = templateRef ? JSON.stringify(templateRef) : null;
-  const operandsKey = JSON.stringify(operands);
-  // The review's preview is the preflight: one read per chosen template, never repeated on its own.
-  React.useEffect(() => {
-    if (!templateRef || !operands) return;
-    let live = true;
-    setPreflight({ status: 'checking' });
-    actions.instantiateTemplate({ ...operands, mode: 'preview', templateRef }).then((result) => {
-      if (!live) return;
-      if (result.kind !== 'preview') { setPreflight({ status: 'failed', code: 'invalid_response' }); return; }
-      setPreflight({ status: 'ready', firstRun: result.review.firstRunSetup === true,
-        shortOn: (result.review.capacity ?? []).filter((entry) => entry.state === 'shortfall').map((entry) => entry.resource) });
-    }, (error) => {
-      if (!live) return;
-      const outcome = readDeploymentActionError(error);
-      setPreflight({ status: 'failed', code: outcome.kind === 'refused' ? outcome.code : 'unknown_error' });
-    });
-    return () => { live = false; };
-    // The serialized ref and operands are the preview's identity.
-  }, [actions, refKey, operandsKey]);
-  const press = useDeploymentChangePress({ request: (artifactId) => { props.onClose(); props.review.request(artifactId); } },
-    () => setAdded(true));
-  const refusalCode = press.outcome?.kind === 'refused' ? press.outcome.code
-    : preflight.status === 'failed' ? preflight.code : null;
-  const partial = press.outcome?.kind === 'refused' ? press.outcome.progress : undefined;
-  const add = () => {
-    if (!templateRef || !operands) return;
-    void press.press(async () => {
-      const result = await actions.instantiateTemplate({ ...operands, mode: 'apply', templateRef, deploy: { requestKey: randomUUID() } }, { confirmed: true });
-      return result.kind === 'partial' ? { ok: false, error: result.errorCode, details: result } : { ok: true };
-    });
-  };
-  const title = props.item.title;
-  // A lost confirmation means the Add may have landed: pressing it again would race the change it just made.
-  const outcomeUnknown = press.outcome?.kind === 'refused' && press.outcome.code === 'outcome_unknown';
-  const footer = added || partial || outcomeUnknown ? (
-    <ModalCardFooterActions>
-      <RoundButton testID="project-deployments.add.done" size="normal"
-        title={t(partial && props.onNavigate ? 'projects.deployments.openEnvironment' : outcomeUnknown ? 'common.close' : 'common.done')}
-        onPress={() => {
-          props.onClose();
-          if (partial) props.onNavigate?.({ tab: deploymentPartialRecoveryTab(partial) });
-        }} />
-    </ModalCardFooterActions>
-  ) : (
-    <ModalCardFooterActions cancel={{ onPress: props.onClose, testID: 'project-deployments.add.cancel', disabled: press.running }}>
-      <RoundButton testID="project-deployments.add.back" size="normal" display="secondary" disabled={press.running}
-        title={t('projects.deployments.addBack')} onPress={props.onBack} />
-      <RoundButton testID="project-deployments.add.confirm" size="normal" title={t('projects.deployments.addConfirm')}
-        disabled={!templateRef || preflight.status !== 'ready' || press.running} loading={press.running} onPress={add} />
-    </ModalCardFooterActions>
-  );
-  const { setChrome } = props;
-  React.useEffect(() => { setChrome?.({ kind: 'card', footer }); });
-  React.useEffect(() => () => setChrome?.(null), [setChrome]);
-  return (
-    <ListPresentationProvider value="page" pageInsets="contained">
-      <View testID="project-deployments.add.review" style={deploymentSheetStyles.body}>
-        {added ? (
-          <>
-            <SurfaceStateCard testID="project-deployments.add.added" size="details" layout="inline" kind="success"
-              title={t('projects.deployments.addAdded', { name: title })} />
-            {preflight.status === 'ready' && preflight.firstRun ? (
-              <SurfaceStateCard testID="project-deployments.add.firstRun" size="details" layout="inline" kind="empty"
-                title={t('projects.deployments.addFirstRunTitle')} reason={t('projects.deployments.addFirstRunBody')} />
-            ) : null}
-          </>
-        ) : (
-          <>
-            <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.addDeploysNow', { name: title, machine: props.machine })}</Text>
-            <ItemGroup testID="project-deployments.add.facts" header="none">
-              <Item testID="project-deployments.add.template" title={title} subtitle={props.item.description ?? undefined} mode="info" />
-              {app && app.generatedSecrets.length > 0 ? (
-                <Item testID="project-deployments.add.secrets" mode="info"
-                  title={t('capabilities.store.appPage.secretsTitle', { count: app.generatedSecrets.length })}
-                  subtitle={t('capabilities.store.appPage.secretsBody')} />
-              ) : null}
-              {read.kind === 'ready' ? <Item testID="project-deployments.add.preflight" title={t('projects.deployments.addPreflight')} mode="info"
-                detail={preflight.status === 'checking' ? t('projects.deployments.addChecking')
-                  : preflight.status === 'failed' ? undefined
-                    : preflight.shortOn.length === 0 ? t('projects.deployments.addRoomOk') : undefined}
-                {...(preflight.status === 'ready' && preflight.shortOn.length > 0 ? { subtitle: t(preflight.shortOn.includes('memoryBytes')
-                  ? 'projects.deployments.addShortMemory' : 'projects.deployments.addShortDisk') } : {})} /> : null}
-            </ItemGroup>
-            {read.kind === 'loading' ? <SurfaceStateCard testID="project-deployments.add.itemLoading" size="line" kind="loading"
-              title={t('common.loading')} /> : null}
-            {read.kind === 'unavailable' ? <SurfaceStateCard testID="project-deployments.add.itemUnavailable" size="line" kind="error"
-              title={t('projects.deployments.addRefused')} reason={describeRegistrySourceFailure(read.status)} diagnosticCode={read.error}
-              action={{ label: t('common.retry'), onPress: () => { void read.refresh(); } }} /> : null}
-            {needsReview ? <SurfaceStateCard testID="project-deployments.add.needsReview" size="line" kind="unavailable"
-              title={t('projects.deployments.addNeedsReview')} /> : null}
-            {partial && press.outcome?.kind === 'refused' && press.outcome.failure ? (
-              <DeploymentPartialProgress testID="project-deployments.add.progress" progress={partial} failure={press.outcome.failure} />
-            ) : null}
-            {/* Partial results keep the failed step and saved work together in their existing presenter. */}
-            {!partial && refusalCode ? <DeploymentAddRefusal testID="project-deployments.add.refused" code={refusalCode}
-              {...(props.onOpenRecovery ? { onOpenRecovery: (destination: DeploymentFailureRecoveryDestinationV1) => {
-                props.onClose(); props.onOpenRecovery?.(destination);
-              } } : {})} /> : null}
-          </>
-        )}
-        {setChrome ? null : footer}
-      </View>
-    </ListPresentationProvider>
-  );
-}
-
-/**
- * A refused Add, said once: the shared recovery owner's sentence and its one next step. A code that owner does not know
- * keeps the generic remedy with its diagnostic code.
- */
-export function DeploymentAddRefusal(props: Readonly<{
-  testID: string;
-  code: string;
-  onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
-}>) {
-  const recovery = readDeploymentRefusalRecoveryV1(props.code);
-  const { onOpenRecovery } = props;
-  if (!recovery) {
-    return <SurfaceStateCard testID={props.testID} size="line" kind="error" title={t('projects.deployments.addRefused')}
-      reason={deploymentActionRefusalRemedy(props.code)} diagnosticCode={props.code} />;
-  }
-  return <SurfaceStateCard testID={props.testID} size="line" kind="error" title={recovery.remedy}
-    {...(onOpenRecovery ? { action: { label: recovery.nextAction.label, testID: `${props.testID}.next`,
-      onPress: () => onOpenRecovery(recovery.nextAction.destination) } } : {})} />;
 }
 
 type DeploymentSetBindings = ReturnType<typeof createDeploymentActions>['setBindings'];

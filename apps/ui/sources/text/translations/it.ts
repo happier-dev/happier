@@ -3371,6 +3371,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     },
     copyDiagnostics: "Copia diagnostica",
     diagnosticsCopied: "Diagnostica copiata",
+    syncedAgo: ({ when }: { when: string }) => `Sincronizzato ${when}`,
   },
 
   time: {
@@ -18867,7 +18868,7 @@ settingsSession: {
         empty: "Nessuna riga restituita",
         incomplete: "I risultati potrebbero essere incompleti",
         roleUnavailable: "Il database richiede un ruolo dedicato di sola lettura. Verifica la configurazione o chiedi al proprietario di configurare i permessi dello schema.",
-        nativeParameters: "Usa PostgreSQL :'name' o MySQL/MariaDB @name. I valori JSON sono testo.",
+            nativeParameters: "PostgreSQL :'name'; MySQL @name. I nomi iniziano con a-z e contengono a-z, 0-9 o _. Il prefisso happier_ è riservato. I valori JSON sono testo.",
         password: "Password",
         description: ({ name }: { name: string }) => `SQL di sola lettura per ${name}.`,
         row: ({ number }: { number: number }) => `Riga ${number}`,

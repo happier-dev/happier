@@ -3265,6 +3265,7 @@ const enConnectionStatus = {
   },
   copyDiagnostics: 'Copy diagnostics',
   diagnosticsCopied: 'Diagnostics copied',
+  syncedAgo: ({ when }: { when: string }) => `Synced ${when}`,
 };
 
 const enTime = {
@@ -22309,7 +22310,7 @@ const enProjects = {
         empty: "No rows returned",
         incomplete: "Results may be incomplete",
         roleUnavailable: "The database needs a dedicated read-only role. Review setup, or ask its owner to configure the required schema privileges.",
-        nativeParameters: "Use PostgreSQL :'name' or MySQL/MariaDB @name parameters. JSON values are text.",
+            nativeParameters: "PostgreSQL :'name'; MySQL @name. Names start with a-z and contain a-z, 0-9 or _. The happier_ prefix is reserved. JSON values are text.",
         password: "Password",
         description: ({ name }: { name: string }) => `Read-only SQL for ${name}.`,
         row: ({ number }: { number: number }) => `Row ${number}`,

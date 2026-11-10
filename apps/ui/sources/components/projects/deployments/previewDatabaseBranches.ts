@@ -9,7 +9,7 @@ export type PreviewBranchTarget = LinkedTarget & Readonly<{ actionId: string; ti
 
 /** Linked data targets consume their plugin's branch contribution, without a second provider catalog. */
 export function previewBranchTargets(declarations: readonly Readonly<{ manifest: PluginPortableReleaseManifestV1 }>[],
-  detail: DeploymentEnvironmentReadDetailV1): readonly PreviewBranchTarget[] {
+  detail: DeploymentEnvironmentReadDetailV1, titles?: ReadonlyMap<string, string>): readonly PreviewBranchTarget[] {
   return detail.targetLinks.flatMap((row): PreviewBranchTarget[] => {
     const source = row.targetLink.source;
     if (row.targetLink.role !== 'data' || source.kind !== 'plugin') return [];
@@ -17,13 +17,14 @@ export function previewBranchTargets(declarations: readonly Readonly<{ manifest:
     const target = manifest?.contributes.deploymentTargets?.find(entry => entry.id === source.contribution.localId);
     const branches = target?.role === 'data' ? target.dataV1?.branches : undefined;
     if (!branches?.listAction || !branches.create || !branches.delete) return [];
-    return [{ ...row, title: typeof target?.title === 'string' ? target.title : row.targetLink.targetKind,
+    return [{ ...row, title: titles?.get(row.targetLink.id) || (typeof target?.title === 'string' ? target.title : row.targetLink.targetKind),
       actionId: formatQualifiedPluginActionId({ pluginId: source.contribution.pluginId, localId: branches.listAction }) }];
   });
 }
 
 /** The host admits this recorded link custody; the UI never substitutes the viewer or changes its purpose. */
-export function buildPreviewBranchReadInput(detail: DeploymentEnvironmentReadDetailV1, target: PreviewBranchTarget) {
+export function buildPreviewBranchReadInput(detail: DeploymentEnvironmentReadDetailV1, target: LinkedTarget) {
+  if (!target.content) return null;
   const { credentialPrincipal, providerIdentity, providerEnvironment } = target.content;
   if (!credentialPrincipal || credentialPrincipal.kind !== 'account' || credentialPrincipal.target.kind !== 'account'
     || !providerIdentity || !providerEnvironment) return null;
@@ -33,7 +34,8 @@ export function buildPreviewBranchReadInput(detail: DeploymentEnvironmentReadDet
     credentialRef: credentialPrincipal.target.account, providerIdentity, providerEnvironment };
 }
 
-export type PreviewBranchParent = Readonly<{ title: string; parentBranchRef: Readonly<{ providerProjectId: string; branchId: string }> }>;
+type ManagedPreviewSelection = Extract<NonNullable<DeploymentEnvironmentReadDetailV1['content']['previewTemplate']>['data'][number], { kind: 'managed' }>;
+export type PreviewBranchParent = Readonly<{ title: string; parentBranchRef: ManagedPreviewSelection['parentBranchRef'] }>;
 
 /** Public data-target results use project ids (Neon) or project refs (Supabase); only the linked parent is selectable. */
 export function readPreviewBranchParents(value: unknown, identity: DeploymentTargetProviderIdentityV1): readonly PreviewBranchParent[] {
@@ -45,6 +47,6 @@ export function readPreviewBranchParents(value: unknown, identity: DeploymentTar
       ? projectId === identity.providerResourceId && branch.branchId === identity.providerEnvironment
       : branch.parentProjectRef === identity.providerResourceId && branch.projectRef === identity.providerEnvironment;
     return matches && typeof projectId === 'string'
-      ? [{ title: branch.name, parentBranchRef: { providerProjectId: projectId, branchId: branch.branchId } }] : [];
+      ? [{ title: branch.name, parentBranchRef: { providerProjectId: projectId, branchId: branch.branchId, displayName: branch.name } }] : [];
   });
 }

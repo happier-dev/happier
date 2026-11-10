@@ -9,7 +9,8 @@ import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from './publi
 import { isRecursivelyClosedPluginJsonSchemaV2 } from './jsonSchema.js';
 import type { PluginResourceContributionV2 } from './v2.js';
 import { DeploymentTargetRoleInputProtocolSchemasV1,
-    DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetLogsResultV1ProtocolSchema,
+    DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetLogsResultV1ProtocolSchema, DeploymentTargetDomainResultV1ProtocolSchema,
+    DeploymentTargetVariablesReadResultV1ProtocolSchema, DeploymentTargetVariablesSyncResultV1ProtocolSchema,
     DeploymentTargetPreparationBaseV1ProtocolSchema } from './deploymentTargetRolesV1.js';
 export * from './deploymentTargetRolesV1.js';
 
@@ -147,8 +148,17 @@ export function validateDeploymentTargetContributionsV1(
             if (action.execution.target === 'client' || binding.role === 'uploadDeploy' && action.execution.target !== 'daemon') {
                 context.addIssue({ code: 'custom', path, message: 'Deployment target roles require Account or daemon placement; uploadDeploy requires daemon placement.' });
             }
-            if (!action.inputSchema || !action.resultSchema
-                || !isRecursivelyClosedPluginJsonSchemaV2(action.inputSchema)
+            // The query's named string parameters are the canonical typed map;
+            // every custody field and the enclosing input remain exact/closed.
+            const queryInput = binding.role === 'query.readOnly';
+            let validInput = false;
+            try {
+                validInput = Boolean(action.inputSchema && (queryInput
+                    ? pluginJsonValuesEqual(normalizePluginJsonSchema(action.inputSchema),
+                        normalizePluginJsonSchema(DeploymentTargetRoleInputProtocolSchemasV1['query.readOnly'].jsonSchema))
+                    : isRecursivelyClosedPluginJsonSchemaV2(action.inputSchema)));
+            } catch { /* Invalid authored schemas receive the same typed declaration refusal below. */ }
+            if (!validInput || !action.resultSchema
                 || !isRecursivelyClosedPluginJsonSchemaV2(action.resultSchema)) {
                 context.addIssue({ code: 'custom', path, message: 'Deployment target roles require explicit recursively closed input and result schemas.' });
             }
@@ -160,15 +170,19 @@ export function validateDeploymentTargetContributionsV1(
                         || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.inputSchema),
                             normalizePluginJsonSchema(DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema))
                         || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.resultSchema),
-                            normalizePluginJsonSchema((binding.role.startsWith('logs.')
-                                ? DeploymentTargetLogsResultV1ProtocolSchema : DeploymentTargetRoleResultV1ProtocolSchema).jsonSchema))) {
+                            normalizePluginJsonSchema((binding.role.startsWith('domains.') ? DeploymentTargetDomainResultV1ProtocolSchema
+                                : binding.role.startsWith('logs.')
+                                ? DeploymentTargetLogsResultV1ProtocolSchema
+                                : role === 'variables.read' ? DeploymentTargetVariablesReadResultV1ProtocolSchema
+                                : role === 'variables.sync' ? DeploymentTargetVariablesSyncResultV1ProtocolSchema
+                                : DeploymentTargetRoleResultV1ProtocolSchema).jsonSchema))) {
                         context.addIssue({ code: 'custom', path, message: 'Deployment lifecycle roles require their exact canonical input and observation schemas.' });
                     }
                 } catch {
                     context.addIssue({ code: 'custom', path, message: 'Deployment lifecycle roles require valid canonical schemas.' });
                 }
             }
-            if (descriptor.role === 'data' || binding.role === 'inspect' || binding.role === 'link') {
+            if (!queryInput && (descriptor.role === 'data' || binding.role === 'inspect' || binding.role === 'link')) {
                 try {
                     const declared = action.inputSchema && normalizePluginJsonSchema(action.inputSchema);
                     const role = binding.role as keyof typeof DeploymentTargetRoleInputProtocolSchemasV1;
