@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionStatusResultSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -8,6 +8,12 @@ import * as sessionSockets from '@/api/session/sockets';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { MachinesAgentsListOutputSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
+
+beforeEach(() => {
+  // Direct owner reads may maintain their display projection. Keep that HTTP
+  // boundary local while exercising the real best-effort unsupported-peer path.
+  vi.spyOn(axios, 'patch').mockResolvedValue({ status: 400, data: {} });
+});
 
 afterEach(() => { vi.restoreAllMocks(); });
 
