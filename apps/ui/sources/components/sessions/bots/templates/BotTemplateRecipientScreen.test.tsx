@@ -1,6 +1,6 @@
 import * as React from 'react';
 import * as ReactNative from 'react-native';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -10,6 +10,7 @@ import { BotTemplateReleaseV1Schema, projectBotTemplateArtifactHeaderV1 } from '
 import { MachineSetupObservationV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationV1';
 import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { BotTemplateRecipientScreen } from './BotTemplateRecipientScreen';
+import BotTemplateCopyForm from './BotTemplateCopyForm';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -26,6 +27,8 @@ import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/ex
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { NewSessionEmbeddedHostProvider, type NewSessionEmbeddedHost } from '@/components/sessions/new/navigation/newSessionHost';
+import { NewBotDraftFace } from '@/components/sessions/bots/NewBotDraftHeader';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -167,6 +170,7 @@ describe('recipient template page', () => {
     });
     it('shares the mounted setup selections between visible controls and Agent read and patch', async () => {
         let sessionBirthRequested = false;
+        let bornMetadata: unknown;
         const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
         await adoptHomeProfile({ descriptor: { serverUrl: 'https://template-setup-draft.test',
             homeServerIdentityId: 'srv_template_setup', displayName: 'Setup' }, source: 'manual', suggestedName: 'Setup' });
@@ -176,7 +180,7 @@ describe('recipient template page', () => {
             capabilities: { serverIdentity: { serverIdentityId: 'srv_template_setup' } } });
         home = await createPlainArtifactHomeFixture('https://template-setup-draft.test', { currentAccount: true,
             serverFeatures: features,
-            handleRequest: async path => {
+            handleRequest: async (path, init) => {
                 if (path === '/v1/features/authenticated') return Response.json(features);
                 if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
                 if (path === '/v2/account/session-drafts/read') return Response.json({ status: 'absent' });
@@ -187,12 +191,13 @@ describe('recipient template page', () => {
                 // birth owner; it does not mint a template root authorization.
                 if (path !== '/v1/sessions') return null;
                 sessionBirthRequested = true;
+                bornMetadata = JSON.parse(JSON.parse(String(init?.body)).sharedMetadata.ciphertext);
                 const refusal = projectExternalActionHttpError('credential_scope_denied', 'setup-copy');
                 return Response.json(refusal.payload, { status: refusal.statusCode });
             } });
         storage.setState({ isSessionDraftsReady: true });
         const release = BotTemplateReleaseV1Schema.parse({ v: 1, version: '1.0.0', releasedAtMs: 1, changelog: '',
-            content: { v: 1, identity: { name: 'Garden', description: 'Garden advice' }, instructions: { markdown: 'Grow herbs' },
+            content: { v: 1, identity: { name: 'Garden', description: 'Garden advice', face: { seed: 'template-face', body: 'tall' } }, instructions: { markdown: 'Grow herbs' },
                 skills: [], memoryRules: [], needs: { software: [], connectedAccounts: [], mcpServers: [{
                     key: 'search', name: 'Search', requirement: 'optional', purpose: 'Find plants', skipConsequence: 'No search',
                     definition: { name: 'search', transport: 'stdio', stdio: { command: { kind: 'literal', value: 'search-mcp' }, args: [] },
@@ -241,17 +246,35 @@ describe('recipient template page', () => {
             selections: { software: [], accounts: [], mcpServers: [{ key: 'search',
                 selection: { action: 'bind', inputKeys: ['index'] } }] } } });
         expect(JSON.stringify(agentEditedRead)).not.toContain('trees');
+        expect(screen.findByType(NewBotDraftFace).props.face).toMatchObject({ seed: 'template-face', body: 'tall' });
+        onTestFinished(withPopoverWebGlobals());
+        await screen.pressByTestIdAsync('new-bot-draft-face-button');
+        await screen.pressByTestIdAsync('bot-face-use-default');
         // Exercise the typed creation port that the real NewSession model consumes, stopping at the Home boundary.
         const host: NewSessionEmbeddedHost = screen.findByType(NewSessionEmbeddedHostProvider).props.host;
+        const draftId = host.params.draftId;
+        if (typeof draftId !== 'string') throw new Error('Missing template copy draft id');
+        expect(screen.findByType(NewBotDraftFace).props.face).toEqual({ seed: draftId });
+        const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        const { withNewBotDraftFaceSeed } = await import('@/components/sessions/bots/newBotDraft');
+        const copyProps: React.ComponentProps<typeof BotTemplateCopyForm> = screen.findByType(BotTemplateCopyForm).props;
+        const copyScope = copyProps.execution.binding?.scope;
+        if (!copyScope) throw new Error('Missing template copy Account scope');
+        const draft = readNewSessionDraftFromRepository({ scope: copyScope, draftId });
+        if (!draft) throw new Error('Missing template copy draft');
         const creation = { creationKey: SessionCreationKeyV1Schema.parse('setup-copy'), executionTarget: { serverId: home.home.id, machineId: 'selected-machine' },
             directory: { kind: 'managed' as const }, agentTarget: { kind: 'agent' as const,
-                identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, permissionMode: 'default' as const, title: 'My Garden' };
+                identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, permissionMode: 'default' as const, title: 'My Garden',
+            identity: withNewBotDraftFaceSeed(draft.initialSessionFacts, draftId) };
+        let result: unknown;
         await act(async () => {
-            const result = await host.executeSpawnAction!(creation, { surface: 'ui', authority: 'present_user',
+            result = await host.executeSpawnAction!(creation, { surface: 'ui', authority: 'present_user',
                 serverId: home!.home.id, actionRequestId: 'setup-copy' });
-            expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
         });
-        expect(sessionBirthRequested).toBe(true);
+        expect(sessionBirthRequested, JSON.stringify(result)).toBe(true);
+        expect(bornMetadata).toMatchObject({ bot: { kind: 'bot' } });
+        expect(bornMetadata).toHaveProperty('botFace', { seed: draftId });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
         expect(home.boundary.list()).toHaveLength(1);
         await screen.unmount();
     });
