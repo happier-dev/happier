@@ -1550,7 +1550,7 @@ async function createPiConversationRuntimeOperations(
               nativeChoices,
             }, { signal: controller.signal, buildNativeChoices: ({ mcpTool }) => {
               const grant = nativeChoices.choices.find(choice => choice.id === 'allow_session')!;
-              const catalogChoice = createMcpCatalogPermissionChoiceV1({ mcpTool, grant });
+              const catalogChoice = createMcpCatalogPermissionChoiceV1({ mcpTool, grant, existingChoices: nativeChoices.choices });
               return catalogChoice ? { ...nativeChoices, choices: [...nativeChoices.choices, catalogChoice] } : nativeChoices;
             } });
             response = { type: 'extension_ui_response', id: request.id,

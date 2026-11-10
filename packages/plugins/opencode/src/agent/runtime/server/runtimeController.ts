@@ -1616,7 +1616,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
             buildNativeChoices: ({ mcpTool }) => {
               const nativeChoices = approvalRequest.nativeChoices!;
               const grant = nativeChoices.choices.find(choice => choice.id === 'allow_session')!;
-              const catalogChoice = createMcpCatalogPermissionChoiceV1({ mcpTool, grant });
+              const catalogChoice = createMcpCatalogPermissionChoiceV1({ mcpTool, grant, existingChoices: nativeChoices.choices });
               return catalogChoice ? { ...nativeChoices, choices: [...nativeChoices.choices, catalogChoice] } : nativeChoices;
             },
           },

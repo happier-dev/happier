@@ -27,7 +27,7 @@ export function buildClaudePermissionChoices(input: Readonly<{
         }
     }
     if (isClaudeExternalMcpTool(toolName) && input.mcpTool) {
-        const catalogChoice = createMcpCatalogPermissionChoiceV1({ mcpTool: input.mcpTool,
+        const catalogChoice = createMcpCatalogPermissionChoiceV1({ mcpTool: input.mcpTool, existingChoices: choices,
             grant: { id: 'always_allow', label: 'Allow for this session', decision: 'approved', scope: 'session',
                 response: { approved: true, decision: 'approved', allowedTools: [toolName],
                     updatedPermissions: [{ type: 'addRules', behavior: 'allow', destination: 'session', rules: [{ toolName }] }] } },

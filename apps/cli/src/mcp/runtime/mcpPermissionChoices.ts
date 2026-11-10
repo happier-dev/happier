@@ -6,11 +6,7 @@ import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/p
 export function createMcpPermissionChoices(source: string, mcpTool: ResolvedMcpToolIdentityV1 | null): NativePermissionChoicesV1 {
   const sessionGrant = { id: 'approved_for_session', label: 'Allow for this session', decision: 'approved_for_session', scope: 'session',
     response: { approved: true, decision: 'approved_for_session' } } as const satisfies NativePermissionChoicesV1['choices'][number];
-  const catalogGrant = createMcpCatalogPermissionChoiceV1({ mcpTool, grant: sessionGrant });
-  return {
-    requirementId: randomUUID(),
-    source,
-    choices: [
+  const choices: NativePermissionChoicesV1['choices'][number][] = [
       { id: 'approved', label: 'Allow once', decision: 'approved', scope: 'once',
         response: { approved: true, decision: 'approved' } },
       sessionGrant,
@@ -18,7 +14,11 @@ export function createMcpPermissionChoices(source: string, mcpTool: ResolvedMcpT
         response: { approved: false, decision: 'denied' } },
       { id: 'abort', label: 'Cancel', decision: 'abort', scope: 'once',
         response: { approved: false, decision: 'abort' } },
-      ...(catalogGrant ? [catalogGrant] : []),
-    ],
+  ];
+  const catalogGrant = createMcpCatalogPermissionChoiceV1({ mcpTool, grant: sessionGrant, existingChoices: choices });
+  return {
+    requirementId: randomUUID(),
+    source,
+    choices: catalogGrant ? [...choices, catalogGrant] : choices,
   };
 }

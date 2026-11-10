@@ -9,6 +9,7 @@ import {
   type AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
+  createMcpCatalogPermissionChoiceV1,
   InteractionTransientAuthorRequestV1Schema,
   type InteractionOptions,
   type InteractionTransientAuthorQuestionV1,
@@ -113,10 +114,11 @@ async function requestApproval(
     };
   }
   try {
+    const nativeChoices = input.nativeChoices ?? buildCodexPermissionChoices(randomUUID());
     return await ui.requestApproval({
       kind: 'approval',
       title: input.title,
-      nativeChoices: input.nativeChoices ?? buildCodexPermissionChoices(randomUUID()),
+      nativeChoices,
       ...(input.description ? { description: input.description } : {}),
       subject: {
         kind: 'tool',
@@ -127,7 +129,11 @@ async function requestApproval(
       ...(input.allowSessionPersistence === undefined
         ? {}
         : { allowSessionPersistence: input.allowSessionPersistence }),
-    }, { signal });
+    }, { signal, buildNativeChoices: ({ mcpTool }) => {
+      const grant = nativeChoices.choices.find(choice => choice.decision === 'approved_for_session');
+      const catalogChoice = grant ? createMcpCatalogPermissionChoiceV1({ mcpTool, grant, existingChoices: nativeChoices.choices }) : undefined;
+      return catalogChoice ? { ...nativeChoices, choices: [...nativeChoices.choices, catalogChoice] } : nativeChoices;
+    } });
   } catch {
     return {
       requestId: randomUUID(),

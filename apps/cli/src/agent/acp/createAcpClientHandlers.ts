@@ -19,6 +19,7 @@ import {
 } from './sessionUpdateHandlers';
 import type { AcpPermissionHandler } from './permissions/acpPermissionHandler';
 import { createAcpNativePermissionChoices } from './permissions/permissionMapping';
+import { createMcpCatalogPermissionChoiceV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import type { AcpClientConnectionHandlers } from './connection/types';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { LegacyAcpToolRuntime } from './toolCalls/legacy/runtime';
@@ -142,7 +143,7 @@ export function createAcpClientHandlers(params: Readonly<{
         ?? readNonBlankOpaqueIdentifier(toolCall?.id)
         ?? randomUUID();
       const permissionId = toolCallId;
-      const nativeChoices = createAcpNativePermissionChoices(randomUUID(), request.options);
+      const upstreamChoices = createAcpNativePermissionChoices(randomUUID(), request.options);
       const requestSessionId =
         typeof (extendedParams as { sessionId?: unknown }).sessionId === 'string'
           ? String((extendedParams as { sessionId?: string }).sessionId)
@@ -211,6 +212,30 @@ export function createAcpClientHandlers(params: Readonly<{
         return { outcome: { outcome: 'cancelled' } };
       }
 
+      // The declared transport owns host-managed MCP's revocable session grant.
+      // Project its chosen native option before publication, never rank an answer afterwards.
+      const sessionOptionId = params.transport.pickPermissionOptionId?.(
+        request.options, 'approved_for_session', { toolCallId, toolName, input },
+      );
+      const sessionOption = request.options.find(option => option.optionId === sessionOptionId && option.kind === 'allow_once');
+      const nativeOptionIdByChoiceId = new Map<string, string>();
+      const choices: Array<typeof upstreamChoices.choices[number]> = [];
+      for (const [index, choice] of upstreamChoices.choices.entries()) {
+        if (choice.decision === 'approved' && sessionOptionId === null) continue;
+        const hostSessionGrant = request.options[index]?.kind === 'allow_always'
+          && sessionOption && sessionOption.optionId !== choice.id;
+        choices.push(hostSessionGrant ? {
+          ...choice, decision: 'approved_for_session', scope: 'session',
+          response: { approved: true, decision: 'approved_for_session' },
+        } : choice);
+        nativeOptionIdByChoiceId.set(choice.id, hostSessionGrant ? sessionOption.optionId : choice.id);
+      }
+      const nativeChoices = { ...upstreamChoices, choices };
+      if (choices.length === 0) {
+        await cancelOwnedPrompt();
+        return { outcome: { outcome: 'cancelled' } };
+      }
+
       if (toolName !== (toolCall?.kind || toolCall?.toolName || extendedParams.kind || 'Unknown tool')) {
         logger.debug(`[AcpBackend] Detected tool name: ${toolName} from toolCallId: ${toolCallId}`);
       }
@@ -268,7 +293,17 @@ export function createAcpClientHandlers(params: Readonly<{
       if (params.permissionHandler) {
         try {
           const result = await params.permissionHandler.handleToolCall(
-            toolCallId, toolName, input, { nativeChoices },
+            toolCallId, toolName, input, {
+              nativeChoices,
+              buildNativeChoices: ({ mcpTool }) => {
+                const onceOption = request.options.find(option => option.kind === 'allow_once');
+                const grant = choices.find(choice => choice.id === onceOption?.optionId);
+                const catalogChoice = grant ? createMcpCatalogPermissionChoiceV1({ mcpTool, grant, existingChoices: choices }) : undefined;
+                if (!catalogChoice || !onceOption) return nativeChoices;
+                nativeOptionIdByChoiceId.set(catalogChoice.id, onceOption.optionId);
+                return { ...nativeChoices, choices: [...choices, catalogChoice] };
+              },
+            },
           );
           if (!permissionRequest.isCurrent()) return withdraw();
           const isApproved =
@@ -276,8 +311,9 @@ export function createAcpClientHandlers(params: Readonly<{
             || result.decision === 'approved_for_session'
             || result.decision === 'approved_execpolicy_amendment';
 
-          const outcome = result.nativeChoice
-            ? { outcome: 'selected' as const, optionId: result.nativeChoice.choiceId }
+          const optionId = result.nativeChoice ? nativeOptionIdByChoiceId.get(result.nativeChoice.choiceId) : undefined;
+          const outcome = optionId
+            ? { outcome: 'selected' as const, optionId }
             : { outcome: 'cancelled' as const };
           if (tracksForeground && outcome.outcome === 'selected') {
             params.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);

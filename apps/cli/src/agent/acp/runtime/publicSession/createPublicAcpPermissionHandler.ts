@@ -142,6 +142,7 @@ export function createPublicAcpPermissionHandler(params: Readonly<{
           ...(context?.nativeChoices ? { nativeChoices: context.nativeChoices } : {}),
         }, {
           signal: AbortSignal.any([params.signal, controller.signal]),
+          ...(context?.buildNativeChoices ? { buildNativeChoices: context.buildNativeChoices } : {}),
           ...(custody.permissionContext ? { permissionContext: custody.permissionContext } : {}),
         });
 

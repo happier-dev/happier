@@ -31,11 +31,15 @@ export function parseMcpToolWireNameV1(name: string, knownServerKeys: ReadonlySe
 export function createMcpCatalogPermissionChoiceV1(input: Readonly<{
   mcpTool: ResolvedMcpToolIdentityV1 | null | undefined;
   grant: NativePermissionChoicesV1['choices'][number];
+  existingChoices: readonly Pick<NativePermissionChoicesV1['choices'][number], 'id'>[];
 }>): NativePermissionChoicesV1['choices'][number] | undefined {
   const { mcpTool, grant } = input;
   if (!mcpTool || mcpTool.server === 'happier') return undefined;
+  const offeredIds = new Set(input.existingChoices.map(choice => choice.id));
+  let id = 'mcp_always_allow';
+  for (let suffix = 1; offeredIds.has(id); suffix += 1) id = `mcp_always_allow:${suffix}`;
   return {
-    ...grant, id: 'mcp_always_allow', label: 'Always allow', scope: 'localPersistent',
+    ...grant, id, label: 'Always allow', scope: 'localPersistent',
     followUp: { actionId: 'mcp.servers.tools.set', input: {
       serverId: mcpTool.item.serverId, tools: { [mcpTool.tool]: 'allow' },
     } },

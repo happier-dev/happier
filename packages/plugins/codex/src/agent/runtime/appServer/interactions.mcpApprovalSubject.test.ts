@@ -438,7 +438,7 @@ describe('Codex MCP approval subjects through real session grants', () => {
     },
   );
 
-  it.each(['happier.codex', 'external.agent'])('resolves an injected server and its operands through %s host interactions', async pluginId => {
+  it.each(['happier.codex', 'external.agent'])('offers catalog consent for an injected server through %s host interactions', async pluginId => {
     const mcpServerKeys = assignInjectedServerKeys(['happier', 'qa-boot3']);
     const fixture = createFixture({ pluginId, mcpServerKeys, getMcpToolContext: () => ({
       mcpServerIdentities: { 'qa-boot3': { serverId: 'catalog-qa', serverTitle: 'QA server' } },
@@ -460,8 +460,21 @@ describe('Codex MCP approval subjects through real session grants', () => {
       server: 'qa-boot3', tool: 'acknowledge', item: { serverId: 'catalog-qa' },
       serverTitle: 'QA server', toolTitle: 'Acknowledge', decision: { approval: 'ask' },
     });
-    await fixture.respond(pending.id, 'denied');
-    await expect(result).resolves.toEqual(deniedAnswer);
+    const offer = pending.request.nativeChoices;
+    expect(offer?.choices.find(choice => choice.id === 'mcp_always_allow')).toMatchObject({
+      decision: 'approved_for_session', scope: 'localPersistent',
+      response: { approved: true, decision: 'approved_for_session' },
+      followUp: { actionId: 'mcp.servers.tools.set', input: {
+        serverId: 'catalog-qa', tools: { acknowledge: 'allow' },
+      } },
+    });
+    const respond = fixture.session.rpcHandlerManager.handlers.get('permission');
+    if (!respond || !offer) throw new Error('Missing offered permission');
+    await respond({ id: pending.id, nativeChoice: {
+      requirementId: offer.requirementId, choiceId: 'mcp_always_allow',
+    } });
+    // Catalog consent remains a host grant: the native engine runs this call once.
+    await expect(result).resolves.toEqual(approvedAnswer);
   });
 
   it('keeps a grant on one server/tool from approving a different tool or server', async () => {

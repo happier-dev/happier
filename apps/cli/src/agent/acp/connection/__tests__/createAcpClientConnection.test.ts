@@ -6,6 +6,8 @@ import { AcpAgentPeer } from '../AcpAgentPeer';
 import { defineAcpExtensionNotification, defineAcpExtensionRequest } from '../types';
 import { createAcpClientHandlers } from '../../createAcpClientHandlers';
 import { createLegacyHandlerContextFixture } from '../../__tests__/legacyToolRuntimeFixture';
+import { createAcpTransportHandlerFromDefinition } from '../../runtime/definition/transport';
+import { McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { createPublicAcpPermissionHandler } from '../../runtime/publicSession/createPublicAcpPermissionHandler';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { createNativeAgentCurrentSessionUiServices } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
@@ -56,12 +58,31 @@ describe('createAcpClientConnection', () => {
   });
 
   it.each([
-    { kind: 'allow_once', relationship: 'owner' },
-    { kind: 'allow_always', relationship: 'owner' },
-    { kind: 'allow_always', relationship: 'sharedApprover' },
-    { kind: 'allow_always', relationship: null },
-    { kind: 'empty', relationship: 'owner' },
-  ] as const)('handles native permission offers through the approval owner ($kind, $relationship)', async ({ kind, relationship }) => {
+    { kind: 'allow_once', relationship: 'owner', catalog: false },
+    { kind: 'allow_always', relationship: 'owner', catalog: false },
+    { kind: 'allow_always', relationship: 'sharedApprover', catalog: false },
+    { kind: 'allow_always', relationship: null, catalog: false },
+    { kind: 'empty', relationship: 'owner', catalog: false },
+    { kind: 'allow_always', relationship: 'owner', catalog: true },
+    { kind: 'allow_always', relationship: 'sharedApprover', catalog: true },
+    { kind: 'allow_always', relationship: null, catalog: true },
+    { kind: 'allow_always', relationship: 'owner', catalog: true, answer: 'native' },
+    { kind: 'allow_always', relationship: 'sharedApprover', catalog: true, answer: 'native' },
+    { kind: 'allow_always', relationship: 'owner', catalog: true, answer: 'no-once' },
+    { kind: 'allow_always', relationship: 'owner', catalog: true, answer: 'no-safe-options' },
+    { kind: 'allow_always', relationship: 'owner', catalog: true, answer: 'catalog-collision' },
+    { kind: 'allow_always', relationship: 'owner', catalog: true, answer: 'native-collision' },
+  ] as const)('handles native permission offers through the approval owner ($kind, $relationship, catalog=$catalog, answer=$answer)', async (row) => {
+    const { kind, relationship, catalog } = row;
+    const nativeSession = 'answer' in row && (row.answer === 'native' || row.answer === 'native-collision');
+    const collision = 'answer' in row && (row.answer === 'catalog-collision' || row.answer === 'native-collision');
+    const nativePersistentOptionId = collision ? 'mcp_always_allow' : 'opaque:second';
+    const noSafeOptions = 'answer' in row && row.answer === 'no-safe-options';
+    const noOnce = noSafeOptions || 'answer' in row && row.answer === 'no-once';
+    const mcpCatalog = McpServerCatalogV1Schema.parse({ v: 1, bindings: [], servers: [{
+      id: 'catalog-tools', name: 'tools', title: 'Tools', transport: 'http', env: {},
+      remote: { url: 'https://example.invalid/mcp', headers: {} }, createdAt: 1, updatedAt: 1,
+    }] });
     // Session persistence and authenticated RPC are external boundaries; approval owners stay real.
     const session = {
       sessionId: 'native-acp-choice',
@@ -76,7 +97,13 @@ describe('createAcpClientConnection', () => {
     };
     const hostPermissionHandler = new ProviderEnforcedPermissionHandler(
       session as unknown as ApiSessionClient,
-      { logPrefix: '[ACP native choice test]', getWorkspaceWrites: () => 'allow' },
+      {
+        logPrefix: '[ACP native choice test]', getWorkspaceWrites: () => 'allow',
+        getMcpToolContext: () => catalog ? {
+          catalog: { status: 'ready', authority: 'active', revision: 1, diagnostics: [], catalog: mcpCatalog },
+          mcpServerIdentities: { tools: { serverId: 'catalog-tools', serverTitle: 'Tools' } },
+        } : null,
+      },
     );
     const lifetime = new AbortController();
     const currentSession = createNativeAgentCurrentSessionUiServices({
@@ -93,7 +120,11 @@ describe('createAcpClientConnection', () => {
         kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default',
       }),
     });
-    const handlerContext = createLegacyHandlerContextFixture();
+    const handlerContext = createLegacyHandlerContextFixture(catalog ? {
+      transport: createAcpTransportHandlerFromDefinition({
+        backendId: 'test', mcpServerKeys: new Set(['tools']), mcpToolPolicyServerKeys: new Set(['tools']),
+      }),
+    } : undefined);
     const handlers = createAcpClientHandlers({
       onSessionUpdate() {}, transport: handlerContext.transport, emit() {}, permissionHandler,
       createHandlerContext: () => handlerContext,
@@ -108,15 +139,15 @@ describe('createAcpClientConnection', () => {
       .onRequest('test/native-permission', (params) => params, async (context) => {
         const response = context.client.request(methods.client.session.requestPermission, {
           sessionId: session.sessionId,
-          toolCall: { toolCallId: 'native-tool', title: 'Native operation', kind: 'other' },
+          toolCall: { toolCallId: 'native-tool', title: catalog ? 'mcp__tools__mutate' : 'Native operation', kind: 'other' },
           options: kind === 'empty' ? [] : [
-            { optionId: 'opaque:first', name: 'First operation', kind: 'allow_once' },
-            { optionId: 'opaque:second', name: 'Second operation', kind },
-            { optionId: 'opaque:deny', name: 'Decline operation', kind: 'reject_once' },
+            ...(noOnce ? [] : [{ optionId: 'opaque:first', name: 'First operation', kind: 'allow_once' as const }]),
+            { optionId: nativePersistentOptionId, name: 'Second operation', kind },
+            ...(noSafeOptions ? [] : [{ optionId: 'opaque:deny', name: 'Decline operation', kind: 'reject_once' as const }]),
           ],
         });
         try {
-          if (kind === 'empty') {
+          if (kind === 'empty' || noSafeOptions) {
             let returned = false;
             void response.then(() => { returned = true; }, () => { returned = true; });
             await expect.poll(() => returned || Object.keys(session.state.requests ?? {}).length > 0).toBe(true);
@@ -128,13 +159,28 @@ describe('createAcpClientConnection', () => {
           await expect.poll(() => Object.keys(session.state.requests ?? {}).length).toBe(1);
           const [id] = Object.keys(session.state.requests ?? {});
           const pending = session.state.requests?.[id];
-          expect(pending?.nativeChoices?.choices.map((choice) => choice.id)).toEqual([
-            'opaque:first', 'opaque:second', 'opaque:deny',
+          if (nativeSession) expect(pending?.nativeChoices?.choices.find(choice => choice.id === nativePersistentOptionId))
+            .toMatchObject({ decision: 'approved_for_session', scope: 'session',
+              response: { approved: true, decision: 'approved_for_session' } });
+          const catalogChoice = pending?.nativeChoices?.choices.find(choice => choice.followUp?.actionId === 'mcp.servers.tools.set');
+          const choiceIds = pending?.nativeChoices?.choices.map(choice => choice.id) ?? [];
+          expect(new Set(choiceIds).size).toBe(choiceIds.length);
+          expect(pending?.nativeChoices?.choices.map((choice) => choice.id)).toEqual(noOnce ? ['opaque:deny'] : [
+            'opaque:first', nativePersistentOptionId, 'opaque:deny', ...(catalog ? [catalogChoice?.id] : []),
           ]);
-          const nativeChoice = { requirementId: pending!.nativeChoices!.requirementId, choiceId: 'opaque:second' };
+          if (catalog && !noOnce) {
+            expect(pending?.tool).toBe('mcp__tools__mutate');
+            expect(catalogChoice).toMatchObject({
+              id: expect.any(String), scope: 'localPersistent', decision: 'approved',
+              response: { approved: true, decision: 'approved' },
+              followUp: { actionId: 'mcp.servers.tools.set', input: { serverId: 'catalog-tools', tools: { mutate: 'allow' } } },
+            });
+          }
+          const nativeChoice = { requirementId: pending!.nativeChoices!.requirementId,
+            choiceId: noOnce ? 'opaque:deny' : catalog && !nativeSession ? catalogChoice!.id : nativePersistentOptionId };
           const answer = { id, turnId: pending?.turnId, nativeChoice };
           const respond = session.rpcHandlerManager.handlers.get('session.permission.respond')!;
-          if (kind === 'allow_always' && relationship !== 'owner') {
+          if (kind === 'allow_always' && relationship !== 'owner' && !nativeSession) {
             const result = await respond(answer, relationship ? {
               signal: lifetime.signal,
               authorization: {
@@ -149,8 +195,15 @@ describe('createAcpClientConnection', () => {
             expect(session.state.requests?.[id]?.nativeChoices).toEqual(pending?.nativeChoices);
             expect(session.state.completedRequests?.[id]).toBeUndefined();
           }
-          await expect(respond(answer)).resolves.toBeUndefined();
-          await expect(response).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'opaque:second' } });
+          await expect(respond(answer, nativeSession && relationship === 'sharedApprover' ? {
+            signal: lifetime.signal,
+            authorization: {
+              kind: 'session.permission.respond', sessionId: session.sessionId,
+              actor: { kind: 'accountUser', accountId: 'shared-account', relationship },
+            },
+          } : undefined)).resolves.toBeUndefined();
+          await expect(response).resolves.toEqual({ outcome: { outcome: 'selected',
+            optionId: noOnce ? 'opaque:deny' : catalog ? 'opaque:first' : 'opaque:second' } });
           expect(session.state.completedRequests?.[id]?.nativeChoice).toEqual(nativeChoice);
           expect(Object.keys(session.state.requests ?? {})).toHaveLength(0);
           return {};
