@@ -76,6 +76,7 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
   compilerNativeTestFiles: COMPILER_NATIVE_TEST_FILES,
   compilerTestSuites: COMPILER_TEST_SUITES,
   sourceConditionNativeTestPaths: Object.freeze([
+    'apps/stack/scripts/tailscale_placement.integration.test.mjs',
     // Source-runtime producer fixtures replace OS watchers/compiler/SSH boundaries.
     'apps/stack/scripts/utils/dev_targets/source_runtime_producer.test.mjs',
     'apps/stack/scripts/build/source_runtime_producer.test.mjs',

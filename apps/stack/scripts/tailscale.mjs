@@ -1,4 +1,11 @@
 import './utils/env/env.mjs';
+import { join } from 'node:path';
+import { readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
+import { loadDevTargetsConfig } from './utils/dev_targets/config.mjs';
+import { resolveObservedDevTargetService } from './utils/dev_targets/service_placement.mjs';
+import { resolveRemoteStackStatePaths } from './utils/dev_targets/remote_commands.mjs';
+import { runDevTargetCommand } from './utils/dev_targets/executor.mjs';
+import { ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
@@ -188,6 +195,56 @@ async function main() {
       ].join('\n'),
     });
     return;
+  }
+
+  const stackName = getStackName(process.env);
+  const { baseDir, envPath: retainedEnvPath } = resolveStackEnvPath(stackName, process.env);
+  const envPath = process.env.HAPPIER_STACK_ENV_FILE || retainedEnvPath;
+  if (process.env.HAPPIER_DEV_TARGET_EXECUTION !== '1') {
+    const runtimeState = await readStackRuntimeStateFile(
+      process.env.HAPPIER_STACK_RUNTIME_STATE_PATH || join(baseDir, 'stack.runtime.json'));
+    const { config } = await loadDevTargetsConfig({ stackName });
+    const placed = resolveObservedDevTargetService({ config, runtimeState, service: 'server' });
+    if (placed) {
+      if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
+        throw new Error('[tailscale] remote commands are disabled in sandbox mode. Set HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1 to allow them.');
+      }
+      const paths = resolveRemoteStackStatePaths(placed.target, { stackName, runtimeMode: placed.runtimeMode });
+      const output = [];
+      const result = await runDevTargetCommand({
+        target: placed.target, stackBaseDir: baseDir,
+        commandArgs: ['node', 'apps/stack/scripts/stack.mjs', `tailscale:${cmd}`, paths.stackName, ...argv.slice(1).filter(arg => arg !== '--json'), '--json'],
+        environment: {
+          HAPPIER_DEV_TARGET_EXECUTION: '1',
+          HAPPIER_STACK_REPO_DIR: placed.target.repoDir,
+          HAPPIER_STACK_HOME_DIR: placed.target.cliHomeDir,
+          HAPPIER_STACK_STORAGE_DIR: paths.stackStorageDir,
+          ...(process.env.HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL
+            ? { HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL: process.env.HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL } : {}),
+        },
+        silent: true,
+        onLine: ({ stream, line }) => {
+          if (stream === 'stdout') output.push(line);
+          else process.stderr.write(line + '\n');
+        },
+      });
+      const text = output.join('\n');
+      if (!text.trim()) {
+        process.exitCode = result.code || 1;
+        return;
+      }
+      const data = JSON.parse(text);
+      if (result.code === 0 && cmd === 'enable' && data.httpsUrl) {
+        await ensureEnvFileUpdated({ envPath,
+          updates: [{ key: 'HAPPIER_PUBLIC_SERVER_URL', value: data.httpsUrl }] });
+      }
+      printResult({ json, data,
+        text: cmd === 'url' ? data.url : cmd === 'status' ? data.status
+          : data.failure ? data.failure.remediation || data.failure.code
+          : `[tailscale ${cmd}] ${stackName}: ${data.httpsUrl || data.enableUrl || 'ok'}` });
+      process.exitCode = result.code;
+      return;
+    }
   }
 
   const { internalServerUrl } = await resolveStackServerEndpoint();
