@@ -22,6 +22,8 @@ import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/rpc/
 import { handleActionsCommand } from '@/cli/commands/actions';
 import { createQualifiedConnectedAccountAttemptTransactionAdapters } from '@/daemon/connectedServices/qualifiedConnectedAccountAttemptTransactionAdapters';
 import { registerConnectedAccountAttemptTransactionRoutes } from '../../../../server/sources/app/api/routes/connect/connectedAccountAttemptTransactions/registerConnectedAccountAttemptTransactionRoutes';
+import * as sessionSockets from '@/api/session/sockets';
+import { USAGE_SOURCE_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/usage/usageSources';
 
 it('delivers public and private authentication completions through CLI, Home and the installed daemon approval executor', async () => {
   const cleanup: Array<() => unknown | Promise<unknown>> = [];
@@ -55,7 +57,9 @@ it('delivers public and private authentication completions through CLI, Home and
     installationId: home.installationId, createdAt: 1,
     publicKey: Buffer.from(home.keys.publicKey).toString('base64url'), privateKey: Buffer.from(home.keys.secretKey).toString('base64url') }), { mode: 0o600 });
   const actionId = 'connectedServices.authentication.beginConnect';
-  const settings = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } });
+  const rootActionId = 'usage.sources.root.set';
+  const settings = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] },
+    [rootActionId]: { approvalRequiredSurfaces: ['cli'] } } });
   const policy = { getActionsSettings: () => settings, getAccountSettings: () => accountSettingsParse({ actionsSettingsV1: settings }) };
   const content = prepareAccountSettingsV2Content({ credentials, raw: { actionsSettingsV1: settings }, envelopeKind: 'encrypted' });
   await axios.post(`${home.baseUrl}/v2/account/settings`, { expectedVersion: 0, content },
@@ -98,6 +102,20 @@ it('delivers public and private authentication completions through CLI, Home and
     await nativeCompletion;
     return nativeResult;
   });
+  let finishRoot!: () => void;
+  const rootCompletion = new Promise<void>(resolve => { finishRoot = resolve; });
+  let rootEffects = 0;
+  const rootResult = { source: { serverId, machineId: home.machineId, sourceId: 'cli-root-source',
+    agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, root: { kind: 'override', path: '/private-usage-root' },
+    consent: 'disabled', status: 'found', coverage: 'unknown', pendingCount: 0, asOfMs: null } };
+  // The native Machine RPC is the filesystem boundary for this transport test.
+  // Like the real handler, serve the admitted caller's routing label.
+  rpc.registerHandler(rootActionId, async raw => {
+    const input = USAGE_SOURCE_ACTION_INPUT_SCHEMAS[rootActionId].parse(raw);
+    rootEffects++;
+    await rootCompletion;
+    return { source: { ...rootResult.source, serverId: input.serverId } };
+  });
   let connectionPhase: string | undefined;
   const unsubscribe = machine.onConnectionStateChange(state => { connectionPhase = state.phase; });
   cleanup.push(unsubscribe);
@@ -107,7 +125,7 @@ it('delivers public and private authentication completions through CLI, Home and
   // Wait for the actual RPC registrations used by this journey.
   rpc.replayUnacknowledgedHandlerRegistrations();
   expect(await rpc.waitForRegisteredHandlers([CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
-    EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1], { timeoutMs: 10_000 })).toEqual({ status: 'ready' });
+    EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, rootActionId], { timeoutMs: 10_000 })).toEqual({ status: 'ready' });
   writeDaemonState({ pid: process.pid, startedAt: Date.now(), startedWithCliVersion: 'test', httpPort: runtime.controlPort,
     controlToken: runtime.controlToken, machineId: home.machineId, accountId: home.accountId });
   let decision: ActionExecuteResult | undefined;
@@ -210,4 +228,58 @@ it('delivers public and private authentication completions through CLI, Home and
     expect(JSON.stringify(genericReceipt)).not.toContain('private-');
   }
   expect(effects).toBe(4);
+  output = '';
+  notices.mockClear();
+  const approvalSockets: Array<ReturnType<typeof sessionSockets.createUserScopedSocketConnection>['socket']> = [];
+  const createSocket = sessionSockets.createUserScopedSocketConnection;
+  const sockets = vi.spyOn(sessionSockets, 'createUserScopedSocketConnection').mockImplementation(options => {
+    const connection = createSocket(options);
+    approvalSockets.push(connection.socket);
+    return connection;
+  });
+  cleanup.push(() => sockets.mockRestore());
+  const rootLifetime = new AbortController();
+  let rootSettled = false;
+  const rootCommand = handleActionsCommand(['invoke', rootActionId, '--input-json', JSON.stringify({
+    serverId, machineId: home.machineId, sourceId: 'cli-root-source', root: '/private-usage-root',
+  }), '--yes', '--json'], { readCredentialsFn: async () => credentials },
+  AbortSignal.any([invocation.signal, rootLifetime.signal])).finally(() => { rootSettled = true; });
+  try {
+    // Original-Account Machine Actions retain their private result on Home's
+    // original request. --yes must receive Ask before that delivery finishes.
+    await expect.poll(() => rootEffects, { timeout: 10_000 }).toBe(1);
+    expect(notices.mock.calls.map(([message]) => JSON.parse(String(message))))
+      .toContainEqual(expect.objectContaining({ data: { kind: 'approval_request_created',
+        artifactId: expect.any(String), actionId: rootActionId } }));
+    expect(rootSettled).toBe(false);
+    finishRoot();
+    await rootCommand;
+    expect(JSON.parse(output), output).toMatchObject({ ok: true, kind: 'actions_invoke', data: rootResult });
+    expect(approvalSockets.length).toBeGreaterThan(0);
+    expect(approvalSockets.every(socket => !socket.active)).toBe(true);
+  } finally {
+    rootLifetime.abort();
+    finishRoot();
+    await rootCommand;
+  }
+  approvalSockets.length = 0;
+  const canceledRootLifetime = new AbortController();
+  let canceledRootNotified = false;
+  const canceledRootExecutor = runWithServerHttpBaseUrl(home.baseUrl, () => createCliActionExecutorFromCredentials({
+    credentials, onApprovalRequested: () => { canceledRootNotified = true; canceledRootLifetime.abort(); },
+  }));
+  try {
+    const canceledRoot = await canceledRootExecutor.execute(rootActionId, {
+      serverId, machineId: home.machineId, sourceId: 'cli-root-source', root: '/private-canceled-root',
+    }, { surface: 'cli', actionCaller: { kind: 'host' }, signal: canceledRootLifetime.signal });
+    expect(canceledRootNotified).toBe(true);
+    expect(canceledRoot).toMatchObject({ ok: false });
+    expect(rootEffects).toBe(1);
+    expect(approvalSockets.length).toBeGreaterThan(0);
+    // The requester opens its observer before dispatching HTTP. Receiver-side
+    // receipt observers retire when that HTTP cancellation reaches Home.
+    expect(approvalSockets[0]?.active).toBe(false);
+  } finally {
+    canceledRootLifetime.abort();
+  }
 }, 120_000);

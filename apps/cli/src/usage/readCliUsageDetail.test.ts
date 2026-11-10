@@ -31,7 +31,8 @@ function batchResponse(body: unknown, status = 200, request?: unknown) {
 describe('CLI Usage Session evidence demand', () => {
     it('reads split UTF-8 NDJSON over real HTTP without joining the aggregate response', async () => {
         const app = fastify();
-        const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeTranscriptEvidence: false, includeWorkEvidence: false });
+        const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeTranscriptEvidence: false,
+            includeWorkEvidence: false, includeCoach: true, includeQuota: false });
         const records = Array.from({ length: 80 }, (_, index) => createSessionRecordFixture({ id: `stream-🌍-${index}`,
             encryptionMode: 'plain', share: null, metadata: JSON.stringify({ path: '/repo', agent: 'claude' }) }));
         app.post(USAGE_SESSION_EVIDENCE_PATH, async (request, reply) => {
@@ -56,6 +57,7 @@ describe('CLI Usage Session evidence demand', () => {
             const result = await readCliUsageDetail({ queries: [query], accounting: [], credentials: { token: 'token', encryption: null },
                 serverId: 'home', serverHttpBaseUrl: base, accountEncryptionMode: 'plain', allowPrivateRead: true, nowMs: 200,
                 assertCurrent: async () => {}, resolveHeaders: () => ({ Authorization: 'Bearer token' }) });
+            expect(result.howYouWork[0]?.errorCode).toBeUndefined();
             expect(result.sessions.map(row => row.id)).toEqual(records.map(row => row.id));
             expect(result.howYouWork[0]?.detail.facts).toHaveLength(80);
         } finally { await app.close(); }

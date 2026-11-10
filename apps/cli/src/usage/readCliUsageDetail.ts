@@ -126,7 +126,8 @@ export async function readCliUsageDetail(input: Readonly<{
             value.requests.forEach((request, index) => {
                 const plan = plans[index]!;
                 const suppliedIds = plan.sessionIds ? new Set(plan.sessionIds) : undefined;
-                if (getUsageQueryKey(request.query) !== getUsageQueryKey(plan.query)
+                // The wire query omits host-only Coach and quota projection flags.
+                if (getUsageQueryKey(request.query) !== getUsageQueryKey(body.requests[index]!.query)
                     || new Set(request.sessionIds).size !== request.sessionIds.length
                     || suppliedIds && (suppliedIds.size !== request.sessionIds.length
                         || request.sessionIds.some(id => !suppliedIds.has(id)))) {

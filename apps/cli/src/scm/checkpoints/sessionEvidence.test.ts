@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildRepositoryCheckpointRefs, encodeRepositoryCheckpointScope } from './refs';
+import { buildRepositoryCheckpointRefs, encodeRepositoryCheckpointScope, isRepositoryCheckpointRollbackBackupRef } from './refs';
+import { buildGitRollbackBackupRef } from './rollback/gitCheckpointRollbackScope';
 import { gitCheckpointAdapter } from './gitCheckpointAdapter';
 import { findRepositoryCheckpointTurnEvidenceByReceipt, readRepositoryCheckpointBranchEvidence, readRepositoryCheckpointCommitEvidence, readRepositoryCheckpointInitialEvidence, readRepositoryCheckpointPullRequestEvidence, readRepositoryCheckpointTurnEvidence, retainRepositoryCheckpointTurnEvidence } from './sessionEvidence';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -78,22 +79,29 @@ describe('checkpoint/commit correspondence', () => {
       }
     } finally { rmSync(cwd, { recursive: true, force: true }); }
   });
-  it('witnesses exact trees, preserves shared-writer scope and rejects another Session/repository or rebased different content', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'happier-work-evidence-'));
+  it.each(['short', 'long'] as const)('witnesses exact trees in a %s repository path, preserves shared-writer scope and rejects another Session/repository or rebased different content', async pathLength => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'happier-work-evidence-'));
+    const cwd = pathLength === 'long' ? join(temporaryRoot, 'managed-project-'.repeat(12)) : temporaryRoot;
+    mkdirSync(cwd, { recursive: true });
     const git = (args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
     try {
       git(['init']); git(['config', 'user.name', 'Evidence test']); git(['config', 'user.email', 'test@example.invalid']);
       writeFileSync(join(cwd, 'a'), 'before\n'); git(['add', 'a']); git(['commit', '-m', 'initial']);
       const baseSha = git(['rev-parse', 'HEAD']);
       const scopeId = `session:${cwd}`;
+      expect(await readRepositoryCheckpointBranchEvidence({ cwd, sessionId: 'session' })).toEqual([]);
       const refs = buildRepositoryCheckpointRefs({ scopeId, messageId: 'message', turnId: 'turn' });
       const context = { cwd, projectKey: 'repo', detection: { isRepo: true, rootPath: cwd, mode: '.git' as const } };
       const before = await gitCheckpointAdapter.capture({ context, checkpointRef: refs.messageStart! });
+      expect(before).toMatchObject({ success: true });
       const startAlias = await gitCheckpointAdapter.alias({ context, sourceRef: refs.messageStart!, targetRef: refs.turnStart! });
       if (!startAlias.success) throw new Error('Checkpoint alias failed');
       writeFileSync(join(cwd, 'a'), 'after\n');
       const after = await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnFinal! });
       if (!before.success || !after.success) throw new Error('Checkpoint capture failed');
+      const rollbackBackupRef = buildGitRollbackBackupRef({ scopeId, rollbackId: 'rollback' });
+      git(['update-ref', rollbackBackupRef, before.commitSha]);
+      expect(isRepositoryCheckpointRollbackBackupRef({ scopeId, ref: rollbackBackupRef })).toBe(true);
       const turnChangeSet = {
         sessionId: 'session', turnId: 'turn', seqRange: { startSeqInclusive: 1, endSeqInclusive: 2 }, status: 'completed',
         files: [], provider: 'agent', derivedAt: 1, repositoryCheckpoint: { version: 1, scopeId,
@@ -188,6 +196,6 @@ describe('checkpoint/commit correspondence', () => {
       expect(await readRepositoryCheckpointCommitEvidence({ ...input, commitShas: [git(['rev-parse', 'HEAD'])] })).toEqual([]);
       git(['update-ref', refs.turnFinal!.ref, git(['rev-parse', 'HEAD'])]);
       expect(await readRepositoryCheckpointCommitEvidence(input)).toEqual([]);
-    } finally { rmSync(cwd, { recursive: true, force: true }); }
+    } finally { rmSync(temporaryRoot, { recursive: true, force: true }); }
   });
 });

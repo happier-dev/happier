@@ -37,6 +37,20 @@ describe('repository checkpoint primitives', () => {
         expect(() => buildRepositoryCheckpointRefs({ scopeId, messageId: ' ' })).toThrow('checkpointId must not be empty');
     });
 
+    it('preserves retained scope names through the filesystem component boundary and contains longer scopes', () => {
+        const retainedScope = 'a'.repeat(191);
+        const retained = buildRepositoryCheckpointRef({ scopeId: retainedScope, phase: 'turn-final', checkpointId: 'turn' });
+        expect(retained.encodedScope).toBe(Buffer.from(retainedScope, 'utf8').toString('base64url'));
+        expect(retained.encodedScope).toHaveLength(255);
+
+        const scopeId = `${retainedScope}b`;
+        const longer = buildRepositoryCheckpointRef({ scopeId, phase: 'turn-final', checkpointId: 'turn' });
+        expect(longer.encodedScope.length).toBeLessThanOrEqual(255);
+        expect(longer.encodedScope).not.toContain('/');
+        expect(parseRepositoryCheckpointRef({ scopeId, ref: longer.ref })).toEqual(longer);
+        expect(parseRepositoryCheckpointRef({ scopeId: `${retainedScope}c`, ref: longer.ref })).toBeNull();
+    });
+
     it('rejects checkpoint phases outside the CHKPT-1 capture set', () => {
         expect(() => buildRepositoryCheckpointRefs({
             scopeId: 'session-safe',

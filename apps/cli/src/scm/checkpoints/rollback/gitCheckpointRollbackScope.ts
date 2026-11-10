@@ -1,8 +1,7 @@
-import { Buffer } from 'node:buffer';
 import { resolve as resolvePath } from 'node:path';
 
 import type { CheckpointCodeRollbackRequest } from './types';
-import { parseRepositoryCheckpointRef } from '../refs';
+import { buildRepositoryCheckpointScopePrefix, parseRepositoryCheckpointRef } from '../refs';
 import type { ScmBackendContext } from '../../types';
 
 const INVALID_REF_SEGMENT = /[\u0000-\u0020\u007f~^:?*[\\]/;
@@ -65,6 +64,5 @@ export function buildGitRollbackBackupRef(input: Readonly<{
     scopeId: string;
 }>): string {
     assertSafeSegment(input.rollbackId, 'rollbackId');
-    const encodedScope = Buffer.from(input.scopeId, 'utf8').toString('base64url');
-    return `refs/happier/checkpoints/${encodedScope}/rollback-backup/${input.rollbackId}`;
+    return `${buildRepositoryCheckpointScopePrefix(input.scopeId)}rollback-backup/${input.rollbackId}`;
 }

@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 
 import type {
     RepositoryCheckpointCapturePhase,
@@ -63,7 +64,11 @@ function buildCheckpointRefSuffix(phase: RepositoryCheckpointCapturePhase, check
 
 export function encodeRepositoryCheckpointScope(scopeId: string): string {
     assertNonEmpty(scopeId, 'scopeId');
-    return Buffer.from(scopeId, 'utf8').toString('base64url');
+    const encoded = Buffer.from(scopeId, 'utf8').toString('base64url');
+    // Loose Git refs and retained evidence use this ASCII name as a filesystem
+    // component (255 bytes). Preserve existing valid names; a dot keeps the
+    // bounded namespace disjoint from legacy base64url scope names.
+    return encoded.length <= 255 ? encoded : `sha256.${createHash('sha256').update(scopeId, 'utf8').digest('hex')}`;
 }
 
 export function buildRepositoryCheckpointScopePrefix(scopeId: string): string {
