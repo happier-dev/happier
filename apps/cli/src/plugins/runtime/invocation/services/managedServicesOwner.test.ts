@@ -5503,6 +5503,7 @@ describe('managed-services SVC09 owner', () => {
             resolveTarget: async target => target.kind === 'account'
                 ? { displayName, account: target.account }
                 : null,
+            resolveCredentialRevision: async () => 'csr_0123456789ABCDEFGHJKMNPQRS',
             // The authenticated Account's credential store is the system boundary.
             materializeAccount: async () => ({ kind: 'environment', env: { TOKEN: 'private-credential' } }),
         });

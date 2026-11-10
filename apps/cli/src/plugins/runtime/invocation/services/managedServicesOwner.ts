@@ -1455,13 +1455,9 @@ async function materializeCredentialBindings(input: Readonly<{
         const hasRequestHeaders = purposeBindings.some(
             ({ binding }) => binding.injection.kind === 'httpHeaders',
         );
-        let initialResyncPending = true;
         input.cleanup.registerSubscription(
-            connectedAccounts.watch(purpose, () => {
-                if (initialResyncPending) {
-                    initialResyncPending = false;
-                    return;
-                }
+            connectedAccounts.watch(purpose, event => {
+                if (!event.authorityChanged) return;
                 if (hasRequestHeaders) {
                     headerLeaseRevision += 1;
                     headerLeaseStale = true;
