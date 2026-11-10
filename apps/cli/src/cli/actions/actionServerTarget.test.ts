@@ -6,6 +6,34 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { admitWidgetActionSurfaceV1 } from '@happier-dev/protocol/widgets';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
+
+it('keeps the selected saved Home credential and daemon transport scope when observation rejoins an existing Home', async () => {
+  await withTempDir('happier-action-selected-profile-', async homeDir => {
+    envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+      HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+    reloadConfiguration();
+    const { getServerProfile } = await import('@/server/serverProfiles');
+    const { resolveActionCliCredentialTarget } = await import('./actionServerTarget');
+    const canonical = await seedTestServerProfile({ id: 'env-home', homeId: 'srv_selected',
+      serverUrl: 'https://selected.example.test' });
+    await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, saved: {
+      id: 'saved', name: 'Saved Home', serverUrl: 'https://saved-endpoint.example.test', localServerUrl: 'http://127.0.0.1:3012',
+      webappUrl: canonical.serverUrl, createdAt: 1, updatedAt: 1,
+    } } }));
+    await writeCredentialsTokenOnlyForServerId('saved', { token: 'selected-credential' });
+    await writeCredentialsTokenOnlyForServerId(canonical.id, { token: 'other-profile-credential' });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json({ features: {},
+      capabilities: { serverIdentity: { serverIdentityId: 'srv_selected' } },
+      homeConnectionDescriptor: canonical.homeConnectionDescriptor })));
+    const target = await resolveActionCliCredentialTarget({ requestedServerId: 'saved', requireServerIdentityId: true,
+      deps: { readCredentialsFn: readStoredCredentials, readCredentialsForServerIdFn: readStoredCredentialsForServerId,
+        getServerProfileFn: getServerProfile } });
+    expect(target).toMatchObject({ credentials: { token: 'selected-credential' }, serverIdentityId: 'srv_selected',
+      canonicalServerUrl: canonical.serverUrl,
+      fixedServer: { serverId: 'saved', serverApiUrl: 'http://127.0.0.1:3012' } });
+  });
+});
 
 it.each(['explicit', 'ambient'] as const)('qualifies a URL-only Home from authenticated identity without inventing a connection descriptor (%s)', async selection => {
   await withTempDir('happier-action-withheld-descriptor-', async homeDir => {
@@ -16,6 +44,7 @@ it.each(['explicit', 'ambient'] as const)('qualifies a URL-only Home from authen
     const { resolveActionCliCredentialTarget } = await import('./actionServerTarget');
     const serverUrl = 'https://withheld-descriptor.example.test';
     const profile = await addServerProfile({ name: 'withheld', serverUrl, webappUrl: serverUrl, use: true });
+    reloadConfiguration();
     await writeCredentialsTokenOnlyForServerId(profile.id, { token: 'fixture-withheld-descriptor-token' });
     let observedIdentity = 'srv_withheld';
     const fetchBoundary = vi.fn<typeof fetch>(async (url, init) => {
@@ -84,7 +113,6 @@ it.each(['public', 'missing-identity', 'descriptor-mismatch', 'profile-mismatch'
 afterEach(() => {
   vi.unstubAllGlobals();
   envScope.restore();
-  vi.resetModules();
 });
 
 it('reads the daemon-established Home identity for a separately resolved CLI Action scope', async () => {

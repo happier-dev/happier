@@ -76,9 +76,7 @@ export async function resolveActionCliCredentialTarget(params: Readonly<{
       serverUrl: profile.localServerUrl ?? profile.serverUrl, token: credentials.token,
     }).catch(() => null);
     if (!observation) return { profile, serverIdentityId: undefined };
-    const serverIdentityId = observation.descriptorOutcome === 'unavailable' ? observation.serverIdentityId
-      : await resolveServerProfileHomeIdentityId(profile.id) ?? undefined;
-    return { profile: observation.profile, serverIdentityId };
+    return { profile: observation.profile, serverIdentityId: observation.serverIdentityId };
   };
   if (params.requestedServerId === null) {
     const credentials = await params.deps.readCredentialsFn();
@@ -102,9 +100,11 @@ export async function resolveActionCliCredentialTarget(params: Readonly<{
     canonicalServerUrl: profile.homeConnectionDescriptor?.canonicalServerUrl ?? profile.serverUrl,
     ...(serverIdentityId ? { serverIdentityId } : {}),
     fixedServer: {
-      serverId: profile.id,
+      // Descriptor adoption may rejoin another profile for the same Home. Keep
+      // credentials and daemon transport paired with the selected local scope.
+      serverId: selectedProfile.id,
       ...(serverIdentityId ? { serverIdentityId } : {}),
-      serverApiUrl: profile.localServerUrl ?? profile.serverUrl,
+      serverApiUrl: selectedProfile.localServerUrl ?? selectedProfile.serverUrl,
     },
   };
 }
