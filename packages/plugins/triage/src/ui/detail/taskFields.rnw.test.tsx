@@ -5,6 +5,7 @@ import { afterEach, expect, it } from 'vitest';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import type { HostPeopleDirectory, HostPeopleDirectoryRequest } from '@happier-dev/plugin-ui/hostApi';
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -35,7 +36,7 @@ afterEach(async () => { for (const fixture of mounted.splice(0)) await fixture.d
 function targetedTaskSource(source: TriageEntryRefV1['source'], kindId: string, role: 'create' | 'edit', readOnly = false,
   fields: readonly TriageTaskFieldV1[] = ['title', 'body'],
   transitions: NonNullable<TriageTaskCapabilitiesV1['transitions']> = [],
-  initialStatuses?: TriageTaskCapabilitiesV1['initialStatuses']): PluginUiTargetedContributionsV1 {
+  initialStatuses?: TriageTaskCapabilitiesV1['initialStatuses'], fieldChoices?: true): PluginUiTargetedContributionsV1 {
   const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
   const contributor = { pluginId: source.pluginId, contributionId: source.localId,
     occurrenceId: source.pluginId === 'happier.triage' ? 'triage-one' : 'source-one',
@@ -49,6 +50,7 @@ function targetedTaskSource(source: TriageEntryRefV1['source'], kindId: string, 
         kinds: [{ id: kindId, task: true, workflowSubject: 'issue', displayName: 'Issue',
           taskCapabilities: { [role === 'create' ? 'createFields' : 'editFields']: fields,
             ...(initialStatuses === undefined ? {} : { initialStatuses }),
+            ...(fieldChoices === undefined ? {} : { fieldChoices }),
             ...(transitions.length === 0 ? {} : { transitions }) } }] }),
       operations: readOnly ? [] : [role, 'get', ...(transitions.length === 0 ? [] : ['transition'])].map(operationRole => ({ point: { pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocol },
         contributor, role: operationRole, action: { pluginId: source.pluginId, localId: operationRole } })), surfaces: [],
@@ -182,9 +184,15 @@ it('opens on Happier tasks by default and preserves an explicitly chosen connect
   expect(saved).toHaveLength(1); // Choosing a draft value never writes before Create.
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
   expect(saved[1]?.initialStatusId).toBe('active-native');
-  // The place chip names where the task goes and leads back to the places.
+  // The place chip opens the places as a menu anchored to it: the draft stays where it is, nothing is pushed.
   await act(async () => { document.querySelector<HTMLElement>('[aria-label^="Where: "]')!.click(); });
-  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: `Issue, ${external.locator!.displayLabel!}` })); });
+  expect(document.querySelector('[data-testid="triage-task-draft-title"]')).not.toBeNull();
+  expect(document.body.textContent).not.toContain('Where does it belong?');
+  // The place the draft is going to is the checked one.
+  const checkedPlaces = [...document.querySelectorAll('[role="menuitemradio"][aria-checked="true"]')].map(node => node.getAttribute('aria-label'));
+  expect(checkedPlaces.length).toBeGreaterThan(0);
+  expect(checkedPlaces.filter(label => /^Issue/.test(label ?? ''))).toEqual([]);
+  await act(async () => { document.querySelector<HTMLElement>('[role="menuitemradio"][aria-label^="Issue"]')!.click(); });
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
   expect(saved[2]).toMatchObject({ source: external.instance.source, sourceInstanceId: external.instance.sourceInstanceId, kindId: 'issue' });
   expect(saved[2]).not.toHaveProperty('initialStatusId');
@@ -280,11 +288,10 @@ it.each([false, true])('submits a create through the Account aggregate without a
   act(() => { createButton.focus(); });
   await act(async () => { setSources(previous => [...previous]); });
   expect(document.activeElement).toBe(createButton);
-  // The chosen place stays named above its form and leads back to the list without losing the draft.
-  // The place chip names where the task goes and leads back to the places.
+  // The chosen place stays named above its form; its chip offers the places in place, without losing the draft.
   await act(async () => { document.querySelector<HTMLElement>('[aria-label^="Where: "]')!.click(); });
-  expect(document.querySelector('[aria-label="Title"]')).toBeNull();
-  await act(async () => { await fixture.press(await place()); });
+  expect(document.querySelector('[aria-label="Title"]')).not.toBeNull();
+  await act(async () => { document.querySelector<HTMLElement>('[role="menuitemradio"][aria-label^="Issue"]')!.click(); });
   expect(document.querySelector('[aria-label="Title"]')).not.toBeNull();
   expect((await fixture.getByRole('button', { name: 'Create task' })).state?.disabled).not.toBe(true);
   await act(async () => { setReadiness({ loaded: true, unavailableReason: 'The Account is unavailable.' }); });
@@ -329,6 +336,54 @@ it('creates with the typed properties the chosen place accepts, in one write', a
   expect(saved).toEqual([]);
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
   expect(saved.map(write => write.fields)).toEqual([{ title: 'Write the replay runbook', dueDate: '2026-11-03' }]);
+});
+
+async function mountAssigneeDraft(options: Readonly<{ internal: boolean;
+  directory?: (request: HostPeopleDirectoryRequest) => HostPeopleDirectory | null }>) {
+  const configured = options.internal ? INTERNAL_TASK_SOURCE_RECORD_V1.value.configured : createTriageSourceV1Fixture().configuredInstance;
+  const saved: ReturnType<typeof TriageCreateTaskActionInputV1Schema.parse>[] = [];
+  let fixture!: PluginUiTestkit;
+  await act(async () => {
+    fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-create-assignees', mountNonce: `assignees-${mounted.length}` },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface: defineUiSurface(() => <TriageCreateTaskFields sources={[{ sourceInstanceId: configured.instance.sourceInstanceId,
+        configured, displayLabel: 'Engineering' }]} sourcesLoaded sourcesUnavailableReason={null}
+        draft={{ title: 'Pair on the release' }} onApplied={async () => undefined} onClose={() => undefined} />),
+      surfaceContext: createSurfaceContextFixture({ accountScope: { serverId: 'fixture-home', accountId: 'viewer-account' },
+        targetedContributions: targetedTaskSource(configured.instance.source, options.internal ? 'task' : 'issue', 'create', false, ['title', 'assigneeIds'],
+          [], undefined, options.internal ? undefined : true) }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
+        ...(options.directory === undefined ? {} : { peopleDirectory: options.directory }) }),
+      handlers: { executeAction: ({ input }) => { saved.push(TriageCreateTaskActionInputV1Schema.parse(input)); return { kind: 'refused', reason: 'unavailable' }; } },
+    });
+  });
+  mounted.push(fixture);
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Issue' })); });
+  return { fixture, saved };
+}
+
+it('picks a Happier task’s assignees from the host people directory, read only once the picker opens', async () => {
+  const requests: HostPeopleDirectoryRequest[] = [];
+  const { fixture, saved } = await mountAssigneeDraft({ internal: true, directory: (request) => {
+    requests.push(request);
+    return { status: request.enabled ? 'ready' : 'idle', retry: () => undefined, people: request.enabled ? [
+      { accountId: 'viewer-account', name: 'Lee', handle: 'You' }, { accountId: 'grace-account', name: 'Grace Hopper', handle: '@grace' },
+    ] : [] };
+  } });
+  expect(requests.every(request => !request.enabled), 'nothing is read before the picker opens').toBe(true);
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Assignees, None' })); });
+  expect(requests.at(-1)).toEqual({ scope: { serverId: 'fixture-home', accountId: 'viewer-account' }, enabled: true });
+  expect(document.querySelector('[placeholder="Separate names with commas"]'), 'a person is picked, never typed').toBeNull();
+  await act(async () => { await fixture.press(await fixture.getByRole('menuitemcheckbox', { name: 'Grace Hopper \u00b7 @grace' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
+  expect(saved.map(write => write.fields)).toEqual([{ title: 'Pair on the release', assigneeIds: ['grace-account'] }]);
+});
+
+it('never offers a typed assignee field where the source has no people directory for a draft', async () => {
+  const { fixture } = await mountAssigneeDraft({ internal: false });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Assignees, None' })); });
+  expect(document.querySelector('[placeholder="Separate names with commas"]')).toBeNull();
+  await expect(fixture.getByRole('menuitem', { name: 'Assign people once the task is created' })).resolves.toBeDefined();
 });
 
 it('opens the created task before a mounted aggregate reread settles and preserves the applied write when that read fails', async () => {
@@ -556,11 +611,14 @@ it('picks assignees from the source directory once the source declares one, comm
   expect(saved.map(write => write.fields)).toEqual([{ assigneeIds: ['ada', 'grace'] }]);
 });
 
-it('keeps typed names and reads once when the source declares no directory', async () => {
-  const { fixture, reads } = await mountEditor({ fields: ['assigneeIds'], values: { assigneeIds: ['ada'] } });
-  await fixture.getByRole('button', { name: 'Assignees, ada' });
+it('never types assignees and reads once when the source declares no directory, keeping the current one removable', async () => {
+  const { fixture, reads, saved } = await mountEditor({ fields: ['assigneeIds'], values: { assigneeIds: ['ada'] } });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Assignees, ada' })); });
   expect(reads()).toBe(1);
-  await expect(fixture.queryByRole('menuitemcheckbox', { name: 'grace' })).resolves.toBeUndefined();
+  expect(document.querySelector('[placeholder="Separate names with commas"]')).toBeNull();
+  await expect(fixture.getByRole('menuitem', { name: 'This source\u2019s people can\u2019t be listed here' })).resolves.toBeDefined();
+  await act(async () => { await fixture.press(await fixture.getByRole('menuitemcheckbox', { name: 'ada' })); });
+  expect(saved.map(write => write.fields)).toEqual([{ assigneeIds: [] }]);
 });
 
 it('names the viewing Account in Assignees through the Account display owner and preserves native edit ids', async () => {
@@ -571,13 +629,8 @@ it('names the viewing Account in Assignees through the Account display owner and
   expect(document.querySelector('[data-testid="triage-task-properties.assigneeIds"]')?.textContent).not.toContain(accountId);
   expect(reads()).toBe(1);
   await act(async () => { await fixture.press(assignees); });
-  const input = [...document.querySelectorAll<HTMLInputElement>('input')].at(-1)!;
-  expect(input.value).toBe(`${accountId}, octocat`);
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, accountId);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Save' })); });
+  expect(document.querySelector('[placeholder="Separate names with commas"]')).toBeNull();
+  await act(async () => { await fixture.press(await fixture.getByRole('menuitemcheckbox', { name: 'octocat' })); });
   expect(saved.map(write => write.fields)).toEqual([{ assigneeIds: [accountId] }]);
 });
 

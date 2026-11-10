@@ -43,6 +43,13 @@ describe('task properties with a source directory', () => {
     expect(commits).toEqual([{ assigneeIds: ['gone-user', 'ada'] }]);
   });
 
+  it('never offers typed assignees: without a directory the picker keeps the current people and says why it lists no others', () => {
+    const items = projectTriageTaskPropertiesV1({ ...base, assigneeLabels: new Map([['gone-user', 'Grace Hopper']]) });
+    const editor = items.find(item => item.id === 'assigneeIds')!.editor!;
+    expect(editor).toMatchObject({ kind: 'choices', value: ['gone-user'], directory: { status: 'unavailable' } });
+    expect(editor.kind === 'choices' && editor.choices).toEqual([{ id: 'gone-user', label: 'Grace Hopper', person: 'Grace Hopper' }]);
+  });
+
   it('keeps typed names where the source offers no directory for that field', () => {
     const items = projectTriageTaskPropertiesV1({ ...base, fieldChoices: { assigneeIds: [{ id: 'ada', label: 'ada' }] } });
     expect(items.find(item => item.id === 'labelIds')!.editor!.kind).toBe('list');

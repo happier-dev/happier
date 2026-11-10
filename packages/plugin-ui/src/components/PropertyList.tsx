@@ -14,6 +14,7 @@ import { Text } from './Text.js';
 import { Badge } from './Foundation.js';
 import type { HappierMarkColor } from '../presentation/semantics.js';
 import { usePropertyCommit } from './propertyCommit.js';
+import { HappierTextActionEdgeContext } from '../presentation/interaction/textActionEdge.js';
 import { isHappierPageRowNarrow, readHappierVisibleLayoutWidth } from '../presentation/layout/pageMetrics.js';
 import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js';
 
@@ -25,6 +26,33 @@ export type PropertyChoice = Readonly<{
   subtitle?: string;
   /** This choice is a person: their name, drawn as an `Avatar` beside the label. */
   person?: string;
+  /** A short quiet fact at the row's end (a designation such as "#877"). */
+  meta?: string;
+}>;
+
+/** @internal One choice as a picker row: its words, supporting identity, person and trailing fact. */
+export function propertyChoiceMenuItem(choice: PropertyChoice): MenuItem {
+  return {
+    id: choice.id,
+    label: choice.label,
+    ...(choice.subtitle === undefined ? {} : { subtitle: choice.subtitle }),
+    ...(choice.person === undefined ? {} : { person: choice.person }),
+    ...(choice.meta === undefined ? {} : { meta: choice.meta }),
+  };
+}
+
+/**
+ * Choices read from a directory rather than known up front (a people directory). The picker asks for it when it
+ * opens, says while it is read, and says in one line when it cannot be read, with one retry when there is one.
+ */
+export type PropertyChoiceDirectory = Readonly<{
+  status: 'loading' | 'ready' | 'unavailable';
+  /** The owner reads on demand: called each time the picker opens. */
+  onOpen?(): void;
+  /** Why no list can be shown, in one line. Defaults to "This list couldn't be loaded". */
+  unavailableLabel?: string;
+  /** Read it again; absent when there is nothing to retry. */
+  retry?(): void;
 }>;
 
 /**
@@ -79,6 +107,8 @@ export type PropertyEditor =
       searchable?: boolean;
       /** Say the chosen names as chips instead of joined words (labels). */
       chips?: boolean;
+      /** The choices are read from a directory (people): its state is said in the picker. */
+      directory?: PropertyChoiceDirectory;
       onCommit(next: readonly string[]): unknown;
     }>;
 
@@ -118,6 +148,8 @@ export type PropertyListProps = Readonly<{
 /** The label column: wide enough for the common property names ("Due date", "Blocked by"), so values share one edge. */
 const PROPERTY_LABEL_WIDTH_PX = 96;
 const CLEAR_ID = '\u0000clear';
+const DIRECTORY_STATUS_ID = '\u0000directory';
+const DIRECTORY_RETRY_ID = '\u0000retry';
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function validCalendarDay(text: string): boolean {
@@ -182,7 +214,9 @@ export function PropertyList(props: PropertyListProps): ReactElement {
               // Decoration: the value's words already name it, so the mark is not announced a second time.
               <View aria-hidden importantForAccessibility="no-hide-descendants">{item.valueLeading}</View>
             )}
-            <View style={{ flexShrink: 1, minWidth: 0 }}>
+            {/* A value that opens its picker is a quiet button whose words stand on the value edge (its hover slab
+                reaches into the gutter), so editable and read-only values read as one column. */}
+            <View style={{ flexShrink: 1, minWidth: 0 }}><HappierTextActionEdgeContext.Provider value="start">
               <PropertyValue
                 item={item}
                 disabled={props.disabled === true || item.busy === true}
@@ -190,6 +224,7 @@ export function PropertyList(props: PropertyListProps): ReactElement {
                   ? {}
                   : { testID: `${props.testID}.${item.id}.value` })}
               />
+              </HappierTextActionEdgeContext.Provider>
             </View>
           </View>
         </View>
@@ -272,12 +307,17 @@ function PropertyChoiceMenu(
   );
   const clearable = item.clearable !== false && selected.size > 0;
   const radioGroupId = 'property';
+  const directory = editor.kind === 'choices' ? editor.directory : undefined;
+  // A directory's state is a line of the picker itself, never a second surface; picking stays the only way in.
+  const directoryItems: MenuItem[] = directory === undefined || directory.status === 'ready' ? []
+    : directory.status === 'loading'
+      ? [{ id: DIRECTORY_STATUS_ID, label: translate('happier.plugin-ui.propertyList.loading', 'Loading\u2026'), disabled: true }]
+      : [{ id: DIRECTORY_STATUS_ID, label: directory.unavailableLabel
+          ?? translate('happier.plugin-ui.propertyList.unavailable', 'This list couldn\u2019t be loaded'), disabled: true },
+        ...(directory.retry === undefined ? [] : [{ id: DIRECTORY_RETRY_ID, label: translate('happier.plugin-ui.propertyList.retry', 'Try again') }])];
   const items: MenuItem[] = [
     ...editor.choices.map((choice): MenuItem => ({
-      id: choice.id,
-      label: choice.label,
-      ...(choice.subtitle === undefined ? {} : { subtitle: choice.subtitle }),
-      ...(choice.person === undefined ? {} : { person: choice.person }),
+      ...propertyChoiceMenuItem(choice),
       ...(multiple
         ? { kind: 'checkbox' as const, checked: selected.has(choice.id) }
         : { kind: 'radio' as const, radioGroupId }),
@@ -290,6 +330,7 @@ function PropertyChoiceMenu(
           },
         ]
       : []),
+    ...directoryItems,
   ];
   return (
     <Stack gap="small"><Menu
@@ -298,12 +339,15 @@ function PropertyChoiceMenu(
         if (next && (props.disabled || write.busy)) return;
         setQuery('');
         setOpen(next);
+        if (next) directory?.onOpen?.();
       }}
       disabled={props.disabled || write.busy}
       trigger={props.shown}
       triggerTextTone={props.toneOfValue}
+      triggerTextVariant="body"
       {...(editor.kind === 'choices' && editor.chips === true && editor.value.length > 0
-        ? { triggerContent: <PropertyNameChips names={editor.value.map((id) => editor.choices.find((choice) => choice.id === id)?.label ?? id)} /> } : {})}
+        ? { triggerContent: <PropertyNameChips names={editor.value.map((id) => editor.choices.find((choice) => choice.id === id)?.label ?? id)} /> }
+        : { triggerAppearance: 'status' as const })}
       triggerAccessibilityLabel={props.triggerAccessibilityLabel}
       sheet={{ title: item.label }}
       items={items}
@@ -321,6 +365,8 @@ function PropertyChoiceMenu(
             ],
           })}
       onSelect={(id) => {
+        if (id === DIRECTORY_STATUS_ID) return;
+        if (id === DIRECTORY_RETRY_ID) { directory?.retry?.(); return; }
         if (editor.kind === 'choices') {
           const next = selected.has(id)
             ? editor.value.filter((value) => value !== id)
@@ -439,8 +485,10 @@ function PropertyFieldPopover(
       disabled={props.disabled}
       trigger={props.shown}
       triggerTextTone={props.toneOfValue}
+      triggerTextVariant="body"
       {...(editor.kind === 'list' && (editor.tones !== undefined || editor.chips === true) && editor.value.length > 0
-        ? { triggerContent: <PropertyNameChips names={editor.value} {...(editor.tones === undefined ? {} : { tones: editor.tones })} /> } : {})}
+        ? { triggerContent: <PropertyNameChips names={editor.value} {...(editor.tones === undefined ? {} : { tones: editor.tones })} /> }
+        : { triggerAppearance: 'status' as const })}
       triggerAccessibilityLabel={props.triggerAccessibilityLabel}
       contentAccessibilityLabel={item.label}
       floatingRole="panel"

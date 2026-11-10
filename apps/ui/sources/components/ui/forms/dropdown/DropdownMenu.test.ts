@@ -51,7 +51,8 @@ vi.mock('@expo/vector-icons', () => ({
 
 /** The device the real Popover reads: it presents `phonePresentation: 'sheet'` as a sheet only on a phone. */
 const popoverDevice = vi.hoisted(() => ({ phone: false }));
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async () => ({
+    ...await import('@/components/ui/popover/modalAwareFloatingPopoverPortalOptions'),
     Popover: (props: any) => {
         const React = require('react');
         return React.createElement(
@@ -660,7 +661,7 @@ describe('DropdownMenu', () => {
         popoverDevice.phone = false;
     });
 
-    it('presents a menu whose rows open submenus as a phone panel, so its submenus push inside it rather than squeeze beside it', async () => {
+    it('presents plain menus and menus with submenus as phone panels', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const render = (items: readonly unknown[]) => renderScreen(React.createElement(DropdownMenu as any, {
             open: true, onOpenChange: vi.fn(), items, onSelect: vi.fn(), trigger: React.createElement('View'),
@@ -680,7 +681,7 @@ describe('DropdownMenu', () => {
         act(() => { withSubmenu.tree.unmount(); });
 
         const plain = await render([{ id: 'status', title: 'Status words' }]);
-        expect(plain.findAllByType('Popover' as any)[0]?.props?.phonePresentation).toBeUndefined();
+        expect(plain.findAllByType('Popover' as any)[0]?.props?.phonePresentation).toBe('panel');
     });
 
     describe('submenu hover intent', () => {
@@ -774,21 +775,24 @@ describe('DropdownMenu', () => {
         });
     });
 
-    it('reveals the swatch highlight only once the person hovers or uses the keyboard', async () => {
+    it.each([
+        ['swatches', [{ id: 'blue', title: 'Blue', swatch: { color: '#0000FF' } }, { id: 'red', title: 'Red', swatch: { color: '#FF0000' } }]],
+        ['rows', [{ id: 'pin', title: 'Pin' }, { id: 'select', title: 'Select' }]],
+    ])('reveals the highlight of %s only once the person hovers or uses the keyboard', async (_kind, items) => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const screen = await renderScreen(React.createElement(DropdownMenu, {
             open: true,
             onOpenChange: vi.fn(),
-            items: [{ id: 'blue', title: 'Blue', swatch: { color: '#0000FF' } }, { id: 'red', title: 'Red', swatch: { color: '#FF0000' } }],
+            items,
             onSelect: vi.fn(),
             trigger: React.createElement('View'),
         }));
         const results = () => screen.findByType('SelectableMenuResults' as any);
-        expect(results()?.props?.swatchHighlightVisible).toBe(false);
+        expect(results()?.props?.highlightVisible).toBe(false);
         act(() => {
             results()?.props?.onSelectionChange?.(1);
         });
-        expect(results()?.props?.swatchHighlightVisible).toBe(true);
+        expect(results()?.props?.highlightVisible).toBe(true);
     });
 
     it('keeps the menus open for an item that finishes its own work, and announces a submenu opening', async () => {

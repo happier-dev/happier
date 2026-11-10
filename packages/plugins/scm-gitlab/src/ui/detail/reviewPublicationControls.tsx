@@ -3,6 +3,7 @@ import {
   Banner,
   Button,
   Form,
+  MarkdownEditor,
   Row,
   Stack,
   Status,
@@ -485,11 +486,13 @@ export function GitlabMergeRequestPublicationControls({
           if (next !== undefined) setVerdict(next);
         }}
       />
-      <Form.TextField
-        label={text('plugins.gitlab.ui.publication.summary', 'Review summary')}
-        value={summary}
-        onChange={setSummary}
-      />
+      <Form.Field label={text('plugins.gitlab.ui.publication.summary', 'Review summary')}>
+        <MarkdownEditor
+          accessibilityLabel={text('plugins.gitlab.ui.publication.summary', 'Review summary')}
+          value={summary}
+          onChange={setSummary}
+        />
+      </Form.Field>
       {verdictNeedsBody ? (
         <Text
           variant="micro"

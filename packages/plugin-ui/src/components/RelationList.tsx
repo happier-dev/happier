@@ -7,7 +7,7 @@ import { Row, Stack } from './Layout.js';
 import { Item, ItemGroup } from './List.js';
 import { Menu } from './Overlay.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
-import type { PropertyChoice } from './PropertyList.js';
+import { propertyChoiceMenuItem, type PropertyChoice } from './PropertyList.js';
 import { TaskStatusGlyph, type TaskStatusCategory } from './TaskStatusGlyph.js';
 import { Text } from './Text.js';
 
@@ -67,12 +67,13 @@ export function RelationList(props: RelationListProps): ReactElement {
   const translate = usePluginTranslation();
   const theme = usePluginTheme();
   const [adding, setAdding] = useState(false);
+  const [query, setQuery] = useState('');
   const add = props.add;
   const action =
     add === undefined ? undefined : (
       <Menu
         open={adding && props.disabled !== true}
-        onOpenChange={(open) => setAdding(open && props.disabled !== true)}
+        onOpenChange={(open) => { setQuery(''); setAdding(open && props.disabled !== true); }}
         disabled={props.disabled === true || add.choices.length === 0}
         trigger={add.label}
         triggerContent={
@@ -83,13 +84,9 @@ export function RelationList(props: RelationListProps): ReactElement {
         }
         triggerAccessibilityLabel={add.label}
         sheet={{ title: add.label }}
-        items={add.choices.map((choice) => ({
-          id: choice.id,
-          label: choice.label,
-          ...(choice.subtitle === undefined
-            ? {}
-            : { subtitle: choice.subtitle }),
-        }))}
+        items={add.choices.map(propertyChoiceMenuItem)}
+        // The same picker as the Parent and Blocked by values: find an entry by its title or designation.
+        search={{ value: query, onValueChange: setQuery }}
         onSelect={(id) => {
           void add.onAdd(id);
         }}

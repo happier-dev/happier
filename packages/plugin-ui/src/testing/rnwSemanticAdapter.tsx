@@ -15,6 +15,7 @@ import type {
 } from '@happier-dev/plugin-sdk/testing';
 import type { RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import type { ScmFileViewedRequest, ScmFileViewedSource } from '@happier-dev/plugin-sdk/scm';
+import type { HostPeopleDirectory, HostPeopleDirectoryRequest } from '../hostApi/peopleDirectory.public.js';
 import type { HappierFocusable } from '../presentation/portableTypes.js';
 import type { PluginUiEphemeralSharedScope } from '../hostApi/ephemeralSharedScope.public.js';
 import type { FindSurfaceRegistrationHost } from '../presentation/find/useFindSurfaceRegistration.js';
@@ -59,6 +60,11 @@ export type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
    * this request. Omitted, the surface has no Viewed source, as in a host without one.
    */
   scmFileViewed?: (request: ScmFileViewedRequest) => ScmFileViewedSource | null;
+  /**
+   * The host's collaboration people directory (`useHostPeopleDirectory`), called as the same-realm hook would be.
+   * Omitted, the surface has none, as in a host without one.
+   */
+  peopleDirectory?: (request: HostPeopleDirectoryRequest) => HostPeopleDirectory | null;
   /**
    * Present `ChangedFilesReview` the way a same-realm host does, as a semantic stand-in: a `group` named by its
    * label listing every file, each an "Open <path>" button that reads that one file through `loadDiff` and shows
@@ -157,6 +163,7 @@ function createSemanticPresentationHost(input: Readonly<{
   return Object.freeze({
     ...(input.options.find === undefined ? {} : { find: input.options.find }),
     ...(input.options.scmFileViewed === undefined ? {} : { useScmFileViewed: input.options.scmFileViewed }),
+    ...(input.options.peopleDirectory === undefined ? {} : { usePeopleDirectory: input.options.peopleDirectory }),
     ...(input.options.changedFilesReview === true ? { renderChangedFilesReview: (request: HappierChangedFilesReviewRequest) => <SemanticChangedFilesReview request={request} /> } : {}),
     ...(input.detailsPane === undefined ? {} : {
       detailsPane: input.detailsPane,
@@ -570,6 +577,7 @@ export function createPluginUiRnwSemanticSurfaceAdapter(
       const paneHeader = options.paneHeader === true ? createSemanticPaneHeader() : undefined;
       const presentationHost = options.targetedSurfaces === undefined
         && options.scmFileViewed === undefined
+        && options.peopleDirectory === undefined
         && options.changedFilesReview !== true
         && options.find === undefined
         && options.physicalFocus === undefined

@@ -37,7 +37,7 @@ import { HappierTextField } from '../presentation/form/Fields.js';
 import { resolveHappierUiPalette, useOptionalHappierUiPalette, useOptionalHappierUiTypography } from '../environment/context.js';
 import { resolveHappierTextStepStyle } from '../presentation/layout/pageText.js';
 import { resolveHappierIconSize } from '../presentation/content/Icon.js';
-import { useButtonFace } from './Button.js';
+import { useButtonFace, usePluginIconButtonColors } from './Button.js';
 import { ComposerStatusBadge, type ComposerStatusBadgeProps } from './ComposerStatusBadge.js';
 import { Icon, PluginUiIconGlyph, type IconName } from './Icon.js';
 import { TaskStatusGlyph, type TaskStatusCategory } from './TaskStatusGlyph.js';
@@ -46,6 +46,7 @@ import { Surface } from './Surface.js';
 import type { HappierFloatingRole } from '../presentation/layout/Surface.js';
 import { SURFACE_PADDING_BY_SIZE } from './surfacePadding.js';
 import { HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL } from '../presentation/layout/pageChrome.js';
+import { COLLECTION_ADD_MENU_SEARCH_THRESHOLD } from '../presentation/collection/CollectionAddMenu.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 
 export type PopoverProps = Readonly<{
@@ -61,7 +62,7 @@ export type PopoverProps = Readonly<{
   trigger: string;
   /** Bounded semantic typography for the text inside Popover's owned trigger. */
   triggerTextVariant?: HappierTextVariant;
-  /** Bounded semantic colour for the text inside Popover's owned trigger. */
+  /** Bounded semantic colour for the text inside Popover's owned trigger, or the glyph of an icon-only one. */
   triggerTextTone?: HappierTone;
   /**
    * `text` (the default) draws the trigger as plain text. `control` draws it as
@@ -106,6 +107,11 @@ export type PopoverProps = Readonly<{
    * decoration; `triggerAccessibilityLabel` names the control ("Change status, In Review").
    */
   triggerTaskStatus?: TaskStatusCategory;
+  /**
+   * An identity mark (a source's brand mark) leading a labelled appearance's words, as a `Button`'s icon does
+   * ("[mark] Happier tasks"). Decoration: `trigger` and `triggerAccessibilityLabel` name the control.
+   */
+  triggerMark?: ReactNode;
   triggerAccessibilityLabel: string;
   /** `status` only: the quieter clause after the words, on the same line ("1 approval needed"). */
   triggerDetail?: string;
@@ -202,6 +208,7 @@ function PopoverPresentation({
   triggerDisclosure = false,
   triggerIcon,
   triggerTaskStatus,
+  triggerMark,
   triggerAccessibilityLabel,
   triggerDetail,
   triggerMarks,
@@ -256,13 +263,12 @@ function PopoverPresentation({
     : triggerAppearance === 'primary' ? primaryFace
       : triggerAppearance === 'control' ? controlFace
         : statusTrigger ? statusFace : null;
+  const iconColors = usePluginIconButtonColors();
   const iconChrome = (state: HappierPressableStyleState) => resolveHappierIconButtonChrome({
     size: well ? HAPPIER_ICON_BUTTON_WELL_SIZE : HAPPIER_ICON_BUTTON_SIZE, variant: well ? 'well' : 'plain',
     selected: state.selected,
     hovered: state.hovered, pressed: state.pressed, focused: state.focused, disabled: state.disabled,
-    colors: { background: theme.colors.control, border: theme.colors.border,
-      hover: theme.colors.control, pressed: theme.colors.control,
-      selected: theme.colors.control, focus: theme.colors.focus },
+    colors: iconColors,
   });
   const hasContent = renderContent !== undefined || children !== undefined;
   const isMenuPresentation = presentation !== 'popover';
@@ -366,7 +372,7 @@ function PopoverPresentation({
           <View style={iconChrome(state).surface}>
             {triggerTaskStatus !== undefined
               ? <TaskStatusGlyph category={triggerTaskStatus} />
-              : triggerIcon === undefined ? null : <Icon name={triggerIcon} size="medium" tone="neutral" />}
+              : triggerIcon === undefined ? null : <Icon name={triggerIcon} size="medium" tone={triggerTextTone} />}
             {well && triggerCount !== undefined && triggerCount > 0 ? (
               <HappierBadge
                 shape="capsule"
@@ -404,6 +410,7 @@ function PopoverPresentation({
         }) : buttonFace ? (state) => buttonFace.renderContent(state, {
           // The glyph in the button's own ink, at a Button's leading-icon size.
           ...(triggerTaskStatus !== undefined ? { icon: <TaskStatusGlyph category={triggerTaskStatus} /> }
+            : triggerMark !== undefined ? { icon: triggerMark }
             : triggerIcon === undefined ? {} : {
               icon: <PluginUiIconGlyph name={triggerIcon} size={resolveHappierIconSize('small')} color={buttonFace.foreground} />,
             }),
@@ -461,6 +468,8 @@ type MenuItemBase = Readonly<{
   person?: string;
   /** Supporting identity or consequence, kept separate from the action label. */
   subtitle?: string;
+  /** A short quiet fact at the row's end (a designation such as "#877"), part of the row's accessible name. */
+  meta?: string;
   disabled?: boolean;
 }>;
 
@@ -549,8 +558,11 @@ export type MenuProps = Omit<PopoverProps, 'children' | 'floatingRole'> & MenuCo
   radioGroups?: readonly MenuRadioGroup[];
   /** Draws each named group's heading above its rows (a Filters menu of labelled checkbox groups). */
   showGroupLabels?: boolean;
-  /** A controlled query that finds rows by label and supporting text; absent menus have no search field. */
-  search?: Readonly<{ value: string; onValueChange(value: string): void }>;
+  /**
+   * A controlled query that finds rows by label and supporting text; absent menus have no search field. `when: 'long'`
+   * shows the field only once the menu's rows no longer fit at a glance (the shared add-menu threshold).
+   */
+  search?: Readonly<{ value: string; onValueChange(value: string): void; when?: 'always' | 'long' }>;
   onSelect(id: string, selection?: Pick<PluginUiPopoverContentControls, 'anchorRef'>): void;
 }>;
 
@@ -686,7 +698,7 @@ function MenuRows({
           : item.kind === 'radio'
             ? 'menuitemradio'
             : undefined}
-        accessibilityLabel={item.subtitle ? `${item.label} · ${item.subtitle}` : item.label}
+        accessibilityLabel={[item.label, item.subtitle, item.meta].filter(Boolean).join(' · ')}
         checked={checked}
         highlighted={restingHighlight && index === selectedIndex}
         disabled={item.disabled}
@@ -732,6 +744,7 @@ function MenuRows({
           <HappierText tone={item.destructive ? 'danger' : 'neutral'} style={labelTextStyle}>{item.label}</HappierText>
           {item.subtitle ? <HappierText tone="secondary" style={subtitleTextStyle}>{item.subtitle}</HappierText> : null}
         </View>
+        {item.meta ? <HappierText tone="secondary" style={subtitleTextStyle} numberOfLines={1}>{item.meta}</HappierText> : null}
         {/* The checked state is drawn, not only announced. */}
         {checked === true ? <Icon name="check" size="small" tone="accent" /> : null}
       </HappierPressable>
@@ -812,7 +825,7 @@ function MenuPresentation({
   groups = [],
   radioGroups = [],
   showGroupLabels = false,
-  search,
+  search: requestedSearch,
   onSelect,
   onOpenChange,
   kind,
@@ -825,8 +838,8 @@ function MenuPresentation({
     ? 'bottom'
     : popover.placement;
   const triggerMode: OverlayTriggerMode = kind === 'context' ? 'context' : 'toggle';
-  const hasSubmenus = popover.open && (ungroupedItems.some(item => item.submenu !== undefined)
-    || groups.some(group => group.items.some(item => item.submenu !== undefined)));
+  const rowCount = ungroupedItems.length + groups.reduce((count, group) => count + group.items.length, 0);
+  const search = requestedSearch?.when === 'long' && rowCount <= COLLECTION_ADD_MENU_SEARCH_THRESHOLD ? undefined : requestedSearch;
 
   return (
     <PopoverPresentation
@@ -835,8 +848,10 @@ function MenuPresentation({
       onOpenChange={onOpenChange}
       autoFocusOnOpen
       triggerMode={triggerMode}
-      {...(hasSubmenus ? { menu: { items: ungroupedItems, groups, radioGroups, showGroupLabels, search, onSelect,
-        accessibilityLabel: popover.triggerAccessibilityLabel, keepOpen: sheet !== undefined } } : {})}
+      // One menu owner: a host draws every menu (its material, rows, search, keyboard and phone panel) from these
+      // semantic rows. The package's own rows below are only for a host without a menu.
+      menu={{ items: ungroupedItems, groups, radioGroups, showGroupLabels, search, onSelect,
+        accessibilityLabel: popover.triggerAccessibilityLabel, keepOpen: sheet !== undefined }}
       presentation={kind}
       initialFocusRef={initialFocusRef}
       {...(sheet === undefined ? {} : { sheet })}

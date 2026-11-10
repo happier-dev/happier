@@ -412,6 +412,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: MENU_ROW_METRICS.iconGlyphSizePx,
         height: MENU_ROW_METRICS.iconGlyphSizePx,
     },
+    trailingWithCheck: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+    },
     // A field's option list (`rowKind="item"`) holds its box in the field's 32pt leading column.
     itemCheckBoxFrame: {
         width: 32,
@@ -502,10 +507,10 @@ type SelectableMenuResultsProps = {
     /** Shared DropdownMenu keyboard policy, delegated through each focusable row. */
     onKeyDown?: (event: unknown) => void;
     /**
-     * Swatches draw the highlight only once the person hovers or uses the keyboard: on a pointer open
-     * the first swatch's highlight would read as a second selection beside the real ring.
+     * Whether the highlighted row or swatch draws its highlight (default true). A menu opened by a pointer draws
+     * none until the person hovers or uses the keyboard: a resting highlight on the first row reads as a choice.
      */
-    swatchHighlightVisible?: boolean;
+    highlightVisible?: boolean;
     /** Owner-supplied map so the menu can open a submenu from the keyboard at the anchor a pointer uses. */
     submenuAnchorRegistry?: Map<string, React.RefObject<unknown>>;
     /**
@@ -583,24 +588,24 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
         const measuredDeltas = new Float64Array(rowCount + 1);
         const categoryStarts: number[] = [];
         const checkRoles: CheckRole[] = [];
+        // The leading column is reserved per section (owner 2026-11-10): a section where only some rows carry an icon
+        // keeps one text edge, its others holding the same empty slot; a section with none starts at the text edge.
+        const leadingSlots: boolean[] = [];
         const knownHeights = rowHeightsRef.current;
         let hasSwatch = false;
         let index = 0;
         for (const category of props.categories) {
             categoryStarts.push(index);
-        // The leading column is reserved per section (owner 2026-11-10): a section where only some rows carry an icon
-        // keeps one text edge, its others holding the same empty slot; a section with none starts at the text edge.
-        const leadingSlots: boolean[] = [];
             let checkedCount = 0;
             let multiSelect = false;
+            let leadingSlot = false;
             for (const item of category.items) {
+                if (item.left != null || item.multiSelect === true) leadingSlot = true;
                 if (item.checked !== undefined) checkedCount++;
                 if (item.multiSelect === true) multiSelect = true;
                 if (item.swatch) hasSwatch = true;
                 const estimate = item.subtitle || item.subtitleNode ? MENU_ROW_WITH_SUBTITLE_ESTIMATE_PX : MENU_ROW_ESTIMATE_PX;
-            let leadingSlot = false;
                 estimatedTops[index + 1] = estimatedTops[index]! + estimate;
-                if (item.left != null || item.multiSelect === true) leadingSlot = true;
                 const known = knownHeights.size > 0 ? knownHeights.get(String(item.id)) : undefined;
                 if (known !== undefined) {
                     measured[index] = known;
@@ -611,12 +616,12 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
             // Checked rows among siblings are one choice (radios) unless they say they are independent
             // (multi-select); a lone checked row is an on/off toggle.
             checkRoles.push(checkedCount > 1 && !multiSelect ? 'radio' : 'checkbox');
+            leadingSlots.push(leadingSlot);
         }
         categoryStarts.push(index);
         return { rowCount, categoryStarts, checkRoles, leadingSlots, hasSwatch, estimatedTops, measured, measuredDeltas };
     }, [allItems.length, props.categories]);
     const recordRowHeight = React.useCallback((structure: MenuRowStructure, index: number, itemId: string, height: unknown) => {
-            leadingSlots.push(leadingSlot);
         if (typeof height !== 'number' || !(height > 0)) return;
         const previous = structure.measured[index] || structure.estimatedTops[index + 1]! - structure.estimatedTops[index]!;
         if (structure.measured[index] === height) return;
@@ -759,12 +764,16 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
 
                 const categoryStartIndex = rowStructure.categoryStarts[categoryIndex]!;
                 const checkRole = rowStructure.checkRoles[categoryIndex]!;
+                const reservesLeadingSlot = rowStructure.leadingSlots[categoryIndex] === true;
                 const renderEntry = (listedItem: SelectableMenuItem, itemIndex: number): RenderedMenuEntry => {
                     const sourceIndex = props.itemSource?.indexById.get(String(listedItem.id));
                     const item = (sourceIndex === undefined ? undefined : props.itemSource?.getItem(sourceIndex)) ?? listedItem;
-                    const isSelected = itemIndex === props.selectedIndex;
-                    const right = item.right ?? (item.checked === true && item.multiSelect !== true ? checkMark : null);
-                const reservesLeadingSlot = rowStructure.leadingSlots[categoryIndex] === true;
+                    const isSelected = itemIndex === props.selectedIndex && props.highlightVisible !== false;
+                    const checked = item.checked === true && item.multiSelect !== true ? checkMark : null;
+                    // A row's trailing fact (a designation) and its check sit together; the check never displaces it.
+                    const right = item.right != null && checked !== null
+                        ? <View style={styles.trailingWithCheck}>{item.right}{checked}</View>
+                        : item.right ?? checked;
                     const left = item.left
                         ?? (item.multiSelect === true ? <MenuCheckBox checked={item.checked === true} rowKind={rowKind} /> : null)
                         ?? (reservesLeadingSlot ? <View style={styles.leadingSlot} /> : null);
@@ -830,11 +839,11 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
                                         style={({ pressed }) => [styles.swatchHit, pressed ? styles.swatchHitPressed : null]}
                                     >
                                             <View
-                                                testID={isSelected && props.swatchHighlightVisible ? `${optionTestID}:highlight` : undefined}
+                                                testID={isSelected ? `${optionTestID}:highlight` : undefined}
                                                 style={[
                                                     styles.swatchHighlight,
                                                     // The menu row's own highlight: an ink fill, never an outline.
-                                                    isSelected && props.swatchHighlightVisible ? { backgroundColor: paintColor(theme.colors.surface.selected) } : null,
+                                                    isSelected ? { backgroundColor: paintColor(theme.colors.surface.selected) } : null,
                                                 ]}
                                             >
                                                 <View

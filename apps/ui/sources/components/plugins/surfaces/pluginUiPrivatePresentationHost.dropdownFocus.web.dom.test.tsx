@@ -152,6 +152,24 @@ function SubmenuHarness({ component: MenuComponent = Menu, onSelect }: Readonly<
     </PluginUiProvider>;
 }
 
+// Long enough that the menu offers its search field.
+const PLAIN_MENU_ITEMS = ['Pin', 'Open in new tab', 'Open to the right', 'Open below', 'Move', 'Mention in composer',
+    'Copy link', 'Rename', 'Select'].map(label => ({ id: label === 'Pin' ? 'pin' : label === 'Select' ? 'select' : label, label }));
+
+function PlainMenuHarness({ component: MenuComponent, onSelect }: Readonly<{ component: typeof Menu; onSelect: (id: string) => void }>) {
+    const [open, setOpen] = React.useState(false);
+    const [query, setQuery] = React.useState('');
+    const context = React.useMemo(() => createSurfaceContext(), []);
+    const host = React.useMemo(() => createPluginUiPrivatePresentationHost(), []);
+    return <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <PluginUiPresentationHostProviderInternal host={host}>
+            <MenuComponent open={open} onOpenChange={setOpen} trigger="More" triggerAccessibilityLabel="More actions"
+                testID="plugin-plain" items={PLAIN_MENU_ITEMS}
+                search={{ value: query, onValueChange: setQuery }} onSelect={onSelect} />
+        </PluginUiPresentationHostProviderInternal>
+    </PluginUiProvider>;
+}
+
 // The author fixture uses only public components; this harness supplies the real
 // binding that an installed same-realm surface receives.
 function AddMenuHarness(props: CollectionAddMenuExampleProps & Readonly<{ withoutPresenter?: boolean }>) {
@@ -275,6 +293,28 @@ describe('plugin Dropdown through the private presentation host (real RNW)', () 
         await act(async () => { document.querySelector<HTMLElement>('[role="button"][aria-label="Work"]')!.click(); });
         await vi.waitFor(() => expect(onSelect).toHaveBeenCalledWith('work', expect.anything()));
         expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it.each([Menu, Dropdown, ContextMenu])('draws a plain public menu with the core menu rows and search, not a package surface (%s)', async (component) => {
+        const onSelect = vi.fn();
+        const trigger = await renderDropdown(<PlainMenuHarness component={component} onSelect={onSelect} />, 'plugin-plain');
+        await act(async () => { dispatchPointerPress(trigger); await waitForPopoverCommit(); });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="dropdown-option-pin"]')).not.toBeNull());
+        // One menu owner: the package's own rows (role=menu / menuitem) are never drawn under a host.
+        expect(document.querySelector('[role="menuitem"]')).toBeNull();
+        const search = document.querySelector<HTMLInputElement>('input[placeholder="Search"]');
+        expect(search).not.toBeNull();
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            setter?.call(search, 'sel');
+            search?.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="dropdown-option-pin"]')).toBeNull());
+        await act(async () => { document.querySelector<HTMLElement>('[data-testid="dropdown-option-select"]')!.click(); });
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(onSelect).toHaveBeenCalledWith('select', expect.anything());
+        });
     });
 
     it('pushes public submenu choices inside one phone menu and Back returns to the parent', async () => {
@@ -402,7 +442,7 @@ describe('plugin Dropdown through the private presentation host (real RNW)', () 
             await waitForPopoverCommit();
         });
 
-        const pointerOpenedItem = document.querySelector<HTMLButtonElement>('[role="menuitem"]');
+        const pointerOpenedItem = document.querySelector<HTMLElement>('[data-testid="dropdown-option-inspect"]');
         expect(pointerOpenedItem).not.toBeNull();
         expect(trigger.getAttribute('aria-expanded')).toBe('true');
         // Initial focus is owned and separately covered by the incumbent
@@ -428,6 +468,6 @@ describe('plugin Dropdown through the private presentation host (real RNW)', () 
         });
 
         expect(trigger.getAttribute('aria-expanded')).toBe('true');
-        expect(document.querySelector('[role="menu"]')).not.toBeNull();
+        expect(document.querySelector('[data-testid="dropdown-option-inspect"]')).not.toBeNull();
     });
 });

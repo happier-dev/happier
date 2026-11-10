@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type {
   PropertyChoice,
+  PropertyChoiceDirectory,
   PropertyListItem,
   PropertyNameTones,
   RelationListEntry,
@@ -68,27 +69,39 @@ export type TriageTaskRelationCandidateV1 = Readonly<{
   title: string;
   designation?: string;
   status: TaskStatusCategory | null;
+  /** The provider's last change, used only to offer recent entries first. */
+  updatedAtMs?: number;
 }>;
 
+const closedRelation = (candidate: TriageTaskRelationCandidateV1) =>
+  candidate.status === 'completed' || candidate.status === 'canceled';
+
+/**
+ * What a relation picker can offer, in the order a person picks by: open entries before finished ones, then the
+ * most recently changed first (the window's own order is by status lane, not by what is being worked on now).
+ */
 export function triageTaskRelationCandidatesV1(
   rows: readonly TriageListRowV1[],
 ): ReadonlyMap<string, TriageTaskRelationCandidateV1> {
-  const candidates = new Map<string, TriageTaskRelationCandidateV1>();
+  const listed: TriageTaskRelationCandidateV1[] = [];
   for (const row of rows) {
-    const snapshot = readTriageSelectedObservationV1(row)?.observation.snapshot;
-    if (snapshot === undefined) continue;
-    const key = triageEntryRowKey(row.entryRef);
-    candidates.set(key, {
-      key,
+    const observation = readTriageSelectedObservationV1(row)?.observation;
+    if (observation === undefined) continue;
+    const snapshot = observation.snapshot;
+    listed.push({
+      key: triageEntryRowKey(row.entryRef),
       ref: row.entryRef,
       title: snapshot.title,
       ...(snapshot.designation === undefined
         ? {}
         : { designation: snapshot.designation }),
       status: triageTaskStatusCategoryV1(snapshot.state),
+      ...(observation.sourceUpdatedAtMs === undefined ? {} : { updatedAtMs: observation.sourceUpdatedAtMs }),
     });
   }
-  return candidates;
+  listed.sort((a, b) => Number(closedRelation(a)) - Number(closedRelation(b))
+    || (b.updatedAtMs ?? 0) - (a.updatedAtMs ?? 0));
+  return new Map(listed.map(candidate => [candidate.key, candidate]));
 }
 
 function describe(
@@ -110,13 +123,14 @@ function describe(
   );
 }
 
+/** One relation choice in every relation picker: the title, its designation as the row's trailing fact. */
 function choice(candidate: TriageTaskRelationCandidateV1): PropertyChoice {
   return {
     id: candidate.key,
     label: candidate.title,
     ...(candidate.designation === undefined
       ? {}
-      : { subtitle: candidate.designation }),
+      : { meta: candidate.designation }),
   };
 }
 
@@ -158,6 +172,11 @@ export type TriageTaskPropertyInputV1 = Readonly<{
   assigneeFace?: (name: string) => ReactNode;
   /** The source's own directory for these fields: people and labels are picked from it rather than typed. */
   fieldChoices?: TriageTaskFieldChoicesV1;
+  /**
+   * Where the assignees come from when the source's read carries no directory: the host's people (a Happier task),
+   * or why none can be listed. Absent, the picker says this source's people can't be listed. Never typed names.
+   */
+  assigneeDirectory?: Readonly<{ choices: readonly PropertyChoice[]; state: PropertyChoiceDirectory }>;
   /** The labels' colours, when the source keeps them (personal tasks): chosen in the Labels editor, drawn as each chip's dot. */
   labelTones?: Readonly<{ tones: PropertyNameTones }>;
   commit(fields: TriageTaskFieldsV1): unknown;
@@ -184,37 +203,57 @@ export function projectTriageTaskPropertiesV1(
       }
       continue;
     }
-    if (field === 'assigneeIds' || field === 'labelIds') {
-      const current = values[field] ?? [];
-      const shown = field === 'assigneeIds' ? current.flatMap(id => {
+    if (field === 'assigneeIds') {
+      const current = values.assigneeIds ?? [];
+      const nameOf = (id: string) => {
         const name = input.assigneeLabels?.has(id) ? input.assigneeLabels.get(id) : id;
-        return name == null ? [] : [name];
-      }) : current;
-      const directory = input.fieldChoices?.[field];
-      const person = field === 'assigneeIds';
+        return name ?? null;
+      };
+      const shown = current.flatMap(id => { const name = nameOf(id); return name === null ? [] : [name]; });
+      const directory = input.fieldChoices?.assigneeIds;
+      const people = directory ?? input.assigneeDirectory?.choices ?? [];
       items.push({
         id: field,
         label: label(field),
         value: shown.length === 0 ? null : shown.join(', '),
-        ...(field === 'assigneeIds' && shown.length === 1 && input.assigneeFace !== undefined
-          ? { valueLeading: input.assigneeFace(shown[0]!) } : {}),
+        ...(shown.length === 1 && input.assigneeFace !== undefined ? { valueLeading: input.assigneeFace(shown[0]!) } : {}),
         ...busy,
-        // A label's colour is kept on the name, so personal task labels stay typed names with their colours.
-        editor: directory !== undefined && !(field === 'labelIds' && input.labelTones !== undefined) ? {
+        editor: {
           kind: 'choices',
           searchable: true,
           value: current,
-          // A person or label the directory no longer lists can still be removed from this task.
-          choices: [...directory, ...current.filter(id => !directory.some(choice => choice.id === id)).map(id => ({ id, label: id }))]
-            .map(choice => ({ ...choice, ...(person ? { person: choice.label } : {}) })),
-          ...(field === 'labelIds' ? { chips: true } : {}),
-          onCommit: (next) => input.commit({ [field]: [...next] }),
+          // A person the directory no longer lists (or that is not read yet) can still be removed from this task.
+          choices: [...people, ...current.filter(id => !people.some(choice => choice.id === id))
+            .map(id => ({ id, label: nameOf(id) ?? text('plugins.triage.tasks.assignees.unnamed', 'Someone') }))]
+            .map(choice => ({ ...choice, person: choice.label })),
+          ...(directory !== undefined ? {} : { directory: input.assigneeDirectory?.state ?? { status: 'unavailable',
+            unavailableLabel: text('plugins.triage.tasks.assignees.unlisted', 'This source\u2019s people can\u2019t be listed here') } }),
+          onCommit: (next) => input.commit({ assigneeIds: [...next] }),
+        },
+      });
+    } else if (field === 'labelIds') {
+      const current = values.labelIds ?? [];
+      const directory = input.fieldChoices?.labelIds;
+      items.push({
+        id: field,
+        label: label(field),
+        value: current.length === 0 ? null : current.join(', '),
+        ...busy,
+        // A label's colour is kept on the name, so personal task labels stay typed names with their colours.
+        editor: directory !== undefined && input.labelTones === undefined ? {
+          kind: 'choices',
+          searchable: true,
+          value: current,
+          // A label the directory no longer lists can still be removed from this task.
+          choices: [...directory, ...current.filter(id => !directory.some(choice => choice.id === id)).map(id => ({ id, label: id }))],
+          chips: true,
+          onCommit: (next) => input.commit({ labelIds: [...next] }),
         } : {
           kind: 'list',
           value: current,
-          onCommit: (next) => input.commit({ [field]: [...next] }),
-          ...(field === 'labelIds' ? { chips: true } : {}),
-          ...(field === 'labelIds' && input.labelTones !== undefined ? { tones: input.labelTones.tones } : {}),
+          onCommit: (next) => input.commit({ labelIds: [...next] }),
+          chips: true,
+          ...(input.labelTones !== undefined ? { tones: input.labelTones.tones } : {}),
         },
       });
     } else if (field === 'scopeId') {
@@ -331,6 +370,7 @@ export function projectTriageTaskPropertiesV1(
         ...busy,
         editor: {
           kind: 'choice',
+          searchable: true,
           value: current?.key ?? null,
           choices: choices.map(choice),
           onCommit: (next) => {
@@ -401,6 +441,7 @@ export function projectTriageTaskBlockersV1(
       value: current.length === 0 ? null : current.map((candidate) => candidate.title).join(', '),
       ...(input.commit === undefined ? {} : { editor: {
         kind: 'choices' as const,
+        searchable: true,
         value: current.map((candidate) => candidate.key),
         choices: [...current, ...choices].map(choice),
         onCommit: (next: readonly string[]) => input.commit!({ blockedBy: next.flatMap((key) => {

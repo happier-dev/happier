@@ -25,6 +25,7 @@ import {
 export type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 export { useScmFileViewed, useScmFileViewedFile, useScmFileViewedStatus } from './scmFileViewed.public.js';
 export { useHostTaskShareSheet, type HostTaskShareRef, type HostTaskShareSheet } from './taskShareSheet.public.js';
+export { useHostPeopleDirectory, type HostPeopleDirectory, type HostPeopleDirectoryRequest, type HostPerson } from './peopleDirectory.public.js';
 export { useFindSurfaceRegistration, type FindSurfaceRegistration } from './find.public.js';
 export { useWidgetAreaPort, type PluginUiWidgetAreaPortV1 } from './widgetArea.public.js';
 
@@ -84,6 +85,7 @@ export type {
 } from './resourceStore.js';
 export {
   useExecutePluginAction,
+  isPluginActionConfirmationDeclined,
   projectPluginActionRejectionV1,
   type PluginActionExecution,
   type PluginActionExecutionController,

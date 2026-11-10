@@ -99,7 +99,7 @@ export { DiffStat, type DiffStatProps } from './DiffStat.js';
 export { InlineCode, type InlineCodeProps } from './InlineCode.js';
 export { TaskStatusGlyph, type TaskStatusCategory, type TaskStatusGlyphProps } from './TaskStatusGlyph.js';
 export { ProgressRing, type ProgressRingProps } from './ProgressRing.js';
-export { PropertyList, type PropertyChoice, type PropertyEditor, type PropertyListItem, type PropertyListProps, type PropertyNameTones } from './PropertyList.js';
+export { PropertyList, type PropertyChoice, type PropertyChoiceDirectory, type PropertyEditor, type PropertyListItem, type PropertyListProps, type PropertyNameTones } from './PropertyList.js';
 export { RelationList, type RelationListEntry, type RelationListProps } from './RelationList.js';
 export { CheckStatusGlyph, type CheckStatusGlyphProps, type CheckStatusKind } from './CheckStatusGlyph.js';
 export { AnsiText, type AnsiTextProps } from './AnsiText.js';
@@ -199,6 +199,7 @@ export { HappierReplyQuote, type HappierReplyQuoteProps, type HappierReplyQuoteS
 export { ReturnedAnswerQuote, type ReturnedAnswerOutcome, type ReturnedAnswerQuestion, type ReturnedAnswerQuoteProps } from './ReturnedAnswerQuote.js';
 export { ContentPreview, type ContentPreviewProps } from './ContentPreview.js';
 export { ChangedFilesReview, type ChangedFilesReviewProps, type ChangedFile, type ChangedFileDiff } from './ChangedFilesReview.js';
+export { MarkdownEditor, type MarkdownEditorProps } from './MarkdownEditor.js';
 export {
   HappierReturnedAnswerQuote,
   type HappierReturnedAnswerOutcome,
@@ -565,6 +566,10 @@ export {
   type HappierChangedFile,
   type HappierChangedFileDiff,
 } from '../presentation/content/ChangedFilesReview.js';
+export {
+  resolveHappierMarkdownEditorRequest,
+  type HappierMarkdownEditorRequest,
+} from '../presentation/content/MarkdownEditor.js';
 export {
   HAPPIER_BADGE_METRICS,
   HappierBadge,

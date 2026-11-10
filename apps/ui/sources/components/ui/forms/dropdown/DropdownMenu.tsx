@@ -34,6 +34,18 @@ const DROPDOWN_ACTION_FRAME_FALLBACK_MS = 100;
 /** A menu that is not tied to its trigger's width reads as a menu, not a sheet: this is its widest. */
 export const DROPDOWN_MENU_MAX_WIDTH_PX = 320;
 
+/** Whether the control that opened the menu holds keyboard focus (the browser's own `:focus-visible` judgement). */
+function openedFromKeyboard(): boolean {
+    const active = typeof document === 'undefined' ? null : document.activeElement;
+    if (active === null || typeof active.matches !== 'function') return false;
+    try {
+        return active.matches(':focus-visible');
+    } catch {
+        // A browser without the selector cannot tell; the first key still reveals the highlight.
+        return false;
+    }
+}
+
 export type DropdownMenuItem = Readonly<{
     id: string;
     testID?: string;
@@ -680,13 +692,18 @@ export function DropdownMenu(props: DropdownMenuProps) {
         [filteredCategories, props.popoverAccessibilityLabel],
     );
     const highlightedId = filteredItems[selectedIndex]?.id ?? null;
-    // A pointer open highlights nothing on swatches until the person hovers or uses the keyboard.
-    const [swatchHighlightVisible, setSwatchHighlightVisible] = React.useState(false);
-    React.useEffect(() => {
-        if (!props.open) setSwatchHighlightVisible(false);
+    // A pointer open highlights no row until the person hovers or uses the keyboard: a resting highlight on the first
+    // row reads as a choice already made. A menu opened from the keyboard shows where the keys will move from.
+    const [highlightVisible, setHighlightVisible] = React.useState(false);
+    React.useLayoutEffect(() => {
+        if (!props.open) {
+            setHighlightVisible(false);
+            return;
+        }
+        if (Platform.OS === 'web' && openedFromKeyboard()) setHighlightVisible(true);
     }, [props.open]);
     const handleResultsSelectionChange = React.useCallback((index: number) => {
-        setSwatchHighlightVisible(true);
+        setHighlightVisible(true);
         setHighlightOrigin('pointer');
         setSelectedIndex(index);
     }, [setSelectedIndex]);
@@ -739,7 +756,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
     }, [filteredItems, openSubmenuFromKeyboard, props.onKeyboardBack, selectedIndex]);
     const handleKeyDown = React.useCallback((e: any) => {
         if (Platform.OS !== 'web') return;
-        setSwatchHighlightVisible(true);
+        setHighlightVisible(true);
         const key = e?.nativeEvent?.key;
         if (typeof key !== 'string') return;
         // Search fields own ordinary typed text. An unsearched dropdown instead
@@ -944,7 +961,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                     categories={presentation === 'sheet' ? sheetCategories : filteredCategories}
                                     selectedIndex={selectedIndex}
                                     onSelectionChange={handleResultsSelectionChange}
-                                    swatchHighlightVisible={swatchHighlightVisible}
+                                    highlightVisible={highlightVisible}
                                     onPressItem={(item) => {
                                         handlePressMenuItem(item);
                                     }}

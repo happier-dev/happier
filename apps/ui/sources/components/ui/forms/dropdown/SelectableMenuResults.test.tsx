@@ -398,17 +398,22 @@ describe('SelectableMenuResults', () => {
         expect(screen.findByTestId('dropdown-option-color_remove:strike')).not.toBeNull();
     });
 
-    it('draws the swatch highlight only when the menu says it is visible', async () => {
+    it('draws the highlight of a swatch and of a row only when the menu says it is visible', async () => {
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
         const render = (visible: boolean) => renderScreen(<SelectableMenuResults
-            categories={[{ id: 'c1', title: '', items: [{ id: 'color:blue', title: 'Blue', swatch: { color: '#0000FF' } }] }]}
-            selectedIndex={0}
-            swatchHighlightVisible={visible}
+            categories={[
+                { id: 'c1', title: '', items: [{ id: 'color:blue', title: 'Blue', swatch: { color: '#0000FF' } }] },
+                { id: 'c2', title: '', items: [{ id: 'pin', title: 'Pin' }] },
+            ]}
+            selectedIndex={visible ? 0 : 1}
+            highlightVisible={visible}
             onSelectionChange={() => {}}
             onPressItem={() => {}}
             rowVariant="slim"
         />);
-        expect((await render(false)).findByTestId('dropdown-option-color_blue:highlight')).toBeNull();
+        const hidden = await render(false);
+        expect(hidden.findByTestId('dropdown-option-color_blue:highlight')).toBeNull();
+        expect((hidden.findByTestId('dropdown-option-pin') as any).props.selected).toBe(false);
         expect((await render(true)).findByTestId('dropdown-option-color_blue:highlight')).not.toBeNull();
     });
 });

@@ -7,6 +7,7 @@ import {
   Icon,
   IconButton,
   Markdown,
+  MarkdownEditor,
   Row,
   Select,
   Stack,
@@ -725,16 +726,14 @@ function ComposerSheet(
           </Stack>
         ) : (
           <Stack gap="none" style={{ flex: 1, padding: theme.spacing.small }}>
-            <TextField
-              presentation="form"
-              label={t(
+            <MarkdownEditor
+              presentation="document"
+              accessibilityLabel={t(
                 'plugins.github.releases.compose.notes',
                 'Release notes',
               )}
-              multiline
               value={fields.body}
               onChange={(value) => set('body', value)}
-              autoCapitalize="sentences"
               disabled={published}
               testID="github-release-notes"
             />

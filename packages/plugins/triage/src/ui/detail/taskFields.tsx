@@ -125,6 +125,7 @@ function TaskWriteNotice({ result, checking, onCheckAgain, sourceUrl, sessionLin
 const TASK_CATEGORY_WORDS = { backlog: 'Backlog', unstarted: 'To do', started: 'In progress', completed: 'Done', canceled: 'Canceled' } as const;
 
 const TASK_STATUS_GROUP_ID = 'status';
+const TASK_PLACE_GROUP_ID = 'place';
 /**
  * The source's workflow as a status menu (lab `tasks-status`): each state led by its category's own glyph, and the
  * task's current state checked. The current state is the transition whose target is where the task already is (its
@@ -337,6 +338,7 @@ export function TriageCreateTaskFields(props: Readonly<{
   const fields = chosen?.kind.taskCapabilities?.createFields ?? [];
   const unsupportedBody = typeof draft.body === 'string' && draft.body.length > 0 && !fields.includes('body');
   const [placeQuery, setPlaceQuery] = React.useState('');
+  const [placeOpen, setPlaceOpen] = React.useState(false);
   // A row is what the place creates; the connection is named only where two connections would otherwise read alike.
   const placeTitle = (choice: (typeof choices)[number]) => choice.kind.displayName ?? choice.kind.id;
   const connectionShown = (choice: (typeof choices)[number]) => new Set(choices.filter(other => other.family === choice.family)
@@ -442,7 +444,7 @@ export function TriageCreateTaskFields(props: Readonly<{
   const placeName = chosen.family === chosen.source.displayLabel ? chosen.family : `${chosen.family} \u00b7 ${chosen.source.displayLabel}`;
   const placeLocked = write.busy || write.result?.kind === 'uncertain' || write.result?.kind === 'applied';
   // The draft is the task's detail before it exists (lab `tasks-form`, decision 10): where it goes as one chip that
-  // leads back to the places, the title and notes written in place as the document they become, then the place's own
+  // offers the places, the title and notes written in place as the document they become, then the place's own
   // properties. Create is pinned at the foot with what it does; nothing reaches the source before it.
   return <Stack gap="none" style={TASK_DRAFT_FILL_STYLE}>
     <ScrollArea style={TASK_DRAFT_FILL_STYLE}>
@@ -455,9 +457,25 @@ export function TriageCreateTaskFields(props: Readonly<{
         </Stack>}
         <Stack gap="small">
           <Row>
-            <Button variant="secondary" size="small" icon={mark(chosen)} title={placeName}
-              accessibilityLabel={text('plugins.triage.tasks.where.changeNamed', 'Where: {place}. Change', { place: placeName })}
-              disabled={placeLocked} onPress={() => setWhere(null)} />
+            {/* Where it goes is a choice on the chip itself: the places open anchored to it, by source, and the
+                draft stays where it is. */}
+            <Menu open={placeOpen && !placeLocked} onOpenChange={next => { setPlaceQuery(''); setPlaceOpen(next && !placeLocked); }}
+              disabled={placeLocked} trigger={placeName} triggerAppearance="control" triggerMark={mark(chosen)}
+              triggerAccessibilityLabel={text('plugins.triage.tasks.where.changeNamed', 'Where: {place}. Change', { place: placeName })}
+              groups={[...new Set(choices.map(choice => choice.family))].map(family => ({ id: family, accessibilityLabel: family,
+                items: choices.filter(choice => choice.family === family).map(choice => {
+                  const subtitle = placeSubtitle(choice);
+                  return { id: choice.value, label: placeTitle(choice), kind: 'radio' as const, radioGroupId: TASK_PLACE_GROUP_ID,
+                    disabled: choice.disabled, ...(subtitle === undefined ? {} : { subtitle }) };
+                }) }))}
+              showGroupLabels
+              radioGroups={[{ id: TASK_PLACE_GROUP_ID, accessibilityLabel: text('plugins.triage.tasks.where.label', 'Where'), selectedId: chosen.value }]}
+              search={{ value: placeQuery, onValueChange: setPlaceQuery, when: 'long' }}
+              onSelect={(id) => {
+                if (id === chosen.value || placeLocked) return;
+                setDraft(previous => ({ ...previous, initialStatusId: undefined }));
+                setWhere(id);
+              }} />
           </Row>
           <Form.TextField presentation="document" documentRole="title" multiline label={text('plugins.triage.tasks.taskTitle', 'Title')}
             focusTarget={titleFocus}
@@ -690,17 +708,17 @@ export function TriageEditTaskScope(props: Readonly<{
   const editText = (field: (typeof TASK_TEXT_FIELDS)[number], value: string) => { setDraft(previous => ({ ...previous, [field]: value })); setIssues({}); };
   const textHeld = disabled || !canEdit || write.busy;
   const draftTitle = typeof draft.title === 'string' ? draft.title : '';
-  // The open editor is the task's own title and notes written in place, as a draft is; the notes are the host's one
-  // Markdown editor (the source stores them as Markdown).
+  // The notes are the host's one Markdown editor (sources store them as Markdown), framed under their label.
   const form = !editing ? null : <Stack gap="small" testID={TRIAGE_TASK_TEXT_EDITOR_TEST_ID_V1}>
     {valuesNotice}
-    {!textFields.includes('title') ? null : <Form.TextField presentation="document" documentRole="title" multiline required
-      label={triageTaskFieldTitleV1(text, 'title')} disabled={textHeld} value={draftTitle} onChange={value => editText('title', value)} />}
+    {!textFields.includes('title') ? null : <Form.TextField required label={triageTaskFieldTitleV1(text, 'title')}
+      disabled={textHeld} value={draftTitle} onChange={value => editText('title', value)} />}
     {issues.title === undefined ? null : <Form.ValidationMessage message={issues.title} />}
-    {!textFields.includes('body') ? null : <MarkdownEditor presentation="document" accessibilityLabel={triageTaskFieldTitleV1(text, 'body')}
-      placeholder={text('plugins.triage.tasks.draft.notesPlaceholder', 'Add notes\u2026')} disabled={textHeld}
-      value={typeof draft.body === 'string' ? draft.body : ''} onChange={value => editText('body', value)} />}
-    {issues.body === undefined ? null : <Form.ValidationMessage message={issues.body} />}
+    {!textFields.includes('body') ? null : <Form.Field label={triageTaskFieldTitleV1(text, 'body')} disabled={textHeld}
+      {...(issues.body === undefined ? {} : { issue: issues.body })}>
+      <MarkdownEditor accessibilityLabel={triageTaskFieldTitleV1(text, 'body')} disabled={textHeld}
+        value={typeof draft.body === 'string' ? draft.body : ''} onChange={value => editText('body', value)} />
+    </Form.Field>}
     <Form.Actions>
       <Button title={text('plugins.triage.tasks.save', 'Save changes')} busy={write.busy}
         disabled={textHeld || (textFields.includes('title') && draftTitle.trim().length === 0)} onPress={saveText} />
