@@ -5369,8 +5369,7 @@ describe('plugin-surface action branch selection', () => {
                         : { code: 'timeout', diagnostics: ['plugin_ui_action_outcome_unknown'] });
                     // The host envelope exposes retryability; recovery destinations remain on the
                     // canonical contributed failure consumed by the dispatch outcome.
-                    if (settlement === 'typed refusal') expect(result).toMatchObject({ retryable: false });
-                    else expect(result).not.toHaveProperty('retryable');
+                    expect(result).toMatchObject({ retryable: false });
                     expect(JSON.stringify(result)).not.toContain('must-not-cross');
                 }
             } finally {
