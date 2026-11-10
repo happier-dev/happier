@@ -134,7 +134,10 @@ describe('ChatList (jump-to-bottom)', () => {
     it('shows a jump-to-bottom button when an existing newest turn grows while unpinned', async () => {
         const onViewportChange = vi.fn();
         storage.setState({ settings: { ...storage.getState().settings, transcriptGroupingMode: 'turns' } });
-        const messages: Message[] = [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' }];
+        const messages: Message[] = [
+            { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
+            { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'First streamed line' },
+        ];
         const source = createTestSessionTranscriptSource({ sessionId: session.id, messages });
         const scroller = createChatListHarnessWebScroller({ clientHeight: 600, scrollHeight: 3000, scrollTop: 2400 });
         await withChatListHarnessWebScrollerDom(scroller, async () => {
@@ -147,14 +150,30 @@ describe('ChatList (jump-to-bottom)', () => {
         await detachFromTail(scroller);
         expect(onViewportChange).toHaveBeenCalledWith(expect.objectContaining({ isPinned: false }));
 
+        const releasedScrollTop = scroller.scrollTop;
+        scroller.scrollHeight = 3600;
+        chatListHarnessState.legendListState = {
+            ...chatListHarnessState.legendListState,
+            contentLength: 3600,
+        };
         await act(async () => {
             source.update({
-                messages: [...messages, { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'a1' }],
+                messages: [messages[0]!, {
+                    kind: 'agent-text', id: 'a1', localId: null, createdAt: 2,
+                    text: 'First streamed line\nSecond streamed line\nThird streamed line',
+                }],
                 metadata: null, agentState: null, reducerState: null,
             });
         });
 
+        expect(screen.getTextContent()).toContain('Third streamed line');
+        expect(scroller.scrollTop).toBe(releasedScrollTop);
         expect(screen.findAllByTestId('transcript-jump-to-bottom').length).toBeGreaterThan(0);
+        onViewportChange.mockClear();
+        await screen.pressByTestIdAsync('transcript-jump-to-bottom');
+        expect(onViewportChange).toHaveBeenCalledWith({
+            isPinned: true, offsetY: 0, shouldRestoreViewport: false,
+        });
         } finally {
             await screen.unmount();
         }

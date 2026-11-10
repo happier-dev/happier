@@ -13,7 +13,8 @@ let assignedLegendRef: any = null;
 const legendEndState = { isAtEnd: true, isNearEnd: true, isWithinMaintainScrollAtEndThreshold: true };
 const legendEndListeners = new Set<() => void>();
 
-vi.mock('@legendapp/list/react-native', () => ({
+vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@legendapp/list/react-native')>()),
     LegendList: React.forwardRef((props: any, ref: any) => {
         capturedLegendListProps = props;
         const instance = {
