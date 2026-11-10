@@ -6,9 +6,13 @@ export const SOURCE_WEB_EXPORT_MEMORY = Object.freeze({ serialKiB: 8236000, para
 // 2026-11-04 validation-floor-sizing-1104/measurements.json: successful
 // cli-file, server-file and package-file runs (six each, two Linux workers).
 // Nearest-rank p95 of per-run sampled tree RSS peaks; no additional margin.
-// UI components have their own class and are excluded from this calibration.
+// UI components have their own class and are excluded from focused calibration.
 export const COMMAND_MEMORY_MEASUREMENTS = Object.freeze({
-  'focused-validation': Object.freeze({ samples: 18, p95KiB: 779072, maxKiB: 779072 }),
+  'focused-validation': Object.freeze({ samples: 18, p95KiB: 779072, maxKiB: 779072, roundingKiB: 1024 * 1024 }),
+  // 2026-11-10 completed-slot-memory.jsonl across linux1, windows2-linux, nl1, nl3:
+  // package-dist n=310, sampled RSS max 5,095,936 KiB; round to next 0.5 GiB.
+  // Owner GO (Continuation 2); no extra margin beyond rounding.
+  'package-dist': Object.freeze({ samples: 310, p95KiB: 4624416, maxKiB: 5095936, roundingKiB: 512 * 1024 }),
 });
 export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Owner Q1 (2026-10-29): successful measured peak rounded up to whole GiB,
@@ -49,7 +53,7 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // tree VmHWM sum 2,374,684 KiB rounds to 3 GiB. Retained raw evidence:
   // SYSTEMIC-DELETE/step10-dependency-install{,-topological-setup}-measurement.log.
   'dependency-install': { memoryKiB: 3 * 1024 * 1024, cpuCores: 'host', diskClass: 'dependency-install' },
-  'package-dist': { memoryKiB: 6291456, cpuCores: 'host', diskClass: 'package-dist' },
+  'package-dist': { memoryKiB: Math.ceil(COMMAND_MEMORY_MEASUREMENTS['package-dist'].maxKiB / COMMAND_MEMORY_MEASUREMENTS['package-dist'].roundingKiB) * COMMAND_MEMORY_MEASUREMENTS['package-dist'].roundingKiB, cpuCores: 'host', diskClass: 'package-dist' },
   // 2026-10-29 linux1 x64 strict Protocol build, n2 cold + n2 warm:
   // sampled peak tree RSS 4,482,316 KiB; live VmHWM sum 4,483,876 KiB.
   // Plus the legacy unmeasured margin rounds to 6 GiB for that workload,

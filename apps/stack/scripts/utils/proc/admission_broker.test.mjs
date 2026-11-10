@@ -1044,6 +1044,31 @@ test('a control stream EPIPE drops only that client and preserves broker admissi
   assert.equal(code, 0, stderr);
 });
 
+
+test('measured package floors fit at capacity and queued work resumes after release', linux, async t => {
+  const gibKiB = 1024 * 1024;
+  const { root, broker } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB: 10 * gibKiB, totalMemoryKiB: 10 * gibKiB }),
+  });
+  const floorKiB = HEAVYWEIGHT_COMMAND_RESOURCES['package-dist'].memoryKiB;
+  assert.equal(floorKiB, 5 * gibKiB);
+  // Isolate memory from CPU admission: package publishers normally reserve host CPU.
+  const options = { className: 'package-dist', cpuCost: 1 };
+  const first = await acquire(root, floorKiB, t, options);
+  const held = await first.admit();
+  const second = await acquire(root, floorKiB, t, options);
+  await second.admit();
+  const third = await acquire(root, floorKiB, t, options);
+  await request(root, { kind: 'sample' }).then(async client => {
+    await client.next(); client.socket.destroy();
+  });
+  assert.equal(broker.status().reservedMemoryKiB, 10 * gibKiB);
+  assert.equal(broker.status().waitingCount, 1);
+  await held.release();
+  const resumed = await third.admit();
+  assert.equal(resumed.admitted.floorKiB, floorKiB);
+});
+
 test('dynamic measured floor options select the most workers at the largest fitting floor', linux, async t => {
   const { root, broker } = await fixture(t);
   const client = await acquire(root, 120, t, { floorOptions: [{ floorKiB: 120, workers: 4 },

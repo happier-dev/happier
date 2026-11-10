@@ -14,11 +14,19 @@ test('every calibrated class uses its recorded measured maximum without a margin
   let checked = 0;
   for (const [className, measurement] of Object.entries(COMMAND_MEMORY_MEASUREMENTS)) {
     assert.ok(measurement.samples >= 10, `${className} needs ten real runs`);
-    assert.equal(resolveHeavyweightMemoryFloorKiB(className), Math.ceil(measurement.maxKiB / (1024 * 1024)) * 1024 * 1024);
+    assert.equal(resolveHeavyweightMemoryFloorKiB(className), Math.ceil(measurement.maxKiB / measurement.roundingKiB) * measurement.roundingKiB);
     checked += 1;
   }
   assert.equal(checked, Object.keys(COMMAND_MEMORY_MEASUREMENTS).length);
   assert.ok(checked > 0);
+});
+
+
+// Continuation 2 owner GO: completed package publishers fit the measured 5 GiB envelope.
+test('package publishers admit at the measured half-GiB-rounded envelope', () => {
+  assert.equal(resolveHeavyweightMemoryFloorKiB('package-dist'), 5 * 1024 * 1024);
+  assert.equal(resolveHeavyweightMemoryFloorKiB('source-bundle'), 12 * 1024 * 1024,
+    'producer startup has no separate heavy reservation; retain the source envelope');
 });
 
 for (const [compiler, expectedGiB] of [['tsrs', 10], ['microsoft', 20]]) {
@@ -61,7 +69,7 @@ for (const [compiler, expectedGiB] of [['tsrs', 10], ['microsoft', 20]]) {
       platform: 'linux', arch: 'x64' });
     assert.ok(build.argsPrefix.includes('--class=compilation'));
     assert.equal(HEAVYWEIGHT_COMMAND_RESOURCES.compilation.memoryKiB, 38 * 1024 * 1024);
-    assert.equal(HEAVYWEIGHT_COMMAND_RESOURCES['package-dist'].memoryKiB, 6 * 1024 * 1024);
+    assert.equal(HEAVYWEIGHT_COMMAND_RESOURCES['package-dist'].memoryKiB, 5 * 1024 * 1024);
     const general = resolveTypeScriptCliInvocation({ args: ['--noEmit'], admissionClass: 'compilation', env,
       platform: 'linux', arch: 'x64' });
     assert.ok(general.argsPrefix.includes('--class=compilation'));
