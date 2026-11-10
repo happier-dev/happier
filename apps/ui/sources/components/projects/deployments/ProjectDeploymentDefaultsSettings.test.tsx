@@ -25,7 +25,8 @@ const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMe
 const original = storage.getState();
 const projectPages = import.meta.glob<{ ProjectDeploymentDefaultsSettings: React.ComponentType<{
     lifetime: ServerAccountScopeLifetime | null; sourceId: string; demand: { mounted: boolean; visible: boolean; focused: boolean };
-    environments?: readonly Readonly<{ id: string; title: string }>[]; onOpenEnvironment?: (environmentId: string) => void;
+    environments?: readonly Readonly<{ id: string; title: string; previewTemplateConfigured?: boolean }>[];
+    onOpenEnvironment?: (environmentId: string) => void; onOpenPreviews?: (environmentId: string) => void;
 }> }>('./ProjectDeploymentDefaultsSettings.tsx');
 const environmentPages = import.meta.glob<typeof import('./DeploymentEnvironmentSettingsPanel')>('./DeploymentEnvironmentSettingsPanel.tsx');
 afterEach(() => { standardCleanup(); storage.setState(original, true); router.resetParams(); vi.unstubAllGlobals(); });
@@ -43,6 +44,7 @@ describe('Project deployment defaults', () => {
         try {
             const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: account.scope.serverId }) });
             const screen = await renderScreen(<DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
+                definitionDocument={{ document: detail.content.definition.kind === 'stored' ? detail.content.definition.document : '', change() {} }}
                 demand={{ mounted: false, visible: false, focused: false }} machineName={id => id} environmentTitle={() => null} />);
             await screen.pressByTestIdAsync('project-deployments.environment.settings.account-defaults');
             expect(router.spies.push).toHaveBeenLastCalledWith({ pathname: '/settings/deployments', params: { serverId: account.scope.serverId } });
@@ -202,5 +204,18 @@ describe('Project deployment defaults', () => {
         await screen.pressByTestIdAsync('project-deployment-defaults.triggers.env-production');
         expect(opened).toEqual(['env-production']);
         expect(screen.getTextContent()).toContain('Staging');
+    });
+
+    it('links only admitted preview templates to their Environment editor', async () => {
+        const { ProjectDeploymentDefaultsSettings } = await projectPages['./ProjectDeploymentDefaultsSettings.tsx']!();
+        const opened = vi.fn();
+        const screen = await renderScreen(<ProjectDeploymentDefaultsSettings lifetime={null} sourceId="source-app"
+            demand={{ mounted: true, visible: true, focused: true }} onOpenPreviews={opened}
+            environments={[{ id: 'template', title: 'Staging', previewTemplateConfigured: true },
+                { id: 'ordinary', title: 'Production', previewTemplateConfigured: false }, { id: 'unknown', title: 'Unknown' }]} />);
+        expect(screen.findByTestId('project-deployment-defaults.previews.ordinary')).toBeNull();
+        expect(screen.findByTestId('project-deployment-defaults.previews.unknown')).toBeNull();
+        await screen.pressByTestIdAsync('project-deployment-defaults.previews.template');
+        expect(opened).toHaveBeenCalledExactlyOnceWith('template');
     });
 });

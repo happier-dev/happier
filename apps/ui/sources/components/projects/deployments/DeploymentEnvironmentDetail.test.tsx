@@ -150,9 +150,127 @@ async function answerTeardownController(machineId: string, execute: TeardownCont
 
 const shown = { mounted: true, visible: true, focused: true };
 const noReview = { pendingId: null, request: () => {}, open: () => {} };
+
+it.each(['update_available', 'removed_from_source', 'unchecked'] as const)(
+  'opens the owning review or source repair from the Environment catalog notice (%s)', async state => {
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+    const { createPromptLibraryCatalogBoundary } = await import('@/dev/testkit/harness/promptLibraryCatalogBoundary');
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { BUILT_IN_REGISTRY_SOURCES_V1, checkRegistryAppUpdatesV1, REGISTRY_ACTION_INPUT_SCHEMAS_V1 } = await import('@happier-dev/protocol/registries');
+    const { createUiRegistryHttpV1 } = await import('@/registries/registryHttpV1');
+    const { ModalProvider } = await import('@/modal');
+    const source = { id: `catalog-${state}`, title: 'Application source', format: 'happier-catalog' as const,
+      kinds: ['app' as const], url: `https://catalog-${state}.test/apps.json`, enabled: true, addedAt: 1 };
+    const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: { v: 2,
+      sources: [source], disabledSourceIds: BUILT_IN_REGISTRY_SOURCES_V1.map(row => row.id) } }] });
+    for (const path of ['/v1/account/entity-rows/prompt-library', '/v1/account/entity-rows/prompt-library/registry-sources'])
+      homes.answer(scope.serverId, path, { body: await (await catalog.handle(path))!.json() });
+    const base = environmentDetailForHome();
+    const definition = { kind: 'stored' as const, document: 'services:\n  app:\n    image: nginx:1\n',
+      contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`, profiles: [], services: ['app'] };
+    const detail = environmentDetailForHome({ content: {
+      ...base.content, definition, template: { templateRef: { sourceId: source.id, itemId: 'app', version: '1',
+        ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+        definition: { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest }, services: ['app'] },
+    } });
+    const member = detail.targetLinks[0]!.targetLink.members[0]!;
+    detail.environment.controllerMachineId = member.machineId;
+    const upstreamHttp = createUiRegistryHttpV1(async () => state === 'unchecked' ? new Response(null, { status: 401 })
+      : Response.json({ schemaVersion: 1, apps: state === 'removed_from_source' ? [] : [{ itemId: 'app', app: {
+        schemaVersion: 1, title: 'App', compose: { document: 'services:\n  app:\n    image: nginx:2\n', profiles: [], services: ['app'] },
+        variables: [], generatedSecrets: [], domains: [], volumes: [],
+      } }] }));
+    await answerExternalActionAccountForHome(homes, scope.serverId, { actionId: 'registries.updates.check',
+      machineId: member.machineId, installationId: member.installationId, tokenEpoch: 0, requesterInvocation: 'none', execute: async raw => {
+        const input = REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check'].parse(raw);
+        if (input.kind !== 'app') throw new Error('Expected app update demand');
+        // The remote host is the process boundary; its real finite registry checker decides the observation.
+        return checkRegistryAppUpdatesV1({ http: upstreamHttp }, { environments: input.environments,
+          readEnvironment: async () => detail, readSources: async () => [{ ...source, origin: { kind: 'user' }, removable: true }] });
+      } });
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    storage.setState({ settingsScope: account.accountLifetime.scope, profileScope: account.accountLifetime.scope });
+    storage.getState().activateProfileScope(account.accountLifetime.scope);
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: member.machineId,
+      installationId: member.installationId, activeAt: Date.now() })]);
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    const { controller } = controllerFor({ detail });
+    const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+      environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+      phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={account.accountLifetime} /></ModalProvider>);
+    try {
+      const banner = 'project-deployments.environment.attention.catalogUpdate';
+      await waitForContent(screen, `${banner}.action`);
+      await screen.pressByTestIdAsync(`${banner}.action`);
+      await waitForContent(screen, state === 'update_available' ? 'project-deployments.add.review' : 'project-deployments.template.sources.view');
+      expect(homes.artifacts(scope.serverId).list()).toEqual([]);
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); }
+  },
+);
+
+it.each(['repository', 'stored'] as const)('opens CI token setup only for a %s Environment', async kind => {
+  const { ModalProvider } = await import('@/modal');
+  const base = environmentDetailForHome();
+  const detail = environmentDetailForHome({ content: { ...base.content,
+    definition: kind === 'repository' ? { kind, ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: ['app'] } }
+      : { kind, document: 'services: {app: {image: nginx:1}}', composeDigest: `sha256:${'a'.repeat(64)}`,
+        contentRevision: 1, profiles: [], services: ['app'] },
+  } });
+  const { controller } = controllerFor({ detail });
+  const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+  try {
+    const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+      demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+      review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} /></ModalProvider>);
+    await waitForContent(screen, 'project-deployments.environment.services');
+    if (kind === 'stored') {
+      expect(screen.findByTestId('project-deployments.environment.ci')).toBeNull();
+    } else {
+      expect(screen.findByTestId('project-deployments.environment.ci')).not.toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.environment.ci');
+      expect(screen.findByTestId('project-deployments.environment.ci.sheet')).not.toBeNull();
+    }
+  } finally { await act(async () => { controller.retire(); }); }
+});
+
+it('shows the declared login username and first-admin warning with the serving image identity', async () => {
+  const base = environmentDetailForHome();
+  const detail = environmentDetailForHome({ content: { ...base.content,
+    template: { templateRef: { sourceId: 'catalog', itemId: 'app', version: '1',
+      ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+      definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, services: ['app'],
+      firstRunSetup: true, loginFields: { username: 'APP_USER', password: 'APP_PASSWORD' } },
+    bindings: [{ purpose: 'variable', name: 'APP_USER', phase: 'runtime', source: { kind: 'value', value: 'owner' } }],
+  } });
+  const receipt = createDeploymentReceiptDetailV1();
+  const { controller } = controllerFor({ detail, receipt });
+  const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+  try {
+    const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+      demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+      review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} />);
+    await waitForContent(screen, 'project-deployments.environment.services');
+    const username = screen.findHostByTestId('project-deployments.environment.services.login.username');
+    expect(username).not.toBeNull();
+    expect(screen.getTextContent()).toContain('owner');
+    expect(screen.findByTestId('project-deployments.environment.services.firstRun')).not.toBeNull();
+    expect(screen.findHostByTestId('project-deployments.environment.services.image:app')).not.toBeNull();
+    expect(screen.getTextContent()).toContain(`sha256:${'b'.repeat(64)}`);
+    // No admitted address means no speculative external link; the existing Domains tab is the remedy.
+    await screen.pressByTestIdAsync('project-deployments.environment.services.firstRun.domains');
+    expect(screen.findHostByTestId('project-deployments.environment.tab:domains')?.props.accessibilityState?.selected).toBe(true);
+  } finally { await act(async () => { controller.retire(); }); }
+});
+
 beforeEach(async () => {
   installHomeGovernanceBoundaries(homes);
-  scope.serverId = await homes.addHome({ name: 'Environment navigation', serverUrl: 'https://environment-navigation.test', accountId: scope.accountId });
+  scope.serverId = await homes.addHome({ name: 'Environment navigation', serverUrl: 'https://environment-navigation.test',
+    accountId: scope.accountId, serverIdentityId: 'srv_environment_navigation' });
   const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
   const resolution = await resolveServerCredentialAccountScope(scope.serverId);
   expect(resolution.kind).toBe('bound');
@@ -712,6 +830,78 @@ describe('Project deployments page', () => {
         await waitForContent(screen, 'project-deployments.empty');
         expect(screen.findByTestId('project-deployments.environment')).toBeNull();
       }
+    } finally { await act(async () => { controller.retire(); }); }
+  });
+
+  it('edits stored Compose through the public update Action while retaining selectors and public files', async () => {
+    scope.serverId = await homes.addHome({ name: 'Stored editor', serverUrl: 'https://stored-editor.test',
+      accountId: scope.accountId, currentAccount: true, serverIdentityId: `srv_${'c'.repeat(32)}` });
+    const base = environmentDetailForHome();
+    const definition = { kind: 'stored' as const, contentRevision: 3, composeDigest: `sha256:${'a'.repeat(64)}`,
+      document: 'services:\n  app:\n    image: nginx:1\n', profiles: ['web'], services: ['app'], primaryService: 'app',
+      publicFiles: [{ path: 'index.html', content: 'Hello' }] };
+    const detail = { ...base, content: { ...base.content, definition } };
+    const { controller } = controllerFor({ detail });
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const { createDeploymentActions } = await import('./deploymentActions');
+    const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+    const { DeploymentActionInputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    let submitted: unknown;
+    homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}`, {
+      body: { ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) },
+    });
+    await answerExternalActionAccountForHome(homes, scope.serverId, { machineId: detail.environment.controllerMachineId,
+      actionId: 'deployments.environments.update', tokenEpoch: 0, execute: raw => {
+        submitted = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
+        return { ok: false, error: 'deployment_conflict' };
+      } });
+    try {
+      let navigate: (tab: DeploymentEnvironmentTabV1) => void = () => {};
+      const actions = createDeploymentActions(lifetime, detail.environment.projectSourceId);
+      function EditorPage() {
+        const [tab, setTab] = React.useState<DeploymentEnvironmentTabV1>('settings');
+        navigate = setTab;
+        return <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+          demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+          destination={{ tab, section: null }} environmentActions={actions}
+          review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} />;
+      }
+      const screen = await renderScreen(<EditorPage />);
+      await waitForContent(screen, 'project-deployments.environment.settings.lead');
+      const field = screen.findByTestId('project-deployments.definition.document');
+      expect(field).not.toBeNull();
+      expect(submitted).toBeUndefined();
+      const document = definition.document.replace('nginx:1', 'nginx:2');
+      await act(async () => { field?.props.onChangeText(document); });
+      await act(async () => { navigate('overview'); });
+      await act(async () => { navigate('settings'); });
+      expect(screen.findByTestId('project-deployments.definition.document')?.props.value).toBe(document);
+      await screen.pressByTestIdAsync('project-deployments.definition.save');
+      await waitForHomeGovernance(() => expect(submitted, screen.getTextContent()).toEqual(expect.objectContaining({
+        environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+        patch: { definition: { from: 'compose', document, profiles: ['web'], services: ['app'], primaryService: 'app',
+          publicFiles: definition.publicFiles } },
+      })));
+      expect(screen.findByTestId('project-deployments.definition.document')?.props.value).toBe(document);
+      await screen.pressByTestIdAsync('project-deployments.definition.cancel');
+      expect(screen.findByTestId('project-deployments.definition.document')?.props.value).toBe(definition.document);
+    } finally { await act(async () => { controller.retire(); }); }
+  });
+
+  it('shows stored Compose without an edit control to a viewer', async () => {
+    const base = environmentDetailForHome();
+    const detail = { ...base, environment: { ...base.environment,
+      capabilities: { ...base.environment.capabilities, role: 'reader' as const, manage: false, deploy: false } },
+      content: { ...base.content, definition: { kind: 'stored' as const, contentRevision: 3,
+        composeDigest: `sha256:${'a'.repeat(64)}`, document: 'services:\n  app:\n    image: nginx:1\n', profiles: [], services: ['app'] } } };
+    const { controller } = controllerFor({ detail });
+    try {
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+        destination={{ tab: 'settings', section: null }} review={noReview} onOpenReceipt={() => {}} />);
+      await waitForContent(screen, 'project-deployments.environment.settings.lead');
+      expect(screen.findByTestId('project-deployments.definition.document')?.props.editable).toBe(false);
+      expect(screen.findByTestId('project-deployments.definition.save')).toBeNull();
     } finally { await act(async () => { controller.retire(); }); }
   });
 
