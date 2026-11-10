@@ -118,8 +118,8 @@ export type LocalDaemonServicesActionInputById = {
             protection: 'nonProduction' | 'production';
             deployerMode: 'chosen' | 'managers' | 'members';
             name: string;
-            buildMachineId?: string | undefined;
             projectSourceId?: string | undefined;
+            buildMachineId?: string | undefined;
             newProject?: undefined | {
                 name: string;
                 requestKey: string;
@@ -685,6 +685,7 @@ export type LocalDaemonServicesActionResultById = {
                 pullRequestId: string;
                 runtimeTargetLinkId: string;
             };
+            previewCompanionOfEnvironmentId?: string | undefined;
             previewDataTargetLinks?: undefined | {
                 contentArtifactId: string;
                 contentHeaderVersion: number;

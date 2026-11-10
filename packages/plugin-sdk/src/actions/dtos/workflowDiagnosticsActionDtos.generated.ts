@@ -41,7 +41,7 @@ export type WorkflowDiagnosticsActionInputById = {
     };
     readonly "workflow.starters.list": Record<string, never>;
     readonly "workflow.starters.resolve": {
-        key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
+        key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
         session?: undefined | {
             sessionId: string;
             machineId: string;
@@ -55,7 +55,7 @@ export type WorkflowDiagnosticsActionResultById = {
     };
     readonly "workflow.starters.list": {
         examples: {
-            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
+            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
             titleKey: string;
             descriptionKey: string;
             definition: Readonly<{
@@ -421,7 +421,7 @@ export type WorkflowDiagnosticsActionResultById = {
     readonly "workflow.starters.resolve": {
         status: 'ready';
         example: {
-            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
+            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
             titleKey: string;
             descriptionKey: string;
             definition: Readonly<{

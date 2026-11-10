@@ -1426,10 +1426,19 @@ export type WorkflowsActionInputById = {
             machineId: string;
             serverId: string;
             environmentId: string;
-            targetLinkId: string;
             deploymentId: string;
+            targetLinkId: string;
             installationId: string;
             configRevision: number;
+        };
+    } | {
+        deploymentBackupEnvironment: {
+            serverId: string;
+            environmentId: string;
+        };
+    } | {
+        healthSource: {
+            sourceInstanceIds: string[];
         };
     } | {
         managedTarget: {
@@ -13609,6 +13618,65 @@ export type WorkflowsActionResultById = {
             triggerId: string;
             definition: WorkflowsActionDefinition3;
         };
+        healthSources?: undefined | {
+            sourceInstanceId: string;
+            revision: string;
+            source: {
+                v: 1;
+                subject: {
+                    kind: 'environment';
+                    environmentId: string;
+                } | {
+                    kind: 'machineService';
+                    machineId: string;
+                    serviceId: string;
+                };
+                checks: {
+                    checkId: string;
+                    kind: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    binding: {
+                        kind: 'domain';
+                        domainId: string;
+                        targetLinkId: string;
+                        condition: 'certificate_renewal_failed' | 'domain_probe_failed';
+                    } | {
+                        kind: 'environmentHealth';
+                        domainId: string;
+                        targetLinkId: string;
+                    } | {
+                        kind: 'healthCheck';
+                    };
+                    config: PluginJsonValueV2;
+                    periodMs: number;
+                    consecutiveFailuresBeforeAlerting: number;
+                }[];
+                alerts?: undefined | {
+                    channels: {
+                        channelId: string;
+                        destination?: PluginJsonValueV2 | undefined;
+                    }[];
+                    phases: ('open' | 'recovered')[];
+                };
+                investigation?: undefined | {
+                    mode: 'auto_start';
+                    configuredActionId: string;
+                } | {
+                    mode: 'inbox';
+                };
+            };
+            enabled: boolean;
+            observer: null | {
+                machineId: string;
+                machineInstallationId: string;
+                pluginId: string;
+                materializationId: string;
+            };
+            automationId: string;
+            triggerId: string;
+        }[];
     };
     readonly "workflow.trigger.add": {
         set: {
@@ -16609,6 +16677,65 @@ export type WorkflowsActionResultById = {
             triggerId: string;
             definition: WorkflowsActionDefinition3;
         };
+        healthSources?: undefined | {
+            sourceInstanceId: string;
+            revision: string;
+            source: {
+                v: 1;
+                subject: {
+                    kind: 'environment';
+                    environmentId: string;
+                } | {
+                    kind: 'machineService';
+                    machineId: string;
+                    serviceId: string;
+                };
+                checks: {
+                    checkId: string;
+                    kind: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    binding: {
+                        kind: 'domain';
+                        domainId: string;
+                        targetLinkId: string;
+                        condition: 'certificate_renewal_failed' | 'domain_probe_failed';
+                    } | {
+                        kind: 'environmentHealth';
+                        domainId: string;
+                        targetLinkId: string;
+                    } | {
+                        kind: 'healthCheck';
+                    };
+                    config: PluginJsonValueV2;
+                    periodMs: number;
+                    consecutiveFailuresBeforeAlerting: number;
+                }[];
+                alerts?: undefined | {
+                    channels: {
+                        channelId: string;
+                        destination?: PluginJsonValueV2 | undefined;
+                    }[];
+                    phases: ('open' | 'recovered')[];
+                };
+                investigation?: undefined | {
+                    mode: 'auto_start';
+                    configuredActionId: string;
+                } | {
+                    mode: 'inbox';
+                };
+            };
+            enabled: boolean;
+            observer: null | {
+                machineId: string;
+                machineInstallationId: string;
+                pluginId: string;
+                materializationId: string;
+            };
+            automationId: string;
+            triggerId: string;
+        }[];
     };
     readonly "session.trigger.add": {
         set: {

@@ -15,6 +15,12 @@ export type AutomationEventsActionInputById = {
         pageSize?: number | undefined;
         cursor?: string | undefined;
         knownRevision?: string | undefined;
+        catalogRefresh?: undefined | {
+            kind: 'refresh';
+        } | {
+            kind: 'retry';
+            retryAt: number;
+        };
         checkpointRetirementCandidates?: undefined | {
             automationId: string;
             triggerId: string;

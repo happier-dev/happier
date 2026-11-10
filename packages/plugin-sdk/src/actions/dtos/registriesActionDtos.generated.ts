@@ -814,6 +814,8 @@ export type RegistriesActionResultById = {
                             username?: string | undefined;
                             password?: string | undefined;
                             database?: string | undefined;
+                            host?: string | undefined;
+                            port?: string | undefined;
                         };
                         logicalBackup?: undefined | {
                             adapter: 'mongo-v1' | 'mysql-v1' | 'postgres-v1' | 'sqlite-v1';

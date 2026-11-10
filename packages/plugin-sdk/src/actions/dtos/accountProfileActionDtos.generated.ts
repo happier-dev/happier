@@ -392,6 +392,7 @@ export type AccountProfileActionInputById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -556,6 +557,7 @@ export type AccountProfileActionInputById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -624,12 +626,12 @@ export type AccountProfileActionInputById = {
                         };
                         kind: 'painting' | 'photo';
                         title: string;
-                        hour: number;
+                        dark: 'dusk' | 'night';
                         horizon: {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
-                        dark: 'dusk' | 'night';
+                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
@@ -1037,6 +1039,7 @@ export type AccountProfileActionInputById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -1201,6 +1204,7 @@ export type AccountProfileActionInputById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -1269,12 +1273,12 @@ export type AccountProfileActionInputById = {
                         };
                         kind: 'painting' | 'photo';
                         title: string;
-                        hour: number;
+                        dark: 'dusk' | 'night';
                         horizon: {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
-                        dark: 'dusk' | 'night';
+                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
@@ -1682,6 +1686,7 @@ export type AccountProfileActionInputById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -1846,6 +1851,7 @@ export type AccountProfileActionInputById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -1914,12 +1920,12 @@ export type AccountProfileActionInputById = {
                         };
                         kind: 'painting' | 'photo';
                         title: string;
-                        hour: number;
+                        dark: 'dusk' | 'night';
                         horizon: {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
-                        dark: 'dusk' | 'night';
+                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
@@ -2511,12 +2517,12 @@ export type AccountProfileActionResultById = {
                             };
                             kind: 'painting' | 'photo';
                             title: string;
-                            hour: number;
+                            dark: 'dusk' | 'night';
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            dark: 'dusk' | 'night';
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
@@ -2625,12 +2631,12 @@ export type AccountProfileActionResultById = {
                             };
                             kind: 'painting' | 'photo';
                             title: string;
-                            hour: number;
+                            dark: 'dusk' | 'night';
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            dark: 'dusk' | 'night';
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
@@ -3539,12 +3545,12 @@ export type AccountProfileActionResultById = {
                             };
                             kind: 'painting' | 'photo';
                             title: string;
-                            hour: number;
+                            dark: 'dusk' | 'night';
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            dark: 'dusk' | 'night';
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
@@ -4064,12 +4070,12 @@ export type AccountProfileActionResultById = {
                             };
                             kind: 'painting' | 'photo';
                             title: string;
-                            hour: number;
+                            dark: 'dusk' | 'night';
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            dark: 'dusk' | 'night';
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
@@ -4589,12 +4595,12 @@ export type AccountProfileActionResultById = {
                             };
                             kind: 'painting' | 'photo';
                             title: string;
-                            hour: number;
+                            dark: 'dusk' | 'night';
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            dark: 'dusk' | 'night';
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
@@ -5114,12 +5120,12 @@ export type AccountProfileActionResultById = {
                             };
                             kind: 'painting' | 'photo';
                             title: string;
-                            hour: number;
+                            dark: 'dusk' | 'night';
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            dark: 'dusk' | 'night';
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
@@ -5639,12 +5645,12 @@ export type AccountProfileActionResultById = {
                             };
                             kind: 'painting' | 'photo';
                             title: string;
-                            hour: number;
+                            dark: 'dusk' | 'night';
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            dark: 'dusk' | 'night';
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
@@ -6164,12 +6170,12 @@ export type AccountProfileActionResultById = {
                             };
                             kind: 'painting' | 'photo';
                             title: string;
-                            hour: number;
+                            dark: 'dusk' | 'night';
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            dark: 'dusk' | 'night';
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;

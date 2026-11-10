@@ -27,6 +27,42 @@ import { withPatchedProcessEnv } from '../../../apps/stack/scripts/testkit/core/
 // charged-payload wait restriction belongs to its real workspace publication.
 withPatchedProcessEnv(test, { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: undefined });
 
+test('Action map null fingerprints never admit stale outputs when an input disappears', async t => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-null-fingerprint-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const cachePath = resolve(directory, 'cache.json');
+  const outputPath = resolve(directory, 'output.ts');
+  const stale = 'export type Catalog = {};\n';
+  const current = 'export type Catalog = { catalogRefresh?: { kind: "refresh" } };\n';
+  writeFileSync(outputPath, stale);
+  writeFileSync(cachePath, JSON.stringify({ version: 1, inputPaths: [resolve(directory, 'removed-input.ts')],
+    fingerprint: null, outputDigest: createHash('sha256').update(stale).digest('hex') }));
+  let derivations = 0;
+  await runCachedActionTypeMap({ cachePath, outputPath, derive: async () => {
+    derivations += 1;
+    return { inputPaths: [], output: current };
+  } });
+  assert.equal(derivations, 1, 'a missing input requires real derivation');
+  assert.equal(readFileSync(outputPath, 'utf8'), current);
+});
+
+test('automation source list DTO retains the closed catalog refresh intent', async () => {
+  const derived = await deriveActionDtoSchemas({ repoRoot: process.cwd(), onlyFamilies: ['automation_events'] });
+  const dto = derived.outputs.get(resolve('packages/protocol/src/actions/automationEventsActionDtos.ts'));
+  assert.ok(dto, 'the automation family must produce its canonical DTO');
+  const source = ts.createSourceFile('dto.ts', dto, ts.ScriptTarget.ES2022, true);
+  const inputs = source.statements.find(node => ts.isTypeAliasDeclaration(node)
+    && node.name.text === 'AutomationEventsActionInputById').type;
+  const list = inputs.members.find(member => member.name.text === 'automation.event.sources.list').type;
+  const refresh = list.members.find(member => member.name.text === 'catalogRefresh');
+  assert.ok(refresh, 'catalog scheduling must reach SDK Action callers');
+  assert.equal(refresh.questionToken?.kind, ts.SyntaxKind.QuestionToken);
+  const shape = refresh.type.getText(source);
+  assert.match(shape, /kind: 'refresh'/u);
+  assert.match(shape, /kind: 'retry'/u);
+  assert.match(shape, /retryAt: number/u);
+});
+
 test('approval reads derive sanitized requester attribution instead of opaque JSON', async () => {
   const derived = await deriveActionDtoSchemas({ repoRoot: process.cwd(), onlyFamilies: ['approvals'] });
   const dto = derived.outputs.get(resolve('packages/protocol/src/actions/approvalsActionDtos.ts'));

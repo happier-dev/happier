@@ -21,8 +21,8 @@ export type ClientFilesActionInputById = {
                 machineId: string;
                 serverId: string;
                 environmentId: string;
-                targetLinkId: string;
                 deploymentId: string;
+                targetLinkId: string;
                 installationId: string;
                 ref?: string | undefined;
             };

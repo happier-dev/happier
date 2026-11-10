@@ -163,6 +163,7 @@ export type DiscoveryActionInputById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {

@@ -61,6 +61,10 @@ export type WorkflowEventCatalogActionResultById = {
                         };
                         scmPullRequestLifecycle?: undefined | {
                             providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            previewStatusActionRef?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
                         };
                         webhookContributionRef?: undefined | {
                             pluginId: string;
@@ -80,6 +84,7 @@ export type WorkflowEventCatalogActionResultById = {
                         connectedAccountPurposeBindings?: undefined | {
                             path: string;
                             purpose: string;
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                     };

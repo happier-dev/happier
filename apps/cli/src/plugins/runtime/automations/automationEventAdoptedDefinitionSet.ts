@@ -445,6 +445,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
   let adoptedSnapshotRefresh: AdoptedSnapshotRefresh | null = null;
   let catalogInvalidated = true;
   let catalogRefreshFailed = false;
+  let consumedCatalogRetryAt: number | undefined;
 
   function isOccurrenceCurrent(signal: AbortSignal): boolean {
     return !signal.aborted && !params.occurrenceSignal.aborted && params.isOccurrenceCurrent();
@@ -884,6 +885,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
           if (signal.aborted) done();
         });
       }
+      if (intent?.kind === 'retry') consumedCatalogRetryAt = intent.retryAt;
       return refresh(signal);
     };
     const inFlight: AdoptedSnapshotRefresh = {
@@ -916,6 +918,10 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
     if (intent !== undefined && adoptedSnapshotRefresh === null) {
       if (!catalogInvalidated && !catalogRefreshFailed && adopted !== null) return { kind: 'unchanged', revision: adopted.revision };
       if (intent.kind === 'refresh' && catalogRefreshFailed && !catalogInvalidated) return { kind: 'discarded', reason: 'unavailable' };
+      // Observer waits may settle in separate timer turns. A completed failed
+      // retry still belongs to every subscriber of that deadline.
+      if (intent.kind === 'retry' && catalogRefreshFailed && !catalogInvalidated
+        && consumedCatalogRetryAt !== undefined && intent.retryAt <= consumedCatalogRetryAt) return { kind: 'discarded', reason: 'unavailable' };
     }
     const inFlight = acquireAdoptedSnapshotRefresh(intent);
     try {
@@ -964,6 +970,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
     invalidate() {
       catalogInvalidated = true;
       catalogRefreshFailed = false;
+      consumedCatalogRetryAt = undefined;
       adoptedSnapshotRefresh?.expedite();
     },
     refresh,

@@ -126,6 +126,7 @@ export type HomeHubLayoutActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -288,6 +289,7 @@ export type HomeHubLayoutActionInputById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -561,6 +563,7 @@ export type HomeHubLayoutActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -733,6 +736,7 @@ export type HomeHubLayoutActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -915,6 +919,7 @@ export type HomeHubLayoutActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -1082,6 +1087,7 @@ export type HomeHubLayoutActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -1252,6 +1258,7 @@ export type HomeHubLayoutActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -1423,6 +1430,7 @@ export type HomeHubLayoutActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -1576,6 +1584,7 @@ export type HomeHubLayoutActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -1737,6 +1746,7 @@ export type HomeHubLayoutActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -1904,6 +1914,7 @@ export type HomeHubLayoutActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -2074,6 +2085,7 @@ export type HomeHubLayoutActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -2245,6 +2257,7 @@ export type HomeHubLayoutActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -2398,6 +2411,7 @@ export type HomeHubLayoutActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {

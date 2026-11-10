@@ -535,7 +535,7 @@ export type ProjectExecutionActionResultById = {
                             kind: 'secret';
                         };
                     }[];
-                    phase: 'bindings' | 'deploy' | 'domains' | 'environment' | 'generation' | 'metadata' | 'target';
+                    phase: 'bindings' | 'deploy' | 'domains' | 'environment' | 'generation' | 'metadata' | 'repository' | 'target';
                     errorCode: string;
                     environmentId?: string | undefined;
                     revision?: number | undefined;
@@ -544,6 +544,109 @@ export type ProjectExecutionActionResultById = {
                         kind: 'stored';
                         contentRevision: number;
                         composeDigest: string;
+                    };
+                    repositoryChange?: undefined | {
+                        kind: 'partial';
+                        stage: 'cleanup' | 'commit' | 'pullRequest' | 'worktree' | 'write';
+                        errorCode: string;
+                        worktree?: undefined | {
+                            path: string;
+                            branchName: string;
+                        };
+                        headCommit?: string | undefined;
+                        writtenPaths?: string[] | undefined;
+                        pullRequest?: undefined | {
+                            [x: string]: unknown;
+                            provider: {
+                                [x: string]: unknown;
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                                urlSafety: {
+                                    [x: string]: unknown;
+                                    allowedSchemes: string[];
+                                };
+                                nameWithOwner?: string | undefined;
+                                repositoryWebUrl?: string | undefined;
+                                remoteName?: string | undefined;
+                            };
+                            title: string;
+                            url: string;
+                            baseBranch: string;
+                            headBranch: string;
+                            state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                            number?: null | number | undefined;
+                            providerNativeId?: string | undefined;
+                            headRepositoryNameWithOwner?: string | undefined;
+                            isCrossRepository?: boolean | undefined;
+                            headSha?: null | string | undefined;
+                            baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
+                            createdAtMs?: number | undefined;
+                            closedAtMs?: number | undefined;
+                            mergedAtMs?: number | undefined;
+                            isDraft?: boolean | undefined;
+                            author?: undefined | {
+                                [x: string]: unknown;
+                                login?: string | undefined;
+                                displayName?: string | undefined;
+                                url?: string | undefined;
+                            };
+                            checks?: undefined | {
+                                [x: string]: unknown;
+                                state: 'failure' | 'pending' | 'success' | 'unknown';
+                                description?: string | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'pullRequest';
+                        pullRequest: {
+                            [x: string]: unknown;
+                            provider: {
+                                [x: string]: unknown;
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                                urlSafety: {
+                                    [x: string]: unknown;
+                                    allowedSchemes: string[];
+                                };
+                                nameWithOwner?: string | undefined;
+                                repositoryWebUrl?: string | undefined;
+                                remoteName?: string | undefined;
+                            };
+                            title: string;
+                            url: string;
+                            baseBranch: string;
+                            headBranch: string;
+                            state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                            number?: null | number | undefined;
+                            providerNativeId?: string | undefined;
+                            headRepositoryNameWithOwner?: string | undefined;
+                            isCrossRepository?: boolean | undefined;
+                            headSha?: null | string | undefined;
+                            baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
+                            createdAtMs?: number | undefined;
+                            closedAtMs?: number | undefined;
+                            mergedAtMs?: number | undefined;
+                            isDraft?: boolean | undefined;
+                            author?: undefined | {
+                                [x: string]: unknown;
+                                login?: string | undefined;
+                                displayName?: string | undefined;
+                                url?: string | undefined;
+                            };
+                            checks?: undefined | {
+                                [x: string]: unknown;
+                                state: 'failure' | 'pending' | 'success' | 'unknown';
+                                description?: string | undefined;
+                            };
+                        };
+                        headCommit: string;
+                        branchName: string;
                     };
                     requiredFact?: string | undefined;
                     remedy?: string | undefined;
@@ -759,6 +862,10 @@ export type ProjectExecutionActionResultById = {
                             serverId: string;
                             environmentId: string;
                             expectedRevision: number;
+                            providerVariables?: undefined | {
+                                useOurs: string[];
+                                keepTheirs: string[];
+                            };
                         };
                     } | {
                         actionId: 'deployments.environments.create';
@@ -796,6 +903,7 @@ export type ProjectExecutionActionResultById = {
                                 pullRequestId: string;
                                 runtimeTargetLinkId: string;
                             };
+                            previewCompanionOfEnvironmentId?: string | undefined;
                             previewDataTargetLinks?: undefined | {
                                 contentArtifactId: string;
                                 contentHeaderVersion: number;
@@ -1250,6 +1358,20 @@ export type ProjectExecutionActionResultById = {
                 serverId: string;
                 environmentId: string;
                 deploymentId: string;
+                expectedDown?: undefined | {
+                    operation: 'backup' | 'deploy';
+                    targetLinkId: string;
+                    machineId: string;
+                    installationId: string;
+                    serviceIds: readonly string[];
+                    domains: readonly Readonly<{
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                        machineId: string;
+                        installationId: string;
+                    }>[];
+                };
             } | {
                 kind: 'forkRequest';
                 id: string;
@@ -1619,6 +1741,127 @@ export type ProjectExecutionActionResultById = {
                             remedy: string;
                         };
                     };
+                };
+            } | {
+                kind: 'review_required';
+                code: 'restore_snapshot_not_confirmed';
+                snapshot: {
+                    kind: 'confirmed';
+                    snapshotId: string;
+                    coverage: {
+                        rootDisk: boolean;
+                        attachedVolumes: boolean;
+                    };
+                    cost: {
+                        kind: 'billed';
+                        source: string;
+                        price?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    };
+                    consistency: 'running' | 'stopped' | 'unknown';
+                } | {
+                    kind: 'failed';
+                    code: string;
+                    nativeCause?: {
+                        grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                    } | {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                        fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        exitCode: null | number;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
+                } | {
+                    kind: 'refused';
+                    code: string;
+                    nativeCause?: {
+                        grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                    } | {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                        fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        exitCode: null | number;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
+                } | {
+                    kind: 'unknown';
+                    code: string;
+                    nativeCause?: {
+                        grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                    } | {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                        fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        exitCode: null | number;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
+                } | {
+                    kind: 'unsupported';
+                    code: string;
                 };
             };
             setupReview?: undefined | {
@@ -1971,7 +2214,7 @@ export type ProjectExecutionActionResultById = {
                             kind: 'secret';
                         };
                     }[];
-                    phase: 'bindings' | 'deploy' | 'domains' | 'environment' | 'generation' | 'metadata' | 'target';
+                    phase: 'bindings' | 'deploy' | 'domains' | 'environment' | 'generation' | 'metadata' | 'repository' | 'target';
                     errorCode: string;
                     environmentId?: string | undefined;
                     revision?: number | undefined;
@@ -1980,6 +2223,109 @@ export type ProjectExecutionActionResultById = {
                         kind: 'stored';
                         contentRevision: number;
                         composeDigest: string;
+                    };
+                    repositoryChange?: undefined | {
+                        kind: 'partial';
+                        stage: 'cleanup' | 'commit' | 'pullRequest' | 'worktree' | 'write';
+                        errorCode: string;
+                        worktree?: undefined | {
+                            path: string;
+                            branchName: string;
+                        };
+                        headCommit?: string | undefined;
+                        writtenPaths?: string[] | undefined;
+                        pullRequest?: undefined | {
+                            [x: string]: unknown;
+                            provider: {
+                                [x: string]: unknown;
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                                urlSafety: {
+                                    [x: string]: unknown;
+                                    allowedSchemes: string[];
+                                };
+                                nameWithOwner?: string | undefined;
+                                repositoryWebUrl?: string | undefined;
+                                remoteName?: string | undefined;
+                            };
+                            title: string;
+                            url: string;
+                            baseBranch: string;
+                            headBranch: string;
+                            state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                            number?: null | number | undefined;
+                            providerNativeId?: string | undefined;
+                            headRepositoryNameWithOwner?: string | undefined;
+                            isCrossRepository?: boolean | undefined;
+                            headSha?: null | string | undefined;
+                            baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
+                            createdAtMs?: number | undefined;
+                            closedAtMs?: number | undefined;
+                            mergedAtMs?: number | undefined;
+                            isDraft?: boolean | undefined;
+                            author?: undefined | {
+                                [x: string]: unknown;
+                                login?: string | undefined;
+                                displayName?: string | undefined;
+                                url?: string | undefined;
+                            };
+                            checks?: undefined | {
+                                [x: string]: unknown;
+                                state: 'failure' | 'pending' | 'success' | 'unknown';
+                                description?: string | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'pullRequest';
+                        pullRequest: {
+                            [x: string]: unknown;
+                            provider: {
+                                [x: string]: unknown;
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                                urlSafety: {
+                                    [x: string]: unknown;
+                                    allowedSchemes: string[];
+                                };
+                                nameWithOwner?: string | undefined;
+                                repositoryWebUrl?: string | undefined;
+                                remoteName?: string | undefined;
+                            };
+                            title: string;
+                            url: string;
+                            baseBranch: string;
+                            headBranch: string;
+                            state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                            number?: null | number | undefined;
+                            providerNativeId?: string | undefined;
+                            headRepositoryNameWithOwner?: string | undefined;
+                            isCrossRepository?: boolean | undefined;
+                            headSha?: null | string | undefined;
+                            baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
+                            createdAtMs?: number | undefined;
+                            closedAtMs?: number | undefined;
+                            mergedAtMs?: number | undefined;
+                            isDraft?: boolean | undefined;
+                            author?: undefined | {
+                                [x: string]: unknown;
+                                login?: string | undefined;
+                                displayName?: string | undefined;
+                                url?: string | undefined;
+                            };
+                            checks?: undefined | {
+                                [x: string]: unknown;
+                                state: 'failure' | 'pending' | 'success' | 'unknown';
+                                description?: string | undefined;
+                            };
+                        };
+                        headCommit: string;
+                        branchName: string;
                     };
                     requiredFact?: string | undefined;
                     remedy?: string | undefined;
@@ -2195,6 +2541,10 @@ export type ProjectExecutionActionResultById = {
                             serverId: string;
                             environmentId: string;
                             expectedRevision: number;
+                            providerVariables?: undefined | {
+                                useOurs: string[];
+                                keepTheirs: string[];
+                            };
                         };
                     } | {
                         actionId: 'deployments.environments.create';
@@ -2232,6 +2582,7 @@ export type ProjectExecutionActionResultById = {
                                 pullRequestId: string;
                                 runtimeTargetLinkId: string;
                             };
+                            previewCompanionOfEnvironmentId?: string | undefined;
                             previewDataTargetLinks?: undefined | {
                                 contentArtifactId: string;
                                 contentHeaderVersion: number;
@@ -2686,6 +3037,20 @@ export type ProjectExecutionActionResultById = {
                 serverId: string;
                 environmentId: string;
                 deploymentId: string;
+                expectedDown?: undefined | {
+                    operation: 'backup' | 'deploy';
+                    targetLinkId: string;
+                    machineId: string;
+                    installationId: string;
+                    serviceIds: readonly string[];
+                    domains: readonly Readonly<{
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                        machineId: string;
+                        installationId: string;
+                    }>[];
+                };
             } | {
                 kind: 'forkRequest';
                 id: string;
@@ -3055,6 +3420,127 @@ export type ProjectExecutionActionResultById = {
                             remedy: string;
                         };
                     };
+                };
+            } | {
+                kind: 'review_required';
+                code: 'restore_snapshot_not_confirmed';
+                snapshot: {
+                    kind: 'confirmed';
+                    snapshotId: string;
+                    coverage: {
+                        rootDisk: boolean;
+                        attachedVolumes: boolean;
+                    };
+                    cost: {
+                        kind: 'billed';
+                        source: string;
+                        price?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    };
+                    consistency: 'running' | 'stopped' | 'unknown';
+                } | {
+                    kind: 'failed';
+                    code: string;
+                    nativeCause?: {
+                        grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                    } | {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                        fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        exitCode: null | number;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
+                } | {
+                    kind: 'refused';
+                    code: string;
+                    nativeCause?: {
+                        grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                    } | {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                        fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        exitCode: null | number;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
+                } | {
+                    kind: 'unknown';
+                    code: string;
+                    nativeCause?: {
+                        grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                    } | {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                        fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        exitCode: null | number;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
+                } | {
+                    kind: 'unsupported';
+                    code: string;
                 };
             };
             setupReview?: undefined | {
@@ -3407,7 +3893,7 @@ export type ProjectExecutionActionResultById = {
                             kind: 'secret';
                         };
                     }[];
-                    phase: 'bindings' | 'deploy' | 'domains' | 'environment' | 'generation' | 'metadata' | 'target';
+                    phase: 'bindings' | 'deploy' | 'domains' | 'environment' | 'generation' | 'metadata' | 'repository' | 'target';
                     errorCode: string;
                     environmentId?: string | undefined;
                     revision?: number | undefined;
@@ -3416,6 +3902,109 @@ export type ProjectExecutionActionResultById = {
                         kind: 'stored';
                         contentRevision: number;
                         composeDigest: string;
+                    };
+                    repositoryChange?: undefined | {
+                        kind: 'partial';
+                        stage: 'cleanup' | 'commit' | 'pullRequest' | 'worktree' | 'write';
+                        errorCode: string;
+                        worktree?: undefined | {
+                            path: string;
+                            branchName: string;
+                        };
+                        headCommit?: string | undefined;
+                        writtenPaths?: string[] | undefined;
+                        pullRequest?: undefined | {
+                            [x: string]: unknown;
+                            provider: {
+                                [x: string]: unknown;
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                                urlSafety: {
+                                    [x: string]: unknown;
+                                    allowedSchemes: string[];
+                                };
+                                nameWithOwner?: string | undefined;
+                                repositoryWebUrl?: string | undefined;
+                                remoteName?: string | undefined;
+                            };
+                            title: string;
+                            url: string;
+                            baseBranch: string;
+                            headBranch: string;
+                            state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                            number?: null | number | undefined;
+                            providerNativeId?: string | undefined;
+                            headRepositoryNameWithOwner?: string | undefined;
+                            isCrossRepository?: boolean | undefined;
+                            headSha?: null | string | undefined;
+                            baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
+                            createdAtMs?: number | undefined;
+                            closedAtMs?: number | undefined;
+                            mergedAtMs?: number | undefined;
+                            isDraft?: boolean | undefined;
+                            author?: undefined | {
+                                [x: string]: unknown;
+                                login?: string | undefined;
+                                displayName?: string | undefined;
+                                url?: string | undefined;
+                            };
+                            checks?: undefined | {
+                                [x: string]: unknown;
+                                state: 'failure' | 'pending' | 'success' | 'unknown';
+                                description?: string | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'pullRequest';
+                        pullRequest: {
+                            [x: string]: unknown;
+                            provider: {
+                                [x: string]: unknown;
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                                urlSafety: {
+                                    [x: string]: unknown;
+                                    allowedSchemes: string[];
+                                };
+                                nameWithOwner?: string | undefined;
+                                repositoryWebUrl?: string | undefined;
+                                remoteName?: string | undefined;
+                            };
+                            title: string;
+                            url: string;
+                            baseBranch: string;
+                            headBranch: string;
+                            state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                            number?: null | number | undefined;
+                            providerNativeId?: string | undefined;
+                            headRepositoryNameWithOwner?: string | undefined;
+                            isCrossRepository?: boolean | undefined;
+                            headSha?: null | string | undefined;
+                            baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
+                            createdAtMs?: number | undefined;
+                            closedAtMs?: number | undefined;
+                            mergedAtMs?: number | undefined;
+                            isDraft?: boolean | undefined;
+                            author?: undefined | {
+                                [x: string]: unknown;
+                                login?: string | undefined;
+                                displayName?: string | undefined;
+                                url?: string | undefined;
+                            };
+                            checks?: undefined | {
+                                [x: string]: unknown;
+                                state: 'failure' | 'pending' | 'success' | 'unknown';
+                                description?: string | undefined;
+                            };
+                        };
+                        headCommit: string;
+                        branchName: string;
                     };
                     requiredFact?: string | undefined;
                     remedy?: string | undefined;
@@ -3631,6 +4220,10 @@ export type ProjectExecutionActionResultById = {
                             serverId: string;
                             environmentId: string;
                             expectedRevision: number;
+                            providerVariables?: undefined | {
+                                useOurs: string[];
+                                keepTheirs: string[];
+                            };
                         };
                     } | {
                         actionId: 'deployments.environments.create';
@@ -3668,6 +4261,7 @@ export type ProjectExecutionActionResultById = {
                                 pullRequestId: string;
                                 runtimeTargetLinkId: string;
                             };
+                            previewCompanionOfEnvironmentId?: string | undefined;
                             previewDataTargetLinks?: undefined | {
                                 contentArtifactId: string;
                                 contentHeaderVersion: number;
@@ -4122,6 +4716,20 @@ export type ProjectExecutionActionResultById = {
                 serverId: string;
                 environmentId: string;
                 deploymentId: string;
+                expectedDown?: undefined | {
+                    operation: 'backup' | 'deploy';
+                    targetLinkId: string;
+                    machineId: string;
+                    installationId: string;
+                    serviceIds: readonly string[];
+                    domains: readonly Readonly<{
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                        machineId: string;
+                        installationId: string;
+                    }>[];
+                };
             } | {
                 kind: 'forkRequest';
                 id: string;
@@ -4491,6 +5099,127 @@ export type ProjectExecutionActionResultById = {
                             remedy: string;
                         };
                     };
+                };
+            } | {
+                kind: 'review_required';
+                code: 'restore_snapshot_not_confirmed';
+                snapshot: {
+                    kind: 'confirmed';
+                    snapshotId: string;
+                    coverage: {
+                        rootDisk: boolean;
+                        attachedVolumes: boolean;
+                    };
+                    cost: {
+                        kind: 'billed';
+                        source: string;
+                        price?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    };
+                    consistency: 'running' | 'stopped' | 'unknown';
+                } | {
+                    kind: 'failed';
+                    code: string;
+                    nativeCause?: {
+                        grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                    } | {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                        fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        exitCode: null | number;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
+                } | {
+                    kind: 'refused';
+                    code: string;
+                    nativeCause?: {
+                        grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                    } | {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                        fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        exitCode: null | number;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
+                } | {
+                    kind: 'unknown';
+                    code: string;
+                    nativeCause?: {
+                        grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                    } | {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                        fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        exitCode: null | number;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
+                } | {
+                    kind: 'unsupported';
+                    code: string;
                 };
             };
             setupReview?: undefined | {

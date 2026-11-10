@@ -436,12 +436,15 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                 if (!changed) {
                     const retryAt = eligibility(source.retryAt({ error, now: now() }));
                     if (catalogFailed && retryAt !== null && input.mode !== 'once') {
-                        // The adopted host owner holds the one catalog retry for
-                        // all subscribers; provider observation waits stay local.
+                        // The host coalesces subscribers, but not every Action
+                        // transport holds a read until its retry deadline. Always
+                        // reach our wait before issuing the retry. A deadline
+                        // already consumed by a retry is not a future wake;
+                        // park until invalidation rather than spin at delay zero.
+                        const expiredRetry = catalogRefresh?.kind === 'retry' && retryAt <= now();
                         catalogRefresh = { kind: 'retry', retryAt };
-                        continue;
-                    }
-                    wakeAt = retryAt;
+                        wakeAt = expiredRetry ? null : retryAt;
+                    } else wakeAt = retryAt;
                 }
             }
             if (input.mode === 'once' || context.signal.aborted) return;

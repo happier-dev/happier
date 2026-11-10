@@ -1030,8 +1030,6 @@ export type ManagedMachinesActionInputById = {
                 };
                 updatedAt: number;
             };
-            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-            approvalProfileId?: null | string | undefined;
             connectedServices?: undefined | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
@@ -1093,6 +1091,8 @@ export type ManagedMachinesActionInputById = {
                     };
                 }> | undefined;
             };
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+            approvalProfileId?: null | string | undefined;
             placementOrigin?: undefined | {
                 kind: 'machine_pool';
                 poolId: string;
@@ -3257,8 +3257,6 @@ export type ManagedMachinesActionInputById = {
                 };
                 updatedAt: number;
             };
-            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-            approvalProfileId?: null | string | undefined;
             connectedServices?: undefined | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
@@ -3320,6 +3318,8 @@ export type ManagedMachinesActionInputById = {
                     };
                 }> | undefined;
             };
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+            approvalProfileId?: null | string | undefined;
             placementOrigin?: undefined | {
                 kind: 'machine_pool';
                 poolId: string;
@@ -4621,12 +4621,12 @@ export type ManagedMachinesActionInputById = {
                 contentArtifactId: string;
                 contentHeaderVersion: number;
                 contentBodyVersion: number;
-                targetLinkId: string;
-                expectedTargetLinkRevision: number;
-                requestKey: string;
+                serverId: string;
                 environmentId: string;
                 expectedRevision: number;
-                serverId: string;
+                requestKey: string;
+                targetLinkId: string;
+                expectedTargetLinkRevision: number;
                 whenBusy?: 'refuse' | 'supersede' | undefined;
                 onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                 services?: string[] | undefined;
@@ -4645,13 +4645,6 @@ export type ManagedMachinesActionInputById = {
                                 profiles: string[];
                                 services: string[];
                                 path: string;
-                                augmentation?: undefined | {
-                                    document: string;
-                                    publicFiles?: undefined | {
-                                        path: string;
-                                        content: string;
-                                    }[];
-                                };
                                 primaryService?: string | undefined;
                             };
                             pullRequestHead?: undefined | {
@@ -4723,6 +4716,7 @@ export type ManagedMachinesActionInputById = {
                     pullRequestId: string;
                     runtimeTargetLinkId: string;
                 };
+                previewCompanionOfEnvironmentId?: string | undefined;
                 previewDataTargetLinks?: undefined | {
                     contentArtifactId: string;
                     contentHeaderVersion: number;
@@ -5082,6 +5076,24 @@ export type ManagedMachinesActionInputById = {
                     installationId: string;
                 };
                 destination: {
+                    kind: 'repositoryPullRequest';
+                    workspace: {
+                        kind: 'workspace-ref';
+                        serverId: string;
+                        id: string;
+                    };
+                    sourceRevision: number;
+                    repository: {
+                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                        deployment: string;
+                        repository: string;
+                    };
+                    baseCommit: string;
+                    baseBranch: string;
+                    branchName: string;
+                    composePath: string;
+                    title: string;
+                } | {
                     kind: 'stored';
                     contentRevision: number;
                     composeDigest: string;
@@ -5172,12 +5184,12 @@ export type ManagedMachinesActionInputById = {
                     contentArtifactId: string;
                     contentHeaderVersion: number;
                     contentBodyVersion: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
+                    serverId: string;
                     environmentId: string;
                     expectedRevision: number;
-                    serverId: string;
+                    requestKey: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
                     whenBusy?: 'refuse' | 'supersede' | undefined;
                     onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                     services?: string[] | undefined;
@@ -5196,13 +5208,6 @@ export type ManagedMachinesActionInputById = {
                                     profiles: string[];
                                     services: string[];
                                     path: string;
-                                    augmentation?: undefined | {
-                                        document: string;
-                                        publicFiles?: undefined | {
-                                            path: string;
-                                            content: string;
-                                        }[];
-                                    };
                                     primaryService?: string | undefined;
                                 };
                                 pullRequestHead?: undefined | {
@@ -5274,6 +5279,7 @@ export type ManagedMachinesActionInputById = {
                         pullRequestId: string;
                         runtimeTargetLinkId: string;
                     };
+                    previewCompanionOfEnvironmentId?: string | undefined;
                     previewDataTargetLinks?: undefined | {
                         contentArtifactId: string;
                         contentHeaderVersion: number;
@@ -5633,6 +5639,24 @@ export type ManagedMachinesActionInputById = {
                         installationId: string;
                     };
                     destination: {
+                        kind: 'repositoryPullRequest';
+                        workspace: {
+                            kind: 'workspace-ref';
+                            serverId: string;
+                            id: string;
+                        };
+                        sourceRevision: number;
+                        repository: {
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            deployment: string;
+                            repository: string;
+                        };
+                        baseCommit: string;
+                        baseBranch: string;
+                        branchName: string;
+                        composePath: string;
+                        title: string;
+                    } | {
                         kind: 'stored';
                         contentRevision: number;
                         composeDigest: string;
@@ -7495,12 +7519,12 @@ export type ManagedMachinesActionInputById = {
                     contentArtifactId: string;
                     contentHeaderVersion: number;
                     contentBodyVersion: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
+                    serverId: string;
                     environmentId: string;
                     expectedRevision: number;
-                    serverId: string;
+                    requestKey: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
                     whenBusy?: 'refuse' | 'supersede' | undefined;
                     onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                     services?: string[] | undefined;
@@ -7519,13 +7543,6 @@ export type ManagedMachinesActionInputById = {
                                     profiles: string[];
                                     services: string[];
                                     path: string;
-                                    augmentation?: undefined | {
-                                        document: string;
-                                        publicFiles?: undefined | {
-                                            path: string;
-                                            content: string;
-                                        }[];
-                                    };
                                     primaryService?: string | undefined;
                                 };
                                 pullRequestHead?: undefined | {
@@ -7597,6 +7614,7 @@ export type ManagedMachinesActionInputById = {
                         pullRequestId: string;
                         runtimeTargetLinkId: string;
                     };
+                    previewCompanionOfEnvironmentId?: string | undefined;
                     previewDataTargetLinks?: undefined | {
                         contentArtifactId: string;
                         contentHeaderVersion: number;
@@ -7956,6 +7974,24 @@ export type ManagedMachinesActionInputById = {
                         installationId: string;
                     };
                     destination: {
+                        kind: 'repositoryPullRequest';
+                        workspace: {
+                            kind: 'workspace-ref';
+                            serverId: string;
+                            id: string;
+                        };
+                        sourceRevision: number;
+                        repository: {
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            deployment: string;
+                            repository: string;
+                        };
+                        baseCommit: string;
+                        baseBranch: string;
+                        branchName: string;
+                        composePath: string;
+                        title: string;
+                    } | {
                         kind: 'stored';
                         contentRevision: number;
                         composeDigest: string;
@@ -16723,12 +16759,12 @@ export type ManagedMachinesActionResultById = {
                 contentArtifactId: string;
                 contentHeaderVersion: number;
                 contentBodyVersion: number;
-                targetLinkId: string;
-                expectedTargetLinkRevision: number;
-                requestKey: string;
+                serverId: string;
                 environmentId: string;
                 expectedRevision: number;
-                serverId: string;
+                requestKey: string;
+                targetLinkId: string;
+                expectedTargetLinkRevision: number;
                 whenBusy?: 'refuse' | 'supersede' | undefined;
                 onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                 services?: string[] | undefined;
@@ -16747,13 +16783,6 @@ export type ManagedMachinesActionResultById = {
                                 profiles: string[];
                                 services: string[];
                                 path: string;
-                                augmentation?: undefined | {
-                                    document: string;
-                                    publicFiles?: undefined | {
-                                        path: string;
-                                        content: string;
-                                    }[];
-                                };
                                 primaryService?: string | undefined;
                             };
                             pullRequestHead?: undefined | {
@@ -16825,6 +16854,7 @@ export type ManagedMachinesActionResultById = {
                     pullRequestId: string;
                     runtimeTargetLinkId: string;
                 };
+                previewCompanionOfEnvironmentId?: string | undefined;
                 previewDataTargetLinks?: undefined | {
                     contentArtifactId: string;
                     contentHeaderVersion: number;
@@ -17184,6 +17214,24 @@ export type ManagedMachinesActionResultById = {
                     installationId: string;
                 };
                 destination: {
+                    kind: 'repositoryPullRequest';
+                    workspace: {
+                        kind: 'workspace-ref';
+                        serverId: string;
+                        id: string;
+                    };
+                    sourceRevision: number;
+                    repository: {
+                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                        deployment: string;
+                        repository: string;
+                    };
+                    baseCommit: string;
+                    baseBranch: string;
+                    branchName: string;
+                    composePath: string;
+                    title: string;
+                } | {
                     kind: 'stored';
                     contentRevision: number;
                     composeDigest: string;
@@ -17350,6 +17398,7 @@ export type ManagedMachinesActionResultById = {
                     version: string;
                     expectedContributorOccurrenceId?: string | undefined;
                 };
+                connectToServices?: string[] | undefined;
                 minimumResources?: undefined | {
                     memoryBytes?: number | undefined;
                     freeDiskBytes?: number | undefined;
@@ -17390,6 +17439,10 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'keepEverything';
                         };
+                        alertChannels?: undefined | {
+                            channelId: string;
+                            destination?: PluginJsonValueV2 | undefined;
+                        }[];
                     };
                     sources: {
                         buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -17400,6 +17453,7 @@ export type ManagedMachinesActionResultById = {
                         backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                         backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                         backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        alertChannels?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     };
                 };
                 creationDefaultsBasis?: undefined | {
@@ -17421,6 +17475,30 @@ export type ManagedMachinesActionResultById = {
                 }[];
                 deploy?: undefined | {
                     requestKey: string;
+                };
+                repositoryChange?: undefined | {
+                    files: {
+                        path: string;
+                        before: null | string;
+                        content: null | string;
+                    }[];
+                    kind: 'repositoryPullRequest';
+                    workspace: {
+                        kind: 'workspace-ref';
+                        serverId: string;
+                        id: string;
+                    };
+                    sourceRevision: number;
+                    repository: {
+                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                        deployment: string;
+                        repository: string;
+                    };
+                    baseCommit: string;
+                    baseBranch: string;
+                    branchName: string;
+                    composePath: string;
+                    title: string;
                 };
                 publicFiles?: undefined | {
                     path: string;
@@ -20248,12 +20326,12 @@ export type ManagedMachinesActionResultById = {
                         contentArtifactId: string;
                         contentHeaderVersion: number;
                         contentBodyVersion: number;
-                        targetLinkId: string;
-                        expectedTargetLinkRevision: number;
-                        requestKey: string;
+                        serverId: string;
                         environmentId: string;
                         expectedRevision: number;
-                        serverId: string;
+                        requestKey: string;
+                        targetLinkId: string;
+                        expectedTargetLinkRevision: number;
                         whenBusy?: 'refuse' | 'supersede' | undefined;
                         onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                         services?: string[] | undefined;
@@ -20272,13 +20350,6 @@ export type ManagedMachinesActionResultById = {
                                         profiles: string[];
                                         services: string[];
                                         path: string;
-                                        augmentation?: undefined | {
-                                            document: string;
-                                            publicFiles?: undefined | {
-                                                path: string;
-                                                content: string;
-                                            }[];
-                                        };
                                         primaryService?: string | undefined;
                                     };
                                     pullRequestHead?: undefined | {
@@ -20350,6 +20421,7 @@ export type ManagedMachinesActionResultById = {
                             pullRequestId: string;
                             runtimeTargetLinkId: string;
                         };
+                        previewCompanionOfEnvironmentId?: string | undefined;
                         previewDataTargetLinks?: undefined | {
                             contentArtifactId: string;
                             contentHeaderVersion: number;
@@ -20709,6 +20781,24 @@ export type ManagedMachinesActionResultById = {
                             installationId: string;
                         };
                         destination: {
+                            kind: 'repositoryPullRequest';
+                            workspace: {
+                                kind: 'workspace-ref';
+                                serverId: string;
+                                id: string;
+                            };
+                            sourceRevision: number;
+                            repository: {
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                deployment: string;
+                                repository: string;
+                            };
+                            baseCommit: string;
+                            baseBranch: string;
+                            branchName: string;
+                            composePath: string;
+                            title: string;
+                        } | {
                             kind: 'stored';
                             contentRevision: number;
                             composeDigest: string;
@@ -20875,6 +20965,7 @@ export type ManagedMachinesActionResultById = {
                             version: string;
                             expectedContributorOccurrenceId?: string | undefined;
                         };
+                        connectToServices?: string[] | undefined;
                         minimumResources?: undefined | {
                             memoryBytes?: number | undefined;
                             freeDiskBytes?: number | undefined;
@@ -20915,6 +21006,10 @@ export type ManagedMachinesActionResultById = {
                                 } | {
                                     kind: 'keepEverything';
                                 };
+                                alertChannels?: undefined | {
+                                    channelId: string;
+                                    destination?: PluginJsonValueV2 | undefined;
+                                }[];
                             };
                             sources: {
                                 buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -20925,6 +21020,7 @@ export type ManagedMachinesActionResultById = {
                                 backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                                 backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                                 backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                                alertChannels?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                             };
                         };
                         creationDefaultsBasis?: undefined | {
@@ -20946,6 +21042,30 @@ export type ManagedMachinesActionResultById = {
                         }[];
                         deploy?: undefined | {
                             requestKey: string;
+                        };
+                        repositoryChange?: undefined | {
+                            files: {
+                                path: string;
+                                before: null | string;
+                                content: null | string;
+                            }[];
+                            kind: 'repositoryPullRequest';
+                            workspace: {
+                                kind: 'workspace-ref';
+                                serverId: string;
+                                id: string;
+                            };
+                            sourceRevision: number;
+                            repository: {
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                deployment: string;
+                                repository: string;
+                            };
+                            baseCommit: string;
+                            baseBranch: string;
+                            branchName: string;
+                            composePath: string;
+                            title: string;
                         };
                         publicFiles?: undefined | {
                             path: string;
@@ -21886,12 +22006,12 @@ export type ManagedMachinesActionResultById = {
                     contentArtifactId: string;
                     contentHeaderVersion: number;
                     contentBodyVersion: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
+                    serverId: string;
                     environmentId: string;
                     expectedRevision: number;
-                    serverId: string;
+                    requestKey: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
                     whenBusy?: 'refuse' | 'supersede' | undefined;
                     onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                     services?: string[] | undefined;
@@ -21910,13 +22030,6 @@ export type ManagedMachinesActionResultById = {
                                     profiles: string[];
                                     services: string[];
                                     path: string;
-                                    augmentation?: undefined | {
-                                        document: string;
-                                        publicFiles?: undefined | {
-                                            path: string;
-                                            content: string;
-                                        }[];
-                                    };
                                     primaryService?: string | undefined;
                                 };
                                 pullRequestHead?: undefined | {
@@ -21988,6 +22101,7 @@ export type ManagedMachinesActionResultById = {
                         pullRequestId: string;
                         runtimeTargetLinkId: string;
                     };
+                    previewCompanionOfEnvironmentId?: string | undefined;
                     previewDataTargetLinks?: undefined | {
                         contentArtifactId: string;
                         contentHeaderVersion: number;
@@ -22347,6 +22461,24 @@ export type ManagedMachinesActionResultById = {
                         installationId: string;
                     };
                     destination: {
+                        kind: 'repositoryPullRequest';
+                        workspace: {
+                            kind: 'workspace-ref';
+                            serverId: string;
+                            id: string;
+                        };
+                        sourceRevision: number;
+                        repository: {
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            deployment: string;
+                            repository: string;
+                        };
+                        baseCommit: string;
+                        baseBranch: string;
+                        branchName: string;
+                        composePath: string;
+                        title: string;
+                    } | {
                         kind: 'stored';
                         contentRevision: number;
                         composeDigest: string;

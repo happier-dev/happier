@@ -1267,6 +1267,9 @@ authored repository namespace once. Empty or omitted ownership preserves the
 authored location. Bundled destinations require exact relative ownership segments
 with forward slashes, without empty/dot segments, absolute paths or control characters;
 authored configuration retains its existing transport grammar.
+Native path operations are supplied by the SDK's existing `/fs` runtime facade
+(`joinNativePath`, `joinPosixPath`, `isWindowsAbsolutePath`); the public destination
+declarations do not import Node built-ins or choose another path normalizer.
 Scoped local output retains the final host `path`, optional
 existing-base `mountPath`, and the joined repository locator inside the fixed
 container mount. Native custody mounts the base without creating the final

@@ -35,6 +35,14 @@ export type MachinePresetsActionInputById = {
         };
         homeId: string;
         setup?: unknown;
+        retention?: undefined | {
+            afterMs: number;
+            kind: 'unused';
+            effect: 'delete' | 'stop';
+        } | {
+            kind: 'until-delete';
+        };
+        wakeOnAcceptedMessage?: boolean | undefined;
         launch?: undefined | {
             provider: {
                 pluginId: string;
@@ -60,14 +68,6 @@ export type MachinePresetsActionInputById = {
                 };
             }[];
         };
-        retention?: undefined | {
-            afterMs: number;
-            kind: 'unused';
-            effect: 'delete' | 'stop';
-        } | {
-            kind: 'until-delete';
-        };
-        wakeOnAcceptedMessage?: boolean | undefined;
         controller?: undefined | {
             machineId: string;
             installationId: string;

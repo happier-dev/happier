@@ -2899,7 +2899,7 @@ export type TeamsActionResultById = {
         mediaType: string;
         fileName: string;
         base64: string;
-        fields: ('activity' | 'breakdowns' | 'contributions' | 'costFacts' | 'costPresentation' | 'coverage' | 'engineTimeline' | 'insights' | 'leaders' | 'messageStats' | 'modelTimeline' | 'priceCatalog' | 'renewals' | 'resets' | 'series' | 'tokenCategories' | 'totals')[];
+        fields: ('activity' | 'breakdowns' | 'contributions' | 'costFacts' | 'costPresentation' | 'coverage' | 'engineTimeline' | 'insights' | 'leaders' | 'messageStats' | 'modelTimeline' | 'priceCatalog' | 'renewals' | 'resets' | 'scopeKeys' | 'series' | 'tokenCategories' | 'totals')[];
         asOfMs: null | number;
     };
     readonly "teams.members.history.preparation.get": {

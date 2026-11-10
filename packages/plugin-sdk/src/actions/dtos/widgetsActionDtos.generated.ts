@@ -226,6 +226,7 @@ export type WidgetsActionInputById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -1045,6 +1046,7 @@ export type WidgetsActionInputById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -1475,6 +1477,7 @@ export type WidgetsActionInputById = {
                                             pluginId: string;
                                             localId: string;
                                         };
+                                        alternativePaths?: string[] | undefined;
                                         nativeServicePath?: string | undefined;
                                     }[];
                                     networkOverride?: undefined | {
@@ -1639,6 +1642,7 @@ export type WidgetsActionInputById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -2017,6 +2021,7 @@ export type WidgetsActionInputById = {
                     pluginId: string;
                     localId: string;
                 };
+                alternativePaths?: string[] | undefined;
                 nativeServicePath?: string | undefined;
             }[];
             networkOverride?: undefined | {
@@ -2041,6 +2046,7 @@ export type WidgetsActionInputById = {
                     pluginId: string;
                     localId: string;
                 };
+                alternativePaths?: string[] | undefined;
                 nativeServicePath?: string | undefined;
             }[];
             networkOverride?: null | undefined | {
@@ -2361,6 +2367,7 @@ export type WidgetsActionInputById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -2604,6 +2611,7 @@ export type WidgetsActionInputById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -2877,6 +2885,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -3115,6 +3124,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -3270,6 +3280,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -3437,6 +3448,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -3582,6 +3594,7 @@ export type WidgetsActionResultById = {
                                             pluginId: string;
                                             localId: string;
                                         };
+                                        alternativePaths?: string[] | undefined;
                                         nativeServicePath?: string | undefined;
                                     }[];
                                     networkOverride?: undefined | {
@@ -3749,6 +3762,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -3890,6 +3904,7 @@ export type WidgetsActionResultById = {
                                             pluginId: string;
                                             localId: string;
                                         };
+                                        alternativePaths?: string[] | undefined;
                                         nativeServicePath?: string | undefined;
                                     }[];
                                     networkOverride?: undefined | {
@@ -4057,6 +4072,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -4198,6 +4214,7 @@ export type WidgetsActionResultById = {
                                             pluginId: string;
                                             localId: string;
                                         };
+                                        alternativePaths?: string[] | undefined;
                                         nativeServicePath?: string | undefined;
                                     }[];
                                     networkOverride?: undefined | {
@@ -4365,6 +4382,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -4507,6 +4525,7 @@ export type WidgetsActionResultById = {
                                             pluginId: string;
                                             localId: string;
                                         };
+                                        alternativePaths?: string[] | undefined;
                                         nativeServicePath?: string | undefined;
                                     }[];
                                     networkOverride?: undefined | {
@@ -4674,6 +4693,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -4875,6 +4895,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -5025,6 +5046,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -5192,6 +5214,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -5379,6 +5402,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -5529,6 +5553,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -5696,6 +5721,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -5883,6 +5909,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -6033,6 +6060,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -6200,6 +6228,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -6423,6 +6452,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -6573,6 +6603,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -6740,6 +6771,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -6927,6 +6959,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -7077,6 +7110,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -7244,6 +7278,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -7431,6 +7466,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -7581,6 +7617,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -7748,6 +7785,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -7935,6 +7973,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -8085,6 +8124,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -8252,6 +8292,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -8497,6 +8538,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -8647,6 +8689,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -8814,6 +8857,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -9001,6 +9045,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -9151,6 +9196,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -9318,6 +9364,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -9543,6 +9590,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -9693,6 +9741,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -9860,6 +9909,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -10047,6 +10097,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -10197,6 +10248,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -10364,6 +10416,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -10551,6 +10604,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -10701,6 +10755,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -10868,6 +10923,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -11055,6 +11111,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -11205,6 +11262,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -11372,6 +11430,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -11559,6 +11618,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        alternativePaths?: string[] | undefined;
                         nativeServicePath?: string | undefined;
                     }[];
                     networkOverride?: undefined | {
@@ -11709,6 +11769,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -11876,6 +11937,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -12133,6 +12195,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -12300,6 +12363,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -12508,6 +12572,7 @@ export type WidgetsActionResultById = {
                                             pluginId: string;
                                             localId: string;
                                         };
+                                        alternativePaths?: string[] | undefined;
                                         nativeServicePath?: string | undefined;
                                     }[];
                                     networkOverride?: undefined | {
@@ -12675,6 +12740,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -12904,6 +12970,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -13071,6 +13138,7 @@ export type WidgetsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -13279,6 +13347,7 @@ export type WidgetsActionResultById = {
                                             pluginId: string;
                                             localId: string;
                                         };
+                                        alternativePaths?: string[] | undefined;
                                         nativeServicePath?: string | undefined;
                                     }[];
                                     networkOverride?: undefined | {
@@ -13446,6 +13515,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -13826,6 +13896,7 @@ export type WidgetsActionResultById = {
                     pluginId: string;
                     localId: string;
                 };
+                alternativePaths?: string[] | undefined;
                 nativeServicePath?: string | undefined;
             }[];
             networkOverride?: undefined | {
@@ -13950,6 +14021,7 @@ export type WidgetsActionResultById = {
                     pluginId: string;
                     localId: string;
                 };
+                alternativePaths?: string[] | undefined;
                 nativeServicePath?: string | undefined;
             }[];
             networkOverride?: undefined | {
@@ -14101,6 +14173,7 @@ export type WidgetsActionResultById = {
                     pluginId: string;
                     localId: string;
                 };
+                alternativePaths?: string[] | undefined;
                 nativeServicePath?: string | undefined;
             }[];
             networkOverride?: undefined | {
@@ -14214,6 +14287,7 @@ export type WidgetsActionResultById = {
                     pluginId: string;
                     localId: string;
                 };
+                alternativePaths?: string[] | undefined;
                 nativeServicePath?: string | undefined;
             }[];
             networkOverride?: undefined | {
@@ -14327,6 +14401,7 @@ export type WidgetsActionResultById = {
                     pluginId: string;
                     localId: string;
                 };
+                alternativePaths?: string[] | undefined;
                 nativeServicePath?: string | undefined;
             }[];
             networkOverride?: undefined | {
@@ -14444,6 +14519,7 @@ export type WidgetsActionResultById = {
                     pluginId: string;
                     localId: string;
                 };
+                alternativePaths?: string[] | undefined;
                 nativeServicePath?: string | undefined;
             }[];
             networkOverride?: undefined | {
@@ -14659,6 +14735,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -14920,6 +14997,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -15177,6 +15255,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -15434,6 +15513,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {
@@ -15691,6 +15771,7 @@ export type WidgetsActionResultById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    alternativePaths?: string[] | undefined;
                                     nativeServicePath?: string | undefined;
                                 }[];
                                 networkOverride?: undefined | {

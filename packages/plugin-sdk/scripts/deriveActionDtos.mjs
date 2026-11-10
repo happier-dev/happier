@@ -129,7 +129,12 @@ function selectSchemaRows(protocol, keys, readSource) {
       if (ts.isSpreadAssignment(member)) {
         const found = property(path, member.expression, key, bindings);
         if (found) return found;
-      } else if ((ts.isPropertyAssignment(member) || ts.isShorthandPropertyAssignment(member)) && member.name.text === key) {
+      } else if (ts.isPropertyAssignment(member) || ts.isShorthandPropertyAssignment(member)) {
+        let memberKey = member.name.text;
+        if (ts.isComputedPropertyName(member.name)) {
+          try { memberKey = catalogReader.evaluate(path, member.name.expression); } catch { continue; }
+        }
+        if (memberKey !== key) continue;
         const value = ts.isShorthandPropertyAssignment(member) ? member.name : member.initializer;
         return ts.isIdentifier(value) && bindings.has(value.text) ? bindings.get(value.text) : { path, node: value };
       }
@@ -166,6 +171,16 @@ function selectSchemaRows(protocol, keys, readSource) {
     };
     visit(definition);
   }
+  const requiredPropertyType = (node, name) => {
+    if (!node) return null;
+    if (ts.isParenthesizedTypeNode(node)) return requiredPropertyType(node.type, name);
+    if (ts.isTypeReferenceNode(node) && node.typeName.getText(source(actionPath)) === 'Readonly') {
+      return requiredPropertyType(node.typeArguments?.[0], name);
+    }
+    if (!ts.isTypeLiteralNode(node)) return null;
+    return node.members.find(member => ts.isPropertySignature(member) && !member.questionToken
+      && member.name.getText(source(actionPath)) === name)?.type ?? null;
+  };
   const visitType = node => {
     if (ts.isTypeReferenceNode(node) && node.typeName.getText(source(actionPath)) === 'CanonicalActionSchemaDefinition' && node.typeArguments?.length >= 3) {
       const [id, input, output, surface] = node.typeArguments;
@@ -183,6 +198,17 @@ function selectSchemaRows(protocol, keys, readSource) {
             ts.forEachChild(n, findOverride);
           };
           findOverride(surface);
+        }
+        // A concrete family row can require its binding without widening all
+        // optional family bindings. Match the same required-property contract
+        // as PluginActionDomainInputSchemaById at that intersection only.
+        if (ts.isIntersectionTypeNode(node.parent)) {
+          for (const part of node.parent.types) {
+            const bindings = requiredPropertyType(part, 'surfaceBindings');
+            const plugin = requiredPropertyType(bindings, 'plugin');
+            const schema = requiredPropertyType(plugin, 'inputSchema');
+            if (schema) inputRow = query(actionPath, schema, key) ?? inputRow;
+          }
         }
         // A mapped type's parameter can range over only part of the catalog.
         // Prefer a concrete authored row before asking the checker to infer a map key.

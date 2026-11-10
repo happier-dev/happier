@@ -405,6 +405,10 @@ export type ScmGitActionInputById = {
             baseOid: string;
             headOid: string;
         };
+        revisionRangeFromRef?: undefined | {
+            baseOid: string;
+            headRef: string;
+        };
     };
     readonly "scm.branch.list": {
         cwd?: string | undefined;
@@ -3374,6 +3378,7 @@ export type ScmGitActionResultById = {
             baseOid: string;
             headOid: string;
             historyComplete: boolean;
+            headRef?: string | undefined;
             graphRelation?: 'diverged' | 'equal' | 'forward' | undefined;
             totalCount?: number | undefined;
             nextSkip?: number | undefined;

@@ -346,7 +346,7 @@ export type AppShellActionResultById = {
                 invocationId?: string | undefined;
             };
             expectedDuring?: undefined | {
-                kind: 'deploy' | 'reboot' | 'restart' | 'stop';
+                kind: 'backup' | 'deploy' | 'reboot' | 'restart' | 'stop';
                 operation: {
                     serverId: string;
                     machineId: string;

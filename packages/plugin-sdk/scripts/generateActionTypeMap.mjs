@@ -218,7 +218,7 @@ async function inspectActionTypeMapCache({ cachePath, outputPath }) {
     }
     try {
       if (
-        currentFingerprint === record.fingerprint
+        currentFingerprint !== null && currentFingerprint === record.fingerprint
         && digest(await readFile(outputPath)) === record.outputDigest
       ) {
         for (const [path, expected] of record.outputDigests ?? []) {

@@ -6,7 +6,10 @@ import type { ActionFailureCauseV1 } from './pluginActionDtoSupport.generated.js
 
 export type InventoryActionInputById = {
     readonly "agents.models.list": {
-        purpose?: 'scm_diff_summary' | undefined;
+        purpose?: 'llm_task_runner' | 'scm_diff_summary' | undefined;
+        task?: 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary' | 'session_replay_summary' | undefined;
+        choice?: unknown;
+        sessionAgentTargetKey?: string | undefined;
         discoveryTargetKey?: string | undefined;
         modelSelector?: undefined | {
             profileId?: string | undefined;
@@ -52,6 +55,16 @@ export type InventoryActionInputById = {
                     };
                 }> | undefined;
             };
+            sessionConfigOptionOverrides?: undefined | {
+                [x: string]: unknown;
+                v: 1;
+                updatedAt: number;
+                overrides: Record<string, {
+                    [x: string]: unknown;
+                    updatedAt: number;
+                    value: boolean | null | number | string;
+                }>;
+            };
         };
         agentId?: string | undefined;
         backendTargetKey?: string | undefined;
@@ -60,6 +73,7 @@ export type InventoryActionInputById = {
         limit?: number | undefined;
         probe?: undefined | {
             cwd?: string | undefined;
+            modelId?: string | undefined;
             timeoutMs?: number | undefined;
             transportTimeoutMs?: number | undefined;
             bypassCache?: boolean | undefined;
@@ -138,6 +152,7 @@ export type InventoryActionInputById = {
         serverId?: undefined;
         probe?: undefined | {
             cwd?: string | undefined;
+            modelId?: string | undefined;
             timeoutMs?: number | undefined;
             transportTimeoutMs?: number | undefined;
             bypassCache?: boolean | undefined;
@@ -215,6 +230,7 @@ export type InventoryActionInputById = {
         serverId?: undefined;
         probe?: undefined | {
             cwd?: string | undefined;
+            modelId?: string | undefined;
             timeoutMs?: number | undefined;
             transportTimeoutMs?: number | undefined;
             bypassCache?: boolean | undefined;
@@ -586,6 +602,7 @@ export type InventoryActionResultById = {
             };
             backendId?: string | undefined;
             description?: string | undefined;
+            readiness?: 'checking' | 'needsSignIn' | 'notInstalled' | 'ready' | 'unknown' | 'unsupported' | undefined;
         }[];
         defaultTargetKey?: string | undefined;
     };

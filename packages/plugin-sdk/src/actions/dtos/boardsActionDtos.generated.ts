@@ -278,6 +278,7 @@ export type BoardsActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -711,6 +712,7 @@ export type BoardsActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            alternativePaths?: string[] | undefined;
                             nativeServicePath?: string | undefined;
                         }[];
                         networkOverride?: undefined | {
@@ -1077,6 +1079,7 @@ export type BoardsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {
@@ -1354,6 +1357,7 @@ export type BoardsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                alternativePaths?: string[] | undefined;
                                 nativeServicePath?: string | undefined;
                             }[];
                             networkOverride?: undefined | {

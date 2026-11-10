@@ -665,6 +665,40 @@ describe('checkpointed observer ownership', () => {
         } finally { f.controller.abort(); await running; }
     });
 
+    it.each([999, 1000, 2000])('bounds persistent non-host catalog failures at provider deadline %s', async retryAt => {
+        const f = fixture();
+        vi.useFakeTimers();
+        vi.setSystemTime(1000);
+        let reads = 0;
+        // An Action transport need not implement the daemon's deferred read.
+        // Abort a runaway old implementation so the RED itself cannot hang.
+        f.execute.mockImplementation(async id => {
+            if (id !== 'automation.event.sources.list') return {};
+            reads += 1;
+            if (reads > 8) f.controller.abort();
+            throw new Error('Catalog remains unavailable');
+        });
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context,
+            source: { ...f.source, retryAt: () => retryAt } });
+        try {
+            await vi.advanceTimersByTimeAsync(0);
+            expect(reads).toBe(retryAt > 1000 ? 1 : 2);
+            await vi.advanceTimersByTimeAsync(999);
+            expect(reads).toBe(retryAt > 1000 ? 1 : 2);
+            await vi.advanceTimersByTimeAsync(60_001);
+            expect(reads).toBe(2);
+            // An expired retry parks until actual catalog invalidation, which
+            // still reaches the reader immediately without a new local cap.
+            f.invalidate({ reason: 'reconnect' });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(reads).toBe(4);
+        } finally {
+            f.controller.abort();
+            await running;
+            vi.useRealTimers();
+        }
+    });
+
     it.each(['deadline', 'invalidation'] as const)('keeps one failed-catalog retry and no idle reads after recovery by %s', async recovery => {
         const f = fixture();
         vi.useFakeTimers();
@@ -677,14 +711,15 @@ describe('checkpointed observer ownership', () => {
             await vi.advanceTimersByTimeAsync(0);
             expect(catalogReads()).toBe(1);
             expect(f.observe).not.toHaveBeenCalled();
-            expect(f.execute.mock.calls.filter(([id]) => id === 'automation.event.sources.list').at(-1)?.[1])
-                .toMatchObject({ catalogRefresh: { kind: 'retry', retryAt: 2000 } });
+            expect(f.execute.mock.calls.filter(([id]) => id === 'automation.event.sources.list')).toHaveLength(1);
             await vi.advanceTimersByTimeAsync(999);
             expect(catalogReads()).toBe(1);
             expect(f.observe).not.toHaveBeenCalled();
             if (recovery === 'invalidation') for (let n = 0; n < 10; n += 1) f.invalidate({ reason: 'reconnect' });
             await vi.advanceTimersByTimeAsync(recovery === 'deadline' ? 1 : 0);
             expect(catalogReads()).toBe(2);
+            expect(f.execute.mock.calls.filter(([id]) => id === 'automation.event.sources.list').at(-1)?.[1])
+                .toMatchObject({ catalogRefresh: recovery === 'deadline' ? { kind: 'retry', retryAt: 2000 } : { kind: 'refresh' } });
             expect(f.observe).toHaveBeenCalledOnce();
             await vi.advanceTimersByTimeAsync(60_000);
             expect(catalogReads()).toBe(2);
