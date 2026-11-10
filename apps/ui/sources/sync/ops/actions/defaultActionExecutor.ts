@@ -399,8 +399,8 @@ import { createUiProjectPagesList } from './projectPagesAction';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
 import { createProjectSourceTeamMoveDeps } from '@/sync/api/projects/projectSourceTeamMove';
 import { createUiDeploymentActionDeps, createUiDeploymentWorkspaceMachineReader, recoverUiDeploymentActionResult } from '@/sync/api/deployments/deploymentActions';
-import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { DeploymentEnvironmentGetResultV1Schema, DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentActionInputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentBackupConfigureInputV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { canUsePrivateProjectAccountAction, createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
@@ -991,6 +991,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     let requestedMachineId = workspaceSourceMachineId ?? (demand?.target.kind === 'machine' ? demand.target.machineId : pluginInput !== null && typeof pluginInput === 'object'
       && 'machineId' in pluginInput && typeof pluginInput.machineId === 'string'
       ? pluginInput.machineId : undefined);
+    if (readAdmittedActionId(args.actionId, args.input) === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) {
+      const input = DeploymentActionInputSchemasV1[DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1].safeParse(pluginInput);
+      if (!input.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      if (input.data.preview) {
+        if (!deploymentActionDeps) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+        const selected = await deploymentActionDeps.readEnvironmentCreateController(input.data, args.context);
+        if (!selected.ok) return selected;
+        requestedMachineId = selected.machineId;
+      }
+    }
     if (readAdmittedActionId(args.actionId, args.input) === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
       const input = DeploymentTemplateInstantiateInputV1Schema.safeParse(pluginInput);
       if (!input.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };

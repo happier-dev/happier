@@ -1197,6 +1197,7 @@ export function DiscoverListingsSection(props: Readonly<{
     machineId?: string | null;
     serverId?: string | null;
     canRunActions: boolean;
+    installDisabledReason?: string | null;
     isPluginActionInFlight: (pluginId: string) => boolean;
     onAction: (request: PluginMarketplaceActionRequest) => void;
     onLoadMore: () => void;
@@ -1336,6 +1337,7 @@ type DiscoverListingActionInputs = Readonly<{
     serverId?: string | null;
     installedPluginById: ReadonlyMap<string, InstalledPluginEntry>;
     canRunActions: boolean;
+    installDisabledReason?: string | null;
     loading: boolean;
     isPluginActionInFlight: (pluginId: string) => boolean;
     onAction: (request: PluginMarketplaceActionRequest) => void;
@@ -1357,6 +1359,7 @@ function discoverListingControl(entry: PluginMarketplaceCatalogEntry, props: Dis
             display="secondary"
             testID={`settings.plugins.marketplace.action.${action}.${entry.sourceId}.${entry.id}`}
             title={installed ? t('settingsPlugins.surfaces.open') : t('common.install')}
+            disabledReason={installed ? undefined : props.installDisabledReason ?? undefined}
             accessibilityLabel={buildActionRowAccessibilityLabel([
                 installed ? t('settingsPlugins.managePlugin') : t('settingsPlugins.installAndTrust'),
                 entry.title, entry.sourceTitle,

@@ -57,7 +57,7 @@ describe('reach rule optimistic state', () => {
         act(() => { write = hook.getCurrent().change({ kind: 'replace', rules: [{ target: initial.target, enabled: false }] }); });
         expect(hook.getCurrent().rules[0]?.enabled).toBe(false);
         await act(async () => { pending.resolve({ ok: true, result: { ok: false, code: 'conflict' } }); await write; });
-        expect(await write).toEqual({ ok: false, message: 'conflict' });
+        expect(await write).toEqual({ ok: false, code: 'conflict', message: 'conflict' });
         expect(hook.getCurrent().rules).toEqual([initial]);
     });
     it('serializes rapid edits and preserves both changes through acknowledgements and a stale read', async () => {
@@ -94,7 +94,7 @@ describe('reach rule optimistic state', () => {
             .mockResolvedValueOnce({ ok: true, result: { ok: false, code: 'conflict' } });
         const hook = await renderHook((props: ReachRulesSource) => useReachRulesState(props, execute), { initialProps: source });
         await act(async () => { await hook.getCurrent().change({ kind: 'write', write: { place: initial.target, state: 'off' } }); });
-        await act(async () => { expect(await hook.getCurrent().undoLast()).toEqual({ ok: false, message: 'conflict' }); });
+        await act(async () => { expect(await hook.getCurrent().undoLast()).toEqual({ ok: false, code: 'conflict', message: 'conflict' }); });
         expect(hook.getCurrent().rules).toEqual([off]);
         await hook.rerender({ ...source, status: 'unavailable' });
         expect(hook.getCurrent().rules).toEqual([off]);

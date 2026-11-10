@@ -35,32 +35,24 @@ export async function removeSkillRulesV1(port: SkillRulesActionPortV1, skillId: 
 /** Reach intent is applied once to the reviewed row and committed by its existing CAS. */
 export async function mutateSkillRulesV1(port: SkillRulesActionPortV1,
   request: z.infer<typeof SkillsRulesSetInputV1Schema>, signal?: AbortSignal,
+  /** The creation owner already holds this identity from the acknowledged Artifact write. */
+  createdSkill?: Readonly<{ id: string; name: string }>,
 ): Promise<z.infer<typeof SkillsRulesSetOutputV1Schema>> {
   const input = SkillsRulesSetInputV1Schema.parse(request);
   if (input.change.kind === 'replace' && input.items.length !== 1) return { ok: false, code: 'replace_needs_one_item' };
   const assertCurrent = () => { signal?.throwIfAborted(); port.assertCurrent(); };
-  const unavailable = (cause: unknown) => {
-    assertCurrent();
-    if (cause instanceof Error && (cause.name === 'AbortError'
-      || 'code' in cause && (cause.code === 'scope-retired' || cause.code === 'cancelled'))) throw cause;
-    return { ok: false, code: 'catalog_unavailable' } as const;
-  };
   assertCurrent();
-  let projection: Awaited<ReturnType<SkillRulesActionPortV1['readCatalog']>>;
-  let library: Awaited<ReturnType<SkillRulesActionPortV1['listSkills']>>;
-  try {
-    // Both authenticated observations are independent. Keep their latency off
-    // each other's critical path; no rule is written until both are admitted.
-    [projection, library] = await Promise.all([
-      port.readCatalog(signal, 'skill-rules'),
-      port.listSkills(signal, input.items.every(item => 'skillId' in item)
-        ? input.items.flatMap(item => 'skillId' in item ? [item.skillId] : []) : undefined),
-    ]);
-  }
-  catch (cause) { return unavailable(cause); }
+  // Public mutations resolve current library identities. Creation supplies its
+  // own acknowledged identity instead of adding an HTTP read after the write.
+  const [projection, library] = await Promise.all([
+    port.readCatalog(signal, 'skill-rules'),
+    createdSkill ? [createdSkill] : port.listSkills(signal, input.items.every(item => 'skillId' in item)
+      ? input.items.flatMap(item => 'skillId' in item ? [item.skillId] : []) : undefined),
+  ]);
   assertCurrent();
   const read = readPromptLibraryCatalogRecordV1({ ...projection, key: 'skill-rules' });
-  if (read.status !== 'ready' || read.record.key !== 'skill-rules'
+  if (read.status === 'unavailable') throw Object.assign(new Error(read.reason), { code: read.reason });
+  if (read.record.key !== 'skill-rules'
     || read.authority === 'inactive' && projection.sourceSettingsVersion === undefined) return { ok: false, code: 'catalog_unavailable' };
   const retainedRules = read.record.value.rules;
   const ids = new Set<string>();
@@ -78,11 +70,8 @@ export async function mutateSkillRulesV1(port: SkillRulesActionPortV1,
   const rules = [...retainedRules.filter(rule => !ids.has(rule.skillId)),
     ...items.flatMap(item => item.rules.map(rule => ({ ...rule, skillId: item.skillId })))];
   assertCurrent();
-  let result: Awaited<ReturnType<SkillRulesActionPortV1['writeRecord']>>;
-  try {
-    result = await port.writeRecord({ record: { key: 'skill-rules', value: { ...read.record.value, rules } }, expectedRevision: read.revision,
+  const result = await port.writeRecord({ record: { key: 'skill-rules', value: { ...read.record.value, rules } }, expectedRevision: read.revision,
       ...(read.authority === 'inactive' ? { sourceSettingsVersion: projection.sourceSettingsVersion } : {}) }, signal);
-  } catch (cause) { return unavailable(cause); }
   // A consumed durable receipt survives subsequent caller cancellation or Home retirement.
   if (result.status === 'updated') return { ok: true, items, revision: result.revision };
   return { ok: false, code: result.status === 'conflict' || result.status === 'settings-conflict' ? 'conflict' : 'catalog_unavailable' };

@@ -22,7 +22,7 @@ function fixture(options: { unavailable?: boolean; conflict?: boolean; inactive?
   const port = {
     serverId: 'home', assertCurrent: () => {},
     readCatalog: async () => {
-      if (options.readFailure) throw new Error('Home transport failed');
+      if (options.readFailure) throw Object.assign(new Error('Home transport failed'), { code: 'forbidden' });
       return { catalog: options.unavailable
       ? { status: 'partial' as const, rows: [], tombstones: [], diagnostics: [{ key: 'skill-rules' as const, revision: 3, reason: 'invalid-stored-content' as const }] }
       : { status: 'ready' as const, rows: options.inactive ? [] : [{ record: { key: 'skill-rules' as const, value: { v: 1 as const, rules,
@@ -31,7 +31,7 @@ function fixture(options: { unavailable?: boolean; conflict?: boolean; inactive?
     },
     writeRecord: async (input: Parameters<ArtifactFolderActionPortV1['writeRecord']>[0]) => {
       writes.push(input);
-      if (options.writeFailure) throw new Error('Home transport failed');
+      if (options.writeFailure) throw Object.assign(new Error('Home transport failed'), { code: 'forbidden' });
       if (options.conflict) return { status: 'conflict' as const, revision: 4 };
       if (input.record.key === 'skill-rules') rules = input.record.value.rules;
       return { status: 'updated' as const, revision: 4, cursor: 1 };
@@ -115,7 +115,14 @@ describe('skill rules Action through prompt-library CAS', () => {
     expect(f.writes[0]?.expectedRevision).toBe(3);
     expect(f.rules().map(rule => rule.skillId)).toEqual(['lint-id', 'review-id']);
   });
-  it.each([{ unavailable: true }, { inactive: true }])('refuses unreadable rules or missing captured source currentness', async options => {
+  it('keeps the catalog reason when stored rules cannot be read', async () => {
+    const f = fixture({ unavailable: true });
+    expect(await f.executor.execute('skills.rules.set', request, presentUser))
+      .toMatchObject({ ok: false, errorCode: 'invalid-stored-content', error: 'invalid-stored-content' });
+    expect(f.writes).toEqual([]);
+  });
+  it('refuses missing captured source currentness', async () => {
+    const options = { inactive: true };
     const f = fixture(options);
     expect(await f.executor.execute('skills.rules.set', request, presentUser)).toEqual({ ok: true, result: { ok: false, code: 'catalog_unavailable' } });
     expect(f.writes).toEqual([]);
@@ -129,7 +136,7 @@ describe('skill rules Action through prompt-library CAS', () => {
   it.each([{ readFailure: true }, { writeFailure: true }])('projects catalog transport failure through the closed Action result', async options => {
     const f = fixture(options);
     expect(await f.executor.execute('skills.rules.set', request, presentUser))
-      .toEqual({ ok: true, result: { ok: false, code: 'catalog_unavailable' } });
+      .toMatchObject({ ok: false, errorCode: 'forbidden', error: 'Home transport failed' });
     expect(f.rules()).toEqual([original]);
   });
   it('refuses missing items and multi-item replacement without writing any item', async () => {

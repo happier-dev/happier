@@ -4,7 +4,7 @@ import { SkillsRulesSetOutputV1Schema } from '@happier-dev/protocol/actions/spec
 import type { MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
 import type { ReachRulesChangeV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
 
-import { installSkills, previewSkillInstall, retrySkillRules, retrySkillInstallRules, retrySkillInstall } from './skillInstall';
+import { createSkill, acknowledgeSkillActionResult, acknowledgeSkillCreation, installSkills, previewSkillInstall, retrySkillRules, retrySkillInstallRules, retrySkillInstall, describeSkillInstallIncomplete } from './skillInstall';
 
 /** The Action transport is the boundary: the Home answers `skills.install` / `skills.rules.set`. */
 function home(answer: (actionId: string, input: unknown) => ActionExecuteResult) {
@@ -20,6 +20,41 @@ const POINTER = { kind: 'registry' as const, sourceId: 'builtin:skills-sh', item
 const RULES_CHANGE = { kind: 'replace', rules: [{ target: { t: 'allMachines' }, enabled: true }] } as const satisfies ReachRulesChangeV1;
 
 describe('installSkills (Add to library)', () => {
+    it.each(['skills.create', 'skills.duplicate', 'skills.found.adopt'] as const)('retains %s acknowledgments and preserves domain refusals', actionId => {
+        const receipt = acknowledgeSkillActionResult(actionId, { ok: false, errorCode: 'forbidden', error: 'Rules were refused',
+            details: { skillIds: ['copy'], incomplete: [{ skillId: 'copy', step: 'rules' }] } });
+        expect(receipt).toMatchObject({ skillIds: ['copy'], rulesMissing: ['copy'], failures: [{ code: 'forbidden', message: 'Rules were refused' }] });
+        expect(receipt.failures?.[0]).not.toHaveProperty('skillId');
+        expect(() => acknowledgeSkillActionResult(actionId, { ok: true, result: { ok: false, code: 'conflict' } }))
+            .toThrow(expect.objectContaining({ code: 'conflict', message: 'conflict' }));
+    });
+    it('retains the first failed create receipt and repairs its rules without another creation', async () => {
+        const { execute, calls } = home(action => action === 'skills.create'
+            ? { ok: false, errorCode: 'forbidden', error: 'Rules request was refused',
+                details: { skillIds: ['skill-1'], incomplete: [{ skillId: 'skill-1', step: 'rules' }] } }
+            : { ok: true, result: { ok: true, revision: 2, items: [{ skillId: 'skill-1', rules: [], previous: [] }] } });
+        const receipt = await createSkill(execute, { name: 'sample', files: [{ path: 'SKILL.md', contentKind: 'utf8',
+            contentBase64: 'LS0tCm5hbWU6IHNhbXBsZQotLS0KSW5zdHJ1Y3Rpb25z' }] });
+        expect(receipt).toMatchObject({ skillIds: ['skill-1'], rulesMissing: ['skill-1'], failures: [{ code: 'forbidden', message: 'Rules request was refused' }] });
+        expect(await retrySkillInstallRules(execute, receipt)).toEqual({ ok: true, skillIds: ['skill-1'], rulesMissing: [], incomplete: [] });
+        expect(calls.map(call => call.actionId)).toEqual(['skills.create', 'skills.rules.set']);
+    });
+    it('keeps the current typed rules retry failure beside the acknowledged skill', async () => {
+        const { execute, calls } = home(() => ({ ok: false, errorCode: 'forbidden', error: 'Rules request was refused' }));
+        const outcome = await retrySkillInstallRules(execute, { ok: true, skillIds: ['skill-1'], rulesMissing: ['skill-1'],
+            incomplete: [{ skillId: 'skill-1', step: 'rules' }] });
+        expect(outcome).toMatchObject({ skillIds: ['skill-1'], rulesMissing: ['skill-1'],
+            failures: [{ skillId: 'skill-1', step: 'rules', code: 'forbidden', message: 'Rules request was refused' }] });
+        expect(describeSkillInstallIncomplete(outcome)).toContain('forbidden');
+        expect(describeSkillInstallIncomplete(outcome)).toContain('Rules request was refused');
+        expect(calls.map(call => call.actionId)).toEqual(['skills.rules.set']);
+        const sessionReceipt = { skillId: 'session-skill', incomplete: 'session_include' as const,
+            inclusion: { ok: false as const, code: 'session_unavailable' as const } };
+        const session = acknowledgeSkillCreation(sessionReceipt);
+        expect(session).toMatchObject({ failures: [{ skillId: 'session-skill', step: 'session_include',
+            code: 'session_unavailable', message: 'session_unavailable' }] });
+        expect(describeSkillInstallIncomplete(session)).toContain('session_unavailable');
+    });
     for (const missingRules of [false, true]) it(`retains and recovers the real batch owner's content failure without duplicating held content (missing rules: ${missingRules})`, async () => {
         const { createSkillInstallActionHarness } = await import('@/dev/testkit/harness/skillInstallActionHarness');
         const { skillFileFromBytesV1 } = await import('@happier-dev/protocol/prompts/library/skills/skillZipV1');
@@ -85,7 +120,7 @@ describe('installSkills (Add to library)', () => {
                 items: [{ skillId: 'sk_1', previous: [], rules: [] }] }) });
         const outcome = await installSkills(execute, { source: POINTER });
         expect(outcome).toEqual({ ok: true, skillIds: ['sk_1'], rulesMissing: ['sk_1'], incomplete: [{ skillId: 'sk_1', step: 'rules' }] });
-        await expect(retrySkillRules(execute, { skillId: 'sk_1', change: RULES_CHANGE })).resolves.toBe(true);
+        await expect(retrySkillRules(execute, { skillId: 'sk_1', change: RULES_CHANGE })).resolves.toMatchObject({ ok: true });
         expect(calls.map((call) => call.actionId)).toEqual(['skills.install', 'skills.rules.set']);
         expect(calls[1]!.input).toEqual({ items: [{ skillId: 'sk_1' }], change: RULES_CHANGE });
     });
@@ -94,7 +129,7 @@ describe('installSkills (Add to library)', () => {
         for (const result of [{ ok: false, code: 'settings_conflict' }, { ok: true },
             { ok: true, revision: 1, items: [{ skillId: 'another-skill', previous: [], rules: [] }] }]) {
             const { execute } = home(() => ({ ok: true, result }));
-            await expect(retrySkillRules(execute, { skillId: 'sk_1', change: RULES_CHANGE })).resolves.toBe(false);
+            await expect(retrySkillRules(execute, { skillId: 'sk_1', change: RULES_CHANGE })).resolves.toMatchObject({ ok: false });
         }
     });
 

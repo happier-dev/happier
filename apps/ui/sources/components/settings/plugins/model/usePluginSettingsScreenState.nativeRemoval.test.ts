@@ -9,17 +9,14 @@ import { PluginDevelopmentStatusV1Schema } from '@happier-dev/protocol/capabilit
 import type { CapabilitiesInvokeRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { IModal } from '@/modal';
 
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createManagedResourceDependencyFixture } from '@/dev/testkit/fixtures/managedResourceDependencyFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability';
-import { replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
 import { createRegistryPluginCatalogFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL } from '@happier-dev/protocol/marketplace';
@@ -28,7 +25,6 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
-import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
 
 const boundary = vi.hoisted(() => ({
@@ -58,10 +54,26 @@ installApprovalCommonModuleMocks({
     // Keep translation parameters visible so the test can see which reason reached the user.
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
     modal: async () =>
-        (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true, spies: {
+        (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true, settleTransientConfirmations: false, spies: {
             confirm: boundary.confirm, alert: boundary.alert,
         } }).module,
 });
+
+// Configure the native presentation boundary before runtime-bearing harnesses
+// can import Modal; otherwise the helper's default inert provider is cached.
+const [
+    { createAccountTokenForTests },
+    { installDisconnectedServerSocketBoundary, restoreServerAccountForTest },
+    { loadSyncSingletonForTests },
+    { replacePluginAccountAvailabilityProjection },
+    { createArtifactStoreBoundary },
+] = await Promise.all([
+    import('@/dev/testkit/harness/homeGovernanceHarness'),
+    import('@/dev/testkit/harness/serverAccountConnectionHarness'),
+    import('@/dev/testkit/harness/syncSingletonLoader'),
+    import('@/sync/domains/plugins/availability/projection'),
+    import('@/dev/testkit/harness/artifactStoreBoundary'),
+]);
 
 type NativeSection = Readonly<{ key: string; data: readonly unknown[] }>;
 function renderNativeSectionList(props: Readonly<{
@@ -89,7 +101,7 @@ async function renderRemovalOwner(
     options: Readonly<{ initiallyEnabled?: boolean; readbackEnabled?: boolean; development?: boolean;
         developmentRoot?: string; actionFailure?: boolean;
         beforeActionResponse?: (signal: AbortSignal | null | undefined) => Promise<void>;
-        actionError?: string; catalog?: boolean; browse?: boolean; focused?: boolean; installOutcomeUnknown?: boolean; declineInstall?: boolean; noTarget?: boolean;
+        actionError?: string; catalog?: boolean; browse?: boolean; management?: boolean; focused?: boolean; installOutcomeUnknown?: boolean; declineInstall?: boolean; noTarget?: boolean;
         deferredInstall?: boolean; installErrorsByMachine?: Readonly<Record<string, string>>;
         /** A second online Machine beside the selected one. */
         secondMachine?: boolean; bundled?: boolean; bundledAccountEnabled?: boolean;
@@ -285,8 +297,8 @@ async function renderRemovalOwner(
                     ? options.installErrorsByMachine?.[envelope.target.machineId] : undefined;
                 if (installError) return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId,
                     requestId: envelope.requestId, execution: { ok: false, errorCode: installError, error: installError } }));
-                if (options.deferredInstall && actionId === 'plugins.install') {
-                    const execution = await nativeExecutor.execute('plugins.install', envelope.input,
+                if (options.deferredInstall && (actionId === 'plugins.install' || actionId === 'approval.request.create')) {
+                    const execution = await nativeExecutor.execute(actionId, envelope.input,
                     { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
                         serverId: serverIdentityId, serverIdentityId, runtimeAccountId: 'account-owner',
                         actionRequestId: envelope.requestId, externalActionTarget: envelope.target });
@@ -356,9 +368,9 @@ async function renderRemovalOwner(
     clearDaemonMergedProjectionCacheForTests();
     const { usePluginSettingsScreenState } = await import('./usePluginSettingsScreenState');
     const hook = await renderHook(({ focused }: { focused: boolean }) => usePluginSettingsScreenState({ focused,
-        ...(options.browse ? { initialView: 'discover', management: true } : {}) }),
+        ...(options.browse ? { initialView: 'discover', management: options.management ?? true } : {}) }),
         { initialProps: { focused: options.focused ?? true } });
-    if (options.focused !== false && !options.noTarget) await vi.waitFor(() => expect(hook.getCurrent().daemonOperationsAvailable).toBe(true));
+    if (options.focused !== false && !options.noTarget && options.management !== false) await vi.waitFor(() => expect(hook.getCurrent().daemonOperationsAvailable).toBe(true));
     if (options.development) await vi.waitFor(() => expect(hook.getCurrent().developmentPlugins.map(plugin => plugin.sourceRootPath)).toEqual([sourceRootPath]));
     const publishMachine = (changes: Partial<typeof machine>) => {
         const next = { ...machine, seq: machine.seq + 1, updatedAt: Date.now(), ...changes };
@@ -371,7 +383,8 @@ async function renderRemovalOwner(
     const decideInstall = async (artifactId: string, decision: 'approve' | 'reject' | 'cancel',
         authority: 'present_user' | 'account_automation' = 'present_user') => {
         const result = await nativeExecutor.execute('approval.request.decide', { artifactId, decision }, {
-            surface: 'ui', authority, actionCaller: { kind: 'host' },
+            surface: authority === 'present_user' ? 'ui' : 'agent', authority,
+            actionCaller: authority === 'present_user' ? { kind: 'host' } : { kind: 'session', sessionId: 'requesting-agent' },
             serverId: scope.serverId, serverIdentityId, runtimeAccountId: 'account-owner',
         });
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
@@ -383,6 +396,43 @@ async function renderRemovalOwner(
 }
 
 describe('Plugin install/update originating approval state', () => {
+    it('keeps Browse search editable alongside catalog installs without a contribution projection', async () => {
+        const { censusReads } = await renderRemovalOwner('disable', [], {
+            catalog: true, browse: true, management: false,
+        });
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const { PluginSettingsHomeScreen } = await import('../PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(DestinationInstanceHost, {
+            tabId: 'store', ref: { kind: 'plugins', params: { view: 'browse' } }, pathname: '/plugins', focused: true, visible: true,
+            navigation: { push: boundary.push, pushRetainingCurrent: boundary.push, replace: boundary.push,
+                back: () => {}, setParams: () => {} },
+            children: React.createElement(AppPaneProvider, null, React.createElement(PluginSettingsHomeScreen)),
+        }));
+        await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.marketplace.search')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.marketplace.search')?.props.editable).toBe(true));
+        await act(async () => {
+            screen.findByTestId('settings.plugins.marketplace.search')?.props.onChangeText('Example compute');
+        });
+        expect(screen.findByTestId('settings.plugins.marketplace.search')?.props.value).toBe('Example compute');
+        expect(censusReads).toHaveLength(0);
+    });
+
+    it('admits a catalog install from passive Browse without demanding installed contribution details', async () => {
+        const { hook, catalog, actionRequests, censusReads } = await renderRemovalOwner('disable', [], {
+            catalog: true, browse: true, management: false,
+        });
+        await vi.waitFor(() => expect(hook.getCurrent().discoverEntries.some(entry => entry.sourceId === catalog.source.id)).toBe(true));
+        expect(hook.getCurrent().canRunDiscoverActions).toBe(true);
+        expect(censusReads).toHaveLength(0);
+        await act(async () => hook.getCurrent().runCatalogAction({ method: 'install', pluginId: 'example.compute', sourceId: catalog.source.id }));
+        await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
+        expect(actionRequests[0]).toMatchObject({ actionId: 'plugins.install', envelope: {
+            target: { kind: 'machine', machineId: 'controller-1' },
+            input: { source: { kind: 'marketplace', sourceId: catalog.source.id, pluginId: 'example.compute', version: '1.2.3' } },
+        } });
+        expect(censusReads).toHaveLength(0);
+    });
+
     it('collects the exact per-Machine pending approvals without installing or lending confirmation to another target', async () => {
         const { hook, catalog, artifacts, nativeInstallCommitCount, actionRequests, scope } =
             await renderRemovalOwner('disable', [], { catalog: true, browse: true, noTarget: true, deferredInstall: true });
@@ -467,6 +517,12 @@ describe('Plugin install/update originating approval state', () => {
         await vi.waitFor(() => expect(artifacts.list(), JSON.stringify({ nativeExecutions, alerts: boundary.alert.mock.calls,
             actionRequestCount: actionRequests.length })).toHaveLength(1));
         const artifactId = artifacts.list()[0]!.id;
+        expect(nativeExecutions[0]).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+        expect(actionRequests.filter(request => request.actionId === 'approval.request.create')).toMatchObject([{
+            envelope: { target: { kind: 'machine', machineId: 'controller-1' }, input: {
+                actionId: 'plugins.install', actionArgs: actionRequests.find(request => request.actionId === 'plugins.install')!.envelope.input,
+            } },
+        }]);
         await vi.waitFor(() => expect(hook.getCurrent().pluginActionApproval).toMatchObject({
             approvalId: artifactId, approvalPending: true, serverId: connection!.home.id, artifact: { id: artifactId },
         }));

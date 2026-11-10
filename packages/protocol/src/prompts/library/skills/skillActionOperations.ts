@@ -1,5 +1,7 @@
 import { decodeBase64, encodeBase64 } from '../../../crypto/base64.js';
 import type { ActionExecuteResult } from '../../../actions/actionExecutionResult.js';
+import { readActionErrorCodeV1 } from '../../../actions/actionErrorClassV1.js';
+import { redactBugReportSensitiveText } from '../../../bugs/reports/redaction.js';
 import type { ActionExecutorContext } from '../../../actions/executor/types.js';
 import { resolveArtifactOrganizationHeaderV1 } from '../../../artifacts/artifactOrganizationV1.js';
 import { readArtifactFolderCatalogV1 } from '../promptFolderActionsV1.js';
@@ -58,8 +60,9 @@ class SkillActionFailureV1 extends Error {
   constructor(readonly code: string, readonly current?: SkillListItemV1) { super(code); }
 }
 class SkillAcknowledgedFailureV1 extends Error {
-  constructor(readonly code: string, readonly details: SkillInstallAcknowledgedEffectsV1) { super(code); }
+  constructor(readonly code: string, readonly details: SkillInstallAcknowledgedEffectsV1, message = code) { super(message); }
 }
+class SkillRulesAcknowledgedFailureV1 extends SkillAcknowledgedFailureV1 {}
 const fail = (code: string, current?: SkillListItemV1): never => { throw new SkillActionFailureV1(code, current); };
 function unavailableSkillReason(error: unknown): SkillUnavailableItemV1['reason'] | null {
   const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
@@ -260,15 +263,26 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
       summary: { name, description: frontmatter.description ?? null,
         ...(provenance.kind === 'written' && port.savedBy ? { creator: port.savedBy } : {}) } };
     if (reach.rules.length) {
-      try { const result = await mutateSkillRulesV1(port.skillRules, { items: [{ skillId: base.skillId }], change: { kind: 'replace', rules: reachRulesToDraftsV1(reach.rules) } }, signal);
-        if (!result.ok) return { ...base, incomplete: 'rules' as const }; }
-      catch { return { ...base, incomplete: 'rules' as const }; }
+      try { const result = await mutateSkillRulesV1(port.skillRules, { items: [{ skillId: base.skillId }], change: { kind: 'replace', rules: reachRulesToDraftsV1(reach.rules) } }, signal,
+        { id: base.skillId, name });
+        if (!result.ok) throw Object.assign(new Error(result.code), { code: result.code }); }
+      catch (cause) {
+        const code = readActionErrorCodeV1(cause) ?? 'internal_error';
+        throw new SkillRulesAcknowledgedFailureV1(code, { skillIds: [base.skillId], incomplete: [{ skillId: base.skillId, step: 'rules' }] },
+          cause instanceof Error ? redactBugReportSensitiveText(cause.message) : code);
+      }
     }
     return includeSkill(base, reach.includeInSessionId, signal);
   }
   async function includeSkill<T extends Readonly<{ skillId: string; includedInSessionId: string | null }>>(base: T, sessionId: string | null, signal?: AbortSignal) {
     if (sessionId) {
-      const result = await port.includeInSession(sessionId, base.skillId, signal);
+      let result: SessionCapabilitiesSetOutputV1;
+      try { result = await port.includeInSession(sessionId, base.skillId, signal); }
+      catch (cause) {
+        const code = readActionErrorCodeV1(cause) ?? 'internal_error';
+        throw new SkillAcknowledgedFailureV1(code, { skillIds: [base.skillId], incomplete: [{ skillId: base.skillId, step: 'session_include' }] },
+          cause instanceof Error ? redactBugReportSensitiveText(cause.message) : code);
+      }
       if (!result.ok) return { ...base, inclusion: result, incomplete: 'session_include' as const };
       return { ...base, inclusion: result, includedInSessionId: sessionId };
     }
@@ -290,7 +304,8 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
     held?: Awaited<ReturnType<typeof heldSkills>>) {
     const reach = resolveCreateReachV1({ kind: 'skill', caller, requested: where, ctx: { nowMs: nowMs(), newId: port.randomId } });
     if (!reach.ok) return reach;
-    const receipts: SkillLibraryActionResultByIdV1['skills.create'][] = [];
+    const receipts: Pick<SkillLibraryActionResultByIdV1['skills.create'], 'skillId' | 'includedInSessionId' | 'incomplete'>[] = [];
+    let rulesFailure: SkillAcknowledgedFailureV1 | undefined;
     for (const item of items) {
       try {
         const identity = held ? { provenance: item.provenance, name: readSkillFrontmatterV1(skillMarkdown(item.files)).name!,
@@ -305,6 +320,15 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
         receipts.push(receipt);
         if (held && identity && !existingId) held.push({ ...identity, skillId: receipt.skillId });
       } catch (error) {
+        if (error instanceof SkillRulesAcknowledgedFailureV1) {
+          rulesFailure ??= error;
+          for (const skillId of error.details.skillIds) {
+            receipts.push({ skillId, includedInSessionId: null, incomplete: 'rules' });
+            if (held) held.push({ provenance: item.provenance, name: readSkillFrontmatterV1(skillMarkdown(item.files)).name!,
+              digest: computePromptBundleDigestV1({ v: 1, entries: [...item.files], createdAtMs: 0, updatedAtMs: 0 }), skillId });
+          }
+          continue;
+        }
         if (!receipts.length) throw error;
         const record = error && typeof error === 'object' ? error : {};
         const code = 'code' in record && typeof record.code === 'string' ? record.code : 'content_write_failed';
@@ -313,10 +337,13 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
           skillIds: [...receipts.map(receipt => receipt.skillId), ...(acknowledged?.skillIds ?? [])],
           incomplete: [...receipts.flatMap(receipt => receipt.incomplete ? [{ skillId: receipt.skillId, step: receipt.incomplete }] : []), ...(acknowledged?.incomplete ?? [])],
         };
-        return { ok: false, errorCode: code, error: code, details };
+        return { ok: false, errorCode: code, error: error instanceof Error ? redactBugReportSensitiveText(error.message) : code, details };
       }
     }
-    return projectInstalledSkills(receipts);
+    const projected = projectInstalledSkills(receipts);
+    if (rulesFailure) return { ok: false, errorCode: rulesFailure.code, error: rulesFailure.message,
+      details: { skillIds: projected.skillIds, incomplete: projected.incomplete ?? [] } };
+    return projected;
   }
   async function readFound(machineId: string, path: string, signal?: AbortSignal) {
     if (!port.readFoundSkillBundle) return fail('unsupported_source');
@@ -654,7 +681,7 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
       }
       if (result && typeof result === 'object' && 'ok' in result && result.ok === false) return result;
       return outputs[actionId].parse(result);
-    } catch (error) { if (error instanceof SkillAcknowledgedFailureV1) return { ok: false, errorCode: error.code, error: error.code, details: error.details };
+    } catch (error) { if (error instanceof SkillAcknowledgedFailureV1) return { ok: false, errorCode: error.code, error: error.message, details: error.details };
       if (error instanceof SkillActionFailureV1) return { ok: false, code: error.code, ...(error.current ? { current: error.current } : {}) };
       if (error && typeof error === 'object' && 'code' in error && error.code === 'invalid_skill_lock') return { ok: false, code: 'invalid_skill_lock' };
       throw error; }

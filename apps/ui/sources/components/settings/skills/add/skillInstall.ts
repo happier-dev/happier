@@ -4,7 +4,10 @@ import {
   SkillInstallPreviewV1Schema,
   type SkillFileInputV1,
   type SkillInstallPreviewV1,
+  type SkillLibraryActionInputByIdV1,
 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { SessionCapabilitiesSetOutputV1 } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
 import { DEFAULT_CREATE_REACH_CHANGE_V1, type ReachRulesChangeV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
 import type { RegistrySkillContentRefV1 } from '@happier-dev/protocol/registries';
 
@@ -12,6 +15,7 @@ import type { MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAu
 import { readRegistryFailureStatus, type RegistryFailureStatus } from '@/registries/describeRegistrySourceStatus';
 import { readReachRulesAcknowledgment } from '@/sync/domains/capabilities/reach/reachRulesAcknowledgment';
 import { t } from '@/text';
+import { readSkillActionFailure, readSkillActionRefusal } from '../skillActionResult';
 
 export type SkillInstallSource =
   | Readonly<{
@@ -34,12 +38,14 @@ type SkillInstallEffects = Readonly<{
       skillIds: readonly string[];
       rulesMissing: readonly string[];
       incomplete: readonly Readonly<{ skillId: string; step: 'rules' | 'session_include' }>[];
+      failures?: readonly Readonly<{ skillId?: string; step?: 'rules' | 'session_include'; code: string; message: string }>[];
 }>;
 export type SkillInstallOutcome = SkillInstallEffects & (
   | Readonly<{ ok: true }>
   | Readonly<{
       ok: false;
       error: string;
+      errorMessage?: string;
       status?: RegistryFailureStatus;
       request: SkillInstallRequest;
       /** Re-read through the canonical held identity owner; used by the existing checklist and recovery notice. */
@@ -50,7 +56,13 @@ export type SkillInstallOutcome = SkillInstallEffects & (
 /** A failure keeps the registry's typed status when it has one ("Try again at 14:05"). */
 function failure(result: Readonly<{ errorCode?: string; error: string; details?: unknown }>) {
   const status = readRegistryFailureStatus(result.details);
-  return { ok: false as const, error: result.errorCode ?? result.error, ...(status ? { status } : {}) };
+  return { ok: false as const, error: result.errorCode ?? result.error,
+    ...(result.errorCode && result.errorCode !== result.error ? { errorMessage: result.error } : {}), ...(status ? { status } : {}) };
+}
+
+export function describeSkillActionFailure(error: unknown): string {
+  const cause = readSkillActionFailure(error);
+  return cause.message === cause.code ? cause.code : `${cause.code}: ${cause.message}`;
 }
 
 /**
@@ -132,34 +144,67 @@ export async function previewSkillInstall(
 export async function retrySkillRules(
   execute: MountedAuthoringActionExecute,
   input: Readonly<{ skillId: string; change: ReachRulesChangeV1 }>,
-): Promise<boolean> {
-  const result = await execute('skills.rules.set', {
-    items: [{ skillId: input.skillId }],
-    change: input.change,
-  });
-  return readReachRulesAcknowledgment('skill', input.skillId, result).ok;
+): Promise<ReturnType<typeof readReachRulesAcknowledgment>> {
+  try {
+    const result = await execute('skills.rules.set', {
+      items: [{ skillId: input.skillId }],
+      change: input.change,
+    });
+    return readReachRulesAcknowledgment('skill', input.skillId, result);
+  } catch (error) { return { ok: false, ...readSkillActionFailure(error) }; }
 }
 
 export type SkillInstallAcknowledgment = SkillInstallOutcome;
 export type SkillCreationAcknowledgment = Extract<SkillInstallAcknowledgment, { ok: true }>;
 
+/** Write retains an acknowledged Artifact when its later reach write failed. */
+export async function createSkill(execute: MountedAuthoringActionExecute,
+  input: SkillLibraryActionInputByIdV1['skills.create'],
+): Promise<SkillCreationAcknowledgment> {
+  const result = await execute('skills.create', input);
+  return acknowledgeSkillActionResult('skills.create', result);
+}
+
+/** Failed creation Actions can still acknowledge durable content; every entry point retains that receipt. */
+export function acknowledgeSkillActionResult(
+  actionId: 'skills.create' | 'skills.duplicate' | 'skills.found.adopt',
+  result: ActionExecuteResult,
+): SkillCreationAcknowledgment {
+  if (!result.ok) {
+    const effects = SkillInstallAcknowledgedEffectsV1Schema.safeParse(result.details);
+    if (effects.success && effects.data.skillIds.length > 0) {
+      return { ...acknowledgeSkillCreation(effects.data), failures: [readSkillActionFailure(result)] };
+    }
+    throw Object.assign(new Error(result.error), { code: result.errorCode ?? 'internal_error' });
+  }
+  const refusal = readSkillActionRefusal(result);
+  if (refusal) throw Object.assign(new Error(refusal), { code: refusal });
+  return acknowledgeSkillCreation(SKILL_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(result.result));
+}
+
 /** All create entry points keep the same content identities and independently missing effects. */
 export function acknowledgeSkillCreation(receipt:
-  | Readonly<{ skillId: string; incomplete?: 'rules' | 'session_include' }>
+  | Readonly<{ skillId: string; incomplete?: 'rules' | 'session_include'; inclusion?: SessionCapabilitiesSetOutputV1 }>
   | Readonly<{ skillIds: readonly string[]; incomplete?: SkillInstallEffects['incomplete'] }>,
 ): SkillCreationAcknowledgment {
   const skillIds = 'skillId' in receipt ? [receipt.skillId] : receipt.skillIds;
   const incomplete = 'skillId' in receipt
     ? receipt.incomplete ? [{ skillId: receipt.skillId, step: receipt.incomplete }] : []
     : receipt.incomplete ?? [];
-  return { ok: true, skillIds, incomplete, rulesMissing: incomplete.filter(step => step.step === 'rules').map(step => step.skillId) };
+  const inclusion = 'inclusion' in receipt ? receipt.inclusion : undefined;
+  const failure = inclusion && !inclusion.ok ? { code: inclusion.code, message: inclusion.code } : undefined;
+  return { ok: true, skillIds, incomplete, rulesMissing: incomplete.filter(step => step.step === 'rules').map(step => step.skillId),
+    ...(failure ? { failures: incomplete.map(step => ({ ...step, ...failure })) } : {}) };
 }
 
 /** A later Add must not replace an earlier content acknowledgment that still needs rules. */
 export function mergeSkillCreationAcknowledgments(previous: SkillCreationAcknowledgment | null, next: SkillCreationAcknowledgment): SkillCreationAcknowledgment {
   if (!previous) return next;
   const steps = new Map([...previous.incomplete, ...next.incomplete].map(step => [JSON.stringify([step.skillId, step.step]), step]));
-  return acknowledgeSkillCreation({ skillIds: [...new Set([...previous.skillIds, ...next.skillIds])], incomplete: [...steps.values()] });
+  const failures = [...new Map([...previous.failures ?? [], ...next.failures ?? []]
+    .map(failure => [JSON.stringify([failure.skillId, failure.step]), failure])).values()];
+  return { ...acknowledgeSkillCreation({ skillIds: [...new Set([...previous.skillIds, ...next.skillIds])], incomplete: [...steps.values()] }),
+    ...(failures.length ? { failures } : {}) };
 }
 
 /** Keep every content acknowledgment; a subsequent retry only visits rules still missing. */
@@ -179,11 +224,23 @@ export async function retrySkillInstallRules(
   change: ReachRulesChangeV1 = DEFAULT_CREATE_REACH_CHANGE_V1,
 ): Promise<SkillInstallAcknowledgment> {
   const incomplete: SkillInstallAcknowledgment['incomplete'][number][] = [];
+  const { failures: previousFailures, ...receipt } = outcome;
+  const failures: NonNullable<SkillInstallAcknowledgment['failures']>[number][] = outcome.rulesMissing.length === 0
+    ? previousFailures?.filter(failure => failure.step === undefined) ?? [] : [];
   for (const step of outcome.incomplete) {
-    if (step.step !== 'rules' || !await retrySkillRules(execute, { skillId: step.skillId, change }).catch(() => false))
+    if (step.step !== 'rules') {
       incomplete.push(step);
+      failures.push(...previousFailures?.filter(failure => failure.skillId === step.skillId && failure.step === step.step) ?? []);
+      continue;
+    }
+    const result = await retrySkillRules(execute, { skillId: step.skillId, change });
+    if (!result.ok) {
+      incomplete.push(step);
+      failures.push({ ...step, code: result.code, message: result.message });
+    }
   }
-  return { ...outcome, incomplete, rulesMissing: incomplete.filter(step => step.step === 'rules').map(step => step.skillId) };
+  return { ...receipt, incomplete, rulesMissing: incomplete.filter(step => step.step === 'rules').map(step => step.skillId),
+    ...(failures.length ? { failures } : {}) };
 }
 
 /** Explicit Try again: repair acknowledged rules, then retry the pinned content through findHeldSkillV1. */
@@ -203,13 +260,19 @@ export async function retrySkillInstall(
   }
   return { ...retried, ...(!retried.ok && !retried.previews && repaired.previews ? { previews: repaired.previews } : {}),
     skillIds: [...new Set([...repaired.skillIds, ...retried.skillIds])], incomplete,
+    ...(repaired.failures?.length ? { failures: repaired.failures } : {}),
     rulesMissing: incomplete.filter(step => step.step === 'rules').map(step => step.skillId) };
 }
 
 /** One recovery message for Link, Upload, Browse and the shelf, using their existing notice anatomy. */
 export function describeSkillInstallIncomplete(outcome: SkillInstallAcknowledgment): string {
-  if (outcome.ok) return t('capabilities.skillAdd.partial.rules');
-  const names = outcome.previews?.filter(item => item.inLibrary === undefined
-    && (!outcome.request.selectPaths || outcome.request.selectPaths.includes(item.path))).map(item => item.name) ?? [];
-  return t('capabilities.skillAdd.partial.content', { names: names.join(', ') });
+  const names = !outcome.ok ? outcome.previews?.filter(item => item.inLibrary === undefined
+    && (!outcome.request.selectPaths || outcome.request.selectPaths.includes(item.path))).map(item => item.name) ?? []
+    : [];
+  const label = outcome.ok
+    ? outcome.rulesMissing.length ? t('capabilities.skillAdd.partial.rules') : t('common.error')
+    : names.length || !outcome.rulesMissing.length ? t('capabilities.skillAdd.partial.content', { names: names.join(', ') }) : t('capabilities.skillAdd.partial.rules');
+  const causes = [...outcome.failures?.map(cause => describeSkillActionFailure({ code: cause.code, error: cause.message })) ?? [],
+    ...(!outcome.ok ? [describeSkillActionFailure({ code: outcome.error, error: outcome.errorMessage ?? outcome.error })] : [])];
+  return [label, ...new Set(causes)].join(' · ');
 }

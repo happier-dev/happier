@@ -53,6 +53,7 @@ function harness(registry?: RegistryPorts, foundReader?: (machineId: string, pat
   const artifacts = new Map<string, PromptLibraryStoredArtifact>();
   let usage: Record<string, number> = {}, usageUnavailable = false, rules: SkillRuleV1[] = [], rowRevision = 0, creates = 0, createAttempts = 0, failCreateAt = 0, failRules = false, failSession = false, failCreatedRead = false, failUpdatedRead = false;
   const order: string[] = [], includes = new Map<string, string[]>();
+  let rulesError: Error | undefined;
   const store: PromptLibraryArtifactStore = {
     list: async () => ({ coverage: 'complete', items: [...artifacts.values()].map(a => ({ id: a.id, header: a.header, updatedAtMs: 1, owned: true })) }),
     read: async id => failCreatedRead && artifacts.has(id) ? null : artifacts.get(id) ?? null,
@@ -71,7 +72,7 @@ function harness(registry?: RegistryPorts, foundReader?: (machineId: string, pat
     readCatalog: async (_signal, key) => { if (key === 'skill-usage' && usageUnavailable) throw new Error('Usage row unavailable');
       return { catalog: { status: 'ready', rows: [{ record: { key: 'skill-rules', value: { v: 1, rules } }, revision: rowRevision },
       { record: { key: 'skill-usage', value: { v: 1, lastUsedAt: usage } }, revision: 1 }], tombstones: [], diagnostics: [] } }; },
-    writeRecord: async input => { if (failRules) throw new Error('row transport unavailable'); if (input.expectedRevision !== rowRevision) return { status: 'conflict', revision: rowRevision };
+    writeRecord: async input => { if (failRules) throw rulesError ?? new Error('row transport unavailable'); if (input.expectedRevision !== rowRevision) return { status: 'conflict', revision: rowRevision };
       if (input.record.key === 'skill-rules') rules = input.record.value.rules; order.push('rules'); return { status: 'updated', revision: ++rowRevision, cursor: rowRevision }; },
   };
   const execute = createSkillActionExecuteV1({ store, skillRules, randomId: () => 'rule', nowMs: () => 1,
@@ -85,9 +86,55 @@ function harness(registry?: RegistryPorts, foundReader?: (machineId: string, pat
     failCreateAt: (value: number) => { failCreateAt = value; },
     failCreatedRead: (value: boolean) => { failCreatedRead = value; },
     failUpdatedRead: (value: boolean) => { failUpdatedRead = value; },
-    failRules: (value: boolean) => { failRules = value; }, failSession: (value: boolean) => { failSession = value; } };
+    failRules: (value: boolean, error?: Error) => { failRules = value; rulesError = error; }, failSession: (value: boolean) => { failSession = value; } };
 }
 describe('skill library Actions', () => {
+  it('keeps the typed session transport failure after content was materialised', async () => {
+    const h = harness();
+    const execute = createSkillActionExecuteV1({ store: h.store, skillRules: h.skillRules, randomId: () => 'rule', nowMs: () => 1,
+      includeInSession: async () => { throw Object.assign(new Error('Session transport was refused'), { code: 'forbidden' }); } });
+    expect(await execute('skills.create', { name: 'sample', files }, { surface: 'agent', sessionId: 'session' }))
+      .toMatchObject({ ok: false, errorCode: 'forbidden', error: 'Session transport was refused',
+        details: { skillIds: ['skill-1'], incomplete: [{ skillId: 'skill-1', step: 'session_include' }] } });
+    expect(h.creates()).toBe(1);
+  });
+  it('sets reach from the acknowledged creation without reopening its persisted content', async () => {
+    const h = harness();
+    const execute = createSkillActionExecuteV1({ store: { ...h.store, create: async input => {
+      const created = await h.store.create!(input);
+      return { artifactId: typeof created === 'string' ? created : created.artifactId, revision: { headerVersion: 1, bodyVersion: 1 } };
+    } }, skillRules: { ...h.skillRules, listSkills: (_signal, ids) => readSkillLibraryCatalog({
+      list: async () => ({ coverage: 'complete', items: [] }),
+      read: async () => { throw Object.assign(new Error('Created content read is unavailable'), { code: 'unreachable' }); },
+    }, undefined, ids) }, randomId: () => 'rule', nowMs: () => 1, includeInSession: async () => included });
+    expect(await execute('skills.create', { name: 'sample', files }, { surface: 'ui' })).toMatchObject({ ok: true, skillId: 'skill-1' });
+    expect(h.rules()).toMatchObject([{ skillId: 'skill-1', enabled: true }]);
+  });
+  it('keeps the typed rules failure and materialised identity so recovery writes no second skill', async () => {
+    const h = harness();
+    h.failRules(true, Object.assign(new Error('Rules request was refused'), { code: 'forbidden' }));
+    expect(await h.execute('skills.create', { name: 'sample', files }, { surface: 'ui' })).toMatchObject({
+      ok: false, errorCode: 'forbidden', error: 'Rules request was refused',
+      details: { skillIds: ['skill-1'], incomplete: [{ skillId: 'skill-1', step: 'rules' }] },
+    });
+    h.failRules(false);
+    const { mutateSkillRulesV1 } = await import('../skillRulesActionsV1.js');
+    expect(await mutateSkillRulesV1(h.skillRules, { items: [{ skillId: 'skill-1' }], change: { kind: 'write',
+      write: { place: { t: 'allMachines' }, state: 'on' } } })).toMatchObject({ ok: true });
+    expect(h.creates()).toBe(1);
+    expect(h.rules()).toMatchObject([{ skillId: 'skill-1', enabled: true }]);
+  });
+  it('continues selected materialisation after a rules failure and retains every incomplete identity', async () => {
+    const h = harness(); h.failRules(true);
+    const output = await h.execute('skills.install', { source: { kind: 'upload', files: ['first', 'second'].map(name => ({
+      ...files[0]!, path: `${name}/SKILL.md`, contentBase64: encodeBase64(new TextEncoder().encode(`---\nname: ${name}\n---\nInstructions`), 'base64'),
+    })) } }, { surface: 'ui' });
+    expect(output).toMatchObject({ ok: false, errorCode: 'internal_error', error: 'row transport unavailable',
+      details: { skillIds: ['skill-1', 'skill-2'], incomplete: [
+        { skillId: 'skill-1', step: 'rules' }, { skillId: 'skill-2', step: 'rules' },
+      ] } });
+    expect(h.creates()).toBe(2);
+  });
   it.each(['skills.create', 'skills.update'] as const)('rejects an invalid %s name before approval and saves the corrected name after approval', async actionId => {
     const h = harness();
     if (actionId === 'skills.update') await h.execute('skills.create', { name: 'sample', files }, { surface: 'ui' });
@@ -152,13 +199,14 @@ describe('skill library Actions', () => {
     else expect(h.rules()).toMatchObject([{ target: { t: 'allMachines' }, enabled: true }]);
     expect(h.artifacts.get('skill-1')).toMatchObject({ savedBy });
   });
-  it('rethrows an unexpected Session inclusion error instead of reporting an incomplete success', async () => {
+  it('retains the materialised identity when an unexpected Session inclusion error occurs', async () => {
     const h = harness();
     const error = new Error('Session persistence unavailable');
     const execute = createSkillActionExecuteV1({ store: h.store, skillRules: h.skillRules, randomId: () => 'rule',
       includeInSession: async () => { throw error; } });
     await expect(execute('skills.create', { name: 'sample', files }, { surface: 'agent', sessionId: 'origin-session' }))
-      .rejects.toBe(error);
+      .resolves.toMatchObject({ ok: false, errorCode: 'internal_error', error: error.message,
+        details: { skillIds: ['skill-1'], incomplete: [{ skillId: 'skill-1', step: 'session_include' }] } });
     expect(h.artifacts.has('skill-1')).toBe(true);
   });
   it('returns acknowledged saved identity and admitted creator when inclusion refuses, with no reread or second save', async () => {
@@ -616,12 +664,12 @@ describe('skill library Actions', () => {
     const execute = createSkillActionExecuteV1({ store, skillRules: h.skillRules, randomId: () => 'rule', nowMs: () => 1,
       includeInSession: async () => included });
     const output = await execute('skills.duplicate', { skillId: FIRST_PARTY_SKILLS_V1[0]!.skillId }, { surface: 'ui' });
-    expect(output).toEqual({ ok: true, skillId: 'skill-1', revision: '3:7', includedInSessionId: null,
-      summary: { name: 'happier', description: 'Use Happier from this session' },
-      ...(failRules ? { incomplete: 'rules' } : {}) });
-    const result = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.duplicate'].parse(output);
+    expect(output).toEqual(failRules ? { ok: false, errorCode: 'internal_error', error: 'row transport unavailable',
+      details: { skillIds: ['skill-1'], incomplete: [{ skillId: 'skill-1', step: 'rules' }] } }
+      : { ok: true, skillId: 'skill-1', revision: '3:7', includedInSessionId: null,
+        summary: { name: 'happier', description: 'Use Happier from this session' } });
     expect(h.order).toEqual(failRules ? ['content'] : ['content', 'rules']);
-    expect(h.rules()).toEqual(failRules ? [] : [expect.objectContaining({ skillId: result.skillId, enabled: true })]);
+    expect(h.rules()).toEqual(failRules ? [] : [expect.objectContaining({ skillId: 'skill-1', enabled: true })]);
   });
   it('lists the bundled skill with actual rules and refuses mutations without writing, while duplication makes a written copy', async () => {
     const h = harness(), stub = FIRST_PARTY_SKILLS_V1[0]!;
@@ -938,7 +986,8 @@ describe('skill library Actions', () => {
   });
   it('keeps created identity when rules or session acknowledgement fails', async () => {
     const h = harness(); h.failRules(true);
-    expect(await h.execute('skills.create', { name: 'sample', files }, { surface: 'cli' })).toMatchObject({ ok: true, skillId: 'skill-1', incomplete: 'rules' });
+    expect(await h.execute('skills.create', { name: 'sample', files }, { surface: 'cli' })).toMatchObject({ ok: false, errorCode: 'internal_error',
+      details: { skillIds: ['skill-1'], incomplete: [{ skillId: 'skill-1', step: 'rules' }] } });
     expect(h.rules()).toEqual([]); expect(h.creates()).toBe(1);
     h.failSession(true);
     expect(await h.execute('skills.create', { name: 'sample', files }, { surface: 'agent', sessionId: 's' })).toMatchObject({ skillId: 'skill-2', incomplete: 'session_include', includedInSessionId: null });

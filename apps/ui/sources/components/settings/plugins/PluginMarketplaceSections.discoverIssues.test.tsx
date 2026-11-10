@@ -64,7 +64,10 @@ describe('Browse source issues', () => {
         expect(after).toContain('settingsPlugins.diagnosticsTechnicalCode');
     });
 
-    it.each(['grid', 'list'] as const)('keeps one independent Install control in the %s presentation', async (presentation) => {
+    it.each([
+        { presentation: 'grid', canRunActions: true }, { presentation: 'list', canRunActions: true },
+        { presentation: 'grid', canRunActions: false }, { presentation: 'list', canRunActions: false },
+    ] as const)('keeps one Install control with a visible unavailable reason ($presentation, admitted=$canRunActions)', async ({ presentation, canRunActions }) => {
         const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
         const entry: PluginMarketplaceCatalogEntry = {
             id: 'sample.plugin', title: 'Sample plugin', description: null, version: '1.2.3',
@@ -77,7 +80,8 @@ describe('Browse source issues', () => {
         const onOpenListing = vi.fn();
         const screen = await renderScreen(<ListPresentationProvider value="page"><DiscoverListingsSection
             entries={[entry]} presentation={presentation} loading={false} loadingMore={false} canLoadMore={false}
-            installedPluginById={new Map()} canRunActions isPluginActionInFlight={() => false}
+            installedPluginById={new Map()} canRunActions={canRunActions} isPluginActionInFlight={() => false}
+            installDisabledReason={canRunActions ? null : 'Choose a connected machine'}
             onAction={onAction} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={onOpenListing}
         /></ListPresentationProvider>);
         await measureMountedCollections(screen);
@@ -86,6 +90,11 @@ describe('Browse source issues', () => {
         }
         const actionTestID = 'settings.plugins.marketplace.action.install.curated.sample.plugin';
         expect(screen.findAllHostsByTestId(actionTestID)).toHaveLength(1);
+        if (!canRunActions) {
+            expect(screen.findByTestId(actionTestID)?.props.accessibilityState?.disabled).toBe(true);
+            expect(screen.findByTestId(actionTestID)?.props.accessibilityHint).toBeTruthy();
+            return;
+        }
         await screen.pressByTestIdAsync('settings.plugins.marketplace.entry.curated.sample.plugin');
         expect(onOpenListing).toHaveBeenCalledWith(entry);
         expect(onAction).not.toHaveBeenCalled();

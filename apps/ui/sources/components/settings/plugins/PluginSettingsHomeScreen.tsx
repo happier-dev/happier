@@ -344,7 +344,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
             store={settingsHost ? () => router.push(buildPluginsHomeRoute('app', { view: 'browse' })) : null}
             discover={activeView === 'discover' ? {
                 searchText: state.discoverSearchText,
-                searchable: state.daemonOperationsAvailable,
+                searchable: state.canRunDiscoverActions,
                 onChangeSearchText: state.setDiscoverSearchText,
                 onSubmitSearch: state.canRefreshDiscover ? state.refreshDiscover : undefined,
                 sources: state.discoverSources,
@@ -508,6 +508,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                         machineId={state.executionMachineId}
                         serverId={state.executionServerId}
                         canRunActions={state.canRunDiscoverActions}
+                        installDisabledReason={state.discoverInstallDisabledReason}
                         isPluginActionInFlight={state.isPluginActionInFlight}
                         onAction={state.runCatalogAction}
                         onLoadMore={state.loadMoreDiscover}

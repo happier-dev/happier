@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { isActionApprovalDeclinedErrorCode, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   SKILL_ACTION_OUTPUT_SCHEMAS_V1,
   type SkillLibraryActionInputByIdV1,
@@ -20,6 +20,8 @@ import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
 import { HappyError } from '@/utils/errors/errors';
 
 import { readSkillText } from './skillFileContent';
+import { readSkillActionRefusal } from '../skillActionResult';
+import { acknowledgeSkillActionResult } from '../add/skillInstall';
 
 export type SkillDetailStatus =
   | 'loading'
@@ -33,25 +35,6 @@ export type SkillChange = Omit<
 export type SkillChangeResult =
   | Readonly<{ ok: true; revision: string }>
   | Readonly<{ ok: false; code: string }>;
-
-/** A skill Action's typed refusal, whether the executor returned it as a failed result or as `{ ok: false, code }`. */
-export function readSkillActionRefusal(
-  result: ActionExecuteResult,
-): string | null {
-  if (!result.ok) return result.errorCode ?? result.error ?? 'unknown';
-  const value = result.result;
-  if (
-    value &&
-    typeof value === 'object' &&
-    'ok' in value &&
-    value.ok === false
-  ) {
-    return 'code' in value && typeof value.code === 'string'
-      ? value.code
-      : 'unknown';
-  }
-  return null;
-}
 
 /**
  * One skill as the detail page reads and changes it, entirely through the `skills.*` Actions (C28: no
@@ -226,10 +209,7 @@ export function useSkillDetail(skillId: string | null) {
   const duplicate = React.useCallback(async () => {
     if (!skillId) return null;
     const result = await execute('skills.duplicate', { skillId });
-    if (readSkillActionRefusal(result)) return null;
-    return SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.duplicate'].parse(
-      result.ok ? result.result : null,
-    );
+    return acknowledgeSkillActionResult('skills.duplicate', result);
   }, [execute, skillId]);
 
   /** "Export as .zip": the Agent Skills archive the one `skills.export` Action builds, handed to the person. */

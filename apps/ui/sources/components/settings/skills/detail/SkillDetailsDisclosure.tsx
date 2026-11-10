@@ -16,7 +16,7 @@ import { Modal } from '@/modal';
 import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 
-import { readSkillActionRefusal } from './useSkillDetail';
+import { readSkillActionRefusal } from '../skillActionResult';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 type Execute = (

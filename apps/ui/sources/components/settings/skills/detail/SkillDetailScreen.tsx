@@ -61,10 +61,10 @@ import { SkillSourceSection } from './SkillSourceSection';
 import { useSkillSourceNames } from '../useSkillSourceNames';
 import { skillTextFile } from './skillFileContent';
 import {
-  readSkillActionRefusal,
   useSkillDetail,
   type SkillDetailModel,
 } from './useSkillDetail';
+import { readSkillActionRefusal } from '../skillActionResult';
 import type { WhereItsOnNames } from '@/components/capabilities/where/whereItsOnPresentation';
 import { summarizeMachines } from './skillMachineSummary';
 import {
@@ -73,7 +73,7 @@ import {
 } from './useSkillMachineTruth';
 import { useSkillPlaces } from '../useSkillPlaces';
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { acknowledgeSkillCreation, describeSkillInstallIncomplete, retrySkillInstallRules, type SkillInstallAcknowledgment } from '../add/skillInstall';
+import { describeSkillActionFailure, describeSkillInstallIncomplete, retrySkillInstallRules, type SkillInstallAcknowledgment } from '../add/skillInstall';
 import { useSkillDraft } from '../add/useSkillDraft';
 import { SkillWriteInput } from '../add/SkillWriteInput';
 import { useSkillMakers } from '../useSkillMakers';
@@ -227,10 +227,11 @@ function SavedSkill(props: Readonly<{ skillId: string; creationNotice?: React.Re
           try {
             const created = await detail.duplicate();
             if (!created) { Modal.alert(t('common.error'), t('errors.unknownError')); return; }
-            const receipt = acknowledgeSkillCreation(created);
+            const receipt = created;
             if (receipt.incomplete.length > 0) setCopy({ sourceId: skillId, receipt });
-            else router.push(skillHref(created.skillId) as never);
-          } finally { setCopying(false); }
+            else router.push(skillHref(receipt.skillIds[0]!) as never);
+          } catch (error) { Modal.alert(t('common.error'), describeSkillActionFailure(error)); }
+          finally { setCopying(false); }
         },
       },
     ];

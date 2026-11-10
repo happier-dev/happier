@@ -10,7 +10,7 @@ import type { RegistryContentRefV1 } from '@happier-dev/protocol/registries';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import type { SkillsLibrary } from '@/sync/domains/skills/useSkillsLibrary';
 
-import { readSkillActionRefusal } from '../detail/useSkillDetail';
+import { readSkillActionRefusal } from '../skillActionResult';
 import type { SkillFileChoice } from './skillsUpdatesModel';
 
 export type SkillUpdateDiff =

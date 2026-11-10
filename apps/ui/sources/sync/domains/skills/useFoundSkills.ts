@@ -1,6 +1,5 @@
 import * as React from 'react';
 import {
-  SKILL_ACTION_OUTPUT_SCHEMAS_V1,
   SkillFoundListResultV1Schema,
   type SkillFoundListResultV1,
 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
@@ -8,8 +7,8 @@ import { SkillReadResultV1Schema } from '@happier-dev/protocol/prompts/library/s
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { readSkillText } from '@/components/settings/skills/detail/skillFileContent';
-import { readSkillActionRefusal } from '@/components/settings/skills/detail/useSkillDetail';
-import { acknowledgeSkillCreation, retrySkillInstallRules, type SkillCreationAcknowledgment } from '@/components/settings/skills/add/skillInstall';
+import { readSkillActionRefusal } from '@/components/settings/skills/skillActionResult';
+import { acknowledgeSkillActionResult, retrySkillInstallRules, type SkillCreationAcknowledgment } from '@/components/settings/skills/add/skillInstall';
 import {
   useFoundCacheEntries,
   useFoundMachineScans,
@@ -83,11 +82,7 @@ export function useFoundSkills(machineIds: readonly string[]) {
         machineId,
         items: items.map(({ name, path }) => ({ name, path })),
       });
-      if (readSkillActionRefusal(response) !== null || !response.ok) return null;
-      const receipt = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.found.adopt'].parse(
-        response.result,
-      );
-      return acknowledgeSkillCreation(receipt);
+      return acknowledgeSkillActionResult('skills.found.adopt', response);
     },
     [execute],
   );

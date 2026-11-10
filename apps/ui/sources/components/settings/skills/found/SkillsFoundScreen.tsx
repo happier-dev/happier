@@ -32,7 +32,7 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { skillHref } from '../skillsCollectionModel';
-import { describeSkillInstallIncomplete, mergeSkillCreationAcknowledgments, type SkillCreationAcknowledgment } from '../add/skillInstall';
+import { describeSkillActionFailure, describeSkillInstallIncomplete, mergeSkillCreationAcknowledgments, type SkillCreationAcknowledgment } from '../add/skillInstall';
 import {
   foundAddAllItems,
   groupFoundRowsByName,
@@ -285,7 +285,10 @@ const FoundMachineSection = React.memo(function FoundMachineSection(
           return;
         }
         if (outcome.incomplete.length > 0) setPartial(previous => mergeSkillCreationAcknowledgments(previous, outcome));
+        if (!outcome.incomplete.length && outcome.failures?.length) Modal.alert(t('common.error'), describeSkillInstallIncomplete(outcome));
         await props.onScan(machine.machineId);
+      } catch (error) {
+        Modal.alert(t('common.error'), describeSkillActionFailure(error));
       } finally {
         setAdding((prev) => {
           const next = new Set(prev);

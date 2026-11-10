@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { createStore, type StoreApi } from 'zustand/vanilla';
-import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { readSkillFrontmatterV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import type { ReachRulesChangeV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -15,7 +14,7 @@ import { t } from '@/text';
 import { lintSkillMarkdown } from '../detail/SkillInstructionsSection';
 import { SKILL_DRAFT_TEMPLATE } from '../detail/skillDraftTemplate';
 import { skillTextFile } from '../detail/skillFileContent';
-import { acknowledgeSkillCreation, describeSkillInstallIncomplete, retrySkillInstallRules, type SkillCreationAcknowledgment } from './skillInstall';
+import { createSkill, describeSkillActionFailure, describeSkillInstallIncomplete, retrySkillInstallRules, type SkillCreationAcknowledgment } from './skillInstall';
 
 type SkillDraftState = {
   text: string; dirty: boolean; busy: boolean; receipt: SkillCreationAcknowledgment | null;
@@ -75,12 +74,10 @@ export function useSkillDraft(): SkillDraft {
       if (receipt) {
         if (receipt.incomplete.length > 0) receipt = await retrySkillInstallRules(execution.execute, receipt, state.where);
       } else {
-        const result = await execution.execute('skills.create', {
+        receipt = await createSkill(execution.execute, {
           name: frontmatter.name!, ...(frontmatter.description ? { description: frontmatter.description } : {}),
           files: [skillTextFile('SKILL.md', state.text)], ...(state.where ? { where: state.where } : {}),
         });
-        if (!result.ok) throw new Error(t('capabilities.skillDetail.draft.addFailed'));
-        receipt = acknowledgeSkillCreation(SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.create'].parse(result.result));
       }
       store.setState({ receipt, dirty: false });
       if (receipt.incomplete.length > 0) {
@@ -88,8 +85,8 @@ export function useSkillDraft(): SkillDraft {
         return null;
       }
       return isCurrent() ? receipt.skillIds[0]! : null;
-    } catch {
-      if (isCurrent()) store.setState({ error: t('capabilities.skillDetail.draft.addFailed') });
+    } catch (error) {
+      if (isCurrent()) store.setState({ error: describeSkillActionFailure(error) });
       return null;
     } finally { store.setState({ busy: false }); }
   }, [execution.execute, isCurrent, store]);

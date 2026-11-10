@@ -35,8 +35,7 @@ it('retains adopted content after a rules CAS refusal and offers rules-only reco
     const home = await createSkillsSurfaceHarness('https://skills-found-partial.test');
     const { createSkillInstallActionHarness } = await import('@/dev/testkit/harness/skillInstallActionHarness');
     const { createFoundSkillTransferFixture } = await import('@/dev/testkit/harness/promptMachineTransferBoundary');
-    const { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } = await import('@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1');
-    const { acknowledgeSkillCreation, retrySkillInstallRules } = await import('../add/skillInstall');
+    const { acknowledgeSkillActionResult, retrySkillInstallRules } = await import('../add/skillInstall');
     const fixtures = ['one', 'two'].map(name => createFoundSkillTransferFixture({ name, path: `/skills/${name}`, scope: 'user', agents: ['codex'],
         files: [{ path: 'SKILL.md', contentKind: 'utf8', contentBase64: Buffer.from(`---\nname: ${name}\n---\nHelp.`).toString('base64') }] }));
     const list = { ...fixtures[0]!.list, items: fixtures.flatMap(fixture => fixture.list.items) };
@@ -51,9 +50,7 @@ it('retains adopted content after a rules CAS refusal and offers rules-only reco
         libraryIdByName: new Map(), libraryPending: false, agentNames: ids => ids, readBoth: async () => null,
         adopt: async (machineId, items) => {
             const result = await owner.execute('skills.found.adopt', { machineId, items: items.map(({ name, path }) => ({ name, path })) });
-            if (!result.ok) throw new Error(result.errorCode);
-            const receipt = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.found.adopt'].parse(result.result);
-            return acknowledgeSkillCreation(receipt);
+            return acknowledgeSkillActionResult('skills.found.adopt', result);
         },
         retryRules: receipt => retrySkillInstallRules(owner.execute, receipt),
         onScan: async () => { scan = { ...scan, result: { ...list,

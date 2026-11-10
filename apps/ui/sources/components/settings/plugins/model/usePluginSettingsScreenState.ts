@@ -164,6 +164,7 @@ export type PluginSettingsScreenState = Readonly<{
     clearDiscoverSearch: () => void;
     canRefreshDiscover: boolean;
     canRunDiscoverActions: boolean;
+    discoverInstallDisabledReason: string | null;
     canRefreshInstalledPlugins: boolean;
     daemonOperationsAvailable: boolean;
     /** Exact daemon administration RPCs; independent of contribution projection readiness. */
@@ -437,7 +438,10 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
             }));
     }, [refreshPluginTruth]);
     const canRefreshInstalledPlugins = daemonOperationsAvailable;
-    const canRunDiscoverActions = canRefreshInstalledPlugins && catalog.current;
+    const discoverInstallDisabledReason = !daemonTransportOnline
+        ? t('settingsPlugins.surfaces.listingChooseMachine')
+        : !catalog.current ? t('settingsPlugins.discover.status.stale') : null;
+    const canRunDiscoverActions = discoverInstallDisabledReason === null;
 
     const markPluginActionStarted = React.useCallback((scopeKey: string, pluginId: string) => {
         setRoutineOperationSettlement(null);
@@ -467,7 +471,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         const initialTarget = resolveCurrentExecutionTarget(executionTarget);
         const isAuthorityCurrent = captureMutationPublication();
         if (
-            !daemonOperationsAvailableRef.current
+            (params.method !== 'install' && !daemonOperationsAvailableRef.current)
             || !selectedMachineScopeKey
             || !initialTarget
             || isPluginActionInFlight(params.pluginId)
@@ -965,6 +969,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         isDaemonSettingsTargetCurrent,
         ...catalog,
         canRunDiscoverActions,
+        discoverInstallDisabledReason,
         canRefreshInstalledPlugins,
         daemonOperationsAvailable,
         daemonAdministrationAvailable,
