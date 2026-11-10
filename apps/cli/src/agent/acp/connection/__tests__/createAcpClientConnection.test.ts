@@ -60,7 +60,8 @@ describe('createAcpClientConnection', () => {
     { kind: 'allow_always', relationship: 'owner' },
     { kind: 'allow_always', relationship: 'sharedApprover' },
     { kind: 'allow_always', relationship: null },
-  ] as const)('returns the exact native permission option through the approval owner ($kind, $relationship)', async ({ kind, relationship }) => {
+    { kind: 'empty', relationship: 'owner' },
+  ] as const)('handles native permission offers through the approval owner ($kind, $relationship)', async ({ kind, relationship }) => {
     // Session persistence and authenticated RPC are external boundaries; approval owners stay real.
     const session = {
       sessionId: 'native-acp-choice',
@@ -108,13 +109,22 @@ describe('createAcpClientConnection', () => {
         const response = context.client.request(methods.client.session.requestPermission, {
           sessionId: session.sessionId,
           toolCall: { toolCallId: 'native-tool', title: 'Native operation', kind: 'other' },
-          options: [
+          options: kind === 'empty' ? [] : [
             { optionId: 'opaque:first', name: 'First operation', kind: 'allow_once' },
             { optionId: 'opaque:second', name: 'Second operation', kind },
             { optionId: 'opaque:deny', name: 'Decline operation', kind: 'reject_once' },
           ],
         });
         try {
+          if (kind === 'empty') {
+            let returned = false;
+            void response.then(() => { returned = true; }, () => { returned = true; });
+            await expect.poll(() => returned || Object.keys(session.state.requests ?? {}).length > 0).toBe(true);
+            expect(session.state.requests ?? {}).toEqual({});
+            expect(session.state.completedRequests ?? {}).toEqual({});
+            await expect(response).resolves.toEqual({ outcome: { outcome: 'cancelled' } });
+            return {};
+          }
           await expect.poll(() => Object.keys(session.state.requests ?? {}).length).toBe(1);
           const [id] = Object.keys(session.state.requests ?? {});
           const pending = session.state.requests?.[id];

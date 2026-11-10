@@ -9,6 +9,7 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValu
 
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';
+import { createMcpPermissionChoices } from '@/mcp/runtime/mcpPermissionChoices';
 import { readTrimmedString } from './readTrimmedString';
 
 type SessionMcpScope = Readonly<{
@@ -211,6 +212,7 @@ export function createSessionScopedMcpServices(
                         toolName,
                         request.input,
                         {
+                            buildNativeChoices: facts => createMcpPermissionChoices('mcp.elicitation', facts.mcpTool),
                             ...(params.owner ? { owner: params.owner } : {}),
                             ...(options?.signal ? { signal: options.signal } : {}),
                         },

@@ -408,14 +408,23 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       currentPermissionMode: this.currentPermissionMode,
       context: options,
     });
+    const mcpTool = effective.ok
+      ? this.resolveMcpTool(toolName, options, effective.effectiveMode)
+      : null;
+    const nativeChoices = options?.buildNativeChoices
+      ? options.buildNativeChoices({ mcpTool })
+      : options?.nativeChoices;
+    const causalPermissionContext = nativeChoices === undefined
+      ? options
+      : { ...options, nativeChoices };
     if (!effective.ok) {
       return this.requestPermissionDecision(toolCallId, toolName, input, {
         ...(options?.traceSummary ? { traceSummary: options.traceSummary } : {}),
-        ...(options?.nativeChoices ? { nativeChoices: options.nativeChoices } : {}),
+        ...(nativeChoices !== undefined ? { nativeChoices } : {}),
         ...(owner ? { owner } : {}),
         ...(source ? { source } : {}),
         ...(options?.signal ? { signal: options.signal } : {}),
-        ...(options ? { causalPermissionContext: options } : {}),
+        ...(causalPermissionContext ? { causalPermissionContext } : {}),
         resolveCurrentPermissionDecision,
         ...(options?.acknowledgeDecisionApplication
           ? { acknowledgeDecisionApplication: options.acknowledgeDecisionApplication }
@@ -425,16 +434,13 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
 
     const pending = this.requestPermissionDecision(toolCallId, toolName, input, {
       ...(options?.traceSummary ? { traceSummary: options.traceSummary } : {}),
-        ...(options?.nativeChoices ? { nativeChoices: options.nativeChoices } : {}),
+      ...(nativeChoices !== undefined ? { nativeChoices } : {}),
       ...(owner ? { owner } : {}),
       ...(persistedSource ? { source: persistedSource } : {}),
       ...(options?.signal ? { signal: options.signal } : {}),
-      ...(options ? { causalPermissionContext: options } : {}),
+      ...(causalPermissionContext ? { causalPermissionContext } : {}),
       resolveCurrentPermissionDecision,
-      ...(() => {
-        const mcpTool = this.resolveMcpTool(toolName, options, effective.effectiveMode);
-        return mcpTool ? { mcpTool } : {};
-      })(),
+      ...(mcpTool ? { mcpTool } : {}),
       ...(options?.acknowledgeDecisionApplication
         ? { acknowledgeDecisionApplication: options.acknowledgeDecisionApplication }
         : {}),

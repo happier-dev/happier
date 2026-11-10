@@ -1,3 +1,4 @@
+import type { NativePermissionChoicesV1 } from '../../../sessions/permissions/nativeChoicesV1.js';
 import type { McpToolAnnotationsV1 } from '../settingsV1.js';
 import type { McpToolDecisionV1 } from './resolveMcpToolDecisionV1.js';
 import { McpToolAnnotationsV1Schema } from '../settingsV1.js';
@@ -24,4 +25,19 @@ export function parseMcpToolWireNameV1(name: string, knownServerKeys: ReadonlySe
     if (!longest || server.length > longest.server.length) longest = { server, tool: name.slice(prefix.length) };
   }
   return longest?.tool ? longest : null;
+}
+
+/** Preserve catalog consent while each native producer owns its grant payload. */
+export function createMcpCatalogPermissionChoiceV1(input: Readonly<{
+  mcpTool: ResolvedMcpToolIdentityV1 | null | undefined;
+  grant: NativePermissionChoicesV1['choices'][number];
+}>): NativePermissionChoicesV1['choices'][number] | undefined {
+  const { mcpTool, grant } = input;
+  if (!mcpTool || mcpTool.server === 'happier') return undefined;
+  return {
+    ...grant, id: 'mcp_always_allow', label: 'Always allow', scope: 'localPersistent',
+    followUp: { actionId: 'mcp.servers.tools.set', input: {
+      serverId: mcpTool.item.serverId, tools: { [mcpTool.tool]: 'allow' },
+    } },
+  };
 }

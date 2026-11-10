@@ -81,6 +81,12 @@ async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfil
     return result === pending ? 'pending' : result;
 }
 
+function storedNativeAnswer(session: FakePermissionSession, id: string, choiceId: string) {
+    const offer = session.agentState.requests?.[id]?.nativeChoices;
+    expect(offer?.choices.some(choice => choice.id === choiceId)).toBe(true);
+    return { id, nativeChoice: { requirementId: offer!.requirementId, choiceId } };
+}
+
 describe('createSessionScopedMcpServices permission integration', () => {
     beforeEach(() => {
         setActiveAccountSettingsSnapshot({ scopeKey: 'session-mcp-permission-test', source: 'network', settingsVersion: 1,
@@ -88,6 +94,38 @@ describe('createSessionScopedMcpServices permission integration', () => {
             promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
     });
     afterEach(() => resetActiveAccountSettingsSnapshotForTests());
+    it('requires the stored native MCP offer and ignores caller decision aliases', async () => {
+        const fixture = createMcpInteractionFixture();
+        const { service, session } = fixture;
+        try {
+            const pending = service.elicit({ requestId: 'native-mcp', serverName: 'shell', toolName: 'run_command' });
+            await vi.waitFor(() => expect(session.agentState.requests?.['native-mcp']).toBeDefined());
+            const offer = session.agentState.requests?.['native-mcp']?.nativeChoices;
+            expect(offer).toMatchObject({
+                source: 'mcp.elicitation',
+                choices: [
+                    { id: 'approved', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+                    { id: 'approved_for_session', label: 'Allow for this session', decision: 'approved_for_session', scope: 'session', response: { approved: true, decision: 'approved_for_session' } },
+                    { id: 'denied', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } },
+                    { id: 'abort', label: 'Cancel', decision: 'abort', scope: 'once', response: { approved: false, decision: 'abort' } },
+                ],
+            });
+            const respond = session.rpcHandlerManager.handlers.get('session.permission.respond')!;
+            await expect(respond({ id: 'native-mcp', approved: true })).resolves.toMatchObject({
+                ok: false, errorCode: 'permission_response_invalid',
+            });
+            expect(session.agentState.requests?.['native-mcp']).toBeDefined();
+            await respond({ id: 'native-mcp', nativeChoice: { requirementId: offer!.requirementId, choiceId: 'approved' },
+                approved: false, decision: 'abort' });
+            await expect(pending).resolves.toEqual({ status: 'accepted', decision: 'approved' });
+            expect(session.agentState.completedRequests?.['native-mcp']).toMatchObject({
+                decision: 'approved', nativeChoices: offer,
+                nativeChoice: { requirementId: offer!.requirementId, choiceId: 'approved' },
+            });
+        } finally {
+            await fixture.dispose();
+        }
+    });
     it('presents long schema context through the real session interaction and permission owners', async () => {
         const fixture = createMcpInteractionFixture();
         const { service, session } = fixture;
@@ -145,11 +183,8 @@ describe('createSessionScopedMcpServices permission integration', () => {
             owner: ownerA,
         }));
 
-        await respond?.({
-            id: 'mcp-allow-session',
-            approved: true,
-            decision: 'approved_for_session',
-        });
+        const firstAnswer = storedNativeAnswer(session, 'mcp-allow-session', 'approved_for_session');
+        await respond?.(firstAnswer);
         await expect(approvedForSession).resolves.toEqual({
             status: 'accepted',
             decision: 'approved_for_session',
@@ -188,7 +223,7 @@ describe('createSessionScopedMcpServices permission integration', () => {
             owner: ownerB,
         }));
         expect(await settledState(ownerBRequest)).toBe('pending');
-        await respond?.({ id: 'mcp-owner-b', approved: false, decision: 'denied' });
+        await respond?.(storedNativeAnswer(session, 'mcp-owner-b', 'denied'));
         await expect(ownerBRequest).resolves.toEqual({
             status: 'declined',
             decision: 'denied',
@@ -201,7 +236,7 @@ describe('createSessionScopedMcpServices permission integration', () => {
             input: { command: 'printf cancelled' },
         });
         await vi.waitFor(() => expect(session.agentState.requests?.['mcp-cancelled']).toBeDefined());
-        await respond?.({ id: 'mcp-cancelled', approved: false, decision: 'abort' });
+        await respond?.(storedNativeAnswer(session, 'mcp-cancelled', 'abort'));
         await expect(cancelled).resolves.toEqual({
             status: 'cancelled',
             decision: 'abort',
@@ -296,7 +331,7 @@ describe('createSessionScopedMcpServices permission integration', () => {
         }
     });
 
-    it('validates metadata and rejects unsupported effects and secret-bearing Session boundary faults through real owners', async () => {
+    it('validates metadata and refuses unoffered effects and secret-bearing Session boundary faults through real owners', async () => {
         const fixture = createMcpInteractionFixture();
         const { service, session } = fixture;
         const respond = session.rpcHandlerManager.handlers.get('permission');
@@ -308,9 +343,13 @@ describe('createSessionScopedMcpServices permission integration', () => {
                 input: { command: 'git status', proposedExecpolicyAmendment: amendment },
             });
             await vi.waitFor(() => expect(session.agentState.requests?.['mcp-exec-policy']).toBeDefined());
-            await respond!({ id: 'mcp-exec-policy', approved: true, decision: 'approved_execpolicy_amendment',
-                execPolicyAmendment: { command: amendment } });
-            await expect(unsupported).resolves.toEqual({ status: 'failed', reason: 'mcp_elicitation_effect_unsupported' });
+            await expect(respond!({ id: 'mcp-exec-policy', approved: true, decision: 'approved_execpolicy_amendment',
+                execPolicyAmendment: { command: amendment } })).resolves.toMatchObject({
+                ok: false, errorCode: 'permission_response_invalid',
+            });
+            expect(await settledState(unsupported)).toBe('pending');
+            await respond!(storedNativeAnswer(session, 'mcp-exec-policy', 'denied'));
+            await expect(unsupported).resolves.toEqual({ status: 'declined', decision: 'denied' });
             await expect(service.elicit({
                 requestId: 'mcp-invalid-meta', toolName: 'shell', input: { command: 'git status' },
                 meta: { decision: () => 'approved' },
@@ -330,7 +369,7 @@ describe('createSessionScopedMcpServices permission integration', () => {
                 tool: 'shell', owner: { kind: 'plugin', pluginId: 'happier.agent.test', runtimeId: 'test' },
             }));
             expect(await settledState(deep)).toBe('pending');
-            await respond!({ id: 'mcp-deep-meta', approved: false, decision: 'denied' });
+            await respond!(storedNativeAnswer(session, 'mcp-deep-meta', 'denied'));
             await expect(deep).resolves.toEqual({ status: 'declined', decision: 'denied' });
 
             // Session state is a genuine external boundary; no internal owner is replaced.

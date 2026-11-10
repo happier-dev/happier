@@ -34,6 +34,8 @@ import { materializeRunnerMcpMaterial } from '../servers/materializeRunnerMcpMat
 import { connectSessionMcpClient } from './sessionMcpLocalTransport';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import { ServerBoundPermissionRpcHandlerManager } from '@/agent/permissions/testkit/serverBoundPermissionRpcHandlerManager';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { readClaudeMcpConfigServers } from '../../../../../packages/plugins/claude/src/agent/mcp/configServers';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
@@ -310,14 +312,16 @@ describe('resolveRunnerMcpServers catalog admission', () => {
       await import('@/mcp/startHappyServer');
     });
 
-    it.runIf(process.platform === 'linux').each(['default', 'disabled'] as const)('keeps custom source permission and Account currentness with %s built-in delivery', async delivery => {
+    const exerciseCustomSource = async (delivery: 'default' | 'disabled' | 'native') => {
       vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
       const root = await mkdtemp(join(tmpdir(), 'happier-custom-permission-'));
       const calledPath = join(root, 'called');
-      const selected = { ...server('selected'), tools: { default: 'ask' as const, overrides: { echo: 'off' as const } },
+      const selected = { ...server('selected'), tools: { default: 'ask' as const,
+        overrides: delivery === 'native' ? {} : { echo: 'off' as const } },
         stdio: { command: process.execPath, args: ['-e', `
           require('node:readline').createInterface({input:process.stdin}).on('line', line => {
-            const request=JSON.parse(line); if(request.id===undefined) return;
+            const request=JSON.parse(line);
+            if(request.id===undefined) return;
             if(request.method==='tools/call') require('node:fs').writeFileSync(${JSON.stringify(calledPath)},'called');
             const result=request.method==='initialize'
               ? {protocolVersion:request.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'selected',version:'1'}}
@@ -330,11 +334,22 @@ describe('resolveRunnerMcpServers catalog admission', () => {
         v: 1, managedServersEnabled: true, happierToolsEnabled: false,
         forceIncludeServerIds: [], forceExcludeServerIds: [],
       } }) : undefined;
-      const owner = metadata ? { ...session(), getMetadataSnapshot: () => metadata } : session();
+      const owner = { ...session(), ...(metadata ? { getMetadataSnapshot: () => metadata } : {}),
+        ...(delivery === 'native' ? { getActiveTurnAdmissionWitness: () => ({
+          inputId: 'input-1', turnId: 'turn-1', userMessageSeq: 1, userMessageSeqs: [1],
+          causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const },
+        }) } : {}),
+      };
       const captured = runWithServerHttpBaseUrl(owner.getServerBinding().serverUrl, () => snapshot([selected]));
       setActiveAccountSettingsSnapshot(captured);
       const permissionSession = createMutableApiSessionClientFixture({ sessionId: owner.sessionId });
-      const permission = new ProviderEnforcedPermissionHandler(permissionSession, { logPrefix: '[Session custom MCP]' });
+      const permissionRpc = new ServerBoundPermissionRpcHandlerManager(owner.sessionId);
+      // Session persistence and authenticated RPC attribution are process boundaries.
+      const permission = new ProviderEnforcedPermissionHandler({ ...permissionSession,
+        rpcHandlerManager: permissionRpc } as unknown as ApiSessionClient, {
+          logPrefix: '[Session custom MCP]',
+          ...(delivery === 'native' ? { getWorkspaceWrites: () => 'allow' as const } : {}),
+        });
       const profile = await runWithServerHttpBaseUrl(owner.getServerBinding().serverUrl, () => resolveRunnerMcpServers({
         session: owner, credentials, accountSettings: captured.settings, accountSettingsSnapshot: captured,
         machineId: 'machine-1', directory: root, includeHappierMcpServer: false, agentAcceptsUserMcp: false,
@@ -352,17 +367,61 @@ describe('resolveRunnerMcpServers catalog admission', () => {
           expect(nativeNames).not.toContain('echo');
         }
         await expect(stat(calledPath)).rejects.toMatchObject({ code: 'ENOENT' });
-        const denied = await connection.client.callTool({ name: 'echo', arguments: {}, _meta: { 'happier/tool-source': 'selected' } });
-        expect(denied.structuredContent).toMatchObject({ ok: false, errorCode: 'permission_denied' });
-        await expect(stat(calledPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        const calling = connection.client.callTool({ name: 'echo', arguments: {},
+          _meta: { 'happier/tool-source': 'selected', 'happier/tool-call-id': 'custom-native' } });
+        let returned: Awaited<typeof calling> | undefined;
+        void calling.then(value => { returned = value; }, () => undefined);
+        if (delivery === 'native') {
+          await vi.waitFor(() => expect(returned ?? { pendingIds: Object.keys(permissionSession.__getAgentState().requests ?? {}) })
+            .toMatchObject({ pendingIds: [expect.any(String)] }));
+          const [requestId, pendingRequest] = Object.entries(permissionSession.__getAgentState().requests ?? {})[0]!;
+          const offer = pendingRequest.nativeChoices;
+          expect(offer).toMatchObject({ source: 'mcp.tool', choices: expect.arrayContaining([
+            { id: 'approved', label: 'Allow once', scope: 'once', decision: 'approved',
+              response: { approved: true, decision: 'approved' } },
+          ]) });
+          expect(offer?.choices).toEqual(expect.arrayContaining([expect.objectContaining({
+            id: 'mcp_always_allow', scope: 'localPersistent', decision: 'approved_for_session',
+            response: { approved: true, decision: 'approved_for_session' },
+            followUp: { actionId: 'mcp.servers.tools.set', input: { serverId: 'selected', tools: { echo: 'allow' } } },
+          })]));
+          await expect(stat(calledPath)).rejects.toMatchObject({ code: 'ENOENT' });
+          const respond = permissionRpc.handlers.get('session.permission.respond')!;
+          await expect(respond({ id: requestId, approved: true })).resolves.toMatchObject({
+            ok: false, errorCode: 'permission_response_invalid',
+          });
+          await expect(stat(calledPath)).rejects.toMatchObject({ code: 'ENOENT' });
+          await expect(respond({ id: requestId, turnId: pendingRequest.turnId, nativeChoice: { requirementId: offer!.requirementId, choiceId: 'approved' },
+            approved: false, decision: 'denied' })).resolves.toBeUndefined();
+          expect(permissionSession.__getAgentState().completedRequests?.[requestId]).toMatchObject({ decision: 'approved' });
+          expect((await calling).structuredContent).toMatchObject({ ok: true });
+          expect(await readFile(calledPath, 'utf8')).toBe('called');
+          expect(permissionSession.__getAgentState().completedRequests?.[requestId]).toMatchObject({
+            decision: 'approved', nativeChoice: { requirementId: offer!.requirementId, choiceId: 'approved' },
+          });
+          return;
+        } else {
+          expect((await calling).structuredContent).toMatchObject({ ok: false, errorCode: 'permission_denied' });
+          await expect(stat(calledPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        }
         const listed = await connection.client.listTools({ _meta: { 'happier/tool-sources': true } });
         expect(listed.tools.filter(tool => tool._meta?.['happier/tool-source'] === 'selected').map(tool => tool.name)).toEqual(['echo']);
         clearActiveAccountSettingsSnapshot();
         await expect(connection.client.listTools({ _meta: { 'happier/tool-sources': true } }))
           .rejects.toMatchObject({ data: { errorCode: 'mcp_catalog_unavailable' } });
         await expect(stat(calledPath)).rejects.toMatchObject({ code: 'ENOENT' });
-      } finally { await connection.close(); await profile.happierMcpServer.stop(); await rm(root, { recursive: true, force: true }); }
-    });
+      } finally {
+        await permission.reset();
+        await connection.close();
+        await profile.happierMcpServer.stop();
+        await rm(root, { recursive: true, force: true });
+      }
+    };
+
+    it.runIf(process.platform === 'linux').each(['default', 'disabled'] as const)(
+      'keeps custom source permission and Account currentness with %s built-in delivery', exerciseCustomSource);
+    it.runIf(process.platform === 'linux')('requires the stored native choice before a custom MCP tool effect',
+      () => exerciseCustomSource('native'));
 
   });
 

@@ -26,6 +26,7 @@ export type AcpPermissionDecisionResult = Readonly<{
 export type AcpPermissionCausalAuthority = SessionInputCausalPermissionAuthorityV1;
 
 export type AcpPermissionCallContext = Readonly<{
+  buildNativeChoices?: import('@happier-dev/agents').SessionPermissionChoicesProducerV1;
   nativeChoices?: NativePermissionChoicesV1;
   /** Cancellation of this exact native ACP request, independent of its turn. */
   signal?: AbortSignal;

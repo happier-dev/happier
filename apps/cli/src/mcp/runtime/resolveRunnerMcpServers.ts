@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { AdmittedMcpStdioRuntime, PrepareMcpStdioTransport } from './supervisedStdioTransport';
 import { SESSION_MCP_CONTEXT_FILE_ENV } from './sessionMcpLocalTransport';
 import type { SessionMcpCustomToolsBridge } from './sessionMcpToolsBridge';
+import { createMcpPermissionChoices } from './mcpPermissionChoices';
 import { listResolvedCustomHappierTools } from '@/agent/tools/happierTools/customMcp/listResolvedCustomHappierTools';
 import { callResolvedCustomHappierTool } from '@/agent/tools/happierTools/customMcp/callResolvedCustomHappierTool';
 import type { SessionMcpLocalContext, SessionMcpLocalTransportOptions } from './sessionMcpLocalTransport';
@@ -533,6 +534,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
       const mode = String(scopedSession.getPermissionMode?.() ?? 'default');
       const decision = await params.mcpPermissionHandler.handleToolCall(input.toolCallId ?? randomUUID(),
         `mcp__${input.source}__${input.toolName}`, input.args, {
+          buildNativeChoices: facts => createMcpPermissionChoices('mcp.tool', facts.mcpTool),
           ...(currentSignal ? { signal: currentSignal } : {}),
           ...(witness ? { turnId: witness.turnId, causalPermissionAuthority: witness.causalPermissionAuthority ?? null } : {}),
           callerPermissionMode: mode,

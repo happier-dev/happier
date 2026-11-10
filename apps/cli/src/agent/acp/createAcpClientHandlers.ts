@@ -18,7 +18,7 @@ import {
   type HandlerContext,
 } from './sessionUpdateHandlers';
 import type { AcpPermissionHandler } from './permissions/acpPermissionHandler';
-import { createAcpNativePermissionChoices, pickPermissionOutcome } from './permissions/permissionMapping';
+import { createAcpNativePermissionChoices } from './permissions/permissionMapping';
 import type { AcpClientConnectionHandlers } from './connection/types';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { LegacyAcpToolRuntime } from './toolCalls/legacy/runtime';
@@ -137,13 +137,12 @@ export function createAcpClientHandlers(params: Readonly<{
       const extendedParams = request as ExtendedRequestPermissionRequest;
       const toolCall = extendedParams.toolCall;
       const options = extendedParams.options || [];
+      if (options.length === 0) return { outcome: { outcome: 'cancelled' } };
       const toolCallId = readNonBlankOpaqueIdentifier(toolCall?.toolCallId)
         ?? readNonBlankOpaqueIdentifier(toolCall?.id)
         ?? randomUUID();
       const permissionId = toolCallId;
-      const nativeChoices = options.length > 0
-        ? createAcpNativePermissionChoices(randomUUID(), request.options)
-        : undefined;
+      const nativeChoices = createAcpNativePermissionChoices(randomUUID(), request.options);
       const requestSessionId =
         typeof (extendedParams as { sessionId?: unknown }).sessionId === 'string'
           ? String((extendedParams as { sessionId?: string }).sessionId)
@@ -246,33 +245,9 @@ export function createAcpClientHandlers(params: Readonly<{
           : { outcome: 'cancelled' } };
       }
 
-      let prePromptDecision: Awaited<ReturnType<NonNullable<AcpPermissionHandler['resolvePrePromptDecision']>>> = null;
-      let immediateDecision: Awaited<ReturnType<AcpPermissionHandler['handleToolCall']>> | null = null;
-      try {
-        prePromptDecision = nativeChoices ? null : await (params.permissionHandler.resolvePrePromptDecision?.(
-          toolCallId,
-          toolName,
-          input,
-        ) ?? Promise.resolve(null));
-        immediateDecision = nativeChoices ? null : prePromptDecision ?? params.permissionHandler.getImmediateDecision?.(
-          toolCallId,
-          toolName,
-          input,
-        ) ?? null;
-      } catch (error) {
-        // Provider-controlled text can ride on a policy failure; the default log keeps only its phase and type.
-        logger.warn('[AcpBackend] Permission policy failed; request withdrawn', {
-          phase: 'pre_prompt', errorType: error instanceof Error ? 'Error' : typeof error,
-        });
-        if (!permissionRequest.isCurrent()) return withdraw();
-        await cancelOwnedPrompt();
-        return { outcome: { outcome: 'cancelled' } };
-      }
-
       if (!permissionRequest.isCurrent()) return withdraw();
 
-      if (!immediateDecision) {
-        params.emit({
+      params.emit({
           type: 'permission-request',
           id: permissionId,
           reason: toolName,
@@ -288,13 +263,12 @@ export function createAcpClientHandlers(params: Readonly<{
               kind: opt.kind,
             })),
           },
-        });
-      }
+      });
 
       if (params.permissionHandler) {
         try {
-          const result = prePromptDecision ?? await params.permissionHandler.handleToolCall(
-            toolCallId, toolName, input, nativeChoices ? { nativeChoices } : undefined,
+          const result = await params.permissionHandler.handleToolCall(
+            toolCallId, toolName, input, { nativeChoices },
           );
           if (!permissionRequest.isCurrent()) return withdraw();
           const isApproved =
@@ -302,29 +276,9 @@ export function createAcpClientHandlers(params: Readonly<{
             || result.decision === 'approved_for_session'
             || result.decision === 'approved_execpolicy_amendment';
 
-          const resolvedDecision = String(result.decision);
-          const overrideOptionId = nativeChoices ? undefined : params.transport.pickPermissionOptionId?.(
-            options,
-            resolvedDecision,
-            { toolCallId, toolName, input },
-          );
-          const outcome = (() => {
-            if (nativeChoices) return result.nativeChoice
-              ? { outcome: 'selected' as const, optionId: result.nativeChoice.choiceId }
-              : { outcome: 'cancelled' as const };
-            if (overrideOptionId === null) return { outcome: 'cancelled' as const };
-            if (typeof overrideOptionId === 'string' && overrideOptionId.trim().length > 0) {
-              if (options.some((opt) => opt.optionId === overrideOptionId)) {
-                return { outcome: 'selected' as const, optionId: overrideOptionId };
-              }
-              logger.debug('[AcpBackend] Transport returned unknown permission optionId override; falling back to default mapping', {
-                toolCallId,
-                toolName,
-                optionId: overrideOptionId,
-              });
-            }
-            return pickPermissionOutcome(options, resolvedDecision);
-          })();
+          const outcome = result.nativeChoice
+            ? { outcome: 'selected' as const, optionId: result.nativeChoice.choiceId }
+            : { outcome: 'cancelled' as const };
           if (tracksForeground && outcome.outcome === 'selected') {
             params.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
           } else if (tracksForeground) {
@@ -355,14 +309,7 @@ export function createAcpClientHandlers(params: Readonly<{
         }
       }
 
-      const outcome = pickPermissionOutcome(options, 'approved');
-      if (outcome.outcome === 'selected') {
-        params.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
-      } else {
-        params.lastSelectedPermissionOptionIdByToolCallId.delete(toolCallId);
-      }
-      markToolCallRunningAfterPermission(toolCallId, params.createHandlerContext());
-      return { outcome };
+      return { outcome: { outcome: 'cancelled' } };
     },
   };
 }

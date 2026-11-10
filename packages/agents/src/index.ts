@@ -581,6 +581,7 @@ export type {
   NativePermissionChoicesV1,
   NativePermissionChoiceAnswerV1,
   SessionPermissionDecisionRequestV1,
+  SessionPermissionChoicesProducerV1,
   SessionPermissionDecisionResultV1,
   SessionPermissionDecisionV1,
   SessionPermissionFollowUpPromptDeliveryV1,

@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 
 export const SessionPermissionRespondDecisionV1Schema = lazyZodSchema(() => z.enum([
   'approved', 'approved_for_session', 'approved_execpolicy_amendment', 'denied', 'abort',
@@ -42,6 +43,7 @@ export const NativePermissionChoiceV1Schema = lazyZodSchema(() => z.strictObject
   scope: z.enum(['once', 'session', 'localPersistent']),
   rulePreview: z.optional(z.string()), allowsFeedback: z.optional(z.boolean()),
   response: SessionPermissionRespondPayloadV1Schema,
+  followUp: z.optional(z.strictObject({ actionId: z.string().check(z.minLength(1)), input: StrictJsonValueSchema })),
 }));
 export const NativePermissionChoicesV1Schema = lazyZodSchema(() => z.strictObject({
   requirementId: z.string().check(z.minLength(1)),
