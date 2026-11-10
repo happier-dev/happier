@@ -31,13 +31,17 @@ import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presenta
 export const SESSION_LIST_DROP_OVERLAY_INDENT_PX = 6;
 
 export type SessionListDropOverlayProps = Readonly<{
+    /** The owning list's React carry lifecycle; geometry remains on the UI thread. */
+    active: boolean;
     /** Numeric, worklet-readable overlay geometry shared values. */
     shared: TreeDropOverlaySharedValues;
     testID?: string;
     style?: StyleProp<ViewStyle>;
 }>;
 
-export function SessionListDropOverlay(props: SessionListDropOverlayProps): React.ReactElement {
+export function SessionListDropOverlay(props: SessionListDropOverlayProps): React.ReactElement | null {
+    if (!props.active) return null;
+
     return (
         <TreeDropOverlay
             shared={props.shared}

@@ -224,9 +224,10 @@ function SessionsListViewWithResolvedPaneState(props: Readonly<{
             paneState,
             queryMembershipActive: true,
             referenceCorpusActive: surfaceOwnership.interactive,
+            surfaceOwnership,
             selectedServerIds: props.filterController.queryHomes.map((home) => home.serverId),
         });
-    }, [paneState, props.filterController.queryHomes, props.pathname, props.storageKind, sourceScopeKey, surfaceOwnership.dataActive, surfaceOwnership.interactive]);
+    }, [paneState, props.filterController.queryHomes, props.pathname, props.storageKind, sourceScopeKey, surfaceOwnership]);
     React.useEffect(() => {
         setRetainedSessionListPaneQueryMembershipActive(retentionIdentity, surfaceOwnership.dataActive);
         return () => setRetainedSessionListPaneQueryMembershipActive(retentionIdentity, false);
@@ -618,6 +619,7 @@ function VisibleSessionsListViewContent(
                 </SyncPerformanceReactProfiler>
                 </SessionListRowFactsProvider>
                 <SessionListDropOverlay
+                    active={viewState.dropOverlayActive}
                     shared={viewState.dropOverlayShared}
                     testID="session-list-drop-overlay"
                 />

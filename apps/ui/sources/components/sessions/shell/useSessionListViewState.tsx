@@ -2590,6 +2590,7 @@ export function useSessionListViewStateFromPaneState(
         onRequestBulkMoveToFolder: folderActionsEnabled ? handleRequestBulkMoveToFolder : undefined,
         tagsEnabled: sessionTagsEnabled === true,
         dropOverlayShared: rowInteractions.dropOverlayShared,
+        dropOverlayActive: rowInteractions.activeDragSnapshot !== null,
         entityDragDrop: rowInteractions.entityDragDrop,
         stagedMove: rowInteractions.stagedMove,
     };

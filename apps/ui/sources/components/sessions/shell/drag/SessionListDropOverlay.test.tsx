@@ -54,9 +54,27 @@ describe('SessionListDropOverlay', () => {
         expect(SESSION_LIST_DROP_OVERLAY_INDENT_PX).toBe(6);
     });
 
+    it('mounts feedback only for the active carry and removes it when the carry ends', async () => {
+        // Geometry can retain its last worklet value; the React carry lifecycle owns mounting.
+        const shared = buildSharedValues();
+        const overlay = (active: boolean) => (
+            <SessionListDropOverlay active={active} shared={shared} testID="session-list-drop-overlay" />
+        );
+        const screen = await renderScreen(overlay(false));
+        expect(screen.findAllHostsByTestId('session-list-drop-overlay')).toHaveLength(0);
+        expect(screen.findAllHostsByTestId('session-list-drop-overlay-outline')).toHaveLength(0);
+
+        await screen.update(overlay(true));
+        expect(screen.findHostByTestId('session-list-drop-overlay-outline')).not.toBeNull();
+
+        await screen.update(overlay(false));
+        expect(screen.findAllHostsByTestId('session-list-drop-overlay')).toHaveLength(0);
+        expect(screen.findAllHostsByTestId('session-list-drop-overlay-outline')).toHaveLength(0);
+    });
+
     it('renders ONE non-interactive viewport-level overlay driven by shared values', async () => {
         const screen = await renderScreen(
-            <SessionListDropOverlay shared={buildSharedValues()} testID="session-list-drop-overlay" />,
+            <SessionListDropOverlay active shared={buildSharedValues()} testID="session-list-drop-overlay" />,
         );
 
         const root = screen.findByTestId('session-list-drop-overlay');
@@ -70,6 +88,7 @@ describe('SessionListDropOverlay', () => {
     it('applies the session indent to the reorder line for nested depths', async () => {
         const screen = await renderScreen(
             <SessionListDropOverlay
+                active
                 shared={buildSharedValues({ kind: TREE_DROP_OVERLAY_KIND_LINE, left: 16, right: 320, depth: 2 })}
                 testID="session-list-drop-overlay"
             />,
