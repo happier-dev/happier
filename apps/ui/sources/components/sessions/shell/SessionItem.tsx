@@ -1536,8 +1536,8 @@ const SessionItemContent = React.memo(
         });
         const avatarSize = identityMetrics.slotSize;
         const agentLogoSize = identityMetrics.agentLogoSize;
-        const normalizedFolderDepth = Math.max(0, Math.min(SESSION_FOLDER_ROW_INDENT_CAP,
-            Math.trunc((folderDepth ?? 0) + (nestingDepth ?? 0))));
+        const normalizedFolderDepth = Math.max(0, Math.min(SESSION_FOLDER_ROW_INDENT_CAP, Math.trunc(folderDepth ?? 0)))
+            + Math.max(0, Math.min(SESSION_FOLDER_ROW_INDENT_CAP, Math.trunc(nestingDepth ?? 0)));
         const identityTitleLoadingStyle = isMinimal
             ? styles.sessionTitleLoadingMinimal
             : compact

@@ -161,7 +161,7 @@ export async function setSessionAppearance(params: Readonly<{
     serverUrl?: string;
     sessionId: string;
 }> & SessionAppearancePatch): Promise<Readonly<{
-    /** Exact store record applied from the protected presentation response, when that carrier was written. */
+    /** Opened protected save response, independent of later store publications. */
     presentation?: SessionOrganizationSessionAppearancePresentation | null;
 }>> {
     const key = buildSessionOrganizationServerKey(params.serverId, params.sessionId);
@@ -203,7 +203,7 @@ export async function setSessionAppearance(params: Readonly<{
             params.sessionId,
             openedPresentation,
         );
-        appliedPresentation = getStorage().getState().sessionOrganizationAppearancePresentationsBySessionKey[key] ?? null;
+        appliedPresentation = openedPresentation;
     }
     if (params.color !== undefined) {
         const merged = mergeSessionAppearanceDisplay(current, { color: params.color });
@@ -270,8 +270,8 @@ export async function setSessionParentPlacementWithDelivery(params: Readonly<{
             sessionId,
             placement: params.placement,
         });
-        appliedPlacement = written.presentation
-            ? readStoredSessionParentPlacement({ serverId, sessionId })
+        appliedPlacement = written.presentation?.sessionId === sessionId
+            ? readEffectiveSessionParentPlacement(undefined, written.presentation.presentation)
             : null;
     } catch (error) {
         return {
@@ -280,6 +280,10 @@ export async function setSessionParentPlacementWithDelivery(params: Readonly<{
             placement: params.placement.kind,
             error: error instanceof Error ? error.message : 'session_placement_failed',
         };
+    }
+
+    if (!isSameSessionParentPlacement(appliedPlacement, params.placement)) {
+        return { ok: false, stage: 'placement', placement: params.placement.kind, error: 'session_placement_not_confirmed' };
     }
 
     const message = buildSessionParentPlacementReportingInstruction({

@@ -307,8 +307,8 @@ describe('session lineage row', () => {
         const { SessionItem } = await import('./SessionItem');
         const { en } = await import('@/text/translations/en');
         const session = createSessionFixture({ id: 'nested-depth', metadata: { path: '/repo', host: 'host', flavor: 'codex' } });
-        const marginLeftAtDepth = async (nestingDepth: number) => {
-            const rowModel = createSessionItemTestRowModel({ session, serverId: 'home' }, { nestingDepth });
+        const marginLeftAtDepth = async (nestingDepth: number, folderDepth = 0) => {
+            const rowModel = createSessionItemTestRowModel({ session, serverId: 'home', folderDepth }, { nestingDepth });
             const screen = await renderScreen(<SessionItem session={session} rowModel={rowModel} />);
             const style = screen.findByTestId(`session-list-item-${session.id}`)?.parent?.props.style;
             const flattened = (Array.isArray(style) ? style : [style]).reduce<Record<string, unknown>>(
@@ -323,6 +323,7 @@ describe('session lineage row', () => {
         expect(topLevel).toBe(0);
         expect(depthOne).toBeGreaterThan(topLevel);
         expect(depthTwo).toBeGreaterThan(depthOne);
+        expect(await marginLeftAtDepth(2, 2)).toBeGreaterThan(await marginLeftAtDepth(1, 2));
         expect(en.sessionLineage.expand).toBe('Show subsessions');
         expect(en.sessionLineage.collapse).toBe('Hide subsessions');
     });

@@ -301,6 +301,75 @@ describe('setSessionAppearance', () => {
         expect(delivery.send).toHaveBeenCalledOnce();
     });
 
+    it('refuses initial reporting when a newer parent is published before the save continuation', async () => {
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
+        const { setSessionParentPlacementWithDelivery } = await import('./setSessionAppearance');
+        const store = getStorage();
+        const sessions = ['child', 'saved-parent', 'newer-parent'].map(id => createSessionFixture({ id, serverId: context.serverId }));
+        const key = `${context.serverId}:child`;
+        store.setState({
+            sessions: Object.fromEntries(sessions.map(session => [session.id, session])),
+            sessionListViewDataByServerId: { [context.serverId]: sessions.map(session => ({
+                type: 'session' as const, serverId: context.serverId, session: buildSessionListRenderableFromSession(session),
+            })) },
+            sessionOrganizationAppearancePresentationsSupportedByServerId: { [context.serverId]: true },
+        });
+        http.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (path.endsWith('/v1/account/encryption')) return json({ mode: 'plain', updatedAt: 0 });
+            return json({ presentation: { sessionId: 'child', presentation: JSON.parse(String(init?.body)).presentation, updatedAt: 1 } });
+        });
+        const newerPresentation = { sessionId: 'child', updatedAt: 2, presentation: {
+            t: 'plain' as const, v: { v: 1, placement: { kind: 'session', parentSessionId: 'newer-parent' } },
+        } };
+        let published = false;
+        const unsubscribe = store.subscribe(state => {
+            if (published || !state.sessionOrganizationAppearancePresentationsBySessionKey[key]) return;
+            published = true;
+            queueMicrotask(() => store.getState().applySessionAppearancePresentation(context.serverId, 'child', newerPresentation));
+        });
+        try {
+            const result = await setSessionParentPlacementWithDelivery({ ...context, sessionId: 'child',
+                placement: { kind: 'session', parentSessionId: 'saved-parent' }, localId: 'initial-parent-race' });
+            expect(published).toBe(true);
+            expect(store.getState().sessionOrganizationAppearancePresentationsBySessionKey[key]).toEqual(newerPresentation);
+            expect(result).toMatchObject({ ok: false, stage: 'not_current', error: 'placement_superseded' });
+            expect(delivery.send).not.toHaveBeenCalled();
+        } finally {
+            unsubscribe();
+        }
+    });
+
+    it.each(['null', 'missing-placement', 'different-parent', 'different-session'] as const)(
+        'never queues requested-parent guidance from a %s save response', async responseKind => {
+            const { getStorage } = await import('@/sync/domains/state/storageStore');
+            const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
+            const { setSessionParentPlacementWithDelivery } = await import('./setSessionAppearance');
+            const sessions = [context.sessionId, 'requested-parent', 'other-parent'].map(id => createSessionFixture({ id, serverId: context.serverId }));
+            getStorage().setState({
+                sessions: Object.fromEntries(sessions.map(session => [session.id, session])),
+                sessionListViewDataByServerId: { [context.serverId]: sessions.map(session => ({
+                    type: 'session' as const, serverId: context.serverId, session: buildSessionListRenderableFromSession(session),
+                })) },
+                sessionOrganizationAppearancePresentationsSupportedByServerId: { [context.serverId]: true },
+            });
+            http.serverFetch.mockImplementation(async (path: string) => {
+                if (path.endsWith('/v1/account/encryption')) return json({ mode: 'plain', updatedAt: 0 });
+                return json({ presentation: responseKind === 'null' ? null : {
+                    sessionId: responseKind === 'different-session' ? 'unrelated-session' : context.sessionId,
+                    presentation: { t: 'plain', v: { v: 1, ...(responseKind === 'missing-placement' ? {} : {
+                        placement: { kind: 'session', parentSessionId: responseKind === 'different-parent' ? 'other-parent' : 'requested-parent' },
+                    }) } },
+                    updatedAt: 1,
+                } });
+            });
+            await expect(setSessionParentPlacementWithDelivery({ ...context,
+                placement: { kind: 'session', parentSessionId: 'requested-parent' }, localId: 'unconfirmed-parent' }))
+                .resolves.toMatchObject({ ok: false, stage: 'placement', error: 'session_placement_not_confirmed' });
+            expect(delivery.send).not.toHaveBeenCalled();
+        },
+    );
+
     it('queues standalone guidance only for a real former parent and never sends after a failed write', async () => {
         const { getStorage } = await import('@/sync/domains/state/storageStore');
         const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
