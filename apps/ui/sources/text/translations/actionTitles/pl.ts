@@ -87,7 +87,7 @@ export const pl = {
     session_work_get: "Odczytaj pracę sesji",
     inbox_get: "Odczytaj skrzynkę odbiorczą",
     inbox_mark_all_read: "Oznacz skrzynkę odbiorczą jako przeczytaną",
-    session_draft_delete: "Usuń szkic nowej sesji",
+    session_draft_delete: "Usuń szkic",
     session_draft_directory_set: "Ustaw katalog szkicu nowej sesji",
     notifications_webhooks_list: "Wyświetl webhooki powiadomień",
     notifications_webhooks_add: "Dodaj webhook powiadomień",

@@ -15,7 +15,6 @@ import {
   CollectionNavigationRow,
 } from '@/components/ui/lists/collection/CollectionList';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
-import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
@@ -23,12 +22,13 @@ import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralS
 import { t } from '@/text';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
+import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { DeploymentReadControllerV1 } from '@happier-dev/deployments';
 
-import { deploymentActionRefusalRemedy, deploymentRailState, deploymentStepWorkStatus } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, deploymentRailState, deploymentStepWorkStatus, deploymentWorkStatus } from './deploymentPresentation';
 import { useDeploymentCollection } from './useDeploymentReads';
 import { currentStep, deploymentStepCaption } from './DeploymentStepStrip';
 
@@ -71,6 +71,7 @@ export const DeploymentEnvironmentCollection = React.memo(
       /** Opens that editor; absent while the Action owner is not reachable. */
       onAdd: (() => void) | null;
       onSettings?: () => void;
+      preparation?: React.ReactNode;
       /** The read's finite pages: one page at a time, moved only by the person. */
       paging?: Readonly<{ hasPrevious: boolean; hasNext: boolean; previous: () => void; next: () => void }> | null;
       /** The Home/Account whose plugins name a platform Environment's target. */
@@ -137,12 +138,14 @@ export const DeploymentEnvironmentCollection = React.memo(
             titleQualifier={row.titleQualifier}
             subtitle={row.subtitle}
             subtitleLeading={row.subtitleLeading}
+            needsYouStatus={row.needsYouStatus}
             detail={row.detail}
             icon={mark}
             selected={!props.drafting && props.selectedId === row.environmentId}
             onPress={row.onPress}
           />
         ))}
+        {props.preparation ? <View style={styles.preparation}>{props.preparation}</View> : null}
         {props.paging && (props.paging.hasPrevious || props.paging.hasNext) ? (
           <View style={styles.paging}>
             {props.paging.hasPrevious ? (
@@ -188,7 +191,6 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
   lifetime: ServerAccountScopeLifetime | null = null,
   /** `rail` stands beside the selected Environment, which names its Machine and live version: two short lines. */
   presentation: 'row' | 'rail' = 'row') {
-  const { theme } = useUnistyles();
   const machineIds = React.useMemo(() => items.map((item) => item.environment.controllerMachineId), [items]);
   const machineNames = useMachineDisplayNamesById(machineIds);
   // A platform Environment says which platform it runs on (lab d4), read once for every row.
@@ -225,14 +227,13 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
         // Healthy says where it runs and, with room, what is live there (lab d1 `d1r`: the rail leaves that to the detail).
         : liveVersionTitle && presentation === 'row' ? [machine, liveVersionTitle].filter(Boolean).join(' · ') : where,
       leading: step ? { kind: 'step' as const, status: deploymentStepWorkStatus(step), testID: `${testIDPrefix}.${environment.id}.step` }
-        : latest?.tone ? { kind: 'dot' as const, color: latest.tone === 'danger'
-            ? theme.colors.state.danger.foreground
-            : theme.colors.state.warning.foreground } : null,
+        : latest?.tone && currentDeployment ? { kind: 'trouble' as const, status: deploymentWorkStatus(currentDeployment.state),
+            testID: `${testIDPrefix}.${environment.id}` } : null,
       detail: formatRelativeTimeShort(environment.updatedAtMs, nowMs),
     };
   });
   type Fact = typeof incoming[number];
-  type Row = Omit<Fact, 'leading'> & { subtitleLeading: React.ReactNode };
+  type Row = Omit<Fact, 'leading'> & { subtitleLeading: React.ReactNode; needsYouStatus: ReturnType<typeof deploymentWorkStatus> | null };
   const previous = React.useRef<{ facts: readonly Fact[]; rows: Row[] } | null>(null);
   // Reconcile display facts before creating React elements, whose renderer-owned fields are not JSON data.
   const facts = retainKeyedRows(previous.current?.facts, incoming, row => row.environmentId);
@@ -244,8 +245,8 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
     const { leading, ...parts } = fact;
     const subtitleLeading = old?.fact.leading === leading ? old.row.subtitleLeading
       : leading?.kind === 'step' ? <WorkStatusGlyph status={leading.status} testIDSuffix={leading.testID} />
-      : leading?.kind === 'dot' ? <StatusDot size={6} color={leading.color} /> : undefined;
-    return { ...parts, subtitleLeading };
+      : leading?.kind === 'trouble' ? <WorkStatusRowMark status={leading.status} testIDSuffix={leading.testID} /> : undefined;
+    return { ...parts, subtitleLeading, needsYouStatus: leading?.kind === 'trouble' ? leading.status : null };
   });
   previous.current = { facts, rows };
   return rows;
@@ -295,5 +296,6 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
+  preparation: { alignItems: 'flex-start', gap: theme.space.s8, padding: theme.space.s16 },
   paging: { flexDirection: 'row', justifyContent: 'center', gap: theme.space.s8, paddingVertical: theme.space.s8 },
 }));

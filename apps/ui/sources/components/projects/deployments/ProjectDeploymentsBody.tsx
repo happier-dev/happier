@@ -265,10 +265,15 @@ const ProjectDeploymentsPage = React.memo(
     }, [navigateEnvironment, setSelection]);
     // Project settings lead to each Environment's own Triggers (on its Overview); no Project-wide trigger read.
     const triggerEnvironments = React.useMemo(() => (collection.snapshot.value?.items ?? [])
-      .map((item) => ({ id: item.environment.id, title: item.title })), [collection.snapshot.value]);
+      .map((item) => ({ id: item.environment.id, title: item.title,
+        previewTemplateConfigured: item.previewTemplateConfigured })), [collection.snapshot.value]);
     const openEnvironmentTriggers = React.useCallback((id: string) => {
       setSelection({ environmentId: id, deploymentId: null });
     }, [setSelection]);
+    const openEnvironmentPreviews = React.useCallback((id: string) => {
+      setSelection({ environmentId: id, deploymentId: null });
+      navigateEnvironment({ tab: 'settings', section: 'previews' });
+    }, [navigateEnvironment, setSelection]);
     // A failed receipt's recovery opens the place its typed destination names: an Environment page in place, or
     // the Source, Machines, Connected services or Store page. Logs and review live on the Environment's Overview.
     const openRecoveryDestination = React.useCallback((destination: DeploymentFailureRecoveryDestinationV1, machineId?: string) => {
@@ -417,7 +422,7 @@ const ProjectDeploymentsPage = React.memo(
     const detail =
       selection.defaults ? <ProjectDeploymentDefaultsSettings key={`${props.serverId}:${props.accountId}:${props.sourceId}`}
         lifetime={props.lifetime} sourceId={props.sourceId} demand={props.demand} environments={triggerEnvironments}
-        onOpenEnvironment={openEnvironmentTriggers} /> : draft ?? (environmentId === null ? null : selection.deploymentId ? (
+        onOpenEnvironment={openEnvironmentTriggers} onOpenPreviews={openEnvironmentPreviews} /> : draft ?? (environmentId === null ? null : selection.deploymentId ? (
         <DeploymentReceiptDetail
           key={`${environmentId}:${selection.deploymentId}`}
           controller={props.controller}

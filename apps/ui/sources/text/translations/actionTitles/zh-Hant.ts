@@ -87,7 +87,7 @@ export const zhHant = {
     session_work_get: "讀取工作階段工作",
     inbox_get: "讀取收件匣",
     inbox_mark_all_read: "將收件匣標記為已讀",
-    session_draft_delete: "刪除新工作階段草稿",
+    session_draft_delete: "刪除草稿",
     session_draft_directory_set: "設定新工作階段草稿目錄",
     notifications_webhooks_list: "列出通知 Webhook",
     notifications_webhooks_add: "新增通知 Webhook",

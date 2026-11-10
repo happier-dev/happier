@@ -15,6 +15,7 @@ import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/acti
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { parse } from 'yaml';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal'))
     .createModalModuleMock({ confirmResult: true }).module);
@@ -28,6 +29,90 @@ await import('@/sync/ops/actions/defaultActionExecutor');
 describe('deployment UI Action callbacks', () => {
     beforeEach(() => homes.reset());
     afterEach(() => standardCleanup());
+
+    it.each([false, true])('prepares first-configuration defaults without publishing content (retired response: %s)', async retireOnResult => {
+        const serverId = await homes.addHome({ name: 'Defaults preparation', serverUrl: 'https://defaults.test',
+            serverIdentityId: `srv_${'8'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+        const environment = createDeploymentEnvironmentHeaderV1({ serverId });
+        let current = true;
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' },
+            isCurrent: () => current, onRetire: () => ({ dispose() {} }) };
+        homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, {
+            body: { ok: true, environment, targetLinks: [] },
+        });
+        const creationDefaults = { values: { retainPreviousDeployments: 1, previewDatabase: 'branch' as const,
+            backupRetention: { kind: 'keep' as const, daily: 14 } },
+            sources: { previewDatabase: 'project' as const, backupRetention: 'project' as const } };
+        const backupSourceChoices = [{ kind: 'volume' as const, sourceId: 'web-content', service: 'web',
+            volume: 'content', consistency: 'stopDuringCopy' as const }];
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: environment.controllerMachineId,
+            actionId: 'deployments.environments.update', tokenEpoch: 0, execute: (raw, context) => {
+                expect(raw).toMatchObject({ environmentId: environment.id, expectedRevision: environment.revision,
+                    mode: 'preview', defaultsFor: 'backups' });
+                expect(raw).not.toHaveProperty('patch');
+                expect(context.target).toEqual({ kind: 'machine', machineId: environment.controllerMachineId });
+                expect(resolveActionApprovalRouting({ actionId: 'deployments.environments.update',
+                    spec: getActionSpec('deployments.environments.update'), input: raw,
+                    context: { surface: 'ui', actionCaller: { kind: 'host' }, authority: 'present_user' } }).required).toBe(false);
+                if (retireOnResult) current = false;
+                return { ok: true, environmentId: environment.id, revision: environment.revision, creationDefaults, backupSourceChoices };
+            } });
+        const prepared = createDeploymentActions(lifetime, environment.projectSourceId)
+            .prepareConfigurationDefaults(environment, 'backups');
+        if (retireOnResult) await expect(prepared).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+        else await expect(prepared).resolves.toEqual({ ...creationDefaults, backupSourceChoices });
+        expect(homes.artifacts(serverId).list()).toEqual([]);
+    });
+
+    it('configures backup policy through the controller Action before a runtime target exists', async () => {
+        const serverId = await homes.addHome({ name: 'Backup setup', serverUrl: 'https://backup-setup.test',
+            serverIdentityId: `srv_${'5'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+        const environment = createDeploymentEnvironmentHeaderV1({ serverId, runtimeTargetLinkId: undefined });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, {
+            body: { ok: true, environment, targetLinks: [] },
+        });
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: environment.controllerMachineId,
+            actionId: 'deployments.backups.configure', tokenEpoch: 0, execute: (raw, context) => {
+                expect(raw).toEqual({ serverId, environmentId: environment.id, expectedRevision: environment.revision,
+                    intent: 'markNotNeeded' });
+                expect(context.target).toEqual({ kind: 'machine', machineId: environment.controllerMachineId });
+                return { kind: 'notNeeded', environmentId: environment.id, revision: environment.revision + 1 };
+            } });
+        await expect(createDeploymentActions(lifetime, environment.projectSourceId)
+            .configureBackup(environment, { intent: 'markNotNeeded' })).resolves.toMatchObject({ kind: 'notNeeded' });
+        expect(homes.requests.filter(request => request.path === `/v1/deployments/environments/${environment.id}`)).toHaveLength(1);
+        expect(homes.artifacts(serverId).list()).toEqual([]);
+    });
+
+    it('hands Prepare and Import to the selected workspace Machine with direct person consent', async () => {
+        const serverId = await homes.addHome({ name: 'Prepare', serverUrl: 'https://prepare.test',
+            serverIdentityId: `srv_${'6'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const { DeploymentPrepareInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentPreparationV1');
+        homes.answer(serverId, 'POST /v1/account/project-rows/list', { body: createPlainProjectAccountRowListFixture({
+            workspaceRefs: [{ id: 'checkout', serverId, machineId: 'workspace', rootPath: '/app', createdAtMs: 1,
+                source: { sourceId: 'project', revision: 3 } }],
+        }) });
+        const input = DeploymentPrepareInputV1Schema.parse({ projectSourceId: 'project', sourceRevision: 3,
+            repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
+            baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId, id: 'checkout' },
+            importFrom: { tool: 'Coolify', configurationPaths: ['compose.yaml'] } });
+        await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.prepare', machineId: 'workspace',
+            tokenEpoch: 0, execute: (raw, context) => {
+                expect(DeploymentPrepareInputV1Schema.parse(raw)).toEqual(input);
+                expect(context.target).toEqual({ kind: 'machine', machineId: 'workspace' });
+                const routing = resolveActionApprovalRouting({ actionId: 'deployments.prepare', spec: getActionSpec('deployments.prepare'),
+                    input: raw, context: { surface: 'ui', actionCaller: { kind: 'host' }, authority: 'present_user' } });
+                expect(routing.required).toBe(false);
+                return { kind: 'handedOff', sessionRef: { serverId, sessionId: 'prepare-session' } };
+            } });
+        await expect(createDeploymentActions(lifetime, 'project').prepare(input, 'workspace')).resolves.toEqual({
+            kind: 'handedOff', sessionRef: { serverId, sessionId: 'prepare-session' },
+        });
+    });
 
     it('offers one reviewed Move patch only after verified copy, preserving source volume data', () => {
         const detail = createDeploymentEnvironmentDetailV1();
@@ -166,6 +251,8 @@ describe('deployment UI Action callbacks', () => {
                 execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
                 inputSchema: defineProtocolObject({ expectedRevision: defineProtocolNumber({ integer: true }) }, { policy: 'closed' }),
                 run: async input => {
+                    if (input.expectedRevision === 3) throw new PluginError({ code: 'approval_request_created',
+                        details: { kind: 'approval_request_created', actionId: 'action.invoke', artifactId: 'managed-review' } });
                     if (input.expectedRevision === 2) throw new PluginError({ code: 'credential_unavailable',
                         details: { requiredFact: 'connectedAccountCredential',
                             remedy: 'The selected connection has no usable credential. Reconnect it before finding zones.' },
@@ -182,6 +269,8 @@ describe('deployment UI Action callbacks', () => {
             const actionId = 'happier.deploy.vercel/actions/targets-inspect-v1';
             expect(await actions.inspectPlatformTarget(actionId, { expectedRevision: 1 }))
                 .toEqual({ ok: true, value: { inspectedRevision: 1 } });
+            expect(await actions.inspectPlatformTarget(actionId, { expectedRevision: 3 }))
+                .toMatchObject({ ok: false, code: 'approval_request_created', approvalArtifactId: 'managed-review' });
             expect(await actions.inspectPlatformTarget(actionId, { expectedRevision: 2 }))
                 .toEqual({ ok: false, code: 'credential_unavailable',
                     details: { requiredFact: 'connectedAccountCredential',
@@ -537,6 +626,7 @@ describe('deployment UI Action callbacks', () => {
             providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'branch' },
             providerEnvironment: { kind: 'custom', id: 'branch' } });
         const selection = managed ? { role: 'data' as const, targetId: 'managed-data', targetKind: 'database', machines: [], provider,
+            title: 'Customer database',
             source: { kind: 'plugin' as const, contribution: { pluginId: 'example.data', localId: 'database' } } }
             : { targetId: 'own-server', role: 'runtime' as const, machines: [{ machineId: 'machine-a', installationId: 'installation-a' }] };
         if (managed) homes.answer(serverId, 'POST /v1/deployments/targets/list', {
@@ -550,7 +640,8 @@ describe('deployment UI Action callbacks', () => {
             actionId: 'deployments.targets.link', tokenEpoch: 0, execute: input => {
             const link = DeploymentActionInputSchemasV1['deployments.targets.link'].parse(input);
             if (!('contentArtifactId' in link)) throw new Error('Expected prepared link at storage boundary');
-            const { provider: _private, ...storageSelection } = { ...selection, provider: managed ? provider : undefined };
+            const { provider: _private, title: _title, ...storageSelection } = { ...selection,
+                title: managed ? 'Customer database' : undefined, provider: managed ? provider : undefined };
             expect(input).toMatchObject({ expectedRevision: 1, ...storageSelection,
                 contentHeaderVersion: 1, contentBodyVersion: 1 });
             expect(input).not.toHaveProperty('provider');
@@ -565,7 +656,8 @@ describe('deployment UI Action callbacks', () => {
         const account = await captureLazyActionAccountContext(serverId);
         try {
             expect(await account.readArtifactContent(preparedId)).toMatchObject({
-                header: { kind: 'deployment-target-link.v1' }, body: JSON.stringify(managed ? provider : {}) });
+                header: { kind: 'deployment-target-link.v1', title: managed ? 'Customer database' : '' },
+                body: JSON.stringify(managed ? provider : {}) });
         } finally { account.dispose(); }
     });
 

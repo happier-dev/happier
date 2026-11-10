@@ -87,7 +87,7 @@ export const zhHans = {
     session_work_get: "读取会话工作",
     inbox_get: "读取收件箱",
     inbox_mark_all_read: "将收件箱标记为已读",
-    session_draft_delete: "删除新会话草稿",
+    session_draft_delete: "删除草稿",
     session_draft_directory_set: "设置新会话草稿目录",
     notifications_webhooks_list: "列出通知 Webhook",
     notifications_webhooks_add: "添加通知 Webhook",

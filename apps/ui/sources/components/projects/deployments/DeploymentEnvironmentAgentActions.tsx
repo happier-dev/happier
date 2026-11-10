@@ -5,13 +5,13 @@ import { StyleSheet } from 'react-native-unistyles';
 import { InvestigationAgentActionButtons } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
+import { DeploymentPreparationEntry, type DeploymentPreparationContext } from './DeploymentPreparation';
 
 const ENVIRONMENT_AGENT_ACTIONS = { agentActions: 'subjectOnly' } as const;
 const NO_ACTIONS = Object.freeze([]);
 
 /**
- * The person's records for this Environment ("Set it up" once its owner declares it), each through
- * `sessions/run-configured-v1` with the Environment as the item context. No record, no control.
+ * Repository preparation uses its registered Action; configured investigations retain their own owner.
  */
 export function DeploymentEnvironmentAgentActions(props: Readonly<{
   serverId: string;
@@ -20,6 +20,7 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
   compact: boolean;
   /** An Environment that already serves leads with Deploy; a setup action stays secondary to it. */
   emphasis: 'primary' | 'secondary';
+  preparation?: DeploymentPreparationContext;
 }>): React.ReactElement | null {
   const subject = React.useMemo(() => ({ kind: 'deploymentEnvironment' as const,
     serverId: props.serverId, environmentId: props.environmentId }), [props.serverId, props.environmentId]);
@@ -28,9 +29,10 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
   }), [props.controllerMachineId]);
   const investigation = useInvestigateFailure(subject, options);
   const actions = investigation.actions ?? NO_ACTIONS;
-  if (actions.length === 0 && !investigation.showOutcome) return null;
+  if (!props.preparation && actions.length === 0 && !investigation.showOutcome) return null;
   return (
     <>
+      {props.preparation ? <DeploymentPreparationEntry {...props.preparation} environmentId={props.environmentId} mode="prepare" /> : null}
       <InvestigationAgentActionButtons actions={actions} pending={investigation.pending} compact={props.compact}
         emphasis={props.emphasis}
         onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }} />

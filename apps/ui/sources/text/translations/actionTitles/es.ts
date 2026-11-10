@@ -87,7 +87,7 @@ export const es = {
     session_work_get: "Consultar trabajo de la sesión",
     inbox_get: "Consultar bandeja de entrada",
     inbox_mark_all_read: "Marcar bandeja de entrada como leída",
-    session_draft_delete: "Eliminar borrador de nueva sesión",
+    session_draft_delete: "Eliminar borrador",
     session_draft_directory_set: "Establecer directorio del borrador de nueva sesión",
     notifications_webhooks_list: "Listar webhooks de notificaciones",
     notifications_webhooks_add: "Añadir webhook de notificaciones",

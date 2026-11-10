@@ -87,7 +87,7 @@ export const ru = {
     session_work_get: "Прочитать сведения о работе сессии",
     inbox_get: "Прочитать входящие",
     inbox_mark_all_read: "Отметить входящие как прочитанные",
-    session_draft_delete: "Удалить черновик новой сессии",
+    session_draft_delete: "Удалить черновик",
     session_draft_directory_set: "Выбрать каталог черновика новой сессии",
     notifications_webhooks_list: "Показать вебхуки уведомлений",
     notifications_webhooks_add: "Добавить вебхук уведомлений",

@@ -56,6 +56,8 @@ import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { DeploymentSecretBindingsNotice } from './DeploymentSecretBindingsNotice';
+import { showDeploymentCiTokenSheet, type DeploymentCiInput } from './DeploymentCiToken';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -410,6 +412,11 @@ export const DeploymentEnvironmentDetail = React.memo(
     // Where a name is only a fact or a clause, an unknown Machine drops out instead of reading "a machine".
     const knownMachine = (machineId: string | undefined) => (machineId ? machineNames[machineId] ?? null : null);
     const definition = deploymentDefinitionLabel(detail.content);
+    const ciHome = getServerProfileById(props.serverId);
+    const ciInput = detail.content.definition.kind === 'repository' && detail.environment.capabilities.deploy && props.lifetime && ciHome
+      ? { environmentId: detail.environment.id, name: detail.content.name, protection: detail.environment.protection,
+          serverIdentityId: detail.environment.serverId, serverApiUrl: ciHome.canonicalServerUrl ?? ciHome.serverUrl,
+          scope: props.lifetime.scope, lifetime: props.lifetime } satisfies DeploymentCiInput : null;
     const platformName = platform?.title ?? null;
     const meta: PageHeaderMetaFact[] = [
       ...(domainHost ? [{ key: 'domain', text: domainHost, icon: 'globe' as const }] : []),
@@ -927,6 +934,9 @@ export const DeploymentEnvironmentDetail = React.memo(
                 )}
                 {/* The Environment's own agent actions sit on the facts' edge; Deploy stays the page's one primary. */}
                 <View style={styles.agentActions}>
+                  {ciInput ? <SectionActionButton testID="project-deployments.environment.ci"
+                    title={t('projects.deployments.overviewStatus.ciTitle')}
+                    onPress={() => showDeploymentCiTokenSheet(ciInput)} /> : null}
                   <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id}
                     controllerMachineId={detail.environment.controllerMachineId}
                     preparation={props.lifetime && detail.content.definition.kind === 'repository'
@@ -1052,6 +1062,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               secretRevisions={detail.secretRevisions}
               onDeploy={deployBlocked || !ready ? null : () => { void pressDeploy(); }}
               referenceTargets={referenceTargets}
+              domainRead={{ controller: props.controller, demand: props.demand }}
             />
           ) : tab === 'domains' ? (
             <DeploymentDomainsPanel
@@ -1064,7 +1075,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                 environmentRevision: detail.environment.revision,
                 deployedServices: services.map((service) => service.name),
                 recordedIngress: detail.content.ingress,
-                targetLink: runtime ? { id: runtime.id, revision: runtime.revision } : null,
+                targetLink: runtime ? { id: runtime.id, revision: runtime.revision,
+                  ...(runtime.source.kind === 'plugin' ? { provider: detail.targetLinks.find(row => row.targetLink.id === runtime.id)?.content ?? null } : {}) } : null,
                 review,
                 machine: knownMachine(controllerMachineId ?? undefined) ?? t('projects.deployments.aMachine'),
                 onChanged: () => { void environment.refresh(); },

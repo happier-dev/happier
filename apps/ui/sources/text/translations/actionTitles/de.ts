@@ -87,7 +87,7 @@ export const de = {
     session_work_get: "Session-Arbeit lesen",
     inbox_get: "Posteingang lesen",
     inbox_mark_all_read: "Posteingang als gelesen markieren",
-    session_draft_delete: "Entwurf für neue Session löschen",
+    session_draft_delete: "Entwurf löschen",
     session_draft_directory_set: "Verzeichnis für neuen Session-Entwurf festlegen",
     notifications_webhooks_list: "Benachrichtigungs-Webhooks auflisten",
     notifications_webhooks_add: "Benachrichtigungs-Webhook hinzufügen",

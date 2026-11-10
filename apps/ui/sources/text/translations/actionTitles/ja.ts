@@ -87,7 +87,7 @@ export const ja = {
     session_work_get: "セッションの作業を表示",
     inbox_get: "受信トレイを表示",
     inbox_mark_all_read: "受信トレイを既読にする",
-    session_draft_delete: "新規セッションの下書きを削除",
+    session_draft_delete: "下書きを削除",
     session_draft_directory_set: "新規セッション下書きのディレクトリを設定",
     notifications_webhooks_list: "通知 Webhook の一覧を表示",
     notifications_webhooks_add: "通知 Webhook を追加",

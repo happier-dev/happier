@@ -35,6 +35,7 @@ const moveToRepositoryCopy = {
 
 /** English fallback for the new preview controls, pending translation review. */
 const previewEditorCopy = {
+  addFact: 'Deployment value',
   configure: 'Configure previews',
   domain: 'Preview domain',
   slug: 'Template slug',

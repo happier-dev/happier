@@ -87,7 +87,7 @@ export const ca = {
     session_work_get: "Consulta el treball de la sessió",
     inbox_get: "Consulta la safata d'entrada",
     inbox_mark_all_read: "Marca la safata d'entrada com a llegida",
-    session_draft_delete: "Suprimeix un esborrany de sessió nova",
+    session_draft_delete: "Suprimeix l’esborrany",
     session_draft_directory_set: "Defineix el directori de l'esborrany de sessió nova",
     notifications_webhooks_list: "Llista els webhooks de notificacions",
     notifications_webhooks_add: "Afegeix un webhook de notificacions",

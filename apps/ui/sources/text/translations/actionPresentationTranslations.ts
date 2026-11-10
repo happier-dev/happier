@@ -1,6 +1,6 @@
 import type { SessionVisualCopyApprovalSummaryInput } from '@happier-dev/protocol/actions/specs/definition';
 
-// English titles are copied verbatim from the first-party Action specs.
+// Localized UI titles, including shorter labels for first-party Actions.
 const englishOptionLabels = {
     now: 'Now', afterIdle: 'After idle', start: 'Start', stop: 'Stop', suspend: 'Suspend', resume: 'Resume', delete: 'Delete',
     external: 'Existing server', managedLocal: 'Gateway managed by Happier',
@@ -95,7 +95,7 @@ const en = {
         session_work_get: "Read Session Work",
         inbox_get: "Read Inbox",
         inbox_mark_all_read: "Mark Inbox as read",
-        session_draft_delete: "Delete a New Session draft",
+        session_draft_delete: "Delete draft",
         session_draft_directory_set: "Set New Session draft directory",
         notifications_webhooks_list: "List notification webhooks",
         notifications_webhooks_add: "Add notification webhook",

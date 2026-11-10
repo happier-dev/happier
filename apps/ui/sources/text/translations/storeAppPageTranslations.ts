@@ -1,3 +1,5 @@
+import { templateChoicesTranslations, type TemplateChoicesTranslation } from './templateChoicesTranslations';
+
 // Store → an App listing and its preparation review (STORE-APP-UI). Mounted under `capabilities.store.appPage`; the Apps kind copy is storeAppTranslations.ts.
 
 type Count = Readonly<{ count: number }>;
@@ -8,6 +10,7 @@ type Size = Readonly<{ size: string }>;
 type Project = Readonly<{ project: string }>;
 
 export type StoreAppPageTranslation = Readonly<{
+  choices: TemplateChoicesTranslation;
   install: string;
   installNote: string;
   needsReviewHint: string;
@@ -78,6 +81,7 @@ export type StoreAppPageTranslation = Readonly<{
 }>;
 
 const en: StoreAppPageTranslation = {
+  choices: templateChoicesTranslations.en,
   install: 'Install and deploy',
   installNote: 'Next you choose the Machine that runs it.',
   needsReviewHint: 'Needs review before it can install',
@@ -159,6 +163,7 @@ const en: StoreAppPageTranslation = {
 };
 
 const ca: StoreAppPageTranslation = {
+  choices: templateChoicesTranslations.ca,
   install: 'Instal·la i desplega',
   installNote: 'A continuació tries la màquina que l’executa.',
   needsReviewHint: 'Cal revisar-la abans d’instal·lar-la',
@@ -240,6 +245,7 @@ const ca: StoreAppPageTranslation = {
 };
 
 const de: StoreAppPageTranslation = {
+  choices: templateChoicesTranslations.de,
   install: 'Installieren und bereitstellen',
   installNote: 'Als Nächstes wählst du die Maschine, auf der sie läuft.',
   needsReviewHint: 'Muss vor der Installation geprüft werden',
@@ -322,6 +328,7 @@ const de: StoreAppPageTranslation = {
 };
 
 const es: StoreAppPageTranslation = {
+  choices: templateChoicesTranslations.es,
   install: 'Instalar y desplegar',
   installNote: 'Después eliges la máquina que la ejecuta.',
   needsReviewHint: 'Necesita revisión antes de instalarse',
@@ -403,6 +410,7 @@ const es: StoreAppPageTranslation = {
 };
 
 const fr: StoreAppPageTranslation = {
+  choices: templateChoicesTranslations.fr,
   install: 'Installer et déployer',
   installNote: 'Ensuite, tu choisis la machine qui l’exécute.',
   needsReviewHint: 'Doit être vérifiée avant l’installation',
@@ -484,6 +492,7 @@ const fr: StoreAppPageTranslation = {
 };
 
 const it: StoreAppPageTranslation = {
+  choices: templateChoicesTranslations.it,
   install: 'Installa e distribuisci',
   installNote: 'Poi scegli la macchina che la esegue.',
   needsReviewHint: 'Va verificata prima dell’installazione',
@@ -566,6 +575,7 @@ const it: StoreAppPageTranslation = {
 };
 
 const ja: StoreAppPageTranslation = {
+  choices: templateChoicesTranslations.ja,
   install: 'インストールしてデプロイ',
   installNote: '次に、実行するマシンを選びます。',
   needsReviewHint: 'インストール前に確認が必要です',
@@ -641,6 +651,7 @@ const ja: StoreAppPageTranslation = {
 };
 
 const pl: StoreAppPageTranslation = {
+  choices: templateChoicesTranslations.pl,
   install: 'Zainstaluj i wdróż',
   installNote: 'Następnie wybierzesz maszynę, na której działa.',
   needsReviewHint: 'Wymaga przeglądu przed instalacją',
@@ -722,6 +733,7 @@ const pl: StoreAppPageTranslation = {
 };
 
 const pt: StoreAppPageTranslation = {
+  choices: templateChoicesTranslations.pt,
   install: 'Instalar e implementar',
   installNote: 'A seguir, escolhe a máquina que a executa.',
   needsReviewHint: 'Precisa de revisão antes de instalar',
@@ -802,6 +814,7 @@ const pt: StoreAppPageTranslation = {
 };
 
 const ru: StoreAppPageTranslation = {
+  choices: templateChoicesTranslations.ru,
   install: 'Установить и развернуть',
   installNote: 'Дальше вы выберете машину, на которой оно работает.',
   needsReviewHint: 'Перед установкой нужна проверка',
@@ -879,6 +892,7 @@ const ru: StoreAppPageTranslation = {
 };
 
 const zhHans: StoreAppPageTranslation = {
+  choices: templateChoicesTranslations.zhHans,
   install: '安装并部署',
   installNote: '接下来选择运行它的机器。',
   needsReviewHint: '安装前需要审核',
@@ -951,6 +965,7 @@ const zhHans: StoreAppPageTranslation = {
 };
 
 const zhHant: StoreAppPageTranslation = {
+  choices: templateChoicesTranslations.zhHant,
   install: '安裝並部署',
   installNote: '接下來選擇執行它的機器。',
   needsReviewHint: '安裝前需要審核',

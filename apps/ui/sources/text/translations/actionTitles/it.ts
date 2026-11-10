@@ -87,7 +87,7 @@ export const it = {
     session_work_get: "Leggi il lavoro della sessione",
     inbox_get: "Leggi la posta in arrivo",
     inbox_mark_all_read: "Segna la posta in arrivo come letta",
-    session_draft_delete: "Elimina una bozza di nuova sessione",
+    session_draft_delete: "Elimina bozza",
     session_draft_directory_set: "Imposta la cartella della bozza di nuova sessione",
     notifications_webhooks_list: "Elenca i webhook delle notifiche",
     notifications_webhooks_add: "Aggiungi un webhook delle notifiche",

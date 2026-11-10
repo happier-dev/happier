@@ -87,7 +87,7 @@ export const fr = {
     session_work_get: "Consulter le travail de la session",
     inbox_get: "Consulter la boîte de réception",
     inbox_mark_all_read: "Marquer la boîte de réception comme lue",
-    session_draft_delete: "Supprimer un brouillon de nouvelle session",
+    session_draft_delete: "Supprimer le brouillon",
     session_draft_directory_set: "Définir le dossier du brouillon de nouvelle session",
     notifications_webhooks_list: "Lister les webhooks de notification",
     notifications_webhooks_add: "Ajouter un webhook de notification",

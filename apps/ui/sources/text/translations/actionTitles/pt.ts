@@ -87,7 +87,7 @@ export const pt = {
     session_work_get: "Ler trabalho da sessão",
     inbox_get: "Ler caixa de entrada",
     inbox_mark_all_read: "Marcar caixa de entrada como lida",
-    session_draft_delete: "Excluir rascunho de nova sessão",
+    session_draft_delete: "Excluir rascunho",
     session_draft_directory_set: "Definir diretório do rascunho de nova sessão",
     notifications_webhooks_list: "Listar webhooks de notificação",
     notifications_webhooks_add: "Adicionar webhook de notificação",
