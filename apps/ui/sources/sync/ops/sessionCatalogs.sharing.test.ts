@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { createDeferred, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { SessionSkillCatalogListResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
@@ -14,8 +15,56 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', a
 const { storage } = await import('@/sync/domains/state/storage');
 const { seedAutocompleteSessions } = await import('@/components/autocomplete/autocompleteTestFixtures');
 const { ensureSessionSuggestionCatalogs } = await import('./sessionCatalogs');
+const { useSessionComposerSuggestions } = await import('@/components/sessions/agentInput/useSessionComposerSuggestions');
+const { useActiveSuggestions } = await import('@/components/autocomplete/useActiveSuggestions');
 
 afterEach(() => { standardCleanup(); transport.mockReset(); });
+
+it('refreshes changed native skills only for the matching open composer demand', async () => {
+    const home = await createPlainArtifactHomeFixture('https://session-catalog-native-change.test');
+    seedAutocompleteSessions({ shared: { serverId: home.home.id, active: true,
+        agentState: { nativeCatalogChangesV1: { skills: '100:1' } },
+        metadata: { path: '/repo', sessionSkillCatalogV1: {
+            skills: [{ name: 'old', origin: 'vendor', backendId: 'codex' }],
+            observedNativeChangeToken: '100:1',
+        } },
+    } });
+    transport.mockResolvedValueOnce(SessionSkillCatalogListResponseV1Schema.parse({ skills: [{ name: 'fresh', origin: 'vendor', backendId: 'codex' }] }))
+        .mockResolvedValueOnce(SessionSkillCatalogListResponseV1Schema.parse({ skills: [{ name: 'newest', origin: 'vendor', backendId: 'codex' }] }));
+    const options = { sessionId: 'shared', kinds: ['skill'] as const, composerReferenceHost: null,
+        actionController: { listSlashCommands: () => [] }, skillSource: null };
+    const hook = await renderHook(({ query }: { query: string | null }) => {
+        const source = useSessionComposerSuggestions(options);
+        return useActiveSuggestions(query, source);
+    }, { initialProps: { query: null as string | null } });
+    const publishToken = async (token: string) => act(async () => {
+        const session = storage.getState().sessions.shared!;
+        storage.getState().applySessions([{ ...session, agentState: {
+            ...session.agentState, nativeCatalogChangesV1: { skills: token },
+        } }], 'projection');
+    });
+    try {
+        await publishToken('100:2');
+        await flushHookEffects();
+        expect(transport).not.toHaveBeenCalled();
+        await hook.rerender({ query: '$' });
+        await vi.waitFor(() => expect(hook.getCurrent()[0]).toEqual([expect.objectContaining({ text: expect.stringContaining('fresh') })]));
+        expect(transport).toHaveBeenCalledTimes(1);
+        await publishToken('100:2');
+        await flushHookEffects();
+        expect(transport).toHaveBeenCalledTimes(1);
+        await publishToken('100:3');
+        await vi.waitFor(() => expect(hook.getCurrent()[0]).toEqual([expect.objectContaining({ text: expect.stringContaining('newest') })]));
+        expect(transport).toHaveBeenCalledTimes(2);
+        await hook.rerender({ query: null });
+        await publishToken('100:4');
+        await flushHookEffects();
+        expect(transport).toHaveBeenCalledTimes(2);
+    } finally {
+        await hook.unmount();
+        await home.dispose();
+    }
+});
 
 it.each([null, 'first', 'second'] as const)('shares simultaneous Session catalog reads and publications with independent cancellation (%s)', async cancel => {
     const home = await createPlainArtifactHomeFixture(`https://session-catalog-sharing-${cancel}.test`);

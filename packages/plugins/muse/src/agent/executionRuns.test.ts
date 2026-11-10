@@ -24,6 +24,9 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { prepareProjectAgentLaunch } from '@/workspaces/projectSetup/projectAgentLaunch';
 import { configuration } from '@/configuration';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { buildExecutionRunConfiguration } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
+import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
+import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import {
   createMuseMspProcessFixture,
   readMuseMspProcessAudit,
@@ -50,10 +53,12 @@ async function withDetachedRun(
     launchCount(): number;
     close(): Promise<void>;
     audit(): ReturnType<typeof readMuseMspProcessAudit>;
+    registry: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>['registry'];
   }>) => Promise<void>,
   nativeOptions: Parameters<typeof createMuseMspProcessFixture>[0] = threeTurns,
-  selectedOptions: Pick<Parameters<typeof createNativeAgentExecutionRunHostRuntime>[0]['options'], 'modelSelection' | 'configuration'> = {},
+  selectedOptions: Pick<Parameters<typeof createNativeAgentExecutionRunHostRuntime>[0]['options'], 'modelSelection' | 'configuration' | 'permissionMode'> = {},
   cwd = process.cwd(),
+  environment: Readonly<Record<string, string>> = {},
 ) {
   const controller = new AbortController();
   const scratch = await mkdtemp(join(tmpdir(), 'happier-muse-detached-'));
@@ -96,7 +101,7 @@ async function withDetachedRun(
     const native = await createMuseMspProcessFixture({ ...nativeOptions, auditPath, cwd });
     let launched = 0;
     // Only executable/path resolution is replaced at the OS boundary; the qualified SDK Exec stays real.
-    const exec = createStablePluginExecService({ ...native, signal: controller.signal,
+    const exec = createStablePluginExecService({ ...native, environment, signal: controller.signal,
       isOccurrenceCurrent: registered.isCurrent,
       async resolveExecutable() { launched++; return native.resolveExecutable(); },
       async prepareAgentNativeLaunch(signal, cwd, environment) {
@@ -115,13 +120,21 @@ async function withDetachedRun(
       isCurrent: registered.isCurrent,
     };
     const usage: WorkflowUsage[] = [];
-    const start = { intent: 'delegate', runClass: lifetime === 'finite' ? 'bounded' : 'long_lived',
+    const permissionMode = selectedOptions.permissionMode ?? 'default';
+    // runtime/create.ts supplies this canonical configuration before selecting
+    // the native host. Preserve that real producer instead of passing raw mode alone.
+    const openInputs = buildExecutionRunConfiguration({
+      backendTarget: { kind: 'agent', identity: { pluginId: lease.pluginId, localId: lease.localAgentId } },
+      permissionMode, ...(selectedOptions.modelSelection ? { modelSelection: selectedOptions.modelSelection } : {}),
+      updatedAtMs: 0,
+    });
+    const start = { intent: permissionMode === 'read_only' ? 'task' : 'delegate', runClass: lifetime === 'finite' ? 'bounded' : 'long_lived',
       retentionPolicy: lifetime === 'finite' ? 'ephemeral' : 'resumable',
       ioMode: lifetime === 'finite' ? 'request_response' : 'streaming',
       observeWorkflowUsage(observation: WorkflowUsage) { usage.push(observation); },
     } as const satisfies Start;
     const createExecutionRunContext = createNativeAgentExecutionRunContextLeaseFactory({
-      lease, runId, start, permissionMode: 'default',
+      lease, runId, start, permissionMode,
       controllerOccurrenceId: randomUUID(), callId: randomUUID(), sidechainId: randomUUID(),
       runtimeRegistry: registry, directory: cwd, machineId: 'muse-detached-fixture',
       happyHomeDir: admitted.happyHomeDir, accountSettings: null,
@@ -142,12 +155,12 @@ async function withDetachedRun(
       executionRunContextV1: runtime.sessions?.executionRunContextV1,
       ...(lifetime === 'retained' ? { retainedConversation: true } : {}),
       lease, options: { cwd, runId, scope: 'detached', backendId: 'muse',
-        permissionMode: 'default', start, ...selectedOptions },
+        permissionMode, start, ...openInputs, ...selectedOptions },
       supportsResume: false, createExecutionRunContext,
     });
     const messages: AgentMessage[] = [];
     host.subscribeMessages(message => messages.push(message));
-    await body({ host, runId, messages, usage, launchCount: () => launched,
+    await body({ host, runId, messages, usage, registry, launchCount: () => launched,
       close: () => host!.dispose(), audit: () => readMuseMspProcessAudit(auditPath) });
   } finally {
     try { await host?.dispose(); }
@@ -162,7 +175,40 @@ async function withDetachedRun(
   }
 }
 
-it('returns finite Muse output through the real detached host composer', async () => {
+it('admits a selected native-file Account for Sessions as well as detached Runs', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'muse-selected-native-account-'));
+  const environment = { XDG_CONFIG_HOME: home };
+  try {
+    // Substitute the credential-storage/materialization boundary, never the
+    // purpose projection, readiness decision, or Run host. No vendor sign-in.
+    await mkdir(join(home, 'muse'), { recursive: true });
+    await writeFile(join(home, 'muse/auth.json'), JSON.stringify({ access_token: 'synthetic-selected-account' }));
+    await withDetachedRun('finite', async ({ host, messages, registry }) => {
+      const bindings = { v: 2 as const, bindingsByServiceId: {
+        'happier.agent.muse/muse-account': { source: 'connected' as const, selection: 'profile' as const, profileId: 'selected-account' },
+      } };
+      const snapshot = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({ agentId: 'muse', bindings,
+        contributions: registry.contributes, catalogEntry: await registry.acquireAgentCatalogEntry?.('muse') });
+      expect(snapshot?.bindings).toHaveLength(1);
+      const prepare = (qualifiedPurposeBindingSnapshot: typeof snapshot) => resolveSpawnChildEnvironment({
+        options: { directory: home, connectedServices: bindings }, resolvedAgentId: 'muse',
+        pluginRuntimeRegistry: registry, profileEnvironmentVariables: {}, daemonSpawnHooks: null,
+        processEnv: { HOME: home, USERPROFILE: home, PATH: '', HAPPIER_MUSE_PATH: process.execPath },
+        connectedServiceAuth: { env: environment, qualifiedPurposeBindingSnapshot,
+          cleanupOnFailure: null, cleanupOnExit: null },
+        logDebug() {}, logInfo() {}, logWarn() {},
+      });
+      expect(await prepare(null)).toMatchObject({ ok: false, errorCode: 'agent_signed_out' });
+      await host.provisionRuntime({ initialPrompt: 'Reply with exactly PEBBLE. Do not use tools.' });
+      await host.waitForTurnCompletion?.();
+      expect(messages.some(message => message.type === 'model-output')).toBe(true);
+      const session = await prepare(snapshot);
+      expect(session).toMatchObject({ ok: true, extraEnvForChild: environment });
+    }, threeTurns, {}, home, environment);
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+it.each(['default', 'read_only'] as const)('returns finite Muse output with %s permissions through the real detached host composer', async permissionMode => {
   await withDetachedRun('finite', async ({ host, messages, launchCount, close, audit }) => {
     await host.provisionRuntime({ initialPrompt: 'Reply with exactly PEBBLE. Do not use tools.' });
     await host.waitForTurnCompletion?.();
@@ -176,7 +222,9 @@ it('returns finite Muse output through the real detached host composer', async (
     expect(observed).toMatchObject({ initializeCount: 1, initializedCount: 1 });
     expect(observed.methods.filter(method => method === 'session/start')).toHaveLength(1);
     expect(observed.methods.filter(method => method === 'turn/start')).toHaveLength(1);
-  });
+    expect(observed.commandTargets.find(command => command.method === 'session/start')?.permissionProfile)
+      .toBe(permissionMode === 'read_only' ? ':read-only' : ':ask-me');
+  }, threeTurns, { permissionMode });
 });
 
 it('preserves the native finite usage observation through the existing host workflow observer', async () => {

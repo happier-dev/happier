@@ -1,5 +1,6 @@
 import type { AgentSessionOpenRequest, AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
-import { FeaturesResponseSchema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, QualifiedProviderAccountUsageWriteV4Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema,
+  type QualifiedConnectedAccountCredentialSnapshotV4 } from '@happier-dev/protocol';
 import { SESSION_SUBAGENT_CUSTODY_CAPABILITY_V1, MAX_SESSION_SUBAGENT_CUSTODY_RECORDS, MAX_SESSION_SUBAGENT_CUSTODY_RECEIPTS, SESSION_SUBAGENT_CUSTODY_RECEIPT_RETENTION_MS, SessionSubagentCustodyMutationRequestV1Schema, SessionSubagentCustodyMutationResponseV1Schema, SessionSubagentCustodyPageV1Schema, type SessionSubagentCustodyMutationRequestV1, type SessionSubagentCustodyMutationResponseV1 } from '@happier-dev/protocol/sessions/subagents/durableCustodyV1';
 import { SessionSystemRecordStoredUpsertRequestSchema, SessionSystemRecordStoredSchema, SessionSystemRecordStoredReadResponseSchema, type SessionSystemRecordStored } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
@@ -25,6 +26,7 @@ import { createInitialHostRuntimeActivityMutation } from '@/agent/runtime/sessio
 import { createApiSessionSocketStub, createSessionRuntimeActivityHomeStub, createSessionTranscriptHomeStub,
   resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
 import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
+import { createCurrentSessionPresentationHost } from '@/session/presentation/currentSessionPresentationService';
 import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { loadRetainedAgentRuntimeLeaf } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
@@ -47,6 +49,8 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
   native?: Parameters<typeof createMuseMspProcessFixture>[0];
   cwd?: string;
   systemRecords?: boolean;
+  /** Real credential/usage HTTP clients consume this Home response. */
+  usageCredential?: QualifiedConnectedAccountCredentialSnapshotV4;
   sessionId?: string;
   createSessionSocketTransport?: ApiSessionClientOptions['transport']['createSessionSocketTransport'];
   /** Reuse the actual foreground-admitted registry, retaining its Account owner. */
@@ -89,6 +93,7 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
   const custodyRecords = new Map<string, SessionSubagentCustodyMutationResponseV1['record']>();
   const systemRecords = new Map<string, SessionSystemRecordStored>();
   const storedWrites: SessionSystemRecordStored[] = [];
+  const usageWrites: ReturnType<typeof QualifiedProviderAccountUsageWriteV4Schema.parse>[] = [];
   const boundaryRequests: Array<{ method: string; path: string; status?: number }> = [];
   const connectionStates: string[] = [];
   const recordKey = (address: SessionSystemRecordStored['address']) => JSON.stringify([address.owner, address.namespace, address.kind, address.localId]);
@@ -103,6 +108,15 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
       const path = new URL(request.url ?? '/', 'http://localhost').pathname;
       exchange = { method: request.method ?? '', path };
       boundaryRequests.push(exchange);
+      if (options.usageCredential && request.method === 'GET' && path === '/v4/connect/qualified/credential') {
+        return send(200, options.usageCredential);
+      }
+      if (options.usageCredential && request.method === 'POST' && path === '/v4/connect/qualified/provider-account-usage') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        usageWrites.push(QualifiedProviderAccountUsageWriteV4Schema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
+        return send(200, { success: true, source: { status: 'linked' } });
+      }
       if (request.method === 'GET' && path === '/v1/auth/ping') return send(200, {});
       if (request.method === 'GET' && path === '/v1/features') {
         return send(200, FeaturesResponseSchema.parse({ features: {}, capabilities: {
@@ -257,7 +271,8 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
       credentials, readCredentials: async () => credentials,
       readPermissionMode: () => 'default',
     };
-    const currentSessionUi = createNativeAgentCurrentSessionUiServices(nativeSessionParams);
+    const presentation = createCurrentSessionPresentationHost({ session: host, signal }).bindCurrentSession();
+    const currentSessionUi = createNativeAgentCurrentSessionUiServices({ ...nativeSessionParams, presentation });
     const nativeSessionServices = createNativeAgentSessionServices({ ...nativeSessionParams, currentSessionUi });
     const operationServices = await registry.createAgentInvocationServices({ pluginId, pluginVersion: lease.pluginVersion,
       agentId, occurrenceId: lease.occurrenceId, correlationId: 'muse-admitted-open', cwd, signal,
@@ -281,7 +296,8 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
     });
     const context = composeNativeAgentSessionRuntimeContext({ identity, contributionId: agentId, sessionId,
       invokedAtMs: Date.now(), signal, services: { ...services, exec }, sessionServices,
-      ui: createPluginInvocationPresentation({ currentSession: currentSessionUi, signal, isOccurrenceCurrent: lease.isCurrent }),
+      ui: createPluginInvocationPresentation({ currentSession: currentSessionUi, signal, isOccurrenceCurrent: lease.isCurrent,
+        presentationOwner: { pluginId, contributionId: agentId, generationId: lease.occurrenceId, invocationId: 'muse-admitted-open' } }),
       protocols: createPublicAcpRuntimeProtocols({ pluginId, agentId, signal, isCurrent: lease.isCurrent,
         services, models: sessionServices.models, interactions: currentSessionUi.interactions,
       }),
@@ -295,7 +311,7 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
     const untouchedRegistry = untouched;
     const boundPublications = publications;
     return {
-      runtime, context, host, permissionHandler, custodyMutations, storedWrites, boundaryRequests, connectionStates,
+      runtime, context, host, permissionHandler, custodyMutations, storedWrites, usageWrites, boundaryRequests, connectionStates,
       publications: boundPublications,
       admission: { untouchedHasMuse, untouchedLaunchCount, selectedFactoryLaunchCount },
       get launchCount() { return launched; },

@@ -7,7 +7,10 @@ import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testin
 import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { readMuseRecord } from './events.js';
 
-it.each(['inline', 'snapshot'] as const)('resumes the same native conversation, restores %s history and pending state, then continues once', async historyMode => {
+it.each([
+  { historyMode: 'inline', permissionIntent: null },
+  { historyMode: 'snapshot', permissionIntent: 'read-only' },
+] as const)('resumes the same native conversation with $historyMode history and $permissionIntent permissions, then continues once', async ({ historyMode, permissionIntent }) => {
   const providerSessionId = '00000000-0000-7000-8000-000000000002';
   const after = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/isolated-resume-fork-after.json', import.meta.url), 'utf8')));
   const pending = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/isolated-empty-pending.json', import.meta.url), 'utf8')));
@@ -44,6 +47,10 @@ it.each(['inline', 'snapshot'] as const)('resumes the same native conversation, 
     const session = await fixture.open({ kind: 'resume', sessionId: 'host-admitted-muse',
       cwd: process.cwd(), providerSessionId, strictNativeResumeIdentity: true,
       launchEnvironment: { values: { MUSE_TEST_SELECTED_HOME: '/selected/native/home' }, unset: [] },
+      ...(permissionIntent ? { configuration: {
+        model: { value: null, updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: permissionIntent, updatedAtMs: 0 }, options: {},
+      } } : {}),
     });
     session.watch(events.recordRuntimeEvent);
     expect(session.runtimeDescriptorV1).toMatchObject({ v: 1, agentId: 'muse', agent: { providerSessionId } });
@@ -71,6 +78,8 @@ it.each(['inline', 'snapshot'] as const)('resumes the same native conversation, 
     expect(audit.commandTargets.filter(target => target.method === 'session/resume' || target.method === 'turn/start'))
       .toMatchObject([{ sessionId: providerSessionId }, { sessionId: providerSessionId }]);
     expect(audit.selectedHome).toBe('/selected/native/home');
+    expect(audit.commandTargets.find(command => command.method === 'session/resume')?.permissionProfile)
+      .toBe(permissionIntent === 'read-only' ? ':read-only' : undefined);
   } finally {
     events.dispose();
     await fixture.dispose();

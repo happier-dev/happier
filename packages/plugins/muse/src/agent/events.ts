@@ -48,7 +48,7 @@ export function createMuseEventProjection<SessionId extends string | undefined =
   const childItems = new Map<string, NativeChild>();
   let expectedCompaction: { request: AgentSessionCompactRequest; itemId?: string } | undefined;
 
-  function publish(content: EventContent) {
+  function publish(content: EventContent | Omit<Extract<AgentSessionRuntimeEvent, { kind: 'catalog-changed' }>, 'sequence' | 'sessionId' | 'emittedAtMs'>) {
     if (disposed) return;
     if (content.kind === 'runtime-ended') {
       // Settle pending input custody before the host closes its event stream.
@@ -377,6 +377,12 @@ export function createMuseEventProjection<SessionId extends string | undefined =
   function observe(message: Readonly<{ method: string; params?: JsonValue }>) {
     if (disposed) return;
     const params = readMuseRecord(message.params);
+    if (message.method === 'skill/changed') {
+      if (options.sessionId !== undefined && typeof params.sessionId === 'string' && params.sessionId === nativeSessionId) {
+        publish({ kind: 'catalog-changed', catalog: 'skills' });
+      }
+      return;
+    }
     if (message.method === 'session/statusChanged') {
       if (params.sessionId === nativeSessionId) activity(params.status);
       return;

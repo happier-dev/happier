@@ -6,6 +6,7 @@ import type { ComposerSuggestionTrigger } from '@/components/autocomplete/compos
 import type { PluginContributedActionDescriptor } from '@/components/plugins/actions/pluginContributedActionController';
 import type { SkillComposerSource } from '@/sync/domains/skills/skillComposerGroups';
 import { resolveSessionComposerSuggestions } from './sessionComposerSuggestions';
+import { useSessionSelector } from '@/sync/store/hooks';
 
 /** Keep each active query tied to the native source and declared references it actually consumes. */
 export function useSessionComposerSuggestions(options: Readonly<{
@@ -18,6 +19,8 @@ export function useSessionComposerSuggestions(options: Readonly<{
     compactionAvailability?: AgentSessionCompactionAvailabilityV1;
 }>): Readonly<Record<ComposerSuggestionTrigger, ActiveSuggestionsHandler>> {
     const { sessionId, kinds, composerReferenceHost, actionController, skillSource, compaction, compactionAvailability } = options;
+    const nativeSkillChange = useSessionSelector(sessionId, undefined,
+        session => kinds.includes('skill') ? session?.agentState?.nativeCatalogChangesV1?.skills : undefined);
     const references = React.useMemo(() => composerReferenceHost && kinds.includes('composerReference')
         ? listCurrentComposerReferences(composerReferenceHost.projection) : [], [composerReferenceHost, kinds]);
     const atHost = references.some(({ presentation }) => presentation.triggers.includes('@')) ? composerReferenceHost : null;
@@ -28,7 +31,7 @@ export function useSessionComposerSuggestions(options: Readonly<{
     }), [sessionId, kinds, atHost]);
     const skill = React.useCallback<ActiveSuggestionsHandler>((query, signal, onUpdate) => resolveSessionComposerSuggestions(sessionId, query, {
         kinds, signal, onUpdate, composerReferenceHost: skillHost, skillSource,
-    }), [sessionId, kinds, skillHost, skillSource]);
+    }), [sessionId, kinds, skillHost, skillSource, nativeSkillChange]);
     const slash = React.useCallback<ActiveSuggestionsHandler>((query, signal, onUpdate) => resolveSessionComposerSuggestions(sessionId, query, {
         kinds, signal, onUpdate, composerReferenceHost: slashHost, contributedActions: actionController.listSlashCommands(),
         compaction,

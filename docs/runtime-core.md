@@ -4,6 +4,13 @@ The host owns the executable Session and turn lifecycle. An Agent plugin supplie
 
 This page describes **0.3 development source**, not a shipped release or a completed live-validation gate. It is the standing architecture reference; approved plans remain the execution contract for their assigned work.
 
+Native skill changes use the strict `catalog-changed` Session runtime event with
+`catalog: 'skills'`. The host publishes a content-free observation token in
+`agentState.nativeCatalogChangesV1.skills`. The existing Session catalog reader
+records the observed token with its snapshot; an open skill query refreshes when
+that token changes. Closed queries do no catalog work. Finite Execution Runs have
+no Session catalog consumer and do not publish this event.
+
 Native permission requests use the existing Session permission occurrence. A runtime
 publishes `nativeChoices` with its requirement identity, readable offered labels,
 scopes and canonical response payloads. Clients answer with `nativeChoice`
@@ -881,6 +888,17 @@ Loaded-daemon replay requires the orchestrator's next authorized reload.
 
 ## Native Agent seam
 
+Native skill changes use the strict `catalog-changed` runtime event with
+`catalog: 'skills'`. The existing native Session publication owner records one
+content-free `agentState.nativeCatalogChangesV1.skills` token from its runtime
+incarnation and admitted event sequence, within that publisher's current lifetime.
+The UI's existing skill catalog owner compares this opaque token with the local
+snapshot observation when skills are demanded; an open skill query refreshes on
+change, while a closed composer performs no catalog read. This unreleased 0.3
+contract moves Protocol, SDK, host and UI readers together in the current epoch;
+absent observations preserve existing snapshots. It adds no background reader,
+second catalog store, timer or retry.
+
 In 0.3 development source, the terminal host owns native exit observations.
 Borrowed foreground launches keep their qualified IPC producer. Independently
 created Herdr hosts with a direct native invocation capture a positive PID and
@@ -1209,10 +1227,11 @@ binding reads consume that proof and the existing binding cancellation, tracked
 PID ownership and Account-scope lifetime; they do not repeat the Run-authority
 RPC. End/close releases the binding. Recovering a released binding is a new
 admission and never replays a model request.
-Review host Action provenance and grant caller references instead read the
-daemon's current registry through the authenticated tracked-runner service;
-they do not turn a retained executable declaration into current write authority.
-Review comment signing and sending await the existing current-source checks.
+Review host Action admission and new grant caller references read the daemon's
+current registry through the authenticated tracked-runner service. Once approved,
+review comments retain that admitted subject and its exact prepared operands;
+signing and sending preserve the Account, body and machine-installation proof
+checks without comparing plugin source or policy again.
 Session and Run bridge lifecycle notifications likewise dispatch through the
 existing daemon contribution service, selecting the current registry for each
 event. Child-event metadata does not replace the issuing parent Session's
@@ -1838,7 +1857,18 @@ A consequence: an agent or automation that keeps sending to a Session can resume
 it after a person stopped it. Everything that is not a new send stays held:
 daemon restart and respawn, machine reconnect, unattended pending activation,
 connected-service continuations, Session Follow occurrences, returned answers and
-Runs started by automation, such as the memory worker's hint Runs. The Resume owner
+Runs started by automation. The memory worker's hint Runs never target a Session
+at all: `runMemoryHintsExecutionRun` starts them in the daemon-owned detached
+scope (`execution.run.start` with `sessionId: null`), so a hint never resumes an
+inactive Session or spawns its runner. The prompt carries the transcript text and
+`commitHint` writes the result to the Session; the hint cursor advances only on a
+committed shard, and a failed Run uses the per-Session hint failure backoff. The
+runner comes from `hints.summarizerRunner` through the background task runner
+owner (below): Auto or the person's explicit runner. Nothing ready throws
+`LlmTaskRunnerUnavailableError` before any Run starts, and the hint pass backs off
+as for any failed Run. The indexer reads the Session's own Agent from the same
+Session fetch that opens its transcript and passes it with the hint, so Auto keeps
+the text on that Agent (the default Agent when metadata names none). The Resume owner
 treats a request that names no authority as automatic, so only a named person's
 Resume, or a new send, crosses a hold. Stop keeps the opposite default on purpose:
 a Stop with no authority still records the hold.
@@ -4373,6 +4403,57 @@ Chat and isolated-commit runtimes share their controller occurrence, while a
 resumed controller receives a new identity. Stop, replacement and settlement
 retire the proof. OAuth request-auth issuance still requires the exact current
 Run occurrence and parent Session through the existing broker check.
+
+### Background task runner selection (0.3 development)
+
+Memory hints, the commit message, the diff summary and the replay summary each
+store one runner choice: **Auto**, or an explicit runner
+(`LlmTaskRunnerChoiceV1` in
+[`llmTaskRunnerConfigV1.ts`](../packages/protocol/src/llm/tasks/llmTaskRunnerConfigV1.ts)).
+An explicit runner names the Agent and model (`ProviderBoundModelRef`, native or
+through a Provider connection), the connected-service route, config options such
+as effort, and the permission level.
+
+One owner decides what runs:
+[`resolveLlmTaskRunnerV1`](../packages/protocol/src/llm/tasks/llmTaskRunnerSelection.ts).
+Tasks only declare their needs in `LLM_TASK_DECLARATIONS_V1`: structured output,
+allowed permission levels (the first is the default), whether the prompt carries
+Session text, and the cost tiers Auto may use.
+
+- An explicit choice always wins and is never swapped for another Agent. Its
+  permission level is kept to the task's allowed levels; the commit message is
+  always `no_tools`.
+- Auto reads what is ready on the executing machine: enabled Agents that are
+  signed in or connected through a service, with their offered models. Task
+  runs and the pickers' "Auto — currently" read use the same reader
+  ([`llmTaskRunner.ts`](../apps/cli/src/agent/executionRuns/tasks/llmTaskRunner.ts)).
+- Every one of these tasks sends Session or repository text to a model, so Auto
+  stays on one Agent: the Session's own Agent, or the default Agent
+  (`DEFAULT_AGENT_ID`) when there is no Session or its Agent is unknown. It never
+  moves the text to another provider. Within that Agent it skips models the task
+  can't use and takes the lowest tagged cost tier, catalog order on ties. An
+  untagged model is never assumed cheap: with no tagged model Auto uses the
+  Agent's catalog `default`, else its first model. Memory hints read the
+  Session's Agent from the same Session fetch that opens its transcript.
+- Cost tiers are provider facts on the model descriptor (`costTier`). A
+  provider's low tier is its cheap, fast tier. Codex tags its live model list by
+  model family in its own plugin.
+- Nothing fits: a typed `LLM_TASK_RUNNER_UNAVAILABLE` failure naming the one
+  Agent Auto could use, with `no_ready_agent` or `no_matching_model`. It goes to
+  the task's existing failure path; nothing else is tried.
+
+Pickers show what Auto would pick through `agents.models.list` with purpose
+`llm_task_runner`, which runs the same owner on the executing machine.
+
+The commit message stores its choice in the Account setting
+`scmCommitMessageGeneratorRunnerV1` (null is Auto). The 0.2 Agent id
+`scmCommitMessageGeneratorBackendId` is read once at the settings parse boundary
+(`backfillLegacyTargetKeyedAccountSettings`): empty or the old `claude` default
+stays Auto, any other Agent becomes an explicit runner on its default model.
+Writers no longer write the old key. The UI generator
+([`commitMessageGenerator.ts`](../apps/ui/sources/scm/operations/commitMessageGenerator.ts))
+resolves Auto on the machine that runs the commit message (the workspace's, or
+the Session's), then starts `execution.run.start` with that runner.
 
 ## Execution Run recovery and observation
 

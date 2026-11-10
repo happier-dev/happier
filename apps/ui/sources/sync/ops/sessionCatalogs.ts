@@ -192,11 +192,19 @@ function applyCatalogSnapshots(
 
 const catalogReads = createScopedResolutionSingleFlight<void>();
 
+function hasCurrentSkillSnapshot(metadata: unknown, nativeChangeToken: string | undefined): boolean {
+    if (!hasCatalogSnapshot(metadata, 'sessionSkillCatalogV1')) return false;
+    if (!nativeChangeToken) return true;
+    return isRecord(metadata) && isRecord(metadata.sessionSkillCatalogV1)
+        && metadata.sessionSkillCatalogV1.observedNativeChangeToken === nativeChangeToken;
+}
+
 function readSessionCatalogTargetKey(sessionId: string): string {
     const inactive = isInactiveSession(sessionId);
     const machine = inactive ? readMachineControlTargetForSession(sessionId) : null;
     return JSON.stringify([resolvePreferredServerIdForSessionId(sessionId), sessionId,
-        inactive, readSessionCwd(sessionId), machine?.machineId, machine?.basePath]);
+        inactive, readSessionCwd(sessionId), machine?.machineId, machine?.basePath,
+        storage.getState().sessions[sessionId]?.agentState?.nativeCatalogChangesV1?.skills]);
 }
 
 export async function ensureSessionSuggestionCatalogs(
@@ -207,10 +215,11 @@ export async function ensureSessionSuggestionCatalogs(
     if (options?.signal?.aborted) return;
     const session = storage.getState().sessions[sessionId];
     const metadata = session ? readSessionOwnerMetadataView(session) : null;
+    const nativeChangeToken = session?.agentState?.nativeCatalogChangesV1?.skills;
     const shouldLoadVendorPlugins = request.vendorPlugins === true
         && !hasCatalogSnapshot(metadata, 'sessionVendorPluginCatalogV1');
     const shouldLoadSkills = request.skills === true
-        && !hasCatalogSnapshot(metadata, 'sessionSkillCatalogV1');
+        && !hasCurrentSkillSnapshot(metadata, nativeChangeToken);
 
     if (!shouldLoadVendorPlugins && !shouldLoadSkills) return;
 
@@ -231,7 +240,8 @@ export async function ensureSessionSuggestionCatalogs(
         const currentMetadata = current ? readSessionOwnerMetadataView(current) : null;
         applyCatalogSnapshots(sessionId, {
             ...(vendorPluginCatalog && !hasCatalogSnapshot(currentMetadata, 'sessionVendorPluginCatalogV1') ? { vendorPluginCatalog } : {}),
-            ...(skillCatalog && !hasCatalogSnapshot(currentMetadata, 'sessionSkillCatalogV1') ? { skillCatalog } : {}),
+            ...(skillCatalog && !hasCurrentSkillSnapshot(currentMetadata, nativeChangeToken)
+                ? { skillCatalog: { ...skillCatalog, ...(nativeChangeToken ? { observedNativeChangeToken: nativeChangeToken } : {}) } } : {}),
         });
     };
     try {

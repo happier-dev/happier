@@ -168,7 +168,15 @@ export const AgentSessionConnectedAccountIdentityObservedEventV1Schema = lazyZod
   observedAtMs: SafeIntegerSchema,
 }));
 
+export const AgentSessionCatalogChangedEventV1Schema = lazyZodSchema(() => z.strictObject({
+  ...EventBaseSchema.shape,
+  kind: z.literal('catalog-changed'),
+  catalog: z.literal('skills'),
+}));
+export type AgentSessionCatalogChangedEventV1 = z.infer<typeof AgentSessionCatalogChangedEventV1Schema>;
+
 const LifecycleSchemas = [
+  AgentSessionCatalogChangedEventV1Schema,
   AgentSessionConnectedAccountIdentityObservedEventV1Schema,
   lazyZodSchema(() => z.strictObject({
     ...EventBaseSchema.shape,

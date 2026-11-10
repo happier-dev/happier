@@ -1,4 +1,5 @@
 import type {
+  AgentSessionRuntimeEvent,
   AgentSessionActiveInputBinding,
   AgentSessionActiveInputStatus,
   AgentSessionHostServices,
@@ -25,6 +26,7 @@ export type NativeAgentSessionPublications = Readonly<{
   modelsSource: AgentSessionModelsSource;
   modesSource: AgentSessionModesSource;
   readActiveInputBinding(): AgentSessionActiveInputBinding | null;
+  observeCatalogChange(event: Extract<AgentSessionRuntimeEvent, { kind: 'catalog-changed' }>, runtimeIncarnationId: string): void;
   dispose(): void;
 }>;
 
@@ -220,6 +222,12 @@ export function createNativeAgentSessionPublications(params: Readonly<{
       }),
       activeInput,
     }),
+    observeCatalogChange(event: Extract<AgentSessionRuntimeEvent, { kind: 'catalog-changed' }>, runtimeIncarnationId: string) {
+      if (!isAvailable() || !params.session) return;
+      updateAgentStateBestEffort(params.session, state => ({ ...state,
+        nativeCatalogChangesV1: { skills: `${runtimeIncarnationId}:${event.sequence}` },
+      }), `[${params.agentId}]`, 'native_agent_catalog_change');
+    },
     modelsSource: modelPublication.source,
     modesSource: modePublication.source,
     readActiveInputBinding: () => isAvailable() ? activeInputBinding : null,

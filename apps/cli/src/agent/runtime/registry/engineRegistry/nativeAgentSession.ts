@@ -2634,6 +2634,7 @@ export function createNativeAgentSessionOperations(
                 },
             }).catch(error => { logger.debug('[NativeAgentSession] Config catalog publication failed', error); });
         }
+        if (event.kind === 'catalog-changed') publications?.observeCatalogChange(event, runtimeIncarnationId);
         if (event.kind === 'available-commands') {
             const details = normalizeAvailableCommands(event.commands);
             providerNativeCommandNames = new Set(details.map((detail) => detail.command));

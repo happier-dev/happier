@@ -5,7 +5,7 @@ import type {
   TerminalHostHandle,
 } from '@happier-dev/agents';
 import type { AgentTerminalLaunchPlan, AgentTerminalLaunchRequest } from './surfaces.js';
-import type { AgentSessionIdleCompactionPreferenceV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
+import type { AgentSessionCatalogChangedEventV1, AgentSessionIdleCompactionPreferenceV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentUsageObservedPayloadV1 } from '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1';
 export type { AgentSessionIdleCompactionPreferenceV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
 
@@ -233,6 +233,7 @@ export type AgentSessionRuntimeEvent =
       providerSessionId: string;
       nativeSessionLogPath?: string;
     }>
+  | Readonly<AgentSessionCatalogChangedEventV1>
   | Readonly<{
       sequence: number;
       sessionId: string;

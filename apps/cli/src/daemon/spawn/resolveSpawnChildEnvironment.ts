@@ -39,7 +39,6 @@ import { dispatchDaemonSpawnHookEvent } from '@/plugins/runtime/hooks/execution/
 import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from './spawnExplicitEnvKeysMarker';
 import type { ConnectedServicesMaterializationDiagnostic } from '@/daemon/connectedServices/materialization/materializer';
 import {
-  resolveQualifiedRequestAuthPurposeBindingsFromSnapshot,
   type AgentSpawnQualifiedPurposeBindingSnapshot,
 } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { buildMissingAgentCliCommandErrorMessage } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
@@ -812,9 +811,8 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     }
     agentCliLaunchSpec = validation.launchSpec;
     const agentIdentity = params.pluginRuntimeRegistry?.contributes.agentDefinitionsById.get(resolvedAgentId)?.identity;
-    const hasConnectedAccountRequestAuth = agentIdentity && resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(
-      params.connectedServiceAuth?.qualifiedPurposeBindingSnapshot ?? null,
-    ).some(({ purpose }) => purpose.consumer.pluginId === agentIdentity.pluginId
+    const hasConnectedAccountAuth = agentIdentity && params.connectedServiceAuth?.qualifiedPurposeBindingSnapshot
+      ?.bindings.some(({ purpose }) => purpose.consumer.pluginId === agentIdentity.pluginId
       && purpose.consumer.localId === agentIdentity.localId);
     const acceptedTeamBinding = params.acceptedTeamCredentialBinding;
     const retainedModel = readSessionModelSelectionV2FromMetadata(params.existingSessionMetadata);
@@ -843,9 +841,10 @@ async function resolveSpawnChildEnvironmentImpl(params: {
         || (acceptedTeamBinding.deliveryMode === 'vendor-native' && acceptedTeamBinding.nativeDelivery)));
     // The admitted Provider route owns credential transport. External bindings
     // materialize above; managed bindings materialize after Session admission.
-    // Qualified Connected Account request-auth also owns its transport; none
-    // of these routes require the Agent's unrelated native sign-in.
-    const auth = !agentCliLaunchSpec || params.providerBindingContext || hasConnectedAccountRequestAuth || hasAcceptedTeamPinnedInference
+    // Selected Connected Accounts have already passed purpose admission and
+    // materialization, including native files/environment and request auth.
+    // Their credential authority supersedes an unrelated ambient sign-in probe.
+    const auth = !agentCliLaunchSpec || params.providerBindingContext || hasConnectedAccountAuth || hasAcceptedTeamPinnedInference
       ? null
       : await detectNativeAgentCliAuthStatus({
         agentId: resolvedAgentId,

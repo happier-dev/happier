@@ -3,6 +3,12 @@ import { z } from 'zod/mini';
 
 import { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from '../../strings/opaqueIdentifier.js';
 
+/** Content-free native change observations; absence means no notification was observed. */
+export const SessionNativeCatalogChangesV1Schema = lazyZodSchema(() => z.strictObject({
+  skills: NonBlankOpaqueIdentifierSchema,
+}));
+export type SessionNativeCatalogChangesV1 = z.output<typeof SessionNativeCatalogChangesV1Schema>;
+
 const NonEmptyStringSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 
 const legacyVendorSkillBackends = {

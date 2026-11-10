@@ -86,7 +86,7 @@ export type MuseMspProcessAudit = Readonly<{
     /** Fixture-only native inputs, never a production diagnostic/log carrier. */
     turnInputs: readonly (readonly JsonValue[])[];
     commandTargets: readonly Readonly<{ method: string; commandId: string; sessionId?: string; providerId?: string;
-        modelId?: string; reasoningEffort?: string; turnId?: string; expectedTurnId?: string; lastTurnId?: string }>[];
+        modelId?: string; permissionProfile?: string; reasoningEffort?: string; turnId?: string; expectedTurnId?: string; lastTurnId?: string }>[];
     modelSelections: readonly Readonly<{ providerId?: string | null; modelId?: string }>[];
     modelListSessionIds: readonly (string | null)[];
     viewPages: readonly Readonly<{ sessionId: string | null; cursor: string | null }>[];
@@ -303,7 +303,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         if (message.params?.commandId) {
             commands.push(message.params.commandId);
             const target = { method: message.method, commandId: message.params.commandId };
-            for (const key of ['sessionId', 'providerId', 'modelId', 'reasoningEffort', 'turnId', 'expectedTurnId']) {
+            for (const key of ['sessionId', 'providerId', 'modelId', 'permissionProfile', 'reasoningEffort', 'turnId', 'expectedTurnId']) {
                 if (typeof message.params[key] === 'string') target[key] = message.params[key];
             }
             if (typeof message.params.model?.modelId === 'string') target.modelId = message.params.model.modelId;

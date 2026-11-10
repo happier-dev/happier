@@ -1,7 +1,7 @@
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { canonicalAbsolutePathsEqual } from '@happier-dev/plugin-sdk/fs';
 import { classifyJsonRpcSubmissionFailure } from '@happier-dev/plugin-sdk/exec/protocol-clients';
-import type { AgentRuntime, AgentSessionCatalogControl, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext,
+import type { AgentRuntime, AgentSessionCatalogControl, AgentSessionConfigurationUpdate, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext,
   AgentSessionHostServices, AgentSessionCompactResult, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeJsonValueSchema, createExecutionRunHostBackendFromConversationRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { ACTIVITY_SESSION_SYSTEM_RECORD_KINDS, SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE,
@@ -14,6 +14,14 @@ import { openMuseMsp, type MuseMsp } from './msp.js';
 import { createMuseInteractions } from './interactions.js';
 import { museNativeSkillCatalogItem, readMuseNativeSkills, resolveMuseTurnInput } from './inputs.js';
 import { readMuseHistoryItems, replayMusePagedHistory } from './externalSessions.js';
+import { reconcileMuseHistoryNotification } from './historyRecovery.js';
+import { recordMuseUsageObservation } from './accountUsage.js';
+
+function musePermissionProfile(configuration: AgentSessionConfigurationUpdate | undefined) {
+  const intent = configuration?.permissionIntent.value;
+  if (intent && intent !== 'default' && intent !== 'read-only') return undefined;
+  return intent === 'read-only' || configuration?.workspaceWrites === 'deny' ? ':read-only' : ':ask-me';
+}
 
 async function openMuseConversation<SessionId extends string | undefined>(
   request: AgentSessionOpenRequest | AgentExecutionRunOpenRequest,
@@ -44,9 +52,10 @@ async function openMuseConversation<SessionId extends string | undefined>(
     message: 'Native Muse fork cannot apply the selected MCP startup configuration.' });
   // MSP has no tool-filter or per-tool policy field. Preserve the host's
   // selection by refusing shapes that cannot be represented before any effect.
-  if (selectedMcp.some(([, server]) => server.enabledTools !== undefined)
+  if (request.configuration?.allowedTools !== undefined || request.configuration?.unlistedTools !== undefined
+    || selectedMcp.some(([, server]) => server.enabledTools !== undefined)
     || Object.keys(request.mcpToolPolicy ?? {}).length) {
-    throw new PluginError({ code: 'unsupported', message: 'Native Muse cannot enforce the selected MCP tool filter or policy.' });
+    throw new PluginError({ code: 'unsupported', message: 'Native Muse cannot enforce the selected tool filter or policy.' });
   }
   const nativeMcpServers = Object.fromEntries(selectedMcp.map(([name, server]) => [name, {
     transport: 'stdio', command: server.command,
@@ -55,8 +64,10 @@ async function openMuseConversation<SessionId extends string | undefined>(
     mode: request.mcpServersStrictMode === false ? 'optional' : 'required',
   }]));
   const nativeMcpConfig: Readonly<Record<string, JsonValue>> = selectedMcp.length ? { config: { mcpServers: nativeMcpServers } } : {};
-  const intent = request.configuration?.permissionIntent.value;
-  if ((intent && intent !== 'default') || request.configuration?.workspaceWrites === 'deny') {
+  const permissionProfile = musePermissionProfile(request.configuration);
+  // MSP 1.4.14 admits profiles at start/resume; fork inherits its source profile
+  // and has no profile override. Never widen a requested read-only fork.
+  if (!permissionProfile || (request.kind === 'fork' && permissionProfile === ':read-only')) {
     throw new PluginError({ code: 'unsupported', message: 'The requested permission intent has no characterized native Muse mapping.' });
   }
   if (request.configuration?.mode.value) throw new PluginError({ code: 'unsupported', message: 'Native Muse behavior modes are unavailable.' });
@@ -130,6 +141,13 @@ async function openMuseConversation<SessionId extends string | undefined>(
       ...(selectedMcp.length ? { requestedCapabilities: ['sessionMcp'] } : {}) } },
     onRequest: interactions.onRequest,
     async onNotification(message) {
+      if (message.method === 'usage/changed' && sessionServices && sessionId) {
+        await recordMuseUsageObservation({ params: message.params, accountUsage: sessionServices.accountUsage,
+          sessionId, env: request.launchEnvironment?.values, signal: context.signal, logger: context.services.logger });
+      }
+      if (catalogSessionId) await reconcileMuseHistoryNotification(message, {
+        msp, nativeSessionId: catalogSessionId, projection, context,
+      });
       if (!interactions.observe(message)) await projection.observe(message);
       if (catalogSessionId) catalogSource?.observeConfiguration(message, catalogSessionId);
       if (message.method === 'session/closed') end('connectionLost');
@@ -158,9 +176,12 @@ async function openMuseConversation<SessionId extends string | undefined>(
         ...(request.source.target ? { cutPoint: request.source.target.providerCheckpoint } : {}),
         excludeItems: false }, { signal: context.signal })
       : request.kind === 'resume'
-      ? msp.command('session/resume', { sessionId: resumeId!, excludeItems: false, ...nativeMcpConfig }, { signal: context.signal })
+      ? msp.command('session/resume', { sessionId: resumeId!, excludeItems: false,
+        // Omission retains native authority when no read-only constraint was selected.
+        ...(permissionProfile === ':read-only' ? { permissionProfile } : {}),
+        ...nativeMcpConfig }, { signal: context.signal })
       : msp.command('session/start', { workspaceRoot: request.cwd,
-        approvalMode: 'promptUnmatched', permissionProfile: ':ask-me',
+        approvalMode: 'promptUnmatched', permissionProfile,
         ...nativeMcpConfig,
         ...(selected.status === 'selected' ? { providerId: selected.providerId, modelId: selected.modelId } : {}),
       }, { signal: context.signal })));
@@ -253,8 +274,10 @@ async function openMuseConversation<SessionId extends string | undefined>(
     const updateConfiguration: NonNullable<AgentSessionRuntime['updateConfiguration']> = async (configuration, options) => {
       const unsupported = { status: 'unsupported' as const,
         diagnostic: { code: 'unsupported', severity: 'error' as const } };
-      if (configuration.mode.value || (configuration.permissionIntent.value && configuration.permissionIntent.value !== 'default')
-        || configuration.workspaceWrites === 'deny' || configuration.allowedTools !== undefined
+      // There is no characterized native in-place profile control. Reapplying
+      // the admitted profile may still change independently supported model options.
+      if (configuration.mode.value || musePermissionProfile(configuration) !== permissionProfile
+        || configuration.allowedTools !== undefined
         || configuration.unlistedTools !== undefined || configuration.providerBinding !== undefined
         || configuration.mcpToolPolicy !== undefined
         || Object.keys(configuration.options).some(id => id !== 'reasoning_effort')) return unsupported;

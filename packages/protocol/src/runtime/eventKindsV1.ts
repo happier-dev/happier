@@ -6,6 +6,7 @@ export const AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 = Object.freeze([
   'provider-session-id',
   'connected-account-identity-observed',
   'available-commands',
+  'catalog-changed',
   'config-options',
   'provider-continuation-registered',
   'provider-continuation-released',
