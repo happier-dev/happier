@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/plugin-sdk/errors';
 import { createKimiConnectedAccountRuntime } from './runtime.js';
 
 function store(initial: Record<string, string> = {}) {
@@ -58,6 +59,25 @@ describe('Kimi connected service', () => {
     const ctx = { ...context(store({ accessToken: 'fake-b', credentialKind: 'oauth', apiBase: 'https://api.kimi.ai/coding/v1', deviceId: 'fake-install' })), services: {} } as Parameters<ConnectedAccountRuntime['materialize']>[1];
     expect(await runtime.materialize({ kind: 'httpHeaders', origin: 'https://api.kimi.ai', headerNames: ['Authorization', 'X-Msh-Device-Id'] }, ctx)).toMatchObject({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fake-b', 'X-Msh-Device-Id': 'fake-install' } });
     await expect(runtime.materialize({ kind: 'httpHeaders', origin: 'https://api.kimi.com', headerNames: ['Authorization'] }, ctx)).rejects.toThrow();
+  });
+  it.each([
+    { status: 503, limitCategory: 'capacity', retryable: true },
+    { status: 401, limitCategory: 'auth_invalid', retryable: false },
+    { status: 429, limitCategory: 'rate_limit', retryable: true },
+  ])('preserves a failed model request as provider evidence ($status)', async row => {
+    const runtime = createKimiConnectedAccountRuntime();
+    const ctx = { ...context(store({ accessToken: 'fake-selected', apiBase: 'https://api.kimi.ai/coding/v1' })),
+      services: { http: { async request(input: { url: string }) {
+        return { status: row.status, headers: {}, finalUrl: input.url,
+          body: new TextEncoder().encode('fake-private-vendor-body') };
+      } } },
+    } as Parameters<ConnectedAccountRuntime['materialize']>[1];
+    const error = await runtime.materialize({ kind: 'files', fileIds: ['config.toml'] }, ctx).catch(error => error);
+    expect(error).toMatchObject({ code: 'provider_unavailable', retryable: row.retryable,
+      details: { httpStatus: row.status, limitCategory: row.limitCategory } });
+    expect(readUnexpectedActionErrorDiagnosticV1(error)).toMatchObject({ httpStatus: row.status });
+    expect(JSON.stringify(error)).not.toContain('fake-private-vendor-body');
+    expect(JSON.stringify(error)).not.toContain('fake-selected');
   });
   it.each([{ status: 403, error: 'policy_refusal', result: 'outcomeUnknown' }, { status: 400, error: 'invalid_grant', result: 'reconnectRequired' }, { status: 429, error: 'rate_limited', result: 'outcomeUnknown' }])('uses terminal grant evidence for refresh ($status $error)', async row => {
     const runtime = createKimiConnectedAccountRuntime();

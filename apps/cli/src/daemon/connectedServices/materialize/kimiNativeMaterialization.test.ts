@@ -311,9 +311,17 @@ describe('selected Kimi native Account through the spawn materializer', () => {
       await completeThroughNativeFactory(first, root, 'session');
       await completeThroughNativeFactory(second, root, 'finite');
 
-      await expect(launch('failed', 503)).rejects.toMatchObject({ code: 'model_selection_required' });
+      await expect(launch('failed', 503)).rejects.toMatchObject({ code: 'provider_unavailable', retryable: true,
+        response: { status: 503 }, details: { httpStatus: 503, limitCategory: 'capacity' } });
+      await expect(launch('auth-failed', 401)).rejects.toMatchObject({ code: 'provider_unavailable', retryable: false,
+        response: { status: 401 }, details: { httpStatus: 401, limitCategory: 'auth_invalid' } });
+      await expect(launch('throttled', 429)).rejects.toMatchObject({ code: 'provider_unavailable', retryable: true,
+        response: { status: 429 }, details: { httpStatus: 429, limitCategory: 'rate_limit' } });
       await expect(launch('invalid-default', 200, 'not-in-selected-catalog')).rejects.toMatchObject({ code: 'model_selection_required' });
-      for (const accountId of ['failed', 'invalid-default']) {
+      expect(networkRequests.slice(2)).toEqual(['failed', 'auth-failed', 'throttled', 'invalid-default'].map(accountId => ({
+        url: 'https://api.kimi.ai/coding/v1/models', authorization: `Bearer fake-access-${accountId}`,
+      })));
+      for (const accountId of ['failed', 'auth-failed', 'throttled', 'invalid-default']) {
         const failedRoot = resolveConnectedServiceMaterializedRootDir({ baseDir: join(root, 'materialized'),
           agentId: 'kimi', materializationKey: `kimi-${accountId}` });
         await expect(lstat(failedRoot)).rejects.toMatchObject({ code: 'ENOENT' });

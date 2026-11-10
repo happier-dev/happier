@@ -1,4 +1,5 @@
 import {
+  classifyProviderLimitEvidence,
   parseConnectedAccountTokenEndpointFailure,
   requestDeviceGrantStep,
   type ConnectedAccountAuthenticationContext,
@@ -8,6 +9,8 @@ import {
   type ConnectedAccountMaterialization,
   type ConnectedAccountMaterializationRequest,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { isPermanentRequestStatus } from '@happier-dev/plugin-sdk/http';
 import { z } from 'zod';
 import { fetchKimiQuota } from './quota.js';
 
@@ -57,7 +60,13 @@ export async function materializeKimiCredentials(request: ConnectedAccountMateri
     if (!request.fileIds.includes('config.toml')) return { kind: 'files', files: {} };
     const response = await context.services.http.request({ url: `${apiBase}/models`, method: 'GET', redirect: 'error',
       headers: { Authorization: `Bearer ${token}`, ...(deviceId ? { 'X-Msh-Device-Id': deviceId } : {}) } }, { signal: options?.signal ?? context.signal });
-    if (response.status !== 200) throw Object.assign(new Error('Kimi account models are unavailable'), { code: 'model_selection_required' });
+    if (response.status !== 200) {
+      const failure = classifyProviderLimitEvidence({ status: response.status });
+      throw Object.assign(new PluginError({ code: 'provider_unavailable', message: 'Kimi account models are unavailable',
+        retryable: !isPermanentRequestStatus(response.status),
+        details: { httpStatus: response.status, limitCategory: failure.category },
+      }), { response: { status: response.status } });
+    }
     const { materializeKimiConfig } = await import('./nativeConfig.js');
     return { kind: 'files', files: { 'config.toml': await materializeKimiConfig({
       modelResponse: JSON.parse(new TextDecoder().decode(response.body)), apiBase, accessToken: token,
