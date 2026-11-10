@@ -1,7 +1,6 @@
-import { PLUGIN_PACKAGE_PREFIX } from '../bundledPluginMembership.ts';
-
 /**
- * Plugin-to-plugin imports stay source-owned; only host workspaces supply dist.
+ * Public workspace exports, including producer Plugin declarations, share one
+ * canonical dependency closure. esbuild includes only the imported modules.
  * @param {readonly Readonly<{packageName: string, srcDir: string}>[]} bundles
  * @returns {Readonly<Record<string, string>>}
  */
@@ -9,7 +8,6 @@ export function selectCanonicalRuntimeWorkspacePackageRoots(bundles) {
   /** @type {Record<string, string>} */
   const roots = {};
   for (const bundle of bundles) {
-    if (bundle.packageName.startsWith(PLUGIN_PACKAGE_PREFIX)) continue;
     if (Object.hasOwn(roots, bundle.packageName)) {
       throw new Error(`Duplicate canonical workspace package root for '${bundle.packageName}'`);
     }

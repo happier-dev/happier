@@ -2555,10 +2555,9 @@ export function resolveGeneratorPackagedRuntimePreparation(
 
 /**
  * Runtime staging consumes current host workspace outputs, but always builds a
- * Plugin from its authored source entry. Even after package preparation has
- * refreshed plugin `dist`, resolving plugin-to-plugin source imports through a
- * package output or installed `node_modules` copy would mix ownership domains;
- * the existing first-party resolver must fail closed for those imports.
+ * Plugin from its authored source entry. Public producer Plugin exports use
+ * the same canonical workspace outputs as host dependencies, so declaration
+ * imports enter the consumer bundle without activating the producer Plugin.
  */
 function createCanonicalWorkspacePackageRootsReader(
   repoRoot: string,

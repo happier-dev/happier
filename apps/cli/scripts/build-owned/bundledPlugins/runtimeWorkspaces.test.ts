@@ -9,7 +9,8 @@ import { ensureWorkspacePackagesBuiltByName } from '../../../../../scripts/works
 import { stagePluginDaemonRuntime } from '../../../src/plugins/authoring/bundleDaemonRuntime';
 import { prepareCanonicalRuntimeWorkspacePackages } from './runtimeWorkspaces.mjs';
 
-it('stages new workspace exports after an earlier build and staging, and reuses unchanged output', async () => {
+it.each(['attention', 'plugins-attention'])('stages fresh %s exports and reuses unchanged output', async (packageId) => {
+  const packageName = `@happier-dev/${packageId}`;
   const root = await mkdtemp(join(tmpdir(), 'happier-artifact-dist-freshness-'));
   onTestFinished(() => rm(root, { recursive: true, force: true }));
   const workspace = join(root, 'packages/attention');
@@ -24,7 +25,7 @@ it('stages new workspace exports after an earlier build and staging, and reuses 
     await writeFile(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
   }
   await writeFile(join(workspace, 'package.json'), JSON.stringify({
-    name: '@happier-dev/attention', type: 'module', scripts: { build: 'fixture compiler' },
+    name: packageName, type: 'module', scripts: { build: 'fixture compiler' },
     exports: { './v1': './dist/index.js' },
   }));
   await writeFile(join(workspace, 'tsconfig.json'), '{}\n');
@@ -33,7 +34,7 @@ it('stages new workspace exports after an earlier build and staging, and reuses 
     name: '@happier-dev/plugins-consumer', type: 'module',
   }));
   const entry = join(plugin, 'src/index.ts');
-  const consumer = (name: string) => `import { ${name} } from '@happier-dev/attention/v1';\nexport function activate() { return ${name}; }\n`;
+  const consumer = (name: string) => `import { ${name} } from '${packageName}/v1';\nexport function activate() { return ${name}; }\n`;
   await writeFile(entry, consumer('prior'));
   const builds: string[] = [];
   const buildOptions = {
@@ -49,9 +50,9 @@ it('stages new workspace exports after an earlier build and staging, and reuses 
       },
     },
   };
-  const bundles = [{ packageName: '@happier-dev/attention', srcDir: workspace },
+  const bundles = [{ packageName, srcDir: workspace },
     { packageName: '@happier-dev/plugins-consumer', srcDir: plugin }];
-  await ensureWorkspacePackagesBuiltByName(root, ['@happier-dev/attention'], buildOptions);
+  await ensureWorkspacePackagesBuiltByName(root, [packageName], buildOptions);
   const stage = async (name: string, roots: Readonly<Record<string, string>>) => {
     const stagedRootPath = join(root, name);
     await mkdir(stagedRootPath);
@@ -72,4 +73,34 @@ it('stages new workspace exports after an earlier build and staging, and reuses 
   await prepareCanonicalRuntimeWorkspacePackages(root, bundles, buildOptions);
   assert.equal(await stage('unchanged', freshRoots), 2);
   assert.equal(builds.length, 2, 'unchanged workspace outputs must remain reusable');
+});
+
+it('bundles a producer plugin public declaration export into its runtime consumer', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-plugin-declaration-closure-'));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const producer = join(root, 'producer');
+  const consumer = join(root, 'consumer');
+  await mkdir(join(producer, 'dist'), { recursive: true });
+  await mkdir(consumer);
+  await writeFile(join(producer, 'package.json'), JSON.stringify({
+    name: '@happier-dev/plugins-producer', type: 'module',
+    exports: { '.': './dist/index.js', './connected-account-service': './dist/service.js' },
+  }));
+  await writeFile(join(producer, 'dist/index.js'), 'throw new Error("Producer activation must not be imported");');
+  await writeFile(join(producer, 'dist/service.js'), 'export const SERVICE = Object.freeze({ pluginId: "producer", localId: "account" });');
+  await writeFile(join(consumer, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-consumer', type: 'module' }));
+  await writeFile(join(consumer, 'sibling.ts'), `export { SERVICE } from '@happier-dev/plugins-producer/connected-account-service';`);
+  await writeFile(join(consumer, 'entry.ts'), `import { SERVICE } from '@happier-dev/plugins-producer/connected-account-service';
+import { SERVICE as sibling } from './sibling';
+export function activate() { if (SERVICE !== sibling) throw new Error('Duplicate declaration instance'); return SERVICE; }`);
+  const { selectCanonicalRuntimeWorkspacePackageRoots } = await import('./runtimeWorkspaces.mjs');
+  const stagedRootPath = join(root, 'staged');
+  await mkdir(stagedRootPath);
+  await stagePluginDaemonRuntime({ sourceRootPath: consumer, sourceEntryPath: join(consumer, 'entry.ts'),
+    stagedRootPath, daemonEntrypoint: './runtime.mjs',
+    canonicalWorkspacePackageRoots: selectCanonicalRuntimeWorkspacePackageRoots([
+      { packageName: '@happier-dev/plugins-producer', srcDir: producer },
+    ]) });
+  const runtime = await import(pathToFileURL(join(stagedRootPath, 'runtime.mjs')).href);
+  assert.deepEqual(runtime.activate(), { pluginId: 'producer', localId: 'account' });
 });
