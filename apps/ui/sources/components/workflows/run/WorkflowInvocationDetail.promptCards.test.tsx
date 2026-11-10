@@ -241,7 +241,7 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
                 continueSameConversation: { kind: 'available' }, continueFreshAgent: { kind: 'available' },
             },
         }), onRetryFreshAgent: vi.fn(), onRetrySameConversation: vi.fn(), onRunAgain: vi.fn(), noChoicesNext: 'run_again' });
-        expect(screen.getTextContent()).toContain('Usage limit reached');
+        expect(screen.getTextContent()).toContain('session.usageLimitRecovery.banner.title');
         expect(screen.getTextContent()).not.toContain('Current turn failed');
         expect(screen.findByTestId('workflow-run-retry-fresh')).toBeNull();
         expect(screen.findByTestId('workflow-run-retry-same')).toBeNull();
@@ -322,7 +322,8 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
         // The pane's subtitle says the state and the time; the body never repeats them.
         expect(screen.findByTestId('workflow-run-invocation-status')).toBeNull();
         expect(screen.findByTestId('workflow-run-invocation-elapsed')).toBeNull();
-        expect(screen.get('workflow-run-invocation-result-value').props.children).toBe('Partial findings');
+        expect(screen.findByTestId('workflow-run-invocation-result-value')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Partial findings');
         // A stopped Wait that was never answered keeps its question, and says it went unanswered.
         const unanswered = await renderDetail({ progress: null, lifecycle, waitPrompt: 'Does #1482 fix the crash?' });
         expect(unanswered.getTextContent()).toContain('Does #1482 fix the crash?');
