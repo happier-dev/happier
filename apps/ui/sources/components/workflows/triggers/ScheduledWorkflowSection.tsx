@@ -39,7 +39,10 @@ const ACCOUNT_SCHEDULES = { scope: 'account_all' } as const;
  * know whether anything is scheduled before it draws its own heading (the Session's "Writes here")
  * reads it here and hands the result to `ScheduledWorkflowRows`.
  */
-export function useScheduledWorkflowRows(sessionId?: string): {
+export function useScheduledWorkflowRows(sessionId?: string, options?: Readonly<{
+    /** A host that may not draw the group (another list scope) issues no read: it is `ready` with no rows. */
+    enabled?: boolean;
+}>): {
     available: boolean;
     rows: readonly ScheduledWorkflowRow[];
     status: ReturnType<typeof useWorkflowTriggerSets>['status'];
@@ -48,7 +51,7 @@ export function useScheduledWorkflowRows(sessionId?: string): {
 } {
     const scope = useActiveServerAccountScope();
     const access = useWorkflowsDestinationAccess();
-    const available = access.kind === 'workflows';
+    const available = access.kind === 'workflows' && options?.enabled !== false;
     const read = useWorkflowTriggerSets(scope && available ? ACCOUNT_SCHEDULES : null);
     const previous = React.useRef<readonly ScheduledWorkflowRow[]>([]);
     const rows = React.useMemo(() => {
@@ -59,7 +62,10 @@ export function useScheduledWorkflowRows(sessionId?: string): {
         });
         return previous.current;
     }, [read.sets, sessionId]);
-    return { available, rows, status: read.status, retry: read.retry, serverId: scope?.serverId ?? null };
+    const serverId = scope?.serverId ?? null;
+    // One identity per answer: a host that hands the read to a retained list cell redraws it only on change.
+    return React.useMemo(() => ({ available, rows, status: read.status, retry: read.retry, serverId }),
+        [available, rows, read.status, read.retry, serverId]);
 }
 
 export type ScheduledWorkflowRowsRead = ReturnType<typeof useScheduledWorkflowRows>;
@@ -109,9 +115,14 @@ export const ScheduledWorkflowSection = React.memo(function ScheduledWorkflowSec
 });
 
 /**
- * Drawn only once it has rows or a failure to say: the group may not exist, so a read in flight holds
- * no placeholder that would later collapse and move every session row under it.
+ * Whether the group is drawn: once it has rows or a failure to say. The group may not exist, so a read in
+ * flight holds no placeholder that would later collapse and move every session row under it; the session
+ * list instead presents once this read first settles (`SessionListVirtualizedContent`).
  */
+export function isScheduledWorkflowGroupShown(read: ScheduledWorkflowRowsRead): boolean {
+    return read.available && (read.rows.length > 0 || read.status === 'failed');
+}
+
 export const ScheduledWorkflowGroup = React.memo(function ScheduledWorkflowGroup(props: Readonly<{
     read: ScheduledWorkflowRowsRead; density?: SessionListRowDensity;
 }>) {
@@ -124,7 +135,7 @@ export const ScheduledWorkflowGroup = React.memo(function ScheduledWorkflowGroup
         () => (hidden > 0 ? { ...read, rows: read.rows.slice(0, COLLAPSED_SCHEDULE_ROWS) } : read),
         [hidden, read],
     );
-    if (!read.available || (read.rows.length === 0 && read.status !== 'failed')) return null;
+    if (!isScheduledWorkflowGroupShown(read)) return null;
     return <SessionListGroup testID="workflows-column:group:scheduled" countTestID="workflows-column:group:scheduled-count"
         title={t('sessionWork.scheduled.title')} count={read.rows.length}
         footer={<ScheduledWorkflowReadFailure read={read} />}>

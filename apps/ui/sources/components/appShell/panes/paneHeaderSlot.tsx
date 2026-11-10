@@ -25,7 +25,12 @@ export type PaneHeaderLineSegment =
      * A fact led by its glyph (the task a conversation hangs off, "Invited only" behind a lock). With
      * `onPress` it is a way back to that thing: a link that keeps the line's quiet tone until pointed at.
      */
-    | Readonly<{ text: string; icon: IconName; onPress?: () => void; accessibilityLabel?: string; testID?: string }>;
+    | Readonly<{ text: string; icon: IconName; onPress?: () => void; accessibilityLabel?: string; testID?: string }>
+    /**
+     * A fact that has not arrived yet, in words as long as it will be ("0 changed"): the header keeps its room,
+     * unseen and unannounced, so the fact fills it instead of wrapping the line when it lands.
+     */
+    | Readonly<{ text: string; pending: true }>;
 
 /**
  * The pane header's live line: what this pane is about right now, in real nouns joined by " · "

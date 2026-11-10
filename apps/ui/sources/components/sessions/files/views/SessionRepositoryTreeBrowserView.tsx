@@ -8,7 +8,7 @@ import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/se
 import { useSessionMachineName } from '@/components/sessions/agents/presentation/useSessionMachineName';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useSessionMachineDisplayIdentity } from '@/components/sessions/model/useSessionMachineTarget';
-import { useCheckoutReachability, type CheckoutMachineScope } from '@/components/workspaces/reachability/checkoutReachability';
+import { describeCheckoutUnreachable, useCheckoutReachability, type CheckoutMachineScope } from '@/components/workspaces/reachability/checkoutReachability';
 import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
 import { storage, useSessionDirectoryKind, useSessionProjectScmSnapshot, useSessionRepositoryTreeExpandedPaths, useSessionServerId, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -54,7 +54,7 @@ function UnavailableSessionFiles(props: Readonly<{
     // The + keeps its place; its rows give the pane's one reason (lab FB1o).
     const reachability = useCheckoutReachability(props.machineScope);
     const unavailableReason = reachability.unreachable
-        ? t('projects.checkouts.notAnswering', { machine: reachability.machineName })
+        ? describeCheckoutUnreachable(reachability)
         : t('files.pane.workspaceUnavailableReason');
     const action = React.useMemo(() => <RepositoryTreeCreateMenu createEnabled={false} uploadEnabled={false} isWeb={Platform.OS === 'web'}
         uploadDestinationLabel={props.rootLabel} unavailableReason={unavailableReason} onSelect={ignoreUnavailableAction} />,
@@ -107,8 +107,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     }), [props.sessionId, serverId]);
     // The pane header's live line: where this Session works ("folder on machine"), then how many files changed (the Git pane's words).
     const rootPath = scope?.rootPath ?? (displayIdentity.basePath || null);
-    const repoChangedCount = React.useMemo(() => scmSnapshot?.repo.isRepo ? selectScmChangedFiles(scmSnapshot).length : null, [scmSnapshot]);
-    const chrome = useRepositoryTreePaneChrome({ rootPath: withoutFolder ? null : rootPath, machineName, changedCount: repoChangedCount });
+    const chrome = useRepositoryTreePaneChrome({ rootPath: withoutFolder ? null : rootPath, machineName, scmSnapshot });
     // A changed file's row menu ends with Discard all changes in this file, the Session's own discard (lab FB1k).
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
     const commitStrategy = useSetting('scmCommitStrategy');

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { normalizeVirtualizedListProps } from '../normalizeVirtualizedListProps';
 import type { VirtualizedListProps } from '../virtualizedListTypes';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 type Row = { id: string };
 
@@ -15,6 +16,13 @@ function baseProps(overrides: Partial<VirtualizedListProps<Row>> = {}): Virtuali
 }
 
 describe('normalizeVirtualizedListProps', () => {
+    it('places a row nobody sized at the collection row height, not the backend default slot', () => {
+        // Legend places an unmeasured cell at its estimate; its own default (100) spaced arriving rows far apart.
+        expect(normalizeVirtualizedListProps(baseProps()).virtualization.estimatedItemSize)
+            .toBe(HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight);
+        expect(normalizeVirtualizedListProps(baseProps({ estimatedItemSize: 60 })).virtualization.estimatedItemSize).toBe(60);
+    });
+
     it('splits shared props from virtualization-only tuning', () => {
         const getItemType = () => 'row';
         const { shared, virtualization } = normalizeVirtualizedListProps(baseProps({

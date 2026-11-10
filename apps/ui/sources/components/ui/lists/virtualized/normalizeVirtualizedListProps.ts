@@ -10,6 +10,7 @@ import type {
     VirtualizedListProps,
     VirtualizedListRenderItem,
 } from './virtualizedListTypes';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * Props shared verbatim by every backend. Names come from the FlatList family,
@@ -139,7 +140,9 @@ export function normalizeVirtualizedListProps<T>(
             extraData: props.extraData,
         },
         virtualization: {
-            estimatedItemSize: props.estimatedItemSize,
+            // Where a backend places a cell it has not measured yet. Legend's own default (100) left arriving
+            // rows in tall empty slots until they measured; a list that knows its rows passes their size.
+            estimatedItemSize: props.estimatedItemSize ?? HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight,
             getItemType: props.getItemType,
             getFixedItemSize: props.getFixedItemSize,
             getEstimatedItemSize: props.getEstimatedItemSize,

@@ -56,12 +56,27 @@ export const CodeCommitStrip = React.memo(function CodeCommitStrip(
     return (
       <View
         testID={`${testID}-${state.kind}`}
-        style={[styles.strip, styles.stripLine]}
+        style={[styles.strip, styles.stripLine, phone ? styles.stripPhoneFloor : null]}
       >
         <Icon name="info" size={16} color={theme.colors.text.secondary} />
         <Text numberOfLines={1} style={styles.quiet}>
           {label}
         </Text>
+      </View>
+    );
+  }
+
+  if (state.kind === 'pending' && phone) {
+    // The card's two lines in placeholder: who on the first, the subject beneath on its own line.
+    return (
+      <View testID={`${testID}-pending`} style={[styles.strip, styles.stripPhone]} aria-busy>
+        <View style={styles.phoneLine}>
+          <HappierSkeletonBlock width={22} height={22} radius={11} color={theme.colors.surface.skeleton} reducedMotion={reducedMotion} />
+          <HappierSkeletonBlock width="40%" height={10} radius={5} color={theme.colors.surface.skeleton} reducedMotion={reducedMotion} />
+        </View>
+        <View style={[styles.subjectPlaceholder, styles.subjectPhone]}>
+          <HappierSkeletonBlock width="55%" height={10} radius={5} color={theme.colors.surface.skeleton} reducedMotion={reducedMotion} />
+        </View>
       </View>
     );
   }
@@ -181,6 +196,18 @@ export const CodeCommitStrip = React.memo(function CodeCommitStrip(
   );
 });
 
+const PHONE_STRIP_PADDING_PX = 10;
+const PHONE_STRIP_LINE_GAP_PX = 2;
+/** The identity line: the 22 pt avatar sets it. */
+const PHONE_IDENTITY_LINE_PX = 22;
+function subjectLineHeightPx(): number {
+  return Number(Typography.variant('meta').lineHeight);
+}
+/** The card's own height on a phone: its padding, the identity line, the gap and the subject line. */
+function phoneStripFloorPx(): number {
+  return PHONE_STRIP_PADDING_PX * 2 + PHONE_IDENTITY_LINE_PX + PHONE_STRIP_LINE_GAP_PX + subjectLineHeightPx();
+}
+
 const styles = StyleSheet.create((theme) => ({
   strip: {
     minHeight: 46,
@@ -195,12 +222,21 @@ const styles = StyleSheet.create((theme) => ({
   stripLine: {
     gap: 8,
   },
+  // A phone's strip is the commit card's two lines in every state (pending, none, unavailable, the card).
   stripPhone: {
     flexDirection: 'column',
     alignItems: 'stretch',
     justifyContent: 'center',
-    gap: 2,
-    paddingVertical: 10,
+    gap: PHONE_STRIP_LINE_GAP_PX,
+    paddingVertical: PHONE_STRIP_PADDING_PX,
+    minHeight: phoneStripFloorPx(),
+  },
+  stripPhoneFloor: {
+    minHeight: phoneStripFloorPx(),
+  },
+  subjectPlaceholder: {
+    height: subjectLineHeightPx(),
+    justifyContent: 'center',
   },
   phoneLine: {
     flexDirection: 'row',

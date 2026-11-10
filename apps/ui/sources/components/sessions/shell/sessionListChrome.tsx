@@ -3,7 +3,7 @@ import { View, Platform, Image as ReactNativeImage, type StyleProp, type ViewPro
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
-import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
+import { RecoveryKeyReminderBanner, useRecoveryKeyReminderBannerShown } from '@/components/account/RecoveryKeyReminderBanner';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
@@ -399,6 +399,16 @@ export const SessionsListHeader = React.memo(function SessionsListHeader() {
         </View>
     );
 });
+
+/**
+ * Whether {@link SessionsListHeader} draws the reminder, from the reminder's own owner: the list spaces its
+ * first group from this fact on its first frame instead of measuring the header after it painted.
+ */
+export function useSessionsListReminderLeads(): boolean {
+    const wideLayout = useIsTablet();
+    const bannerShown = useRecoveryKeyReminderBannerShown();
+    return !wideLayout && bannerShown;
+}
 
 
 export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: Readonly<{

@@ -22,6 +22,9 @@ import { t } from '@/text';
 
 type TreeShow = 'all' | 'changed';
 
+/** A digit-wide blank (U+2007 FIGURE SPACE) standing in for a count that has not arrived. */
+const PENDING_COUNT_SLOT = '\u2007';
+
 export type RepositoryTreeToolbarProps = Readonly<{
   /** Prefix of every control's testID (`repository-tree`, `workspace-repository-tree`). */
   testIDPrefix: string;
@@ -234,9 +237,9 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
               id: 'changed',
               label: t('files.pane.showChanged'),
               testID: `${prefix}-show-changed`,
-              ...(changedCount === null
-                ? {}
-                : { count: formatExactCount(changedCount) }),
+              // Unknown: a one-digit slot (a figure space) holds the count's room, so the count fills it
+              // instead of widening the segment when the snapshot answers.
+              count: changedCount === null ? PENDING_COUNT_SLOT : formatExactCount(changedCount),
             },
           ],
     [changedCount, prefix],

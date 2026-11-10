@@ -141,9 +141,12 @@ export function SurfaceFreshnessLine(props: Readonly<{
             ) : null}
         >
             {/* A line's reason is its whole sentence: it wraps (and its recoveries move beneath it when they no
-                longer fit), never cut to an ellipsis. Only the chip, a single inline phrase, keeps one line. */}
-            {chip || parts.asOf === null ? (
-                <Text testID={props.testID ? `${props.testID}-text` : undefined} style={stylesheet.text} numberOfLines={chip ? 1 : undefined}>
+                longer fit), never cut to an ellipsis. The chip and a page header's facts line (`inline`, R139/D23) keep
+                one line, so a reason that changes while reads land never re-flows the header; the whole sentence
+                stays its accessible name. */}
+            {chip || inline || parts.asOf === null ? (
+                <Text testID={props.testID ? `${props.testID}-text` : undefined} style={stylesheet.text}
+                    numberOfLines={chip || inline ? 1 : undefined} accessibilityLabel={inline ? text : undefined}>
                     {renderEmphasis(text, props.emphasis)}
                 </Text>
             ) : (

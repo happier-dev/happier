@@ -18,6 +18,11 @@ import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/pl
  * phone's My work) it is one of the list's rows, so its key, title and dismiss stand on the list's glyph, title
  * and trailing edges (phone-system lab D2); on a page it is a row of its own section.
  */
+/** Whether {@link RecoveryKeyReminderBanner} draws, for a host that spaces what follows it before it paints. */
+export function useRecoveryKeyReminderBannerShown(): boolean {
+    return useRecoveryKeyReminder({ surface: 'banner' }).needed;
+}
+
 export const RecoveryKeyReminderBanner = React.memo((props: Readonly<{
     host?: 'list' | 'page';
 }>) => {

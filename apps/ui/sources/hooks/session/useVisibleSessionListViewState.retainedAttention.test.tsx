@@ -438,8 +438,9 @@ describe('visible session-list retained attention through real state', () => {
                 enabled: true, kind: 'schedule', nextRunAt: now + 120_000, createdAt: now, updatedAt: now,
                 triggerDefinitionEnvelope: null,
                 schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } }] });
-        const scheduledSection = React.createElement(ScheduledWorkflowGroup, { read: { available: true,
-            rows: projectScheduledWorkflowRows([schedule]), status: 'ready', retry: () => {}, serverId } });
+        const scheduledRead = { available: true,
+            rows: projectScheduledWorkflowRows([schedule]), status: 'ready' as const, retry: () => {}, serverId };
+        const scheduledSection = React.createElement(ScheduledWorkflowGroup, { read: scheduledRead });
         route.pathname = '/';
         mountedRowCost.os = 'ios';
         function ComposedList() {
@@ -447,7 +448,7 @@ describe('visible session-list retained attention through real state', () => {
             return React.createElement(SessionListVirtualizedContent, { nodes: state.nodes,
                 rowHeight: state.rowHeight, rowDensity: state.rowDensity, safeAreaBottom: 0,
                 renderItem: state.renderVirtualizedItem, rowExtraData: state.virtualizedRowExtraData,
-                scheduledSection, showReminders: false, onStopScrollEventPropagationOnWeb: () => {} });
+                scheduledSection, scheduledRead, showReminders: false, onStopScrollEventPropagationOnWeb: () => {} });
         }
         const screen = await renderScreen(<InjectedAuthProvider credentials={account!.credentials}>
             <InboxSummaryProvider><AppPaneProvider><CommandPaletteProvider><ComposedList /></CommandPaletteProvider></AppPaneProvider></InboxSummaryProvider>

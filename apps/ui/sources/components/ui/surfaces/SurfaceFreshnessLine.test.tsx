@@ -117,6 +117,19 @@ describe('SurfaceFreshnessLine inline', () => {
     });
 });
 
+describe('SurfaceFreshnessLine inline one line', () => {
+    it('keeps a page header\'s facts line one line tall whatever the reason, the whole sentence still spoken (R139, D23)', async () => {
+        const reason = 'Still reading pull requests and branches, activity, plans and quotas';
+        const screen = await renderScreen(<SurfaceFreshnessLine testID="line" presentation="inline" asOf={Date.now()} reason={reason} busy />);
+        const text = screen.findByTestId('line-text')!;
+        // One text run, clamped to a line: a reason that grows or shrinks while reads land never re-flows the header.
+        expect(text.props.numberOfLines).toBe(1);
+        const spoken = screen.root.findAll(node => typeof node.props?.accessibilityLabel === 'string'
+            && node.props.accessibilityLabel.includes(reason));
+        expect(spoken.length).toBeGreaterThan(0);
+    });
+});
+
 describe('SurfaceFreshnessLine chip', () => {
     it('is an inline status (no strip) whose steady, checking and behind states share the line\'s recovery', async () => {
         const live = await renderScreen(<SurfaceFreshnessLine testID="chip" presentation="chip" signal="live" lead="Sampled while you look" reason="Live" />);

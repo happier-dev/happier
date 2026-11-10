@@ -9,7 +9,8 @@ import type { SessionListStorageFilter } from '@/sync/domains/session/sessionSto
 import { sessionListStyles } from './sessionListStyles';
 import { SessionListDropOverlay } from './drag/SessionListDropOverlay';
 import { SessionListVirtualizedContent } from './sessionListVirtualizedContent';
-import { ScheduledWorkflowSection } from '@/components/workflows/triggers/ScheduledWorkflowSection';
+import { ScheduledWorkflowGroup, useScheduledWorkflowRows } from '@/components/workflows/triggers/ScheduledWorkflowSection';
+import { useSessionsListReminderLeads } from './sessionListChrome';
 import { SessionListSearchChrome } from './search/SessionListSearchChrome';
 import { buildSessionListActiveFilterChips, isSessionListWorkFilterDefault, readSessionListWorkFilterSummary } from './search/SessionListFilterControl';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -367,9 +368,13 @@ function VisibleSessionsListViewContent(
         pathname: props.pathname,
         surfaceOwnership,
     });
-    const scheduledSection = React.useMemo(() => showSessionSections && surfaceOwnership.dataActive
-        && props.filterController.viewContext.kind === 'global' ? <ScheduledWorkflowSection density={viewState.rowDensity} /> : undefined,
-    [showSessionSections, surfaceOwnership.dataActive, props.filterController.viewContext.kind, viewState.rowDensity]);
+    const scheduledApplies = showSessionSections && surfaceOwnership.dataActive
+        && props.filterController.viewContext.kind === 'global';
+    const scheduledRead = useScheduledWorkflowRows(undefined, { enabled: scheduledApplies });
+    const scheduledSection = React.useMemo(() => scheduledApplies
+        ? <ScheduledWorkflowGroup read={scheduledRead} density={viewState.rowDensity} /> : undefined,
+    [scheduledApplies, scheduledRead, viewState.rowDensity]);
+    const reminderLeads = useSessionsListReminderLeads();
     const {
         measureNodeViewportOffset,
         nodeIds,
@@ -606,6 +611,8 @@ function VisibleSessionsListViewContent(
                         showDrafts={showSessionSections}
                         showReminders={props.filterController.displayFilters.show !== 'runs'}
                         scheduledSection={scheduledSection}
+                        scheduledRead={scheduledApplies ? scheduledRead : undefined}
+                        reminderLeads={reminderLeads}
                         layout={layout}
                     />
                 </SyncPerformanceReactProfiler>

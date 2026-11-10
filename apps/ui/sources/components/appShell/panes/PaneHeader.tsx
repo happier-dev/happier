@@ -43,6 +43,17 @@ function readSegmentText(segment: PaneHeaderLineSegment): string {
     return typeof segment === 'string' ? segment : segment.text;
 }
 
+/** A fact that has not arrived: it holds its room on the line and is neither seen nor spoken. */
+function isPendingSegment(segment: PaneHeaderLineSegment): boolean {
+    return typeof segment !== 'string' && 'pending' in segment;
+}
+
+function readSpokenLine(segments: readonly PaneHeaderLineSegment[]): string {
+    return segments.filter(segment => !isPendingSegment(segment)).map(readSegmentText).join(', ');
+}
+
+const PENDING_FACT_STYLE = { opacity: 0 } as const;
+
 /** A phone's large header gives its facts up to two lines; the band keeps one. */
 const LARGE_FACTS_LINES = 2;
 
@@ -84,6 +95,14 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
     const subtitleStyle = [styles.subtitle, large ? styles.largeSubtitle : null];
     // One fact, after the `separator` that joins it to the one before (the band's " · ", or none).
     const renderFact = (segment: PaneHeaderLineSegment, index: number, separator: string): React.ReactNode => {
+        if (isPendingSegment(segment)) {
+            return (
+                <Text key={index} numberOfLines={large ? LARGE_FACTS_LINES : 1} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+                    style={[styles.subtitle, large ? styles.largeSubtitle : null, index === 0 ? null : styles.followingFact, PENDING_FACT_STYLE]}>
+                    {separator}{readSegmentText(segment)}
+                </Text>
+            );
+        }
         if (typeof segment !== 'string' && 'icon' in segment) {
             // A glyph-led fact stays one item: the separator, its glyph, then its words.
             const onPress = segment.onPress;
@@ -149,6 +168,8 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
         // title's edge (files lab FV1p/FV6p). Every item carries its separator in a fixed-width box before it,
         // and the row starts one box to the left under the clip, so a separator that would open a line never shows.
         const items: React.ReactNode[][] = [];
+        // Items that hold a pending fact's room: their separator stays unseen with them.
+        const pendingItems = new Set<number>();
         if (line.leading) items.push([<View key="leading" style={[styles.lineLeading, leadingSeparated ? null : styles.largeLeading]}>{line.leading}</View>]);
         line.segments.forEach((segment, index) => {
             const previous = index === 0 ? null : line.segments[index - 1]!;
@@ -156,7 +177,10 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
             const joined = previous ? isToneSegment(segment) && isToneSegment(previous) : line.leading !== undefined && line.leading !== null && !leadingSeparated;
             const fact = renderFact(segment, index, joined && previous ? NO_BREAK_SPACE : '');
             if (joined && items.length > 0) items[items.length - 1]!.push(fact);
-            else items.push([fact]);
+            else {
+                items.push([fact]);
+                if (isPendingSegment(segment)) pendingItems.add(items.length - 1);
+            }
         });
         // The final fact's own trailing words (who wrote it, a copy control) wrap with that fact, inside the row.
         if (props.lineEnd) items[items.length - 1]!.push(<React.Fragment key="lineEnd">{props.lineEnd}</React.Fragment>);
@@ -165,12 +189,12 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
                 <View
                     testID={`${testID}.subtitle`}
                     accessible={!hasLink && !line.leading}
-                    accessibilityLabel={hasLink || line.leading ? undefined : line.segments.map(readSegmentText).join(', ')}
+                    accessibilityLabel={hasLink || line.leading ? undefined : readSpokenLine(line.segments)}
                     style={[styles.facts, styles.largeFacts, { maxHeight: factsLineHeight * LARGE_FACTS_LINES }]}
                 >
                     <View style={styles.largeFlow}>
                         {items.map((nodes, index) => (
-                            <View key={index} style={styles.largeItem}>
+                            <View key={index} style={[styles.largeItem, pendingItems.has(index) ? PENDING_FACT_STYLE : null]}>
                                 <View style={styles.largeSeparator}>{index === 0 ? null : <Text style={subtitleStyle}>·</Text>}</View>
                                 {nodes}
                             </View>
@@ -195,7 +219,7 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
                     testID={`${testID}.subtitle`}
                     // One spoken line, unless a fact on it is a link of its own to reach.
                     accessible={!hasLink}
-                    accessibilityLabel={hasLink ? undefined : line.segments.map(readSegmentText).join(', ')}
+                    accessibilityLabel={hasLink ? undefined : readSpokenLine(line.segments)}
                     style={[styles.facts, { height: factsLineHeight }]}
                 >
                     {line.segments.map((segment, index) => renderFact(segment, index, bandSeparator(index)))}

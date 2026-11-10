@@ -2506,25 +2506,25 @@ describe('SessionsList (native virtualization)', () => {
 
     it('withdraws Scheduled and Drafts from a coordinator/status filtered list and restores them after reset', async () => {
         const { SessionsListViewWithFilterController } = await import('./SessionsList');
-        const { ScheduledWorkflowSection } = await import('@/components/workflows/triggers/ScheduledWorkflowSection');
+        const { ScheduledWorkflowGroup } = await import('@/components/workflows/triggers/ScheduledWorkflowSection');
         const { NewSessionDraftsSection } = await import('./NewSessionDraftsSection');
         const screen = await renderSessionsList();
         const readController = (): React.ComponentProps<typeof SessionsListViewWithFilterController>['filterController'] => (
             screen.findByType(SessionsListViewWithFilterController).props.filterController
         );
-        expect(screen.findAllByType(ScheduledWorkflowSection)).toHaveLength(1);
+        expect(screen.findAllByType(ScheduledWorkflowGroup)).toHaveLength(1);
         expect(screen.findAllByType(NewSessionDraftsSection)).toHaveLength(1);
         await act(async () => {
             readController().updateFilters(current => ({ ...current, coordinator: 'coordinator', statuses: ['failed'] }));
         });
         await flushHookEffects();
-        expect(screen.findAllByType(ScheduledWorkflowSection)).toHaveLength(0);
+        expect(screen.findAllByType(ScheduledWorkflowGroup)).toHaveLength(0);
         expect(screen.findAllByType(NewSessionDraftsSection)).toHaveLength(0);
         await act(async () => {
             readController().resetFilters();
         });
         await flushHookEffects();
-        expect(screen.findAllByType(ScheduledWorkflowSection)).toHaveLength(1);
+        expect(screen.findAllByType(ScheduledWorkflowGroup)).toHaveLength(1);
         expect(screen.findAllByType(NewSessionDraftsSection)).toHaveLength(1);
     });
 

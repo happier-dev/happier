@@ -110,6 +110,10 @@ type WorkspaceRepositoryTreeListProps = Readonly<{
     /** A second line under the name (a Code folder page on a phone: the entry's latest commit subject). */
     renderRowSubtitle?: ((node: WorkspaceRepositoryTreeNode) => React.ReactNode) | null;
     showInlineLoadingHeader?: boolean;
+    /**
+     * A reload of a root already listed (a refresh): the toolbar's View menu shows it. The first load is the
+     * body's own loading state, so the toolbar keeps its controls as they will stay.
+     */
     onRootLoadingChange?: (loading: boolean) => void;
     /**
      * Changed only (session tabs lab FC): the same tree pruned to the changed files
@@ -293,9 +297,10 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     const rootLoading = changedOnly ? props.scmSnapshot == null : treeRootLoading;
     const rootError = changedOnly ? null : treeRootError;
 
+    const rootRefreshing = rootLoading && rootLoaded;
     React.useEffect(() => {
-        props.onRootLoadingChange?.(rootLoading);
-    }, [props.onRootLoadingChange, rootLoading]);
+        props.onRootLoadingChange?.(rootRefreshing);
+    }, [props.onRootLoadingChange, rootRefreshing]);
 
     const onNodesChange = props.onNodesChange;
     React.useEffect(() => {

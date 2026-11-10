@@ -6,6 +6,8 @@ import type {
   PaneHeaderLineSegment,
 } from '@/components/appShell/panes/paneHeaderSlot';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
+import { selectScmChangedFiles } from '@/scm/scmStatusFiles';
+import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
@@ -21,12 +23,15 @@ export function useRepositoryTreePaneChrome(
     /** Null where the files have no folder of their own to name (a folderless Session). */
     rootPath: string | null;
     machineName: string | null;
-    /** Null while the checkout is not known to be a repository. */
-    changedCount: number | null;
+    /** The checkout's working snapshot; null until it has been read. */
+    scmSnapshot: ScmWorkingSnapshot | null | undefined;
   }>,
 ) {
   const { theme } = useUnistyles();
-  const { rootPath, machineName, changedCount } = input;
+  const { rootPath, machineName, scmSnapshot } = input;
+  // Unknown until read; a folder that is not a repository has no change fact at all.
+  const changedCount = scmSnapshot == null ? 'pending' as const
+    : scmSnapshot.repo.isRepo ? selectScmChangedFiles(scmSnapshot).length : null;
   const paneHeaderLine = React.useMemo((): PaneHeaderLine | null => {
     const folder = leafFolderName(rootPath);
     const place =
@@ -38,7 +43,10 @@ export function useRepositoryTreePaneChrome(
         : (folder ?? machineName);
     if (!place) return null;
     const segments: PaneHeaderLineSegment[] = [place];
-    if (changedCount !== null) {
+    if (changedCount === 'pending') {
+      // The fact's room is kept, so its arrival fills the line instead of wrapping it (and the toolbar under it).
+      segments.push({ text: t('sessionGitPane.header.changed', { count: formatExactCount(0) }), pending: true });
+    } else if (changedCount !== null) {
       segments.push(
         changedCount > 0
           ? t('sessionGitPane.header.changed', {

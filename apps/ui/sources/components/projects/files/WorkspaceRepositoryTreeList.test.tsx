@@ -42,6 +42,7 @@ vi.mock('@/components/workspaces/files/repositoryTree/useScmTreeBadgeIndex', () 
 
 const repositoryTreeBrowserState = vi.hoisted(() => ({
     rootLoading: false,
+    rootLoaded: true,
     liveFileWrites: new Map(),
     arrivedPaths: new Set<string>(),
     rootError: null as string | null,
@@ -56,6 +57,7 @@ const treeBrowserInputs = vi.hoisted(() => ({ current: null as any }));
 vi.mock('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser', () => ({
     useWorkspaceRepositoryTreeBrowser: (input: any) => (treeBrowserInputs.current = input, {
         rootLoading: repositoryTreeBrowserState.rootLoading,
+        rootLoaded: repositoryTreeBrowserState.rootLoaded,
         rootError: repositoryTreeBrowserState.rootError,
         nodes: repositoryTreeBrowserState.nodes,
         liveFileWrites: repositoryTreeBrowserState.liveFileWrites,
@@ -201,6 +203,27 @@ describe('WorkspaceRepositoryTreeList', () => {
         expect(latestFilesystemBrowserProps.current?.rootLoading).toBe(true);
         expect(latestFilesystemBrowserProps.current?.showInlineLoadingHeader).toBe(false);
         expect(screen.findAllByTestId(`repository-tree-row-${toTestIdSafeValue('src')}`).length).toBeGreaterThan(0);
+    });
+
+    it('reports no refresh while the root is listed for the first time: the body says it is loading', async () => {
+        repositoryTreeBrowserState.rootLoading = true;
+        repositoryTreeBrowserState.rootLoaded = false;
+        const onRootLoadingChange = vi.fn();
+        try {
+            await renderScreen(
+                <WorkspaceRepositoryTreeList
+                    theme={theme}
+                    scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
+                    expandedPaths={[]}
+                    onExpandedPathsChange={() => {}}
+                    onOpenFile={() => {}}
+                    onRootLoadingChange={onRootLoadingChange}
+                />,
+            );
+            expect(onRootLoadingChange).not.toHaveBeenCalledWith(true);
+        } finally {
+            repositoryTreeBrowserState.rootLoaded = true;
+        }
     });
 
     it('keeps file browser row plumbing stable when equivalent row actions change identity', async () => {

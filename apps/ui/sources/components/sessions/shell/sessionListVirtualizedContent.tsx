@@ -4,11 +4,14 @@ import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedLi
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { t, type TranslationKey } from '@/text';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { isScheduledWorkflowGroupShown, type ScheduledWorkflowRowsRead } from '@/components/workflows/triggers/ScheduledWorkflowSection';
 
 import { SessionsListHeader } from './sessionListChrome';
 import { NewSessionDraftsSection } from './NewSessionDraftsSection';
 import { SessionListFirstGroupContext } from './SessionListGroup';
 import { SessionListViewEmptyState } from './SessionListViewEmptyState';
+import { SessionListSkeletonRows } from './SessionListSkeletonRows';
 import type { SessionListQueryPresentation } from '@/sync/domains/session/listing/sessionListIndexPresentation';
 import type { SessionListViewContext, SessionListViewFilters } from './search/sessionListViewFilters';
 import { SESSION_LIST_SUPPORTING_SECTIONS_NODE, type SessionListVirtualizedNode } from './sessionListVirtualizedNodes';
@@ -43,29 +46,26 @@ type SessionListSupportingSectionsProps = Readonly<{
     showDrafts?: boolean;
     first: boolean;
     scheduledSection?: React.ReactNode;
+    scheduledShown: boolean;
     viewContext?: SessionListViewContext;
 }>;
 const SessionListSupportingSectionsContext = React.createContext<SessionListSupportingSectionsProps>({
-    rowDensity: 'default', first: false,
+    rowDensity: 'default', first: false, scheduledShown: false,
 });
 
 const SessionListSupportingSections = React.memo(function SessionListSupportingSections() {
     // Legend retains this fixed-key cell when only parent render props change.
     // Transport current slot props here without invalidating any entity cell.
     const props = React.useContext(SessionListSupportingSectionsContext);
-    // The column's first group sits just under its header; whichever leading group draws decides it.
-    const [scheduledShown, setScheduledShown] = React.useState(false);
-    const handleScheduledLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const shown = event.nativeEvent.layout.height > 0;
-        setScheduledShown((previous) => previous === shown ? previous : shown);
-    }, []);
+    // The column's first group sits just under its header; whichever leading group draws decides it,
+    // from the read that draws it rather than from its measured layout.
     return (
         <>
             <SessionListFirstGroupContext.Provider value={props.first}>
-                <View onLayout={handleScheduledLayout}>{props.scheduledSection}</View>
+                {props.scheduledSection}
             </SessionListFirstGroupContext.Provider>
             {props.showDrafts !== false ? (
-                <SessionListFirstGroupContext.Provider value={props.first && !scheduledShown}>
+                <SessionListFirstGroupContext.Provider value={props.first && !props.scheduledShown}>
                     <NewSessionDraftsSection
                         density={props.rowDensity}
                         viewContext={props.viewContext}
@@ -120,6 +120,19 @@ function getSessionListNodeType(node: SessionListVirtualizedNode, rowDensity: Se
     return 'header';
 }
 
+/**
+ * Where Legend places a cell it has not measured yet (a group or rows that arrive after the list first
+ * painted): at the row's own height and the group label's own metrics, so the cell lands where it will
+ * stay instead of in Legend's default 100 pt slot. The supporting cell is often empty, so it reserves nothing.
+ */
+const SESSION_LIST_GROUP_LABEL_ESTIMATE_PX = HAPPIER_COLLECTION_LIST_METRICS.groupLabelPaddingTop
+    + HAPPIER_COLLECTION_LIST_METRICS.groupLabelHeight;
+function estimateSessionListNodeSize(node: SessionListVirtualizedNode, rowHeight: number): number {
+    if (node.kind === 'supporting_sections') return 0;
+    if (node.kind === 'header') return SESSION_LIST_GROUP_LABEL_ESTIMATE_PX;
+    return rowHeight;
+}
+
 export const SessionListVirtualizedContent = React.memo(function SessionListVirtualizedContent(props: Readonly<{
     listRef?: React.Ref<VirtualizedListRef>;
     nodes: ReadonlyArray<SessionListVirtualizedNode>;
@@ -169,6 +182,10 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     showReminders?: boolean;
     /** The global, live Work sidebar alone demands Account upcoming work. */
     scheduledSection?: React.ReactNode;
+    /** The read that draws `scheduledSection`: whether it leads the groups, and the list presents once it first settles. */
+    scheduledRead?: ScheduledWorkflowRowsRead;
+    /** Whether the list header draws the recovery-key reminder (`useSessionsListReminderLeads`). */
+    reminderLeads?: boolean;
     /** The layout these nodes draw; a Projects ↔ Recent choice glides once it commits (web). */
     layout?: SessionListLayoutChoice;
 }>) {
@@ -202,21 +219,20 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             <SessionListFilteredNoResultsMessage message={props.filteredNoResultsMessage} />
         ) : null
     ), [props.filteredNoResultsMessage, props.queryPresentationState]);
-    // Reminders precede every group; Scheduled/Drafts precede only ordinary groups.
-    // Keep the existing measured first-group choice at those actual presentation boundaries.
-    const [leadingShown, setLeadingShown] = React.useState({ reminders: false, sections: false });
-    const handleLeadingLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const shown = event.nativeEvent.layout.height > 0;
-        setLeadingShown((previous) => previous.reminders === shown ? previous : { ...previous, reminders: shown });
-    }, []);
+    // Reminders precede every group; Scheduled/Drafts precede only ordinary groups. The reminder and
+    // Scheduled come from their owners, so the first frame already spaces the groups; Drafts stay measured.
+    const remindersLead = props.showReminders !== false && props.reminderLeads === true;
+    const scheduledRead = props.scheduledRead;
+    // A section handed without its read (a fixed element) is drawn as given.
+    const scheduledShown = scheduledRead ? isScheduledWorkflowGroupShown(scheduledRead) : props.scheduledSection != null;
+    const [draftsShown, setDraftsShown] = React.useState(false);
+    const leadingShown = { reminders: remindersLead, sections: scheduledShown || draftsShown };
     const headerComponent = React.useMemo(() => (
-        <View onLayout={handleLeadingLayout}>
-            {props.showReminders !== false ? <SessionsListHeader /> : null}
-        </View>
-    ), [handleLeadingLayout, props.showReminders]);
+        props.showReminders !== false ? <SessionsListHeader /> : null
+    ), [props.showReminders]);
     const handleSupportingLayout = React.useCallback((event: LayoutChangeEvent) => {
         const sections = event.nativeEvent.layout.height > 0;
-        setLeadingShown(previous => previous.sections === sections ? previous : { ...previous, sections });
+        setDraftsShown(previous => previous === sections ? previous : sections);
     }, []);
     // One element per registration pair: the cell reads its facts from the context below, so a parent
     // render that changed nothing about the cell must hand Legend the same element and redraw nothing.
@@ -256,11 +272,21 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
         (node: SessionListVirtualizedNode) => getSessionListNodeType(node, rowDensity),
         [rowDensity],
     );
+    const rowHeight = props.rowHeight;
+    const getEstimatedNodeSize = React.useCallback(
+        (node: SessionListVirtualizedNode) => estimateSessionListNodeSize(node, rowHeight),
+        [rowHeight],
+    );
     const firstSupportingGroup = props.nodes[0]?.kind === 'supporting_sections' && !leadingShown.reminders;
     const supportingSectionsValue = React.useMemo<SessionListSupportingSectionsProps>(() => ({
-        rowDensity, showDrafts: props.showDrafts, scheduledSection: props.scheduledSection,
+        rowDensity, showDrafts: props.showDrafts, scheduledSection: props.scheduledSection, scheduledShown,
         viewContext: props.viewContext, first: firstSupportingGroup,
-    }), [firstSupportingGroup, props.scheduledSection, props.showDrafts, props.viewContext, rowDensity]);
+    }), [firstSupportingGroup, props.scheduledSection, scheduledShown, props.showDrafts, props.viewContext, rowDensity]);
+    // One presentation per list: until upcoming work first answers, the list's shared loading rows stand in,
+    // so Scheduled never lands above rows already on screen. A later refresh keeps the presented list.
+    const presentedRef = React.useRef(false);
+    if (!(scheduledRead?.available === true && scheduledRead.status === 'loading')) presentedRef.current = true;
+    const awaitingFirstComposition = !presentedRef.current;
     const isWeb = Platform.OS === 'web';
     // Plays the captured glide once the nodes of the chosen layout are committed and laid out.
     React.useLayoutEffect(() => {
@@ -269,6 +295,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
         const frame = requestAnimationFrame(() => playSessionListLayoutFlight(layout));
         return () => cancelAnimationFrame(frame);
     }, [isWeb, props.layout, props.nodes]);
+    if (awaitingFirstComposition) return <SessionListSkeletonRows />;
     return (
         <SessionListSupportingSectionsContext.Provider value={supportingSectionsValue}>
         <SessionListFirstGroupContext.Provider value={!leadingShown.reminders}>
@@ -279,6 +306,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             extraData={props.rowExtraData}
             keyExtractor={sessionListNodeKeyExtractor}
             getItemType={getNodeType as any}
+            getEstimatedItemSize={getEstimatedNodeSize as any}
             contentContainerStyle={contentContainerStyle as any}
             onScroll={props.onScroll}
             onScrollBeginDrag={props.onScrollBeginDrag}
