@@ -40,6 +40,11 @@ it.each(['workers-inspect', 'pages-inspect', 'targets-inspect-v1'])('resolves re
   if (actionId !== 'pages-inspect') {
     expect(fields({ providerEnvironment: { kind: 'script', scriptName: 'worker' } })
       .find(field => field.path === 'triggerUuid')).toMatchObject({ required: true });
+    const script = { kind: 'script', scriptName: 'worker' };
+    expect(fields({ providerEnvironment: script, sourceMethod: 'upload' })
+      .some(field => field.path === 'triggerUuid')).toBe(false);
+    expect(fields({ providerEnvironment: script, sourceMethod: 'gitIntegration' })
+      .find(field => field.path === 'triggerUuid')).toMatchObject({ required: true });
     expect(fields({ providerEnvironment: { kind: 'preview', scriptName: 'worker', previewName: 'feature' } })
       .some(field => field.path === 'triggerUuid')).toBe(false);
     expect(fields({ providerEnvironment: { kind: 'script', scriptName: 'worker' } })

@@ -1,4 +1,4 @@
-import { DeploymentTargetRoleResultV1ProtocolSchema, type DeploymentTargetDeployInputV1,
+import { DeploymentTargetRoleResultV1ProtocolSchema, PluginError, type DeploymentTargetPreparationBaseV1, type DeploymentTargetDeployInputV1,
   type DeploymentTargetRoleFailureV1, type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
 import { isObject } from '../connectedAccounts/probe.js';
 import { observeBuild } from './builds.js';
@@ -8,6 +8,37 @@ import type { PreparedPreview } from './preview.js';
 export type PreviewDeployment = PreparedPreview & Readonly<{ accountId: string; workerTag: string; scriptName: string }>;
 type Observation = Pick<DeploymentTargetDeployInputV1, 'providerDeploymentId'>;
 type Outcome = DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1;
+export type UploadedPreview = Pick<PreviewDeployment, 'accountId' | 'scriptName' | 'previewId'>;
+/** Only Connect's captured native identity selects Preview scope; never fall back to its parent script. */
+export function uploadedPreviewSelection(input: Pick<DeploymentTargetPreparationBaseV1,
+  'providerIdentity' | 'providerEnvironment' | 'preparedNative'>): UploadedPreview | null {
+  if (input.providerEnvironment.kind !== 'preview' || !('scriptName' in input.providerEnvironment)) return null;
+  if (!input.providerIdentity || !input.preparedNative?.previewId) {
+    throw new PluginError({ code: 'deployment_content_unavailable', details: { phase: 'source' } });
+  }
+  return { accountId: input.providerIdentity.providerAccountId, scriptName: input.providerEnvironment.scriptName,
+    previewId: input.preparedNative.previewId };
+}
+export function uploadedPreviewReference(deploymentId: string): string { return `preview-deployment:${deploymentId}`; }
+export function uploadedPreviewDeployment(reference: string | undefined): string | null {
+  return reference?.startsWith('preview-deployment:') && reference.length > 'preview-deployment:'.length
+    ? reference.slice('preview-deployment:'.length) : null;
+}
+export function isUploadedPreviewReference(reference: string | undefined): boolean { return uploadedPreviewDeployment(reference) !== null; }
+
+/** Uploaded native Preview deployments have their own identity, independent of Builds and production versions. */
+export async function observeUploadedPreview(input: Observation, preview: UploadedPreview, context: DeploymentContext): Promise<Outcome> {
+  const deploymentId = uploadedPreviewDeployment(input.providerDeploymentId);
+  if (!input.providerDeploymentId || deploymentId === null) return failure('outcome_unknown', 'observe');
+  const reply = await request(context, preview.accountId,
+    `/workers/workers/${encodeURIComponent(preview.scriptName)}/previews/${encodeURIComponent(preview.previewId)}/deployments/${encodeURIComponent(deploymentId)}`, 'observe');
+  if ('code' in reply) return reply;
+  if (!isObject(reply.value) || reply.value.id !== deploymentId || !Array.isArray(reply.value.urls)) return failure('provider_response_invalid', 'observe');
+  const projected = DeploymentTargetRoleResultV1ProtocolSchema.safeParse({ v: 1,
+    state: reply.value.urls.length > 0 ? 'succeeded' : 'outcome_unknown', providerDeploymentId: input.providerDeploymentId,
+    urls: reply.value.urls, observedAtMs: context.now() });
+  return projected.success ? projected.data : failure('provider_response_invalid', 'observe');
+}
 
 /** Native Preview deployment URLs identify an immutable artifact, unlike the
  * stable Preview alias. Build success alone does not prove code was deployed.

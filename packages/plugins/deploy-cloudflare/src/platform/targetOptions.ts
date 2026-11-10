@@ -180,8 +180,10 @@ export const targetOptionInputHints = { fields: [
   { path: 'preparedNative.projectName', title: 'Pages project name', widget: 'select', inputType: { pluginId, localId: 'target-choice' },
     requiredWhen: { op: 'not', predicate: { op: 'truthy', path: 'providerEnvironment.scriptName' } } },
   { path: 'triggerUuid', title: 'Worker build trigger', widget: 'select', inputType: { pluginId, localId: 'target-choice' },
-    requiredWhen: { op: 'eq', path: 'providerEnvironment.kind', value: 'script' },
-    visibleWhen: { op: 'eq', path: 'providerEnvironment.kind', value: 'script' } },
+    requiredWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.kind', value: 'script' },
+      { op: 'not', predicate: { op: 'eq', path: 'sourceMethod', value: 'upload' } }] },
+    visibleWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.kind', value: 'script' },
+      { op: 'not', predicate: { op: 'eq', path: 'sourceMethod', value: 'upload' } }] } },
 ] } as const;
 export const targetProductSchema = product;
 

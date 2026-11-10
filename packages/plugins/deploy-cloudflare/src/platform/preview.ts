@@ -7,6 +7,17 @@ export type PreviewSelection = Readonly<{ accountId: string; workerTag: string; 
 export type PreparedPreview = Readonly<{ previewId: string; previewName: string; gitBranch: string;
   repositoryAccess: DeploymentTargetRepositoryAccessV1 }>;
 
+/** Both source methods consume the captured native Preview identity. */
+export async function inspectPreviewIdentity(input: Pick<PreviewSelection, 'accountId' | 'scriptName' | 'previewName'>,
+  context: DeploymentContext): Promise<Readonly<{ previewId: string; previewName: string }> | DeploymentTargetRoleFailureV1> {
+  const native = await request(context, input.accountId,
+    `/workers/workers/${encodeURIComponent(input.scriptName)}/previews/${encodeURIComponent(input.previewName)}`, 'link');
+  if ('code' in native) return native;
+  if (!isObject(native.value) || typeof native.value.id !== 'string' || !/^[0-9a-f]{32}$/.test(native.value.id)
+    || native.value.name !== input.previewName) return failure('provider_response_invalid', 'link');
+  return { previewId: native.value.id, previewName: input.previewName };
+}
+
 /** Connect / explicit Check again only. Native Preview GET accepts an encoded
  * name beneath the documented Worker name; Builds uses the distinct Worker tag.
  * https://developers.cloudflare.com/workers/ci-cd/builds/api-reference/
@@ -14,12 +25,9 @@ export type PreparedPreview = Readonly<{ previewId: string; previewName: string;
  * No value-bearing Preview/Base configuration is projected into this result.
  */
 export async function preparePreview(input: PreviewSelection, context: DeploymentContext): Promise<PreparedPreview | DeploymentTargetRoleFailureV1> {
-  const native = await request(context, input.accountId,
-    `/workers/workers/${encodeURIComponent(input.scriptName)}/previews/${encodeURIComponent(input.previewName)}`, 'link');
+  const native = await inspectPreviewIdentity(input, context);
   if ('code' in native) return native;
-  if (!isObject(native.value) || typeof native.value.id !== 'string' || !/^[0-9a-f]{32}$/.test(native.value.id)
-    || native.value.name !== input.previewName) return failure('provider_response_invalid', 'link');
-  const previewId = native.value.id;
+  const previewId = native.previewId;
   const builds = await request(context, input.accountId,
     `/builds/workers/${encodeURIComponent(input.workerTag)}/previews/${encodeURIComponent(previewId)}`, 'link');
   if ('code' in builds) return builds;

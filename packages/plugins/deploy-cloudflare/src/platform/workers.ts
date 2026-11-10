@@ -12,10 +12,15 @@ export type WorkerSelection = Readonly<{ accountId: string; workerTag: string; s
 export type PreparedWorker = Readonly<{ providerIdentity: DeploymentTargetProviderIdentityV1;
   providerEnvironment: Extract<DeploymentTargetProviderEnvironmentV1, { kind: 'script' }>;
   repositoryAccess: DeploymentTargetRepositoryAccessV1; triggerUuid: string }>;
-type WorkerObservation = Pick<DeploymentTargetObserveInputV1, 'providerIdentity' | 'providerEnvironment' | 'providerDeploymentId'>;
+type WorkerObservation = Pick<DeploymentTargetObserveInputV1, 'providerIdentity' | 'providerEnvironment' | 'providerDeploymentId' | 'operation'>;
 type Outcome = DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1;
 type Phase = DeploymentTargetRoleFailureV1['phase'];
 function text(value: unknown): value is string { return typeof value === 'string' && value.trim().length > 0; }
+
+/** Git and Upload preparation name the same selected provider Environment. */
+export function workerEnvironmentKey(scriptName: string, previewName?: string): string {
+  return previewName === undefined ? `script:${scriptName}` : `preview:${JSON.stringify([scriptName, previewName])}`;
+}
 
 /** Connect / explicit Check again only. The selection carries the actual native
  * script tag and name from provider options, never a tag derived from its name.
@@ -37,7 +42,7 @@ export async function prepareWorker(input: WorkerSelection, context: WorkerConte
       && input.repository.kind === 'github' && input.repository.deployment === 'https://github.com'
       && `${repository.provider_account_name}/${repository.repo_name}`.toLowerCase() === input.repository.repository.toLowerCase();
   }
-  return { providerIdentity: { providerAccountId: input.accountId, providerResourceId: input.workerTag, providerEnvironment: `script:${input.scriptName}` },
+  return { providerIdentity: { providerAccountId: input.accountId, providerResourceId: input.workerTag, providerEnvironment: workerEnvironmentKey(input.scriptName) },
     providerEnvironment: { kind: 'script', scriptName: input.scriptName }, triggerUuid: input.triggerUuid,
     repositoryAccess: { status: ready ? 'ready' : 'needsGitAccess', repository: input.repository } };
 }
@@ -48,34 +53,24 @@ export async function prepareWorker(input: WorkerSelection, context: WorkerConte
  * https://developers.cloudflare.com/api/resources/workers_builds/methods/get_builds_by_version/
  */
 async function serving(input: WorkerObservation, buildId: string, context: WorkerContext): Promise<boolean> {
-  if (input.providerEnvironment.kind !== 'script') return false;
-  const reply = await request(context, input.providerIdentity.providerAccountId,
-    `/workers/scripts/${encodeURIComponent(input.providerEnvironment.scriptName)}/deployments`, 'observe');
-  // Unavailable serving evidence cannot turn an already successful build into
-  // a failed workload. Canonical HTTP owner exceptions still propagate unchanged.
-  if ('code' in reply) return false;
-  if (!isObject(reply.value) || !Array.isArray(reply.value.deployments)) return false;
-  const latest: unknown = reply.value.deployments[0];
-  if (!isObject(latest) || !Array.isArray(latest.versions) || latest.versions.length === 0) return false;
-  const active: string[] = [];
-  for (const version of latest.versions) {
-    if (!isObject(version) || !text(version.version_id) || typeof version.percentage !== 'number'
-      || !Number.isFinite(version.percentage) || version.percentage < 0 || version.percentage > 100) return false;
-    if (version.percentage > 0) active.push(version.version_id);
-  }
-  // Cloudflare owns total traffic allocation; do not re-enforce it with a
-  // competing floating-point sum that rejects valid decimal percentages.
-  if (active.length === 0) return false;
+  const active = await servingWorkerVersions(input, context);
+  if ('code' in active || active.length === 0) return false;
   // One native version per documented query. Map keys are unspecified: consume
   // associated values, without inventing a unique build→version relationship.
-  for (const versionId of active) {
-    const associated = await request(context, input.providerIdentity.providerAccountId,
-      `/builds/builds?${new URLSearchParams({ version_ids: versionId })}`, 'observe');
-    if ('code' in associated) return false;
-    if (!isObject(associated.value) || !isObject(associated.value.builds)
-      || !Object.values(associated.value.builds).some(value => isObject(value) && value.build_uuid === buildId)) return false;
+  for (const { versionId } of active) {
+    if (await workerVersionHasBuild(input.providerIdentity.providerAccountId, versionId, buildId, context) !== true) return false;
   }
   return true;
+}
+
+/** The API map's keys are unspecified; a single-version query proves this association. */
+export async function workerVersionHasBuild(accountId: string, versionId: string, buildId: string, context: WorkerContext)
+  : Promise<boolean | DeploymentTargetRoleFailureV1> {
+  const associated = await request(context, accountId,
+    `/builds/builds?${new URLSearchParams({ version_ids: versionId })}`, 'observe');
+  if ('code' in associated) return associated;
+  if (!isObject(associated.value) || !isObject(associated.value.builds)) return failure('provider_response_invalid', 'observe');
+  return Object.values(associated.value.builds).some(value => isObject(value) && value.build_uuid === buildId);
 }
 
 async function observation(value: unknown, input: WorkerObservation, context: WorkerContext, phase: Phase, expectedId?: string): Promise<Outcome> {
@@ -118,4 +113,55 @@ export async function cancelWorker(input: WorkerObservation, context: WorkerCont
     `/builds/builds/${encodeURIComponent(input.providerDeploymentId)}/cancel`, 'cancel', 'PUT');
   if ('code' in reply) return reply;
   return observation(reply.value, input, context, 'cancel', input.providerDeploymentId);
+}
+
+
+async function servingWorkerVersions(input: WorkerObservation, context: WorkerContext)
+  : Promise<readonly Readonly<{ versionId: string; percentage: number }>[] | DeploymentTargetRoleFailureV1> {
+  if (input.providerEnvironment.kind !== 'script') return failure('unsupported_action', 'admission');
+  const reply = await request(context, input.providerIdentity.providerAccountId,
+    `/workers/scripts/${encodeURIComponent(input.providerEnvironment.scriptName)}/deployments`, 'observe');
+  if ('code' in reply) return reply;
+  if (!isObject(reply.value) || !Array.isArray(reply.value.deployments)) return failure('provider_response_invalid', 'observe');
+  const latest: unknown = reply.value.deployments[0];
+  if (!isObject(latest) || !Array.isArray(latest.versions)) return failure('provider_response_invalid', 'observe');
+  const active: { versionId: string; percentage: number }[] = [];
+  for (const version of latest.versions) {
+    if (!isObject(version) || !text(version.version_id) || typeof version.percentage !== 'number'
+      || !Number.isFinite(version.percentage) || version.percentage < 0 || version.percentage > 100) {
+      return failure('provider_response_invalid', 'observe');
+    }
+    if (version.percentage > 0) active.push({ versionId: version.version_id, percentage: version.percentage });
+  }
+  // Cloudflare owns total allocation, including valid decimal percentages.
+  return active;
+}
+
+/** Workers Builds and uploaded Worker versions have independent native UUID
+ * spaces. This tagged reference keeps their identity in the existing receipt
+ * field and selects the correct native observer without another state store.
+ */
+function canonicalWorkerVersionId(versionId: string): string {
+  // Legacy script PUT returns the compact UUID; deployments expose its hyphenated
+  // form. Match pinned Wrangler's parseNonHyphenedUuid for new and retained receipts.
+  return versionId.replace(/^([0-9a-f]{8})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{12})$/i, '$1-$2-$3-$4-$5');
+}
+export function uploadedWorkerReference(versionId: string): string { return `version:${canonicalWorkerVersionId(versionId)}`; }
+export function uploadedWorkerVersion(reference: string | undefined): string | null {
+  return reference?.startsWith('version:') && reference.length > 'version:'.length ? canonicalWorkerVersionId(reference.slice('version:'.length)) : null;
+}
+export function isUploadedWorkerReference(reference: string | undefined): boolean { return uploadedWorkerVersion(reference) !== null; }
+
+/** A finite serving read is driven by the existing operation / explicit Check
+ * status owner, never an upload retry. Acceptance alone is not success.
+ */
+export async function observeUploadedWorker(input: WorkerObservation, context: WorkerContext): Promise<Outcome> {
+  if (input.providerEnvironment.kind !== 'script') return failure('unsupported_action', 'admission');
+  const versionId = uploadedWorkerVersion(input.providerDeploymentId);
+  if (!input.providerDeploymentId || versionId === null) return failure('outcome_unknown', 'observe');
+  const versions = await servingWorkerVersions(input, context);
+  if ('code' in versions) return versions;
+  const allTraffic = input.operation === 'promote' || input.operation === 'rollback';
+  const active = versions.some(version => version.versionId === versionId && (!allTraffic || version.percentage === 100));
+  return { v: 1, state: active ? 'succeeded' : 'outcome_unknown', providerDeploymentId: input.providerDeploymentId, observedAtMs: context.now() };
 }
