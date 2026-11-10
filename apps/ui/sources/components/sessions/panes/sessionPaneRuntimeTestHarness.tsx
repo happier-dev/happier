@@ -76,6 +76,8 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
     /** Current signed provenance when a journey exercises the ordinary Home Action front door. */
     credentials?: AuthCredentials;
     request?: (...args: Parameters<RuntimeFetch>) => Promise<Response | null>;
+    /** Observe every HTTP request at the existing transport boundary, including bootstrap routes. */
+    onHttpRequest?: (...args: Parameters<RuntimeFetch>) => void;
     configureSocket?: (socket: Socket, serverUrl?: string) => void;
     rpc?: (method: string, input: unknown, targetId: string, context: Readonly<{ serverUrl: string | undefined; targetId: string }>) => Promise<unknown>;
 }> = {}) {
@@ -168,6 +170,7 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
             accountId: realm.accountId,
             ...(params.credentials && realm.accountId === accountId ? { credentials: params.credentials } : {}),
             request: async (url, init) => {
+                params.onHttpRequest?.(url, init);
                 const path = new URL(String(url)).pathname;
                 const json = (value: unknown) => Response.json(value);
                 const state = storage.getState();

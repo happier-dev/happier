@@ -15,6 +15,9 @@ import { hasCurrentSessionTurnsProjection } from '@/sync/domains/session/hasAuth
 import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema } from '@happier-dev/protocol/sessions';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
+import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
+import { ChatList } from '@/components/sessions/transcript/ChatList';
+import type { Socket } from 'socket.io-client';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -34,12 +37,22 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 
 const reads: string[] = [];
+const httpRequests: string[] = [];
+const machineRequests: string[] = [];
+const socketRequests: string[] = [];
+const physicalSockets = new Set<Socket>();
+const recordSocketRequest = (event: string) => { socketRequests.push(event); };
 const runtime = installSessionPaneRuntimeTestHarness({
-    rpc: async () => null,
+    rpc: async method => { machineRequests.push(method); return null; },
+    onHttpRequest: input => { httpRequests.push(String(input)); },
     configureSocket: socket => {
+        socket.offAnyOutgoing(recordSocketRequest);
+        socket.onAnyOutgoing(recordSocketRequest);
+        physicalSockets.add(socket);
         const originalAck = vi.mocked(socket.emitWithAck).getMockImplementation();
         if (!originalAck) throw new Error('Expected the canonical Socket boundary');
         vi.mocked(socket.emitWithAck).mockImplementation(async (event, payload: unknown) => {
+            recordSocketRequest(event);
             if (event === SESSION_CONSUMPTION_REPLACE_EVENT) {
                 const request = SessionConsumptionReplaceV1Schema.parse(payload);
                 return { v: 1, ok: true, liveSessionIds: request.liveSessionIds, durableSessionIds: request.durableSessionIds };
@@ -67,6 +80,52 @@ const runtime = installSessionPaneRuntimeTestHarness({
         }
         return null;
     },
+});
+
+it('muse.experience.pc14 keeps a settled Session idle for 60 seconds without timers or requests', async () => {
+    installShippedNativeFrameScheduler();
+    const id = 'idle-session';
+    storage.getState().applySessions([createSessionFixture({ id, serverId: runtime.serverId, seq: 4, encryptionMode: 'plain' })]);
+    await sync.ensureSessionVisibleForMessageRoute(id, { serverId: runtime.serverId, hydrateMessages: false });
+    vi.useFakeTimers();
+    const census = installTimerCensus(stack => stack);
+    let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
+    try {
+        screen = await renderScreen(<DestinationInstanceHost tabId={id}
+            ref={{ kind: 'session', params: { id, serverId: runtime.serverId } }} pathname={`/session/${id}`} focused visible
+            navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+            <SessionDestinationBody />
+        </DestinationInstanceHost>, { wrapper: runtime.Wrapper });
+        await act(async () => {
+            await waitForHomeGovernance(() => expect(storage.getState().sessionMessages[id]?.isLoaded).toBe(true));
+            await waitForHomeGovernance(() => expect(hasCurrentSessionTurnsProjection(storage.getState().sessions[id] ?? {})).toBe(true));
+        });
+        // Initial mount owns finite retention/viewed/persistence/prefetch/socket-release
+        // callbacks. Drain that existing cohort once; no timers are excluded from idle counts.
+        await flushHookEffects({ cycles: 3, turns: 3, advanceTimersMs: 20 });
+        const physicalSocket = [...physicalSockets].find(socket => socket.connected);
+        expect(physicalSocket).toBeDefined();
+        const beforeSocketControl = socketRequests.length;
+        physicalSocket!.emit('muse.experience.pc14.counter-control');
+        expect(socketRequests.slice(beforeSocketControl)).toEqual(['muse.experience.pc14.counter-control']);
+        await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+        expect(census.read()).toEqual([]);
+        expect(storage.getState().sessionMessages[id]!.messageIdsOldestFirst).toHaveLength(3);
+        expect(screen.findAllByType(ChatList)).toHaveLength(1);
+        expect(screen.getTextContent()).toContain('Turn 1');
+        const fires = census.readFires();
+        const pendingAtIdle = census.read();
+        const requests = { http: httpRequests.length, machine: machineRequests.length, socket: socketRequests.length };
+        await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+        expect(census.readFires(), JSON.stringify({ pendingAtIdle, pendingAfterIdle: census.read(), requests: {
+            http: httpRequests.slice(requests.http), machine: machineRequests.slice(requests.machine), socket: socketRequests.slice(requests.socket),
+        } })).toEqual(fires);
+        expect({ http: httpRequests.length, machine: machineRequests.length, socket: socketRequests.length }).toEqual(requests);
+    } finally {
+        await screen?.unmount();
+        census.stop();
+        vi.useRealTimers();
+    }
 });
 
 it('reads one page per ordinary or Voice Session open and preserves a warm reopen probe', async () => {
