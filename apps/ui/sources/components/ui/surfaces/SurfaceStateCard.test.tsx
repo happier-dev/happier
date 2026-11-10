@@ -416,6 +416,28 @@ describe('SurfaceStateCard pane-state composition', () => {
         expect(screen.getTextContent()).toContain('Still waiting · 6 s');
     });
 
+    it('runs no wait clock while its pane is hidden, and reads the true wait once shown again', async () => {
+        vi.useFakeTimers();
+        const { SurfaceStateCard } = await import('./SurfaceStateCard');
+        const { SurfaceStateSizeProvider } = await import('./surfaceStateSize');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const render = (presented: boolean) => (
+            <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+                <SurfaceStateSizeProvider size="pane">
+                    <SurfaceStateCard testID="state-card" kind="loading" title="Scanning local services" />
+                </SurfaceStateSizeProvider>
+            </PluginSurfaceFocusEligibilityProvider>
+        );
+        const screen = await renderScreen(render(false));
+        expect(vi.getTimerCount()).toBe(0);
+        await act(async () => {
+            vi.advanceTimersByTime(6_000);
+        });
+        expect(screen.getTextContent()).not.toContain('Still waiting');
+        await screen.update(render(true));
+        expect(screen.getTextContent()).toContain('Still waiting · 6 s');
+    });
+
     it('a caller live line replaces the automatic wait line', async () => {
         vi.useFakeTimers();
         const { SurfaceStateCard } = await import('./SurfaceStateCard');

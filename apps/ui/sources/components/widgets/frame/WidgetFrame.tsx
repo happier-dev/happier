@@ -362,7 +362,12 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     ) : undefined;
     // A frame drawn headerless (`title={null}`: a page section that owns its title) stays headerless: a refresh
     // never grows an empty header row around a lone spinner; the body's own freshness line speaks for it.
-    const meta = !refreshing || props.title === null ? props.meta : (
+    // The documented meta is "a string, or an element": a string reads in the frame's meta text role on every
+    // presentation, never as a raw text node beside the body.
+    const authoredMeta = typeof props.meta === 'string' || typeof props.meta === 'number'
+        ? <Text testID={`${props.testID}.meta`} style={styles.source} numberOfLines={1}>{props.meta}</Text>
+        : props.meta;
+    const meta = !refreshing || props.title === null ? authoredMeta : (
         <View testID={`${props.testID}.refreshing`} style={styles.refreshing} accessibilityLiveRegion="polite"
             accessible accessibilityLabel={t('widgetDefinition.refreshing')}>
             <ActivitySpinner size={ICON_SIZE.xs - 2} color={theme.colors.text.tertiary} />
@@ -462,7 +467,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         : controls;
     const body = props.body;
     if (props.presentation === 'body') {
-        return <>{props.meta}{body ? <SurfaceStateSizeProvider size={stateSize} actions="quiet">
+        return <>{authoredMeta}{body ? <SurfaceStateSizeProvider size={stateSize} actions="quiet">
             <WidgetFrameBodyOpenContext.Provider value={setLentOpen}>
             <WidgetFrameBodyView testID={props.testID} body={body} rows={0} />
             </WidgetFrameBodyOpenContext.Provider>

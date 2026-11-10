@@ -488,7 +488,13 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
     const offlineMark = React.useMemo(() => (
         <ServiceStatusDot status="unavailable" animationEnabled={false} testID={`${testID}-header-offline-dot`} />
     ), [testID]);
-    const scanUnknown = (viewModel.status === 'loading' || viewModel.status === 'error') && !hasLauncherTargets;
+    // Inventory completion does not settle the launcher projection that owns these rows.
+    // Its initial idle frame is unknown too; only an admitted snapshot proves emptiness.
+    // One decision for the header and the body: neither says "nothing running" while the other still scans.
+    const launcherPending = props.launcherState != null && launcherState.updatedAt === null
+        && launcherState.refreshStatus !== 'error';
+    const scanPending = (viewModel.status === 'loading' || launcherPending) && !hasLauncherTargets;
+    const scanUnknown = scanPending || (viewModel.status === 'error' && !hasLauncherTargets);
     const headerLine = React.useMemo(() => buildHeaderLine({
         offline,
         scanUnknown,
@@ -716,11 +722,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
         );
     }
 
-    // Inventory completion does not settle the launcher projection that owns these rows.
-    // Its initial idle frame is unknown too; only an admitted snapshot proves emptiness.
-    const launcherPending = props.launcherState != null && launcherState.updatedAt === null
-        && launcherState.refreshStatus !== 'error';
-    if ((viewModel.status === 'loading' || launcherPending) && !hasLauncherTargets) {
+    if (scanPending) {
         return withFooter(
             <SurfaceStateCard
                 testID={`${testID}-loading`}

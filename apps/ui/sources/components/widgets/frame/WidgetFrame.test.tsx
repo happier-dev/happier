@@ -6,6 +6,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { collectUnexpectedRawTextNodes } from '@/dev/testkit';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
@@ -70,6 +71,13 @@ async function renderFrame(props: Partial<React.ComponentProps<typeof WidgetFram
 }
 
 describe('WidgetFrame', () => {
+    it.each(['body', 'frame'] as const)('draws a string meta through its meta text role, never as a raw text node (%s)', async (presentation) => {
+        const screen = await renderFrame({ presentation, frameStyle: 'plain', placement: 'companion', title: 'Running',
+            meta: '4 services', body: { kind: 'content', children: <Text>rows</Text> } });
+        expect(screen.getTextContent()).toContain('4 services');
+        expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
+    });
+
     it('keeps authored title and source controls outside native pointer-disabled subtrees', async () => {
         const inspect = vi.fn(), open = vi.fn();
         const screen = await renderFrame({

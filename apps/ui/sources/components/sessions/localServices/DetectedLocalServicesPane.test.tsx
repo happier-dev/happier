@@ -338,6 +338,19 @@ describe('DetectedLocalServicesPane', () => {
         expect(screen.findByTestId('local-services-pane-loading-loading-spinner')).toBeTruthy();
     });
 
+    it('says nothing about what runs while the body still scans: one settled decision for header and body', async () => {
+        const screen = await renderScreen(inHeaderHost(
+            <DetectedLocalServicesPane
+                inventoryState={buildLocalServiceInventoryState({ rows: [] })}
+                launcherState={createLocalServiceLauncherState()}
+                machine={MACBOOK_ONLINE}
+                testID="local-services-pane"
+            />,
+        ));
+        expect(screen.findByTestId('local-services-pane-loading')).toBeTruthy();
+        expect(screen.getTextContent()).not.toContain('Nothing running');
+    });
+
     // A scan can take minutes at Machine scope: the person must still be able to switch back, and the
     // page keeps saying what it is for, while the whole-pane state stands in for the rows.
     it('keeps the page purpose and the scope control through every whole-pane state', async () => {
