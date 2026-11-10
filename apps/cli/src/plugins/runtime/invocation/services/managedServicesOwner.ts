@@ -1,5 +1,6 @@
 import { resolveProjectManagedService } from './projectServiceResolution';
 import { createHash, randomBytes } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { createEnvironmentServiceRecovery } from './environmentServiceRecovery';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentServiceExportV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
@@ -45,10 +46,12 @@ import type { ManagedServiceNativeControlResult } from './managedServiceNativeCo
 import { executeAdmittedServiceCommand, withAdmittedServiceShellForHost, type ServiceCommandV1,
     type ServiceCommandResultV1, type ServiceShellObservation } from '@/daemon/local/services/launch/serviceCommand';
 
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import type {
     AgentProviderBindingMaterializationV1,
     ManagedExecutableRef,
+    QualifiedConnectedAccountPurposeV1,
+    RequestAuthFactsV1,
 } from '@happier-dev/protocol';
 import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
 import { managedServiceEndpointHostPolicyForMode, readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
@@ -2605,6 +2608,7 @@ export type ManagedServiceSemanticEntry = {
             capabilityPath: string;
             modelCatalogs?: NonNullable<ManagedServicesInvocationBindingContext['managedProvider']>['modelCatalogs'];
             purposes: readonly NonNullable<NonNullable<ManagedServicesInvocationBindingContext['requestAuth']>['qualifiedRequestAuthUses']>[number]['purpose'][];
+            authFacts?: readonly Readonly<{ purpose: QualifiedConnectedAccountPurposeV1; facts: RequestAuthFactsV1 }>[];
         }>>;
         mutation: Promise<void>;
     };
@@ -3471,29 +3475,26 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             && readsCurrent(scope.isOccurrenceCurrent)
             && readsCurrent(context.managedProvider!.isCurrent)
             && readsCurrent(context.requestAuth!.isCurrent);
-        try {
-            await serialize(async () => {
-                census.pending -= 1;
-                if (!isCurrent()) return requestUnavailable('Managed Provider consumer authority is unavailable');
-                census.claims.set(token, {
-                    token,
-                    capabilityPath: context.requestAuth!.capabilityPath,
-                    ...(context.managedProvider!.modelCatalogs
-                        ? { modelCatalogs: context.managedProvider!.modelCatalogs } : {}),
-                    purposes: [...new Map(context.requestAuth!.qualifiedRequestAuthUses!.map(({ purpose }) => (
-                        [qualifiedPurposeKey(purpose), purpose] as const
-                    ))).values()],
-                });
-                try { await publish(); } catch (error) { census.claims.delete(token); throw error; }
-                recordClaim('claim');
-            });
-        } catch (error) {
-            if (census.claims.size === 0 && census.pending === 0 && census.unsettled.size === 0) await retireEntry(entry);
-            throw error;
-        }
+        // The operation authority already projects only admitted, bound purposes.
+        const uses = [...new Map(context.requestAuth!.qualifiedRequestAuthUses!.map(use => (
+            [qualifiedPurposeKey(use.purpose), use] as const
+        ))).values()];
+        const subscriptions: Disposable[] = [];
+        const disposeSubscriptions = () => {
+            for (const subscription of subscriptions.splice(0)) subscription.dispose();
+        };
+        const materializeFacts = async (use: (typeof uses)[number]) => {
+            const materialized = await context.connectedAccounts!.materialize(
+                use.purpose.purpose, use.materialization, { signal: lifetime.signal },
+            );
+            if (materialized.kind !== 'httpHeaders') return specInvalid('Connected Accounts returned the wrong request-auth materialization kind');
+            // Publish only facts; the final transport still borrows and substitutes credential headers.
+            return { purpose: use.purpose, facts: materialized.facts ?? {} };
+        };
         const release = (): Promise<void> => {
             active = false;
             lifetime.abort('Managed Provider consumer retired');
+            disposeSubscriptions();
             if (cleanup) return cleanup;
             cleanup = serialize(async () => {
                 census.claims.delete(token);
@@ -3524,6 +3525,50 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             }).catch(error => { cleanup = null; throw error; });
             return cleanup;
         };
+        try {
+            await serialize(async () => {
+                census.pending -= 1;
+                if (!isCurrent()) return requestUnavailable('Managed Provider consumer authority is unavailable');
+                if (context.connectedAccounts) {
+                    for (const use of uses) {
+                        subscriptions.push(context.connectedAccounts.watch(use.purpose.purpose, event => {
+                            if (!event.authorityChanged) return;
+                            return serialize(async () => {
+                                if (!isCurrent()) return;
+                                const fact = await materializeFacts(use);
+                                if (!isCurrent()) return;
+                                const claim = census.claims.get(token);
+                                if (!claim) return;
+                                const authFacts = claim.authFacts!.map(previous => (
+                                    qualifiedPurposeKey(previous.purpose) === qualifiedPurposeKey(use.purpose) ? fact : previous
+                                ));
+                                if (isDeepStrictEqual(claim.authFacts, authFacts)) return;
+                                census.claims.set(token, { ...claim, authFacts });
+                                await publish();
+                            }).catch(() => release());
+                        }));
+                    }
+                }
+                const authFacts = context.connectedAccounts ? await Promise.all(uses.map(materializeFacts)) : undefined;
+                if (!isCurrent()) return requestUnavailable('Managed Provider consumer authority is unavailable');
+                census.claims.set(token, {
+                    token,
+                    capabilityPath: context.requestAuth!.capabilityPath,
+                    ...(context.managedProvider!.modelCatalogs
+                        ? { modelCatalogs: context.managedProvider!.modelCatalogs } : {}),
+                    purposes: uses.map(use => use.purpose),
+                    ...(authFacts ? { authFacts } : {}),
+                });
+                try { await publish(); } catch (error) { census.claims.delete(token); throw error; }
+                recordClaim('claim');
+            });
+        } catch (error) {
+            active = false;
+            lifetime.abort('Managed Provider consumer admission failed');
+            disposeSubscriptions();
+            if (census.claims.size === 0 && census.pending === 0 && census.unsettled.size === 0) await retireEntry(entry);
+            throw error;
+        }
         const physicalFacts = endpointAccessByService.get(physical)!;
         const credential = renderHostClientCredential(physicalFacts.clientAccess, token)!;
         const consumer: ManagedServiceHandle = Object.freeze({

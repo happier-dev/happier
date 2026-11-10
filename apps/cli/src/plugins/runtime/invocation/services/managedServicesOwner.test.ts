@@ -122,6 +122,8 @@ import { createOpenCodeServerTransport } from '../../../../../../../packages/plu
 import { subscribeOpenCodeGlobalEvents } from '../../../../../../../packages/plugins/opencode/src/agent/runtime/server/openCodeServerClient';
 import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
 import { createStablePluginConnectedAccountsHost } from './connectedAccounts';
+import { createXaiConnectedAccountRuntime } from '../../../../../../../packages/plugins/grok/src/connectedAccounts/runtime';
+import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 
 type CredentialFileMaterializeInput = Parameters<
     ManagedServiceCredentialFileOwner['materialize']
@@ -1655,6 +1657,83 @@ describe('managed-services SVC09 owner', () => {
             await expect(observe('web')).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
             expect(observationReleases).toBe(4);
         } finally { releaseRestart?.(); await pendingRestart?.catch(() => {}); await owner.dispose(); }
+    });
+    it('G1 publishes selected materialization facts and refreshes them through the existing binding watch', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-shared-auth-facts-'));
+        const harness = createLifecycleHarness([createLifecycleProcess(4_504)], 'daemon', {
+            sharedGatewayAccessDirectory: directory,
+            fetch: async () => new Response(null, { status: 200 }),
+        });
+        const scope = lifecycleScope({ occurrenceId: 'shared-auth-facts', operationId: 'shared-auth-facts' });
+        const accountService = { pluginId: 'happier.agent.grok', localId: 'xai' };
+        const runtime = createXaiConnectedAccountRuntime();
+        let accountId = 'account-a';
+        let displayName = 'Selected Account';
+        let materializations = 0;
+        let materializationAvailable = true;
+        const fixture = createForegroundPurposeOwnerFixture({
+            consumer: { pluginId: scope.pluginId, localId: 'gateway' }, service: accountService, purpose: 'upstream',
+            resolveTarget: async target => target.kind === 'account' ? { displayName, account: target.account } : null,
+            resolveCredentialRevision: async () => 'csr_0123456789ABCDEFGHJKMNPQRS',
+            // Sealed credential custody and HTTP are genuine system boundaries; the service materializer is real.
+            materializeAccount: async ({ request, account }) => {
+                materializations++;
+                if (!materializationAvailable) throw new Error('Selected credential unavailable');
+                const context = { credentials: { get: async () => JSON.stringify({ mode: account.accountId === 'account-b' ? 'subscription' : 'api-key', accessToken: `private-${account.accountId}` }) },
+                    services: { http: { request: async () => { throw new Error('Facts must not acquire a credential'); } } },
+                } as unknown as Parameters<ConnectedAccountRuntime['materialize']>[1];
+                return runtime.materialize(request, context);
+            },
+        });
+        const host = createStablePluginConnectedAccountsHost(fixture.owner);
+        const connectedAccounts = host.bind({ plugin: { id: scope.pluginId, version: '1' },
+            contribution: { id: 'gateway', qualifiedId: scope.contributionQualifiedId }, occurrenceId: scope.occurrenceId,
+            correlationId: 'facts', surface: 'background', signal: new AbortController().signal,
+            isOccurrenceCurrent: scope.isOccurrenceCurrent,
+        }, [{ purpose: 'upstream', serviceRefs: [accountService], operations: ['use'], materializationKinds: ['httpHeaders'] }]);
+        let service: ManagedServiceHandle | undefined;
+        try {
+            service = await harness.owner.bindScope(scope, harness.exec, { connectedAccounts,
+                managedProvider: { realm: 'managedProviderStart', providerLocalId: 'gateway', isCurrent: () => true, isPhysicalOccurrenceCurrent: () => true,
+                    sharedGateway: { homeId: 'home', accountId: 'account', connectionId: 'connection', machineId: 'machine', consumerId: 'facts' } },
+                requestAuth: { realm: 'managedProviderStart', capabilityPath: join(directory, 'consumer.capability'), isCurrent: () => true,
+                    ...gatewayRequestAuthUses('upstream', ['https://api.x.ai']) },
+            }).supervise({ ...lifecycleSpec({ id: 'facts-gateway', port: 4_354 }),
+                requestAuth: { kind: 'connectedAccountConsumerAccessPath', injectEnvironmentKey: 'CONSUMER_ACCESS_PATH' },
+                clientAccess: { kind: 'hostBearer', injectEnvironmentKey: 'MANAGEMENT_TOKEN', headerName: 'authorization', scheme: 'Bearer' },
+            });
+            const path = harness.exec.spawn.mock.calls[0]?.[0].env?.CONSUMER_ACCESS_PATH;
+            if (!path) throw new Error('Consumer access path missing');
+            const read = async () => JSON.parse(await readFile(path, 'utf8')) as { consumers: { authFacts?: unknown }[] };
+            const expected = [{ purpose: gatewayRequestAuthUses().qualifiedRequestAuthUses[0]!.purpose,
+                facts: { mode: 'api-key', usingApi: true, base: 'https://api.x.ai/v1' } }];
+            expect((await read()).consumers[0]?.authFacts).toEqual(expected);
+            expect(await readFile(path, 'utf8')).not.toContain('private-');
+            expect(materializations).toBe(1);
+            displayName = 'Renamed Account';
+            await fixture.store.update(value => value);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(materializations).toBe(1);
+            accountId = 'account-b';
+            await fixture.store.update(current => ({ ...current, bindings: current.bindings.map(binding => ({ ...binding,
+                target: { kind: 'account', account: { service: accountService, accountId } },
+            })) }));
+            await vi.waitFor(() => expect(materializations).toBe(2));
+            await vi.waitFor(async () => expect((await read()).consumers[0]?.authFacts).toEqual([{ purpose: expected[0]!.purpose,
+                facts: { mode: 'subscription', usingApi: false, base: 'https://cli-chat-proxy.grok.com/v1' } }]));
+            expect(await readFile(path, 'utf8')).not.toContain('private-');
+            materializationAvailable = false;
+            accountId = 'account-c';
+            await fixture.store.update(current => ({ ...current, bindings: current.bindings.map(binding => ({ ...binding,
+                target: { kind: 'account', account: { service: accountService, accountId } },
+            })) }));
+            await vi.waitFor(async () => expect((await read()).consumers).toEqual([]));
+            expect(materializations).toBe(3);
+            expect(await readFile(path, 'utf8')).not.toContain('private-');
+            await service.dispose();
+            await fixture.store.update(value => value);
+            expect(materializations).toBe(3);
+        } finally { await service?.dispose(); await harness.owner.dispose(); host.retire(); await rm(directory, { recursive: true, force: true }); }
     });
     it('G1 retries projection cleanup after consumer settlement is unavailable', async () => {
         const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => undefined);

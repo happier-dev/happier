@@ -1,7 +1,7 @@
 import { PLUGIN_MANIFEST as GROK_MANIFEST } from '@happier-dev/plugins-grok/manifest';
 import { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { describe, expect, it } from 'vitest';
-import { ProviderContributionV1Schema } from '@happier-dev/protocol';
+import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions/v1';
 import { chooseProviderGatewayContributionV1, readProviderGatewayFamilyAvailabilityV1 } from '@happier-dev/protocol/providers/gatewayContributionsV1';
 
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './contribution.js';
