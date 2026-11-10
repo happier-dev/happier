@@ -18,7 +18,7 @@ export { USAGE_BREAKDOWN_DIMENSION_HEADING, readUsageBreakdownsInstanceTitleV1 }
 
 /** Native Session content identities; presentation references and configured copies share this owner. */
 export const SESSION_COMPANION_BUILTIN_ITEM_IDS = ['session_summary', 'agent_plan', 'changes', 'local_services', 'environment', 'running', 'usage', 'links'] as const;
-export const PROJECT_BUILTIN_WIDGET_IDS_V1 = ['project_about', 'project_code', 'project_readme', 'project_checkouts', 'project_scripts', 'project_sessions', 'project_changes'] as const;
+export const PROJECT_BUILTIN_WIDGET_IDS_V1 = ['project_about', 'project_code', 'project_readme', 'project_checkouts', 'project_scripts', 'project_sessions', 'project_changes', 'project_readiness'] as const;
 export const USAGE_BUILTIN_WIDGET_IDS_V1 = ['usage_daily', 'usage_period_summary', 'usage_cost_facts', 'usage_flow', 'usage_efficiency', 'usage_breakdowns',
     'usage_capacity', 'usage_projections', 'usage_resets', 'usage_plan_fit', 'usage_project_ledger', 'usage_session_value', 'usage_outcomes', 'usage_coach',
     'usage_rhythm', 'usage_parallel', 'usage_human_loop', 'usage_night_shift', 'usage_recap', 'usage_footprint', 'usage_sources', 'usage_source_coverage', 'usage_unpriced',
@@ -82,15 +82,20 @@ export type BuiltinUsagePublicPresentationV1 = z.infer<typeof BuiltinUsagePublic
  */
 export function projectOverviewDefaultPlacementsV1(): WidgetLayoutWidgetV1[] {
     return [
+        { kind: 'widget', area: 'aside', instance: { v: 1, id: 'readiness',
+            definition: { kind: 'builtin', id: 'project_readiness' }, bindings: {} } },
+        ...[
         ...(['code', 'readme'] as const).map(id => ({ id, area: 'main' as const })),
         ...(['sessions', 'changes', 'scripts', 'checkouts', 'about'] as const).map(id => ({ id, area: 'aside' as const })),
-    ].map(({ id, area }) => ({ kind: 'widget' as const, area, instance: {
+    ].map(({ id, area }): WidgetLayoutWidgetV1 => ({ kind: 'widget', area, instance: {
         v: 1, id, definition: { kind: 'builtin', id: `project_${id}` }, bindings: { checkout: { kind: 'context', slot: 'checkout' } },
-    } }));
+    } })),
+    ];
 }
 
 const localServicesMetadata = { title: 'Local services', titleKey: 'widgetGlances.localServicesTitle', icon: 'hard-drives' } as const;
 const nativeMetadata = {
+    project_readiness: { title: 'Readiness', titleKey: 'projects.readiness.title', icon: 'list-checks' },
     session_summary: { title: 'Session summary', titleKey: 'sessionBoard.companion.summary.title', icon: 'stack' },
     agent_plan: { title: 'Agent plan', titleKey: 'sessionCompanion.plan.title', icon: 'list-checks' },
     changes: { title: 'Changes', titleKey: 'widgetGlances.changesTitle', icon: 'git-branch' },
@@ -286,15 +291,15 @@ type NativeDescriptor = WidgetInputDescriptorV1 & Readonly<{
     /** The one question the widget answers, for the gallery; definitions without one show their provenance. */
     descriptionKey?: Extract<(typeof nativeMetadata)[BuiltinWidgetIdV1], { descriptionKey: string }>['descriptionKey'];
     icon: (typeof nativeMetadata)[BuiltinWidgetIdV1]['icon'];
-    key: string; target: 'session' | 'app'; homeDefault: 'available'; availability: 'available';
+    key: string; target: 'session' | 'app' | 'project'; homeDefault: 'available'; availability: 'available';
 }>;
 export const BUILTIN_WIDGET_DESCRIPTORS_V1 = Object.freeze([...SESSION_COMPANION_BUILTIN_ITEM_IDS.map((id): NativeDescriptor => Object.freeze({
     ...sessionInputs, ...nativeMetadata[id], definition: { kind: 'builtin' as const, id },
     sizeDeclaration: nativeSizeDeclaration,
     key: `builtin:${id}`, target: readWidgetInputTargetV1(sessionInputs).kind === 'session' ? 'session' : 'app', homeDefault: 'available' as const, availability: 'available' as const,
 })), ...PROJECT_BUILTIN_WIDGET_IDS_V1.map((id): NativeDescriptor => Object.freeze({
-    ...workspaceInputs, ...nativeMetadata[id], definition: { kind: 'builtin' as const, id },
-    sizeDeclaration: nativeSizeDeclaration, key: `builtin:${id}`, target: readWidgetInputTargetV1(workspaceInputs).kind === 'session' ? 'session' : 'app',
+    ...(id === 'project_readiness' ? {} : workspaceInputs), ...nativeMetadata[id], definition: { kind: 'builtin' as const, id },
+    sizeDeclaration: nativeSizeDeclaration, key: `builtin:${id}`, target: id === 'project_readiness' ? 'project' : 'app',
     homeDefault: 'available' as const, availability: 'available' as const,
 })), ...USAGE_BUILTIN_WIDGET_IDS_V1.map((id): NativeDescriptor => Object.freeze({
     ...(id === 'usage_sources' ? sourceInventoryInputs : usageInputs(id)), ...nativeMetadata[id], definition: { kind: 'builtin' as const, id },

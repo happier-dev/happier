@@ -9,6 +9,16 @@ import { createUsageWidgetPresets } from './usageWidgetPresetsV1.js';
 import { resolveEffectiveInputFields } from '../inputs/inputFieldRuntime.js';
 
 describe('native widget target contracts', () => {
+    it('admits Readiness only on its Project without a checkout or Session', () => {
+        const definition = { kind: 'builtin', id: 'project_readiness' } as const;
+        const descriptor = readBuiltinWidgetDescriptorV1(definition);
+        expect(descriptor).toMatchObject({ target: 'project' });
+        expect(isWidgetTargetHostableV1(descriptor!, 'project')).toBe(true);
+        expect(isWidgetTargetHostableV1(descriptor!, 'home')).toBe(false);
+        expect(resolveConfiguredWidgetInputs({ descriptor: descriptor!, instance: {
+            v: 1, id: 'readiness', definition, bindings: {},
+        }, providedContext: {}, viewerValues: {} })).toEqual({ status: 'ready', input: {} });
+    });
     it('admits Home Services without a Session and keeps existing Session copies scoped', () => {
         const definition = { kind: 'builtin', id: 'local_services_app' } as const;
         const app = readBuiltinWidgetDescriptorV1(definition);

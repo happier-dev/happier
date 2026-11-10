@@ -36,18 +36,13 @@ import { useNavigateToProjectOpen } from '../activation/projectOpenPresentation'
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ProjectAttachedDashboardSelection } from '../detail/projectRouteState';
+import { PROJECT_SOURCES_ROUTE, projectSourceRoute } from './projectSourceNavigation';
+export { PROJECT_SOURCES_ROUTE, projectSourceRoute } from './projectSourceNavigation';
 
 /** Projects › Sources: one Collection list beside the selected Source (lab `p-sources`). */
-export const PROJECT_SOURCES_ROUTE = '/projects/sources';
 const NEW_SOURCE = 'new';
 /** The narrowest detail that keeps the address field beside its label. */
 const SOURCES_DETAIL_MIN_WIDTH_PX = 480;
-
-export function projectSourceRoute(sourceId: string | null): string {
-  return sourceId
-    ? `${PROJECT_SOURCES_ROUTE}?source=${encodeURIComponent(sourceId)}`
-    : PROJECT_SOURCES_ROUTE;
-}
 
 function readParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;

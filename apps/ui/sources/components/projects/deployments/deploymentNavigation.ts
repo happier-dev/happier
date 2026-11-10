@@ -4,6 +4,8 @@ type DeploymentEnvironmentAddress = Readonly<{
     serverId: string; projectSourceId: string; environmentId: string; deploymentId?: string; tab?: DeploymentEnvironmentTabV1;
     /** A Settings section, opened in place on the Settings tab. */
     section?: DeploymentEnvironmentSettingsSectionV1;
+    /** Open the incumbent native setup sheet for this exact Environment. */
+    setup?: 'backups';
     /** One of the Environment's databases, opened in place like a receipt (P9). */
     database?: string;
 }>;
@@ -19,6 +21,7 @@ export function deploymentEnvironmentRoute(input: DeploymentEnvironmentAddress) 
             ...(input.deploymentId ? { deployment: input.deploymentId } : {}),
             ...(input.tab ? { deploymentTab: input.tab } : {}),
             ...(input.section ? { deploymentSection: input.section } : {}),
+            ...(input.setup ? { deploymentSetup: input.setup } : {}),
             ...(input.database ? { deploymentService: input.database } : {}),
         },
     };
@@ -39,5 +42,6 @@ export function buildDeploymentEnvironmentHref(input: DeploymentEnvironmentAddre
         + ('deployment' in params ? `&deployment=${encodeURIComponent(params.deployment!)}` : '')
         + ('deploymentTab' in params ? `&deploymentTab=${encodeURIComponent(params.deploymentTab!)}` : '')
         + ('deploymentSection' in params ? `&deploymentSection=${encodeURIComponent(params.deploymentSection!)}` : '')
+        + ('deploymentSetup' in params ? `&deploymentSetup=${encodeURIComponent(params.deploymentSetup!)}` : '')
         + ('deploymentService' in params ? `&deploymentService=${encodeURIComponent(params.deploymentService!)}` : '');
 }

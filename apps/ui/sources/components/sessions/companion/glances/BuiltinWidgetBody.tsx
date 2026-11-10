@@ -41,7 +41,9 @@ export function BuiltinWidgetBody(props: Readonly<{ id: BuiltinWidgetIdV1;
     // The active Home's machines and sessions: an App read with no inputs.
     if (props.target.kind === 'app' && props.id === 'your_home') return <YourHomeWidgetBody testID={props.testID} />;
     if (props.target.kind === 'app' && props.id === 'local_services_app') return <AppLocalServicesGlance serverId={props.serverId} testID={props.testID} />;
-    if (props.target.kind === 'workspace') return <ProjectBuiltinWidgetBody id={props.id}
+    if (props.target.kind === 'project' && props.id === 'project_readiness') return <ProjectBuiltinWidgetBody
+        id={props.id} target={props.target} testID={props.testID} />;
+    if (props.target.kind === 'workspace' && props.id !== 'project_readiness') return <ProjectBuiltinWidgetBody id={props.id}
         workspace={props.target.workspace} checkout={props.target.checkout} testID={props.testID} />;
     if (props.target.kind !== 'session' || !props.target.session) return <UnavailableInstalledWidget
         unresolved={{ state: 'unavailable', reasonCode: 'widget_type_unavailable' }} testID={props.testID} />;
