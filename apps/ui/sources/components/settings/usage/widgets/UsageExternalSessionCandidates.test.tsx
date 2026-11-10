@@ -81,6 +81,25 @@ afterEach(async () => { standardCleanup(); restoreExecutorModuleLoader?.(); rest
     resetRuntimeFetch(); publishAppliedActiveServerRuntimeAvailability(false); vi.restoreAllMocks(); await homes.reset(); });
 
 describe('Usage shared outside-session candidates', () => {
+    it('holds Browse\'s row while a candidate\'s Agent projection is still reading, so the button never pushes the sources down (R142)', async () => {
+        const described = createDeferred<unknown>();
+        const answer = rpc.getMockImplementation();
+        rpc.mockImplementation(async call => call.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+            ? described.promise : answer?.(call));
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'usage-account' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) };
+        const source = { serverId, machineId: 'machine-1', sourceId: 'source', agent: { pluginId: 'acme.review', localId: 'archive' },
+            externalSessionSource: { kind: 'archive' }, root: { kind: 'default' as const, path: '/root' },
+            consent: 'disabled' as const, status: 'found' as const, coverage: 'unknown' as const, pendingCount: 0, asOfMs: null };
+        const screen = await renderScreen(<OutsideBrowsePage testID="page">
+            <UsageExternalSessionCandidates source={source} lifetime={lifetime} online testID="outside" />
+        </OutsideBrowsePage>);
+        // The button's row is held from the first paint, with no control in it.
+        expect(screen.findByTestId('page.browseRow')).toBeTruthy();
+        expect(screen.findByTestId('page.browse')).toBeNull();
+        await act(async () => { described.resolve({ protocolVersion: 1, projection }); });
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('page.browse')).toBeTruthy(); });
+    });
     it('keeps an agent Browse subject to the candidate Action surface restriction', async () => {
         restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
         storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({

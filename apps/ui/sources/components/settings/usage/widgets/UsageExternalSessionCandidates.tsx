@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -30,7 +31,9 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
  * root or consent changes later waits again, so the request never reaches a scope the user did not see.
  */
 type OutsideBrowseRequest = Readonly<{ revision: number; callerContext?: ActionExecutorContext }>;
-type OutsideBrowseRequests = Readonly<{ request: OutsideBrowseRequest; register: (key: string) => () => void }>;
+type OutsideBrowseRequests = Readonly<{ request: OutsideBrowseRequest; register: (key: string) => () => void;
+    /** A Source that may wait for Browse once its Agent projection answers: the page holds the button's row meanwhile. */
+    expect: (key: string) => () => void }>;
 const OutsideBrowseContext = React.createContext<OutsideBrowseRequests | null>(null);
 
 /** Vendor-backed candidate titles require consent or an explicit browse; linking never enables capture. */
@@ -66,6 +69,12 @@ export function UsageExternalSessionCandidates(props: Readonly<{
     const pageRegister = pageBrowse?.register;
     const registryKey = `${props.source.machineId}:${props.source.sourceId}`;
     React.useEffect(() => awaitingBrowse ? pageRegister?.(registryKey) : undefined, [awaitingBrowse, pageRegister, registryKey]);
+    // Before the paint: a Source whose browse target is still being read may wait for Browse, so the page holds the
+    // button's row from its first frame instead of the button pushing the sources down when the projection answers (R142).
+    const mayAwaitBrowse = !!props.source.externalSessionSource && !historyAllowed && props.online
+        && (projected.phase === 'idle' || projected.phase === 'loading');
+    const pageExpect = pageBrowse?.expect;
+    React.useLayoutEffect(() => mayAwaitBrowse ? pageExpect?.(registryKey) : undefined, [mayAwaitBrowse, pageExpect, registryKey]);
     const handledRequest = React.useRef(pageBrowse?.request);
     const pageRequest = pageBrowse?.request;
     React.useEffect(() => {
@@ -168,21 +177,29 @@ export function UsageOutsideSessions(props: Readonly<{ serverId: string; query: 
 
 export function OutsideBrowsePage(props: Readonly<{ testID: string; children: React.ReactNode }>) {
     const [waiting, setWaiting] = React.useState<ReadonlySet<string>>(() => new Set());
+    const [expected, setExpected] = React.useState<ReadonlySet<string>>(() => new Set());
     const [request, setRequest] = React.useState<OutsideBrowseRequest>({ revision: 0 });
     const register = React.useCallback((key: string) => {
         setWaiting(previous => new Set(previous).add(key));
         return () => setWaiting(previous => { const next = new Set(previous); next.delete(key); return next; });
     }, []);
-    const requests = React.useMemo(() => ({ request, register }), [request, register]);
+    const expect = React.useCallback((key: string) => {
+        setExpected(previous => new Set(previous).add(key));
+        return () => setExpected(previous => { const next = new Set(previous); next.delete(key); return next; });
+    }, []);
+    const requests = React.useMemo(() => ({ request, register, expect }), [request, register, expect]);
     const commands = useCurrentUiContextLocalCommands(waiting.size > 0 ? [{ key: 'browse',
         title: t('externalSessions.browseTitle'), invoke: (_input, context) => setRequest(previous => ({ revision: previous.revision + 1,
             callerContext: context })) }] : []);
     return <View testID={props.testID}>
-        {waiting.size > 0 ? <View style={styles.action}><RoundButton size="small" display="inverted"
-            title={t('externalSessions.browseTitle')} testID={`${props.testID}.browse`}
-            onPress={() => { void commands.invoke('browse'); }} /></View> : null}
+        {/* The row is held at the button's drawn height while a Source may still wait for Browse; never an empty control. */}
+        {waiting.size > 0 || expected.size > 0 ? <View testID={`${props.testID}.browseRow`} style={styles.action}>
+            {waiting.size > 0 ? <RoundButton size="small" display="inverted"
+                title={t('externalSessions.browseTitle')} testID={`${props.testID}.browse`}
+                onPress={() => { void commands.invoke('browse'); }} /> : null}
+        </View> : null}
         <OutsideBrowseContext.Provider value={requests}>{props.children}</OutsideBrowseContext.Provider>
     </View>;
 }
 
-const styles = StyleSheet.create({ action: { alignSelf: 'flex-start' } });
+const styles = StyleSheet.create({ action: { alignSelf: 'flex-start', minHeight: HAPPIER_PAGE_METRICS.smallControlHeightPx } });
