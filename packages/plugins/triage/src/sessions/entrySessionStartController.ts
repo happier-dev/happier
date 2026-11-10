@@ -1007,7 +1007,7 @@ export function createTriageEntrySessionStartController(
                 // send; closing it creates no Session, link or Message and
                 // spends no creation key.
                 if (composes || directSettlement === undefined) {
-                    const placementCandidates = placement === null ? [] : projectTriageActionPlacementCandidatesV1(placement);
+                    const placementCandidates = placement === null ? [] : projectTriageActionPlacementCandidatesV1(placement, checkout);
                     setPhase(CHOOSING);
                     const seeded = await requestTriageNewSessionAuthoringV1(host, {
                         entries: [request], promptText, profileId: action.profileId,
@@ -1033,7 +1033,7 @@ export function createTriageEntrySessionStartController(
                 const settlement = directSettlement;
                 const placementCandidates = placement === null
                     ? undefined
-                    : projectTriageActionPlacementCandidatesV1(placement);
+                    : projectTriageActionPlacementCandidatesV1(placement, checkout);
                 const destination = projectTriageNewSessionDestinationV1({
                     workspaceMode: action.workspaceMode,
                     creationKey: mintCreationKey(),

@@ -321,10 +321,10 @@ export async function runTriageConfiguredHandoffV1(
                     registryComplete: registry.status === 'read' && registry.complete })
             : resolveTriageActionPlacementV1({ workspaceMode: action.workspaceMode, projects: [], registryComplete: true }));
         const execution = readTriageActionExecutionPlacementV1(placement);
+        const checkout = resolveTriageActionCheckoutV1(action.workspaceMode, references.profile?.preferences);
         const candidates = projectTriageActionPlacementCandidatesV1({ ...placement,
             ...(registry?.status === 'read' ? { availableCandidates: registry.projects } : {}),
-        });
-        const checkout = resolveTriageActionCheckoutV1(action.workspaceMode, references.profile?.preferences);
+        }, checkout);
         const profile = action.profileId === null ? {} : { profileId: action.profileId };
         const launchDirectory = readTriageActionLaunchDirectoryV1(execution, checkout);
         const directSettlement: unknown = existing !== undefined || delivery === 'compose' || unresolvedChoice !== undefined ? undefined

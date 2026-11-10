@@ -3,6 +3,7 @@ import { SessionServerStartSpawnDraftV1Schema } from '@happier-dev/plugin-sdk/se
 
 import { TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1 } from '../../sessions/entrySessionWorkspace.js';
 import {
+    projectTriageActionPlacementCandidatesV1,
     projectTriageNewSessionDestinationV1,
     projectTriagePreparedWorkspaceSelectionInputV1,
     triageNewSessionDraftSeedV1,
@@ -384,5 +385,26 @@ describe('seeding the new-Session surface', () => {
     it('leaves a stated preference to the host’s own machine', () => {
         expect(triageNewSessionDraftSeedV1({ directory: '/pinned' }))
             .toEqual({ directory: '/pinned' });
+    });
+});
+
+// Owner ruling 2026-11-10 (PR-ACTIONS-1110): a prepared PR checkout needs a clone of the entry's repository (the
+// source refuses another remote), so only repository-matched saved projects are offered; other actions keep every
+// saved project as an override.
+describe('saved projects offered for a press', () => {
+    const project = (id: string, rootPath: string) => ({ projectKey: { id }, serverId: 'server-a', machineId: 'machine-a',
+        rootPath, worktrees: [], reachable: true });
+    const matched = [project('project-app', '/repos/app'), project('project-app-2', '/repos/app-2')];
+    const placement = { kind: 'prefill', reason: 'ambiguous', candidates: matched,
+        availableCandidates: [...matched, project('project-other', '/repos/other')] } as const;
+
+    it('offers only repository matches for a prepared review checkout', () => {
+        expect(projectTriageActionPlacementCandidatesV1(placement, 'preparedReviewWorkspace').map(row => row.rootPath))
+            .toEqual(['/repos/app', '/repos/app-2']);
+    });
+
+    it('keeps every saved project for other checkouts', () => {
+        expect(projectTriageActionPlacementCandidatesV1(placement, 'reuseWorkspace').map(row => row.rootPath))
+            .toEqual(['/repos/app', '/repos/app-2', '/repos/other']);
     });
 });

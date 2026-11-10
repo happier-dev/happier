@@ -596,11 +596,23 @@ describe('single-entry compose checkout handoff', () => {
         expect(actionCalls).toEqual(['sessions.spawn.profiles.list', 'projects.list']);
     });
 
-    it.each([0, 2])('asks the incumbent chooser for %i matching projects and admits a saved-project override', async (matches) => {
+    // Owner ruling 2026-11-10 (PR-ACTIONS-1110): a PR checkout needs a clone of its own repository, so a saved
+    // project from another repository is never offered or prepared.
+    it('never offers a saved project from another repository for a prepared review', async () => {
         const project = { projectKey: { id: 'workspace-a' }, serverId: 'server-a', machineId: 'machine-a',
             rootPath: '/workspaces/example', worktrees: [], reachable: true,
-            forge: matches === 0 ? { ...START_REQUEST.repository, repository: 'acme/other' } : START_REQUEST.repository };
-        const projects = matches === 2 ? [project, { ...project, projectKey: { id: 'workspace-b' }, rootPath: '/workspaces/second' }] : [project];
+            forge: { ...START_REQUEST.repository, repository: 'acme/other' } };
+        const { fixture } = await mountProbe({ request: PREPARED_REVIEW_START_REQUEST, projects: [project] });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+        await settle();
+        expect(draftRequests).toHaveLength(1);
+        expect(draftRequests[0]).toMatchObject({ candidates: [] });
+    });
+
+    it('asks the incumbent chooser between two matching projects', async () => {
+        const project = { projectKey: { id: 'workspace-a' }, serverId: 'server-a', machineId: 'machine-a',
+            rootPath: '/workspaces/example', worktrees: [], reachable: true, forge: START_REQUEST.repository };
+        const projects = [project, { ...project, projectKey: { id: 'workspace-b' }, rootPath: '/workspaces/second' }];
         const { fixture, actionCalls } = await mountProbe({ request: PREPARED_REVIEW_START_REQUEST, projects });
         await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
         await settle();

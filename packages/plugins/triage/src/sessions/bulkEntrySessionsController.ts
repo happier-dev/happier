@@ -814,7 +814,10 @@ export function createTriageBulkEntrySessionsController(
                         actionDefault: triageActionDefaultSeedV1(action),
                         checkoutIntent,
                         placement,
-                        candidates: registry.status === 'read' ? registry.projects.map(projectTriageSessionPlacementCandidateV1) : [],
+                        // A prepared PR checkout needs a clone of this repository: only the matched projects can host it.
+                        candidates: checkoutIntent === 'preparedReviewWorkspace'
+                            ? (placement.kind === 'none' ? [] : placement.candidates).map(projectTriageSessionPlacementCandidateV1)
+                            : registry.status === 'read' ? registry.projects.map(projectTriageSessionPlacementCandidateV1) : [],
                         signal: controller.signal,
                         isCurrent: () => !stopped && !controller.signal.aborted,
                         ...(preparationAction === undefined ? {} : { requestId: mintTriageOpaqueIdV1(),

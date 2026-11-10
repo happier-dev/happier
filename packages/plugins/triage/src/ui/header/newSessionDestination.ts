@@ -102,10 +102,14 @@ export function projectTriageSessionPlacementCandidateV1(
 /** Choice and saved-project evidence travel separately, including Ask and fixed placement. */
 export function projectTriageActionPlacementCandidatesV1(
     placement: TriageActionPlacementV1 & Readonly<{ availableCandidates?: readonly TriageProjectCandidateV1[] }>,
+    checkout?: TriageActionCheckoutResolutionV1,
 ): readonly PluginUiSessionPlacementCandidateV1[] {
     // Automatic matching remains the placement owner's answer. Saved projects
-    // are also available as an explicit override when the person is asked.
-    return (placement.availableCandidates ?? (placement.kind === 'launch' ? [placement.candidate] : placement.candidates))
+    // are also available as an explicit override when the person is asked,
+    // except for a prepared PR checkout: it needs a clone of the entry's own
+    // repository (the source refuses another remote), so only matches can succeed.
+    const matched = placement.kind === 'launch' ? [placement.candidate] : placement.candidates;
+    return (checkout === 'preparedReviewWorkspace' ? matched : placement.availableCandidates ?? matched)
         .map(projectTriageSessionPlacementCandidateV1);
 }
 
@@ -152,7 +156,7 @@ export function triageNewSessionDraftSeedV1(
         ?? (placement !== undefined && 'checkoutIntent' in placement ? placement : undefined);
     const candidates = actionContext?.candidates ?? (actionSeed === undefined || !('placement' in actionSeed)
         ? undefined
-        : projectTriageActionPlacementCandidatesV1(actionSeed.placement));
+        : projectTriageActionPlacementCandidatesV1(actionSeed.placement, actionSeed.checkoutIntent));
     const seed = {
         ...(agentId ? { agentId } : {}),
         ...(actionSeed?.profileId === undefined ? {} : { profileId: actionSeed.profileId }),
