@@ -26,6 +26,9 @@ import { GITHUB_FIXTURE_OWNER, GITHUB_FIXTURE_REPOSITORY, GITHUB_FIXTURE_REPOSIT
 import { createCommittedContributedActionInvoker } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createCliActionExecutor } from './createCliActionExecutor';
 import { registerAccountHomeHttp } from './widgetApproval.testkit';
+import { registerScmHandlers } from '@/rpc/handlers/scm';
+import type { RpcHandler } from '@/api/rpc/types';
+import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 
 // Provider HTTP and the Home HTTP adapter are the only substituted boundaries.
 vi.mock('undici', async original => {
@@ -33,7 +36,7 @@ vi.mock('undici', async original => {
   return { ...runtime, fetch: vi.fn(runtime.fetch) };
 });
 
-it('captures Files through the source-owned Account Action from the Machine SCM executor', async () => {
+it.each(['ui', 'rpc'] as const)('captures Files through the source-owned Account Action from the Machine SCM %s ingress', async ingress => {
   const home = await mkdtemp(join(tmpdir(), 'scm-account-source-'));
   const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL']);
   const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-account-source-repo-' });
@@ -110,13 +113,29 @@ it('captures Files through the source-owned Account Action from the Machine SCM 
       invokeContributedAction: createCommittedContributedActionInvoker(),
       scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [fixture.rootPath] },
     });
-    const result = await cli.execute('scm.diffSummary.capture', { cwd: fixture.rootPath, source }, {
-      surface: 'ui', serverId: configuration.activeServerId, externalActionTarget: { kind: 'machine', machineId },
-    });
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { success: true, comparison: {
+    const input = { cwd: fixture.rootPath, source };
+    const target = { kind: 'machine' as const, machineId, project: { machineId, directory: fixture.rootPath } };
+    const handlers = new Map<string, RpcHandler>();
+    registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, fixture.rootPath,
+      { machineId, actionExecutor: cli, accessPolicy: { kind: 'restrictedRoots', roots: [fixture.rootPath] } });
+    // Files uses the authenticated Machine RPC ingress, whose surface is rpc,
+    // rather than the public UI Action path exercised by the original regression.
+    const result = ingress === 'ui'
+      ? await cli.execute('scm.diffSummary.capture', input, {
+          surface: 'ui', serverId: configuration.activeServerId, externalActionTarget: target,
+        })
+      : await handlers.get('scm.diffSummary.capture')!(createTargetedActionRpcRequestV1(input, target), {
+          signal: new AbortController().signal,
+          machineAdmission: { actorAccountId: accountId, custodianAccountId: accountId, machineId,
+            installationId: 'source-installation', role: 'manage', encryptionMode: 'plain' },
+          verifyMachineAdmissionCurrent: async () => true,
+          transportRequestId: 'rpc-source-comparison',
+        });
+    const capture = ingress === 'ui' && result && typeof result === 'object' && 'result' in result ? result.result : result;
+    expect(capture, JSON.stringify(result)).toMatchObject({ success: true, comparison: {
       source, freshness: 'current', inventory: { state: 'complete', files: [expect.objectContaining({ path: 'current.ts',
         evidence: { state: 'available', unifiedDiff: expect.stringContaining('+new') } })], reasons: [] },
-    } } });
+    } });
     expect(paths.filter(path => path.endsWith('/files'))).toHaveLength(1);
   } finally {
     await runtime?.dispose(); restore?.(); await app.close();

@@ -61,6 +61,9 @@ function projectDefinition(definition: ResolvedActionDefinition, identity: NonNu
 
 function readSurface(surface: string | null | undefined): PluginActionSurface | null {
   switch (surface) {
+    // RPC is the host transport for native Actions (including Files reads),
+    // not a plugin invocation surface. Preserve its API origin at this boundary.
+    case 'rpc': return 'api';
     case 'api': case 'cli': case 'mcp': case 'agent': case 'ui': case 'voice': case 'plugin': return surface;
     default: return null;
   }
@@ -110,7 +113,10 @@ function projectExternalActionContext(
 export function createCommittedContributedActionInvoker(input: Readonly<{
   /** Constraints already admitted by a containing SDK call, across execution realms. */
   inheritedInvocation?: Pick<Parameters<typeof import('./executeContributedAction').executeContributedAction>[0],
-    'requiredDangerLevel' | 'requiredReadOnly' | 'resourceSessionId' | 'readObservation' | 'inheritedTargetedOperation'>;
+    'requiredDangerLevel' | 'requiredReadOnly' | 'resourceSessionId' | 'readObservation' | 'inheritedTargetedOperation'> & Readonly<{
+      /** Existing originating request identity, diagnostic only. */
+      operationRequestId?: string;
+    }>;
   connectedAccountPurposeBindingOwner?: Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings'>;
   observePluginExecution?: HostActionOperationRuntime['observePluginExecution'];
   acquireRuntimeRegistryLease?: typeof acquireAuthoritativePluginRuntimeRegistryLease;
@@ -201,6 +207,8 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
         ...(input.requestCurrentIntent ? { requestCurrentIntent: input.requestCurrentIntent } : {}),
         context: {
+          ...(input.inheritedInvocation?.operationRequestId === undefined ? {}
+            : { operationRequestId: input.inheritedInvocation.operationRequestId }),
           ...(input.observePluginExecution ? { observePluginExecution: input.observePluginExecution } : {}),
           surface,
           invocationSurface: surface,
