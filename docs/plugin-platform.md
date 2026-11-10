@@ -1807,8 +1807,10 @@ mounted daemon Actions retain their existing confirmation paths.
 
 An own host UI press admitted by the canonical Action policy also retains that
 private parent intent without requiring a separate confirmation. The UI dispatcher
-and receiving Account host use the existing reviewed-child port for exact nested
-effects; the plugin caller keeps its automation authority. For example, Triage's
+and receiving Account host use the existing reviewed-child port: child Actions
+invoked by the handler receive proofs bound to their actual operands, rather than
+an advance enumeration of nested effects. The plugin caller keeps its Account
+automation authority. For example, Triage's
 Save defaults click admits its Profile and Prompt writes without a second Apply
 dialog. Explicit per-Action Ask settings still require their normal consent;
 automated callers do not inherit this direct UI intent.

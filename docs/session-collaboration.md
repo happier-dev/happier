@@ -86,8 +86,9 @@ while the exact admitted Session publisher may finish its turn, including transc
 Activity, heartbeat, metadata and terminal settlement. Publisher lifetime is fenced by
 the Session registration; the next Send, reconnect and work-starting Session RPC require
 current Machine access. The canonical Session RPC method policy marks new provider
-operations; the RPC admission owner checks the Session owner's exact Machine binding
-once before forwarding them. Stop, cancel, reads and admitted-turn settlement stay open.
+operations and workspace mutations; the RPC admission owner checks the Session
+owner's exact Machine binding once before forwarding them. Stop, cancel, reads and
+admitted-turn settlement stay open.
 Machine revocation, replacement and AccessKey invalidation retain their exact socket
 eviction. Terminal custody and Archive have their own lifecycle. Ordinary handoff changes execution placement without transferring Session
 ownership. Older producers may omit the optional observation cursor; ordinary-list omission
