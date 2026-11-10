@@ -36,7 +36,7 @@ import { createLocalServiceInventoryRegistry } from '../inventory/registry';
 import { createLocalServicePreviewRegistry } from '../preview/registry';
 import { createLocalServiceLauncherHistoryStore } from './leaves';
 import { createLocalServiceActionRoutes } from '../actions/routes';
-import { createLocalServicesDaemonRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
+import { createLocalServicesDaemonRestartPreparation, createLocalServicesDaemonRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
 import { createProjectServiceRelocationRoute } from '../actions/projectServiceRelocationRoute';
 import { createLocalServicesDaemonFeatureGate } from '../featureGate';
 import { LocalServiceActionRequestV1Schema, LocalServiceManagedServiceActionTargetV1Schema, createLocalServiceActionConfirmationNonceV1, createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
@@ -2621,74 +2621,74 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
             ...(policy === 'waived-agent' ? { 'localServices.launcher.start': ['agent'] } : {}),
         } });
         const h = await fixture();
-        // The peer cannot supply native approval review. Substitute only that
-        // Machine transport; independent Start policy must still refuse Restart.
-        vi.spyOn(machineRpcBoundary, 'callExactMachineRpc').mockImplementation(async call => {
-            expect(call.method).toBe(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT);
-            return DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse({ protocolVersion: 1,
-                snapshot: { v: 1, machineId: h.workspace.machineId, updatedAt: 1, targets: [] },
-                startReview: { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' } });
-        });
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        const selected = await h.starter.resolveStartTarget(h.request, h.ingress, h.context);
+        if (!selected.ok) throw new Error(selected.reasonCode);
+        const review = selected.declaration;
         if (!review.reviewedEffectDigest) throw new Error('Expected current Service review');
-        const start = { ...h.request, expectedEffectDigest: review.reviewedEffectDigest };
-        expect(await h.routes.startTarget!(start, h.ingress, h.context)).toMatchObject({ status: 'succeeded' });
+        expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context))
+            .toMatchObject({ status: 'succeeded' });
         const original = h.owner.listProjectServices()[0]!;
         const actionRoutes = createLocalServiceActionRoutes({ machineId: 'machine', projectManagedServices: h.owner,
             inventoryRegistry: createLocalServiceInventoryRegistry(), restartManagedService: h.starter.restartManagedService,
+            prepareRestartManagedService: h.starter.prepareRestartManagedService,
             verifyConfirmationNonce: request => request.confirmationNonce === createLocalServiceActionConfirmationNonceV1(request) });
-        const gate = createLocalServicesDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => ({ status: 'ready',
+        const featureGate = createLocalServicesDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => ({ status: 'ready',
             features: FeaturesResponseSchema.parse({ features: { localServices: { enabled: true, inventory: { enabled: true },
                 managed: { enabled: true }, actions: { enabled: true }, launcher: { enabled: true } },
-                browser: { enabled: true, viewTargets: { enabled: true } } }, capabilities: {} }) }) });
-        await gate.refresh();
+                    browser: { enabled: true, viewTargets: { enabled: true } } }, capabilities: {} }) }) });
+        await featureGate.refresh();
         const approvals: string[] = [];
-        const execute: ReturnType<typeof createLocalServicesDaemonRuntimeActionExecutor> = createLocalServicesDaemonRuntimeActionExecutor({ featureGate: gate, ingress: h.ingress,
-            routes: { launcherRoutes: h.routes, actionRoutes },
-            prepareStartAction: (request, context) => executor.prepare('localServices.launcher.start', request, context) });
-        const executor: ReturnType<typeof createActionExecutor> = createActionExecutor({
+        let artifact: ReturnType<typeof ApprovalRequestV2Schema.parse> | undefined;
+        const executor = createActionExecutor({
             ...createCliActionDeps({ token: h.runtime.credentials.token, credentials: h.runtime.credentials,
                 serverId: 'home', serverHttpBaseUrl: 'https://home.example', sessionId: 'cli-global', mode: 'plain', ctx: null }),
-            runtimeActionExecute: execute,
-            isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId,
-                settings, context),
-            // Artifact persistence is external; an unreviewable declared Start
-            // must refuse before this publication boundary is reached.
-            approvalsCreate: async ({ request }) => { approvals.push(request.actionId); return { artifactId: 'restart-start-review' }; } });
+            prepareHostReviewedChildren: createLocalServicesDaemonRestartPreparation({ featureGate, ingress: h.ingress,
+                routes: { launcherRoutes: h.routes, actionRoutes } }),
+            prepareLocalServiceStartApproval: ({ input, context, executeCanonicalAction }) =>
+                h.routes.prepareStartApproval!(input, h.ingress, context, executeCanonicalAction),
+            runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({ featureGate, ingress: h.ingress,
+                routes: { launcherRoutes: h.routes, actionRoutes } }),
+            isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+            approvalsCreate: async ({ request }) => { artifact = ApprovalRequestV2Schema.parse(request);
+                approvals.push(request.actionId); return { artifactId: 'restart-review' }; },
+            approvalsGet: async () => artifact ?? null,
+            approvalsUpdate: async ({ request }) => { artifact = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+            isApprovalExecutionOriginCurrent: async () => true });
         const request = { requestId: 'restart-service', action: 'restart_managed' as const, force: false,
             expectedEffectDigest: review.reviewedEffectDigest,
             target: { kind: 'managed_service' as const, machineId: 'machine', managedServiceId: original.instanceId,
                 workspaceId: h.workspace.id, declaration: h.request.declaration, cwd: h.root } };
-        await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ ...h.manifest,
-            services: { ...h.manifest.services, worker: { source: { kind: 'command', command: 'different reviewed effect' } } } }));
-        const refusedRestart = await execute({ actionId: 'localServices.actions.restartManaged',
-            input: { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) },
-            context: { ...h.context, actionRequestId: request.requestId, surface, actionsSettings: settings } });
-        assertActionOutputContract('localServices.actions.restartManaged', refusedRestart);
-        expect(refusedRestart).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_changed' });
-        expect(original.snapshot().state).toBe('running');
-        expect(approvals).toEqual([]);
-        await writeFile(join(h.root, '.happier/project.json'), JSON.stringify(h.manifest));
-        const admittedRequest = { ...request,
-            ...(policy === 'restart-waived-agent' || policy === 'waived-agent' ? { expectedEffectDigest: undefined } : {}) };
-        const result = await execute({ actionId: 'localServices.actions.restartManaged',
-            input: { ...admittedRequest, confirmationNonce: createLocalServiceActionConfirmationNonceV1(admittedRequest) },
-            context: { ...h.context, actionRequestId: request.requestId, surface, actionsSettings: settings } });
-        assertActionOutputContract('localServices.actions.restartManaged', result);
-        if (surface === 'agent' && policy !== 'waived-agent') {
+        const context = { ...h.context, serverIdentityId: h.serverIdentityId, runtimeAccountId: 'owner',
+            actionRequestId: request.requestId, surface, actionsSettings: settings };
+        if (policy === 'rpc') {
+            await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ ...h.manifest,
+                services: { ...h.manifest.services, worker: { source: { kind: 'command', command: 'different reviewed effect' } } } }));
+            expect(await executor.execute('localServices.actions.restartManaged',
+                { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) }, context))
+                .toMatchObject({ ok: true, result: { status: 'denied', reasonCode: 'project_service_effect_changed' } });
             expect(original.snapshot().state).toBe('running');
-            // Declared Starts deliberately refuse generic approval preparation
-            // until native review custody is available. Restart cannot waive it.
-            expect(result).toMatchObject({ status: 'denied', reasonCode: 'approval_context_unavailable' });
             expect(approvals).toEqual([]);
-            expect(h.owner.listProjectServices()).toEqual([original]);
-        } else {
-            expect(original.snapshot().state).toBe('stopped');
-            expect(result).toMatchObject({ status: 'succeeded' });
-            expect(approvals).toEqual([]);
-            expect(h.owner.listProjectServices()[0]?.instanceId).not.toBe(original.instanceId);
-            expect(h.owner.listProjectServices()[0]?.snapshot().state).toBe('running');
+            await writeFile(join(h.root, '.happier/project.json'), JSON.stringify(h.manifest));
         }
+        const result = await executor.execute('localServices.actions.restartManaged',
+            { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) }, context);
+        if (surface === 'agent' && policy !== 'waived-agent') {
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+                result: { kind: 'approval_request_created', actionId: 'localServices.actions.restartManaged' } });
+            expect(approvals).toEqual(['localServices.actions.restartManaged']);
+            expect(original.snapshot().state).toBe('running');
+            expect(h.owner.listProjectServices()).toEqual([original]);
+            expect(await executor.execute('approval.request.decide', { artifactId: 'restart-review', decision: 'approve' }, {
+                ...context, surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner',
+            })).toMatchObject({ ok: true });
+            expect(artifact?.execution, JSON.stringify(artifact?.execution)).toMatchObject({ ok: true, result: { status: 'succeeded' } });
+        } else {
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'succeeded' } });
+            expect(approvals).toEqual([]);
+        }
+        expect(original.snapshot().state).toBe('stopped');
+        expect(h.owner.listProjectServices()[0]?.instanceId).not.toBe(original.instanceId);
+        expect(h.owner.listProjectServices()[0]?.snapshot().state).toBe('running');
     });
     it('keeps the legacy Machine control transport behind the same current Agent approval policy', async () => {
         const h = await fixture();
@@ -2732,13 +2732,16 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
     });
     it('reaches fresh replacement through the actual receiving Machine Restart Action handler', async () => {
         const h = await fixture();
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        const selected = await h.starter.resolveStartTarget(h.request, h.ingress, h.context);
+        if (!selected.ok) throw new Error(selected.reasonCode);
+        const review = selected.declaration;
         if (!review.reviewedEffectDigest) throw new Error('Expected Service effect review');
         expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context))
             .toMatchObject({ status: 'succeeded' });
         const old = h.owner.listProjectServices()[0]!;
         const actionRoutes = createLocalServiceActionRoutes({ machineId: 'machine', projectManagedServices: h.owner,
             inventoryRegistry: createLocalServiceInventoryRegistry(), restartManagedService: h.starter.restartManagedService,
+            prepareRestartManagedService: h.starter.prepareRestartManagedService,
             verifyConfirmationNonce: request => request.confirmationNonce === createLocalServiceActionConfirmationNonceV1(request) });
         const featureGate = createLocalServicesDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => ({ status: 'ready',
             features: FeaturesResponseSchema.parse({ features: { localServices: { enabled: true, inventory: { enabled: true },
@@ -2748,16 +2751,21 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain',
             authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'machine',
                 resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'installation',
+                resolveHomeServerIdentityId: async () => h.serverIdentityId,
                 verifyMachineAdmission: async () => true }) });
         registerDaemonLocalServicesMachineRpcHandlers(rpc, { machineId: 'machine', serverId: 'home', localServicesActions: actionRoutes,
             resolveLauncherActionExecutor: ({ ingress }) => {
                 const executor: ReturnType<typeof createActionExecutor> = createActionExecutor({
                     ...createCliActionDeps({ token: h.runtime.credentials.token, credentials: h.runtime.credentials,
                         serverId: 'home', serverHttpBaseUrl: 'https://home.example', sessionId: 'cli-global', mode: 'plain', ctx: null }),
+                    prepareHostReviewedChildren: createLocalServicesDaemonRestartPreparation({ featureGate, ingress,
+                        routes: { launcherRoutes: h.routes, actionRoutes } }),
+                    prepareLocalServiceStartApproval: ({ input, context, executeCanonicalAction }) =>
+                        h.routes.prepareStartApproval!(input, ingress, context, executeCanonicalAction),
                     runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({ featureGate, ingress,
-                        routes: { launcherRoutes: h.routes, actionRoutes },
-                        prepareStartAction: (request, context) => executor.prepare('localServices.launcher.start', request, context) }) });
-                return { execute: (actionId, input, context) => executor.execute(actionId, input, { serverId: 'home', ...context }) };
+                        routes: { launcherRoutes: h.routes, actionRoutes } }) });
+                return { execute: (actionId, input, context) => executor.execute(actionId, input, { serverId: 'home', ...context,
+                    actionsSettings: context?.actionsSettings ?? normalizeActionsSettingsV1(null) }) };
             } });
         const request = { requestId: 'received-restart', action: 'restart_managed' as const, force: false,
             expectedEffectDigest: review.reviewedEffectDigest,
@@ -2765,7 +2773,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                 workspaceId: h.workspace.id, declaration: h.request.declaration, cwd: h.root } };
         expect(await rpc.handleRequest({ method: 'machine:daemon.localServices.actions.restartManaged',
             params: { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) },
-            requestId: request.requestId, machineAdmission: h.ingress.machineAdmission })).toMatchObject({ status: 'succeeded' });
+            requestId: request.requestId, callerAuthority: 'present_user', machineAdmission: h.ingress.machineAdmission })).toMatchObject({ status: 'succeeded' });
         expect(old.snapshot().state).toBe('stopped');
         expect(h.owner.listProjectServices()[0]?.instanceId).not.toBe(old.instanceId);
         expect(h.owner.listProjectServices()[0]?.snapshot().state).toBe('running');

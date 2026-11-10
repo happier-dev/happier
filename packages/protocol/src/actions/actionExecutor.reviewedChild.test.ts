@@ -34,6 +34,56 @@ const context: ActionExecutorContext = { surface: 'cli', authority: 'present_use
   } }) };
 
 describe('generic reviewed host children', () => {
+  it('retains native demanded children and their review through explicit approval creation', async () => {
+    const input = { rootPath: '/workspace', path: 'README.md' };
+    const demanded = { action: 'machines.work.summary.get' as const, role: 'inspect',
+      input: { serverId: 'home', machineId: 'machine' } };
+    let stored: ApprovalRequest | null = null;
+    const effects: string[] = [];
+    const executor = createActionExecutor({
+      // The host preparer and Artifact storage are external boundaries. Child
+      // admission, retained review, decision transition, and replay remain real.
+      prepareHostReviewedChildren: async ({ actionId }) => actionId === 'daemon.filesystem.readFile'
+        ? { children: [demanded], approvalPreview: { reviewedService: 'web' } } : null,
+      approvalsCreate: async ({ request }) => {
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'explicit-native-review' };
+      },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request, expectedStatus }) => {
+        if (!stored) throw new Error('Missing original approval');
+        const next = ApprovalRequestV2Schema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next, { expectedStatus });
+        if (!transition.ok) return transition;
+        stored = next;
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+      filesystemActionExecute: async ({ context }) => {
+        const result = await context.hostReviewedChild!.invoke(demanded);
+        if (!result.ok) return result;
+        effects.push('read');
+        return { success: true, content: 'requested file' };
+      },
+      machineWorkSummaryGet: async () => { effects.push('inspect'); return { kind: 'current', requesters: [] }; },
+    });
+    const original: ActionExecutorContext = { ...context, serverIdentityId: 'home-identity', machineId: 'machine',
+      surface: 'ui', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) };
+    const created = await executor.execute('approval.request.create', {
+      actionId: 'daemon.filesystem.readFile', actionArgs: input,
+      summary: 'Review requested file', createdBy: { surface: 'cli' },
+    }, original);
+    expect(created, JSON.stringify(created)).toMatchObject({ ok: true });
+    expect(effects).toEqual([]);
+    expect(stored).toMatchObject({ preview: {
+      hostReviewedChildren: { children: [demanded] }, hostReviewedContent: { reviewedService: 'web' },
+    } });
+    expect(await executor.execute('approval.request.decide', {
+      artifactId: 'explicit-native-review', decision: 'approve',
+    }, original)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(effects).toEqual(['inspect', 'read']);
+  });
+
   it.each([true, false])('folds genuine new-session software setup into one native review without approval Artifacts (accept=%s)', async accept => {
     const setup = { homeId: 'home', machineId: 'machine' };
     const softwarePlan = MachineSetupPlanResultV1Schema.parse({

@@ -12,7 +12,7 @@ import { readActionApprovalScopeAdmissionV1 } from './approvalScope.js';
 import type { ActionHomeEquivalence, PreparedCoreAdmission } from './coreInvocation.js';
 import type { ActionSettingsActionId } from '../actionSettings.js';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1, HostReviewedChildInvocationV1 } from './types.js';
-import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1, retainHostReviewedChildCredentialScopeAdmissionV1, type HostReviewedChildPolicyV1 } from './deploymentRoleChild.js';
+import { invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1, retainHostReviewedChildCredentialScopeAdmissionV1, type HostReviewedChildPolicyV1 } from './deploymentRoleChild.js';
 import { HostReviewedChildrenPlanV1Schema } from './hostReviewedChildrenV1.js';
 import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 
@@ -56,8 +56,8 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   reviewAdmitted?: boolean;
   approvalScope?: ActionApprovalPolicyScopeV1;
   existing?: PreparedCoreAdmission; approvalReplay: boolean; isSameHome: ActionHomeEquivalence;
-  invokePreparationChild(child: HostReviewedChildInvocationV1): Promise<ActionExecuteResult>;
-  admitChildCredentialScope(child: HostReviewedChildInvocationV1): Promise<ActionExecuteFailure | null>;
+  executeChild(actionId: ActionId, input: unknown, context: ActionExecutorContext): Promise<ActionExecuteResult>;
+  admitCredentialScope(actionId: ActionId, context: ActionExecutorContext, input: unknown): Promise<ActionExecuteFailure | null>;
 }>): Promise<Readonly<{ plan?: HostReviewedChildrenPlanV1; policies?: readonly HostReviewedChildPolicyV1[];
   input?: HostReviewedChildrenPreparationV1['input'];
   executeAdmittedAction?: HostReviewedChildrenPreparationV1['executeAdmittedAction'];
@@ -71,6 +71,22 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
     ...(existing.prepareExecutionContext ? { prepareExecutionContext: existing.prepareExecutionContext } : {}),
     ...(existing.admittedReviewedChild ? { admittedReviewedChild: true } : {}),
     ...(existing.executeAdmittedAction ? { executeAdmittedAction: existing.executeAdmittedAction } : {}), reviewRequired: false };
+  const parent = () => ({ actionId, input: projectNativeJsonValueForTransport(params.input) as Record<string, import('../../json/strictJsonValue.js').JsonValue> });
+  const invokePreparationChild = (child: HostReviewedChildInvocationV1) => {
+    const policy = prepareHostReviewedChildPolicyV1(child, context, params.approvalScope);
+    return invokeHostReviewedChildV1({ parent: parent(), context, child,
+      // Explicit Require still enters ordinary review without an accepted parent.
+      ...(policy && policy.requiredActionIds.length === 0 ? { admittedReview: policy } : {}),
+      execute: (input, context, childId) => params.executeChild(childId, input, context) });
+  };
+  const admitChildCredentialScope = async (child: HostReviewedChildInvocationV1) => {
+    const admitted = await invokeHostReviewedChildV1({ parent: parent(), context, child,
+      execute: async (input, context, childId) => {
+        const failure = await params.admitCredentialScope(childId, context, input);
+        return failure ?? { ok: true as const, result: null };
+      } });
+    return admitted.ok ? null : admitted;
+  };
   const reviewedChild = readHostReviewedChildOperationV1(context, actionId, params.input);
   const admittedLeaf = readHostAdmittedReviewedChildV1(context);
   // The exact admitted child consumes its original closed plan, not another preparation or review.
@@ -86,13 +102,13 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
     : getActionSpec(actionId).machineRuntimeDemandForInput?.(params.input, context);
   const prepared = params.prepared ?? (actionId === 'template.instantiate' && deps.prepareBotTemplateInstantiation
     ? await deps.prepareBotTemplateInstantiation({ input: params.input,
-      invokeChild: params.invokePreparationChild,
+      invokeChild: invokePreparationChild,
       context: { ...context, runActionOperation: context.runActionOperation ?? deps.runActionOperation } })
     : actionId === 'template.release' && deps.prepareBotTemplateRelease
       ? await deps.prepareBotTemplateRelease({ input: params.input, context })
     : actionId === 'template.updates.apply' && deps.prepareBotTemplateUpdate
       ? await deps.prepareBotTemplateUpdate({ input: params.input,
-        invokeChild: params.invokePreparationChild,
+        invokeChild: invokePreparationChild,
         context: { ...context, runActionOperation: context.runActionOperation ?? deps.runActionOperation } })
     : await deps.prepareHostReviewedChildren?.({ actionId, input: params.input, context,
       ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}) }));
@@ -121,7 +137,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
     // Concrete demanded effects are admitted before any parent effect or Ask.
     // Dynamic operands remain at their existing dispatch-time target boundary.
     if (child.input !== undefined) {
-      const failure = await params.admitChildCredentialScope({ action: child.action, role: child.role, input: child.input });
+      const failure = await admitChildCredentialScope({ action: child.action, role: child.role, input: child.input });
       if (failure) return failure;
     }
     const childId = typeof child.action === 'string' ? child.action : 'action.invoke';

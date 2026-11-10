@@ -55,7 +55,7 @@ import { acquireAuthoritativePluginRuntimeRegistryLease } from "@/plugins/runtim
 import { createSessionTranscriptFollowLeaseRegistry } from "@/api/session/transcriptQueries";
 import { createCliActionExecutorFromCredentials } from "@/session/actions/createCliActionExecutorFromCredentials";
 import { createMachineRecipeReadAction } from "@/machines/setup/machineRecipeActionDeps";
-import { createLocalServicesDaemonRuntimeActionExecutor } from "@/daemon/local/services/actions/runtimeActionExecutor";
+import { createLocalServicesDaemonRestartPreparation, createLocalServicesDaemonRuntimeActionExecutor } from "@/daemon/local/services/actions/runtimeActionExecutor";
 import { createLocalServicesDaemonFeatureGate } from "@/daemon/local/services/featureGate";
 import { dispatchManagedSessionStart, dispatchManagedMachineSetup, dispatchManagedMachineSetupPlan,
   dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, isManagedSessionStartTransportAvailable, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSecondOpinionModelSpawnChild, isReviewedSessionStopChild } from "@/api/externalActionExecutionAuthorization";
@@ -870,20 +870,24 @@ resolveServerFeaturesSnapshot?: () =>
             ...(ingress?.requesterSessionBootstrap ? { requesterSessionBootstrap: ingress.requesterSessionBootstrap } : {}),
           }, ...(moveExecutor ? { execute: operation => moveExecutor.execute('projects.service.relocate', request.input, operation) } : {}) });
         } } : {}),
-        ...(deploymentDeps || reachabilityHost ? {
-          prepareHostReviewedChildren: async request => {
-            const deployment = await deploymentDeps?.prepareHostReviewedChildren(request);
-            if (deployment) return deployment;
-            if (!reachabilityHost || request.actionId !== 'machines.reachability.inspect'
-              && request.actionId !== 'machines.reachability.configure') return null;
-            const ingress = resolveRequesterIngress(request.context,
-              request.actionId === 'machines.reachability.configure' ? 'manage' : 'use');
-            if (!ingress) return {
-              ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable',
-            };
-            return reachabilityHost.prepareMachineReachabilityReviewedChildren(request, ingress);
-          },
-        } : {}),
+        prepareHostReviewedChildren: async request => {
+          if (request.actionId === 'localServices.actions.restartManaged') {
+            const ingress = resolveRequesterIngress(request.context);
+            await localServicesActionFeatureGate.refresh();
+            return createLocalServicesDaemonRestartPreparation({ routes: localServicesRuntimeActionRoutes,
+              ingress, featureGate: localServicesActionFeatureGate })(request);
+          }
+          const deployment = await deploymentDeps?.prepareHostReviewedChildren(request);
+          if (deployment) return deployment;
+          if (!reachabilityHost || request.actionId !== 'machines.reachability.inspect'
+            && request.actionId !== 'machines.reachability.configure') return null;
+          const ingress = resolveRequesterIngress(request.context,
+            request.actionId === 'machines.reachability.configure' ? 'manage' : 'use');
+          if (!ingress) return {
+            ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable',
+          };
+          return reachabilityHost.prepareMachineReachabilityReviewedChildren(request, ingress);
+        },
         ...(reachabilityHost ? {
           machineReachabilityAction: async request => {
             const ingress = resolveRequesterIngress(request.context,
@@ -1257,8 +1261,6 @@ resolveServerFeaturesSnapshot?: () =>
                 routes: localServicesRuntimeActionRoutes,
                 ingress,
                 featureGate: localServicesActionFeatureGate,
-                prepareStartAction: (input, startContext) =>
-                  executor.prepare('localServices.launcher.start', input, startContext),
               })(request);
             } }
           : {}),

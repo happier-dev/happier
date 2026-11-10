@@ -9,6 +9,7 @@ import {
     type ResolvedLocalServiceActionTarget,
     type LocalServiceActionExecutionContext,
     type RestartProjectManagedService,
+    type PrepareRestartProjectManagedService,
     type LocalServiceActionExecutionOutcome,
 } from './executor';
 import { resolveLocalServiceActionEligibility } from './policy';
@@ -17,11 +18,15 @@ import type { TerminateDetectedService } from './terminate';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { LocalServiceLauncherHistoryStore } from '../launch/leaves';
+import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 
 type ManagedServicesOwner = ReturnType<typeof createManagedServicesOwner>;
+type AdmittedLocalServiceAction = Readonly<{ request: LocalServiceActionRequestV1; requestedAt: number;
+    target: ResolvedLocalServiceActionTarget; requiresConfirmation: boolean }>;
 
 export type LocalServiceActionRoutes = Readonly<{
     execute(request: LocalServiceActionRequestV1, execution?: LocalServiceActionExecutionContext): Promise<LocalServiceActionResultV1>;
+    prepareRestart(request: LocalServiceActionRequestV1, execution: LocalServiceActionExecutionContext): Promise<HostReviewedChildrenPreparationV1>;
 }>;
 
 function createAuditEvent(input: Readonly<{
@@ -151,83 +156,107 @@ export function createLocalServiceActionRoutes(input: Readonly<{
     projectManagedServices?: Pick<ManagedServicesOwner, 'resolveProjectService'>;
     launcherHistory?: LocalServiceLauncherHistoryStore;
     restartManagedService?: RestartProjectManagedService;
+    prepareRestartManagedService?: PrepareRestartProjectManagedService;
     terminateEnabled?: () => boolean;
     verifyConfirmationNonce?: (request: LocalServiceActionRequestV1) => boolean;
     terminateDetectedService?: TerminateDetectedService;
     now?: () => number;
 }>): LocalServiceActionRoutes {
     const now = input.now ?? (() => Date.now());
+    async function admit(request: LocalServiceActionRequestV1, execution?: LocalServiceActionExecutionContext):
+        Promise<AdmittedLocalServiceAction | Readonly<{ result: LocalServiceActionResultV1 }>> {
+        const requestedAt = now();
+        const target = await resolveActionTarget({
+            request,
+            machineId: input.machineId,
+            inventoryRegistry: input.inventoryRegistry,
+            projectManagedServices: input.projectManagedServices,
+            execution,
+        });
+        if ('reasonCode' in target) {
+            return { result: deniedResult({ request, requestedAt, reasonCode: target.reasonCode }) };
+        }
+        if (target.kind === 'undo_forget') {
+            const restored = input.inventoryRegistry.undoForget(target.undoKey);
+            return { result: executionResult({
+                request,
+                requestedAt,
+                confirmed: false,
+                status: restored.ok ? 'succeeded' : 'denied',
+                ...(!restored.ok ? { reasonCode: restored.reason } : {}),
+            }) };
+        }
+
+        const decision = resolveLocalServiceActionEligibility({
+            action: request.action,
+            target,
+            terminateEnabled: input.terminateEnabled?.() === true,
+            restartAdmitted: Boolean(input.restartManagedService && input.prepareRestartManagedService && execution?.ingress),
+        });
+        if (!decision.enabled) {
+            return { result: deniedResult({
+                request,
+                requestedAt,
+                reasonCode: decision.reasonCode ?? 'action_not_allowed',
+            }) };
+        }
+
+        if (decision.requiresConfirmation && !request.confirmationNonce) {
+            return { result: deniedResult({
+                request,
+                requestedAt,
+                reasonCode: 'confirmation_required',
+            }) };
+        }
+        if (decision.requiresConfirmation && input.verifyConfirmationNonce?.(request) !== true) {
+            return { result: deniedResult({
+                request,
+                requestedAt,
+                reasonCode: 'confirmation_nonce_invalid',
+            }) };
+        }
+        return { request, requestedAt, target, requiresConfirmation: decision.requiresConfirmation };
+    }
+    async function executeAdmitted(admitted: AdmittedLocalServiceAction, execution?: LocalServiceActionExecutionContext) {
+        const { request, requestedAt, target } = admitted;
+        const outcome = await executeLocalServiceAction({
+            request,
+            target,
+            inventoryRegistry: input.inventoryRegistry,
+            terminateDetectedService: input.terminateDetectedService,
+            launcherHistory: input.launcherHistory,
+            restartManagedService: input.restartManagedService,
+            execution,
+            now: requestedAt,
+        });
+        return executionResult({
+            request,
+            status: outcome.status,
+            ...(outcome.status === 'succeeded' ? {} : { reasonCode: outcome.reasonCode, review: outcome }),
+            ...(outcome.status === 'succeeded' && outcome.undoKey ? { undoKey: outcome.undoKey } : {}),
+            requestedAt,
+            confirmed: admitted.requiresConfirmation,
+        });
+    }
     return {
         async execute(request, execution) {
-            const requestedAt = now();
-            const target = await resolveActionTarget({
-                request,
-                machineId: input.machineId,
-                inventoryRegistry: input.inventoryRegistry,
-                projectManagedServices: input.projectManagedServices,
-                execution,
-            });
-            if ('reasonCode' in target) {
-                return deniedResult({ request, requestedAt, reasonCode: target.reasonCode });
-            }
-            if (target.kind === 'undo_forget') {
-                const restored = input.inventoryRegistry.undoForget(target.undoKey);
-                return executionResult({
-                    request,
-                    requestedAt,
-                    confirmed: false,
-                    status: restored.ok ? 'succeeded' : 'denied',
-                    ...(!restored.ok ? { reasonCode: restored.reason } : {}),
-                });
-            }
-
-            const decision = resolveLocalServiceActionEligibility({
-                action: request.action,
-                target,
-                terminateEnabled: input.terminateEnabled?.() === true,
-                restartAdmitted: Boolean(input.restartManagedService && execution?.ingress && execution.prepareStartAction),
-            });
-            if (!decision.enabled) {
-                return deniedResult({
-                    request,
-                    requestedAt,
-                    reasonCode: decision.reasonCode ?? 'action_not_allowed',
-                });
-            }
-
-            if (decision.requiresConfirmation && !request.confirmationNonce) {
-                return deniedResult({
-                    request,
-                    requestedAt,
-                    reasonCode: 'confirmation_required',
-                });
-            }
-            if (decision.requiresConfirmation && input.verifyConfirmationNonce?.(request) !== true) {
-                return deniedResult({
-                    request,
-                    requestedAt,
-                    reasonCode: 'confirmation_nonce_invalid',
-                });
-            }
-
-            const outcome = await executeLocalServiceAction({
-                request,
-                target,
-                inventoryRegistry: input.inventoryRegistry,
-                terminateDetectedService: input.terminateDetectedService,
-                launcherHistory: input.launcherHistory,
-                restartManagedService: input.restartManagedService,
-                execution,
-                now: requestedAt,
-            });
-            return executionResult({
-                request,
-                status: outcome.status,
-                ...(outcome.status === 'succeeded' ? {} : { reasonCode: outcome.reasonCode, review: outcome }),
-                ...(outcome.status === 'succeeded' && outcome.undoKey ? { undoKey: outcome.undoKey } : {}),
-                requestedAt,
-                confirmed: decision.requiresConfirmation,
-            });
+            const admitted = await admit(request, execution);
+            return 'result' in admitted ? admitted.result : await executeAdmitted(admitted, execution);
+        },
+        async prepareRestart(request, execution) {
+            const settled = (result: LocalServiceActionResultV1): HostReviewedChildrenPreparationV1 => ({ children: [],
+                executeAdmittedAction: async () => ({ ok: true, result }) });
+            const admitted = await admit(request, execution);
+            if ('result' in admitted) return settled(admitted.result);
+            if (request.action !== 'restart_managed' || admitted.target.kind !== 'managed_service'
+                || admitted.target.handle.kind !== 'workspace' || !input.prepareRestartManagedService)
+                return settled(deniedResult({ request, requestedAt: admitted.requestedAt, reasonCode: 'managed_service_restart_admission_required' }));
+            const prepared = await input.prepareRestartManagedService(request, admitted.target.handle, execution);
+            if ('status' in prepared) return settled(executionResult({ request, requestedAt: admitted.requestedAt,
+                confirmed: admitted.requiresConfirmation, status: prepared.status,
+                ...(prepared.status === 'succeeded' ? {} : { reasonCode: prepared.reasonCode, review: prepared }) }));
+            return { ...prepared, executeAdmittedAction: async ({ context }) => ({ ok: true,
+                result: await executeAdmitted(admitted, { ...execution, actionContext: context }) }) };
         },
     };
 }

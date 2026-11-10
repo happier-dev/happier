@@ -769,6 +769,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         projectManagedServices: params.projectManagedServices,
         launcherHistory,
         restartManagedService: declarationStarter?.restartManagedService,
+        prepareRestartManagedService: declarationStarter?.prepareRestartManagedService,
         terminateEnabled: isTerminateEnabled,
         verifyConfirmationNonce: isLocalServiceActionConfirmationNonceV1,
         terminateDetectedService,

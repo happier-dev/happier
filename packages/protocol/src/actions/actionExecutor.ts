@@ -9,7 +9,7 @@ import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsD
 import { admitPresentUserConfirmationV1, recordPresentUserApprovalV1 } from './executor/approvalReview.js';
 import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1, retainHostReviewedChildOperationContextV1 } from './executor/deploymentRoleChild.js';
-import { prepareHostReviewedChildrenV1, prepareHostReviewedChildPolicyV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
+import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
 export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHostReviewedChildPortV1,
   readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1,
   readHostReviewedChildOriginalAuthorizationV1,
@@ -1441,10 +1441,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
     }
 
-    const executionOutcomeUnknown = (): Readonly<{ ok: false; errorCode: string; error: string }> => ({
+    const executionOutcomeUnknown = (failure?: ActionExecuteFailure): ActionExecuteFailure => ({
       ok: false,
       errorCode: 'approval_execution_outcome_unknown',
       error: 'approval_execution_outcome_unknown',
+      ...(failure?.failureCause ? { failureCause: failure.failureCause } : {}),
     });
     const finishExecution = async (request: ApprovalRequest, exec: ActionExecuteResult) => {
       const settlementFailure = await settleApprovalExecutionPublication(args.artifactId, request, args.ctx);
@@ -1495,7 +1496,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         // A pre-effect check may fail after the execution claim. Losing that
         // settlement acknowledgement cannot advertise an unclaimed retry.
         return effectAttempted || request.v === 2 && request.status === 'executing' || fallback.errorCode === 'invalid_transition'
-          ? executionOutcomeUnknown() : fallback;
+          ? executionOutcomeUnknown(fallback) : fallback;
       };
       let updated: unknown;
       try {
@@ -1505,8 +1506,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           serverId: args.artifactServerId,
           expectedStatus: request.status,
         });
-      } catch {
-        return await persistenceFailure(approvalContextUnavailable());
+      } catch (error) {
+        return await persistenceFailure({ ok: false, ...normalizeActionExecutorThrownError(error, 'approval.settlement') });
       }
       const updateFailure = readActionFailureEnvelope(updated);
       return updateFailure ? await persistenceFailure(updateFailure) : finishExecution(nextFailed, failure);
@@ -1517,16 +1518,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       latestRaw = deps.approvalsGet
         ? await deps.approvalsGet({ artifactId: args.artifactId, serverId: args.artifactServerId })
         : null;
-    } catch {
+    } catch (error) {
+      const failure = { ok: false as const, ...normalizeActionExecutorThrownError(error, 'approval.artifact_read') };
       if (args.request.status !== 'executing') {
         // This executor has issued no claim or dispatch. Preserve consent;
         // a later attempt still observes and respects another executor's CAS.
-        return { ...approvalContextUnavailable(), effectAttempted: false };
+        return { ...failure, effectAttempted: false };
       }
       // An unreadable receipt cannot rule out another executor's claim.
       // The normal CAS writer either records that uncertainty or reports its
       // own persistence failure; it never publishes a false no-effect fact.
-      return await persistExecutionFailure(args.request, executionOutcomeUnknown(), true);
+      return await persistExecutionFailure(args.request, executionOutcomeUnknown(failure), true);
     }
     const latestParsed = StoredApprovalRequestSchema.safeParse(latestRaw);
     const latestRequest = latestParsed.success ? latestParsed.data : null;
@@ -2142,7 +2144,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // scope loss and ordinary terminal write failures remain outcome-unknown.
     const retirementReceipt = actionId === null ? null
       : projectKnownAccountAuthorityRetirementReceipt(getActionSpec(actionId), settledExec);
-    const terminalPersistenceFailure = async () => {
+    const terminalPersistenceFailure = async (failure: ActionExecuteFailure) => {
       if (retirementReceipt) return { ok: true as const, request: nextExecuted, exec: retirementReceipt };
       // A missing acknowledgement does not prove the terminal write failed.
       // Read the exact receipt once; never replay the effect or infer its
@@ -2152,16 +2154,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         artifactId: args.artifactId, serverId: args.artifactServerId, request: nextExecuted,
       });
       if (persisted) return finishExecution(persisted, settledExec);
-      return executionOutcomeUnknown();
+      return executionOutcomeUnknown(failure);
     };
     let updated: unknown;
     try {
       updated = await deps.approvalsUpdate({ artifactId: args.artifactId, request: nextExecuted, serverId: args.artifactServerId });
-    } catch {
-      return terminalPersistenceFailure();
+    } catch (error) {
+      return terminalPersistenceFailure({ ok: false, ...normalizeActionExecutorThrownError(error, 'approval.settlement') });
     }
     const updateFailure = readActionFailureEnvelope(updated);
-    if (updateFailure) return terminalPersistenceFailure();
+    if (updateFailure) return terminalPersistenceFailure(updateFailure);
     return finishExecution(nextExecuted, settledExec);
   }
 
@@ -2565,6 +2567,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       || actionId === 'deployments.backups.restore' && deps.prepareDeploymentRestore
       || actionId === 'deployments.teardown' && deps.prepareDeploymentTeardown
       || (actionId === 'deployments.deploy' || actionId === 'deployments.rollback' || actionId === 'deployments.promote') && deps.prepareDeploymentAction)) {
+      const admittedChildBeforePreparation = isHostAdmittedReviewedChildPolicyV1(
+        readHostReviewedChildOperationV1(ctx, actionId, admittedInput), actionId, admittedInput);
       const prepared = await readDeploymentPreparation(deps, actionId, admittedInput, ctx, retainedDeploymentReview,
         (id, input) => executeInvocation(id, input, ctx));
       if (prepared) {
@@ -2578,6 +2582,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           : !areDeploymentTemplateReviewFactsEqualV1(catalogCreate ? readRecord(retainedDeploymentReview).template : retainedDeploymentReview,
             catalogCreate ? readRecord(prepared.preview).template : prepared.preview)))
           return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
+        // Trusted preparation resolves this already reviewed intent. Retain its
+        // private admission before policy routing sees the prepared operand.
+        if (admittedChildBeforePreparation)
+          ctx = retainHostReviewedChildAdmissionV1(ctx, actionId, admittedInput, prepared.input) ?? ctx;
         admittedInput = prepared.input;
         deploymentReview = prepared.preview;
         if ('hostReviewedChildren' in prepared) preparedHostReviewedChildren = prepared.hostReviewedChildren;
@@ -3132,25 +3140,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const nativeReview = nativeConfirmation
       ? recordPresentUserApprovalV1({ ...nativeConfirmation, input: admittedInput }) : null;
     const childrenPreparation = await prepareHostReviewedChildrenV1({ actionId, input: admittedInput, context: ctx, deps,
-      invokePreparationChild: async child => {
-        const policy = prepareHostReviewedChildPolicyV1(child, ctx, approvalScope);
-        return invokeHostReviewedChildV1({ parent: { actionId, input: projectNativeJsonValueForTransport(admittedInput) as Record<string, import('../json/strictJsonValue.js').JsonValue> },
-          context: ctx, child,
-          // A safe preparation can carry its admitted policy. Explicit Require
-          // still enters ordinary Action review without an accepted parent fact.
-          ...(policy && policy.requiredActionIds.length === 0 ? { admittedReview: policy } : {}),
-          execute: (input, context, childId) => executeHostChild(childId, input, context) });
-      },
-      admitChildCredentialScope: async child => {
-        const admitted = await invokeHostReviewedChildV1({
-          parent: { actionId, input: projectNativeJsonValueForTransport(admittedInput) as Record<string, import('../json/strictJsonValue.js').JsonValue> },
-          context: ctx, child,
-          execute: async (input, context, childId) => {
-            const failure = await admitCredentialScope(childId, context, input, true);
-            return failure ?? { ok: true as const, result: null };
-          } });
-        return admitted.ok ? null : admitted;
-      },
+      executeChild: executeHostChild,
+      admitCredentialScope: (id, context, input) => admitCredentialScope(id, context, input, true),
       reviewAdmitted: nativeReview !== null,
       ...(preparedHostReviewedChildren ? { prepared: preparedHostReviewedChildren } : {}),
       ...(approvalScope ? { approvalScope } : {}),
@@ -6563,12 +6554,31 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
         const initialApprovalActionArgs = materializeSessionCreationActionInput(targetActionId, targetArgs, ctx);
+        const targetScope = await readActionApprovalScopeAdmissionV1({ actionId: targetActionId,
+          spec: targetSpec, input: initialApprovalActionArgs, context: ctx, deps, phase: 'prepare',
+          isSameHome: (left, right) => isSameHome(left, right, ctx) });
+        if ('ok' in targetScope) return targetScope;
+        // Explicit requests retain the same native preparation and demanded
+        // effects as ordinary admission, so approval replays the reviewed plan.
+        const targetChildren = await prepareHostReviewedChildrenV1({
+          actionId: targetActionId, input: initialApprovalActionArgs, context: ctx, deps,
+          executeChild: executeHostChild,
+          admitCredentialScope: (id, context, input) => admitCredentialScope(id, context, input, true),
+          ...(targetScope.approvalScope ? { approvalScope: targetScope.approvalScope } : {}),
+          ...(targetSpec.hostReviewedChildren ? { declaredChildren: typeof targetSpec.hostReviewedChildren === 'function'
+            ? targetSpec.hostReviewedChildren(initialApprovalActionArgs) : targetSpec.hostReviewedChildren } : {}),
+          approvalReplay: false, isSameHome: (left, right) => isSameHome(left, right, ctx),
+        });
+        if ('ok' in targetChildren) return targetChildren;
+        const preparedTargetInput = targetChildren.input ?? initialApprovalActionArgs;
         const preparedApproval = await prepareApprovalRequest({
           deps,
           actionId: targetActionId,
-          input: targetArgs,
-          actionArgs: initialApprovalActionArgs,
+          input: preparedTargetInput,
+          actionArgs: preparedTargetInput,
           context: ctx,
+          ...(targetChildren.plan ? { hostReviewedChildren: targetChildren.plan } : {}),
+          ...(targetChildren.approvalPreview === undefined ? {} : { hostReviewedContent: targetChildren.approvalPreview }),
           executeCanonicalAction: (id, input) => executeInvocation(id, input, ctx),
         });
         if (!preparedApproval) {

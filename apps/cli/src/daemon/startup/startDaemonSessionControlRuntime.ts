@@ -263,7 +263,7 @@ import {
 } from '@/api/session/transcriptQueries';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
-import { createLocalServicesDaemonRuntimeActionExecutor } from '@/daemon/local/services/actions/runtimeActionExecutor';
+import { createLocalServicesDaemonRestartPreparation, createLocalServicesDaemonRuntimeActionExecutor } from '@/daemon/local/services/actions/runtimeActionExecutor';
 import { createProjectServiceRelocationRoute } from '@/daemon/local/services/actions/projectServiceRelocationRoute';
 import { createLocalServicesDaemonFeatureGate } from '@/daemon/local/services/featureGate';
 import type { createManagedServicesOwner, ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
@@ -9313,6 +9313,9 @@ export async function startDaemonSessionControlRuntime(
             },
           },
           resolveServerFeaturesSnapshot,
+          prepareHostReviewedChildren: createLocalServicesDaemonRestartPreparation({
+            routes: localServicesRuntimeActionRoutes, ingress, featureGate: localServicesActionFeatureGate,
+          }),
           prepareLocalServiceStartApproval: async ({ input, context, executeCanonicalAction }) => {
             const prepare = localServicesRuntime.launcherRoutes.prepareStartApproval;
             if (!prepare || !localServicesActionFeatureGate.isEnabled('localServices.launcher')) return {
@@ -9324,12 +9327,6 @@ export async function startDaemonSessionControlRuntime(
             routes: localServicesRuntimeActionRoutes,
             ingress,
             featureGate: localServicesActionFeatureGate,
-            prepareStartAction: (request, startContext) =>
-              executor.prepare(
-                'localServices.launcher.start',
-                request,
-                startContext,
-              ),
           }),
         });
         return await executor.execute(actionId, input, context);
@@ -10840,6 +10837,7 @@ export async function startDaemonSessionControlRuntime(
       ? accountContext.connectedServiceRuntimeRegistry
       : ownedConnectedServiceRuntimeRegistry;
     await reconcileConnectedServiceDirectCredentialRevisions({
+      projectsService: projectionSnapshot.projectsService,
       credentialRevisions: projectionSnapshot.credentialRevisions,
       resolveCredentialPresence: projectionSnapshot.resolveCredentialPresence,
       listRuntimeTargets: () =>
@@ -10954,6 +10952,7 @@ export async function startDaemonSessionControlRuntime(
           : [];
         await reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget({
           target: runtimeGenerationTarget(target),
+          projectsService: projectionSnapshot.projectsService,
           providerAdoptedTargets,
           consumer: createDurableGenerationConsumer({
             accountContext,
