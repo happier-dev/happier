@@ -118,6 +118,28 @@ function installDownloadDocument() {
 }
 
 describe('ArtifactBinaryBody', () => {
+    it('opens a PDF in the shared full-screen stage with the already acquired bytes', async () => {
+        const previous = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        const source = binarySource('pdf-stage', 'application/pdf');
+        vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:pdf-stage');
+        vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        try {
+            const screen = await renderScreen(<ArtifactBinaryBody artifactId="pdf-stage" name="proof.pdf" {...source} />);
+            await vi.waitFor(() => expect(screen.findByTestId('artifact:fullScreen')).not.toBeNull());
+            vi.mocked(Modal.show).mockClear();
+            await screen.pressByTestIdAsync('artifact:fullScreen');
+            const [config] = vi.mocked(Modal.show).mock.calls[0] ?? [];
+            expect(config).toMatchObject({ props: { initialIndex: 0, items: [{
+                kind: 'pdf', title: 'proof.pdf', source: {
+                    source: { kind: 'bytes', bytes: source.bytes },
+                    cacheScopeId: 'pdf-stage', mimeType: 'application/pdf',
+                },
+            }] } });
+            expect(source.request).toHaveBeenCalledOnce();
+            await screen.unmount();
+        } finally { Object.defineProperty(Platform, 'OS', { configurable: true, value: previous }); }
+    });
     it('keeps an explicitly requested export approval in place and resumes the same client download once', async () => {
         accountSettings.replaceAccountSettings(account.accountId, AccountSettingsV2GetResponseSchema.parse({
             content: { t: 'plain', v: { actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,

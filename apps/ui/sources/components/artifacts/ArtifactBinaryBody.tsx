@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, useWindowDimensions } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ArtifactBlobReferenceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { FileViewerBody } from '@/components/workspaces/files/file/FileViewerBody';
+import { FileViewerBody, type FileViewerStageHandle } from '@/components/workspaces/files/file/FileViewerBody';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -54,6 +54,7 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
     const [attempt, setAttempt] = React.useState(0);
     const [downloading, setDownloading] = React.useState(false);
     const [downloadFailed, setDownloadFailed] = React.useState(false);
+    const [stage, setStage] = React.useState<FileViewerStageHandle | null>(null);
     const downloadController = React.useRef<AbortController | null>(null);
     React.useEffect(() => {
         setDownloading(false); setDownloadFailed(false);
@@ -114,7 +115,7 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
             // scrolling page bounds the scrolling kinds to most of the window so the page still scrolls past.
             <View style={viewer.kind === 'pdf' || viewer.kind === 'video' ? { height: Math.round(window.height * 0.75) } : null}>
                 <FileViewerBody viewer={viewer} title={props.name} source={previewInput} sizeBytes={reference.sizeBytes}
-                    isActive findSurfaceId={`artifact:${props.artifactId}`} layout="inline" testID="artifact:viewerBody" />
+                    isActive findSurfaceId={`artifact:${props.artifactId}`} layout="inline" stageRef={setStage} testID="artifact:viewerBody" />
             </View>
         )
             : previewable && preview.key === key && (preview.phase === 'failed' || filePreview.status === 'error') ? <SurfaceStateCard testID="artifact:previewFailed" kind="error"
@@ -124,7 +125,10 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
                 action={{ label: t('common.retry'), onPress: props.onRetry ?? (() => setAttempt(value => value + 1)) }} />
             : !previewable ? <FileViewerBody viewer={viewer} title={props.name} source={previewInput} sizeBytes={reference.sizeBytes}
                 isActive findSurfaceId={`artifact:${props.artifactId}`} onDownload={() => { void download(); }} testID="artifact" /> : card}
-        {!previewable ? null : <RoundButton testID="artifact:download" title={t('files.repositoryTree.actions.download')} size="small" display="secondary" loading={downloading} onPress={() => { void download(); }} />}
+        {!previewable ? null : <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
+            {stage ? <RoundButton testID="artifact:fullScreen" title={t('files.viewer.viewFullScreen')} size="small" display="secondary" onPress={stage.open} /> : null}
+            <RoundButton testID="artifact:download" title={t('files.repositoryTree.actions.download')} size="small" display="secondary" loading={downloading} onPress={() => { void download(); }} />
+        </View>}
         {downloadFailed ? <Text accessibilityRole="alert" testID="artifact:downloadFailed">{t('artifacts.browser.loadFailedBody')}</Text> : null}
     </View>;
 }
