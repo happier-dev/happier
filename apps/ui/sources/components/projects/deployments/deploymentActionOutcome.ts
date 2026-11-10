@@ -36,6 +36,7 @@ export function deploymentPartialRecoveryTab(progress: DeploymentPartialResult):
     case 'target':
     case 'metadata': return 'settings';
     case 'environment':
+    case 'repository':
     case 'deploy': return 'overview';
   }
 }
@@ -85,7 +86,7 @@ export function readDeploymentActionResult(
   }
   const progress = readDeploymentPartialResult(failure);
   return { ...readDeploymentRefusal(result.error), ...(progress ? { progress } : {}),
-    ...(result.details !== undefined || result.failureCause !== undefined ? { failure } : {}) };
+    ...(result.details !== undefined || result.failureCause !== undefined || result.effectAttempted !== undefined ? { failure } : {}) };
 }
 
 export function readDeploymentActionError(
@@ -96,10 +97,10 @@ export function readDeploymentActionError(
   const code = (error as { code?: unknown } | null)?.code;
   const failure: ActionExecuteFailure = { ok: false, errorCode: typeof code === 'string' && code ? code : 'unknown_error',
     error: error instanceof Error ? error.message : typeof code === 'string' ? code : 'unknown_error',
-    ...(error instanceof HappyError ? { details: error.details, failureCause: error.failureCause } : {}) };
+    ...(error instanceof HappyError ? { details: error.details, failureCause: error.failureCause, effectAttempted: error.effectAttempted } : {}) };
   const progress = readDeploymentPartialResult(failure);
   return { ...readDeploymentRefusal(failure.errorCode), ...(progress ? { progress } : {}),
-    ...(progress || failure.details !== undefined || failure.failureCause !== undefined ? { failure } : {}) };
+    ...(progress || failure.details !== undefined || failure.failureCause !== undefined || failure.effectAttempted !== undefined ? { failure } : {}) };
 }
 
 /** Run one press through the Action owner and read its answer. */

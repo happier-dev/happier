@@ -7,11 +7,12 @@ export class HappyError extends Error {
     readonly code?: string;
     readonly details?: unknown;
     readonly failureCause?: ActionFailureCauseV1;
+    readonly effectAttempted?: boolean;
 
     constructor(
         message: string,
         canTryAgain: boolean,
-        opts?: { status?: number; kind?: 'auth' | 'config' | 'network' | 'server' | 'unknown'; code?: string; details?: unknown; failureCause?: ActionFailureCauseV1 }
+        opts?: { status?: number; kind?: 'auth' | 'config' | 'network' | 'server' | 'unknown'; code?: string; details?: unknown; failureCause?: ActionFailureCauseV1; effectAttempted?: boolean }
     ) {
         super(message);
         this.canTryAgain = canTryAgain;
@@ -20,6 +21,7 @@ export class HappyError extends Error {
         this.code = opts?.code;
         this.details = opts?.details;
         if (opts?.failureCause) this.failureCause = opts.failureCause;
+        if (opts?.effectAttempted !== undefined) this.effectAttempted = opts.effectAttempted;
         this.name = 'HappyError';
         Object.setPrototypeOf(this, HappyError.prototype);
     }
