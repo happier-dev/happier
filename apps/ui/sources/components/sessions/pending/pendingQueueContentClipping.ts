@@ -31,8 +31,8 @@
  *   pending, last row:  top inset 16 + scroll paddingTop 6 + gap 0             = 22.000
  *   committed:          `userMessageWrapper.paddingBottom` 22                  = 22.000
  *
- * so the crossover does not step at all. (The inset is where the "Pending messages (N)" header sat
- * until the queue's size moved to the composer's status line; it was 14.625, a 1.375px UP step.) The gap under
+ * so the crossover does not step at all. (The titled "Pending messages (N)" header is drawn INSIDE this
+ * inset, so restoring it (owner 11-10) adds no height; 0.2 stacked it above, a 14.625px band.) The gap under
  * a pending bubble exists to separate it from the row BELOW it, so the last row in the scroll
  * content paints none — which is what buys the 8px that used to make this step a 6.625px DOWN.
  *
@@ -56,7 +56,7 @@ export type PendingQueueMessagePresentation = 'head' | 'backlog';
 
 /**
  * The space above the queue. With the scroll box's padding it equals the committed row's 22px
- * (see "No DOWNWARD step" above); the queue itself carries no header.
+ * (see "No DOWNWARD step" above); the queue's titled header is drawn inside it.
  */
 export const PENDING_QUEUE_TOP_INSET_PX = 16;
 /** `contentContainerStyle.paddingTop` on the block's scroll box. */

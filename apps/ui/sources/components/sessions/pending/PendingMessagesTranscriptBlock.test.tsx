@@ -559,7 +559,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         });
     });
 
-    it('paints no header over the queue: its size and waiting state belong to the composer line', async () => {
+    it('titles the queue with its count, so queued messages never read as delivered ones (owner 11-10)', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
@@ -570,9 +570,11 @@ describe('PendingMessagesTranscriptBlock', () => {
                 discardedMessages: [],
             }));
 
-        expect(screen.findByTestId('pendingMessages.headerLabel')).toBeNull();
+        const label = screen.findByTestId('pendingMessages.headerLabel');
+        expect(label).toBeTruthy();
+        expect(screen.getTextContent()).toContain('(2)');
+        // A queue that fits its bound has nothing to expand.
         expect(screen.findByTestId('pendingMessages.headerToggle')).toBeNull();
-        expect(screen.getTextContent()).not.toContain('Pending messages');
     });
 
     it('passes the main Session queue to the shared semantic reorder binding', async () => {
@@ -2173,9 +2175,36 @@ describe('PendingMessagesTranscriptBlock', () => {
             scroll!.props.onContentSizeChange(0, QUEUE_CAP_PX + 40);
         });
 
-        expect(screen.findByTestId('pendingMessages.headerToggle')).toBeNull();
         expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(QUEUE_CAP_PX);
         expect(screen.findByType('ScrollView').props.style?.height).toBe(QUEUE_CAP_PX);
+    });
+
+    it('expands an overflowing queue from its header and collapses it back to the compact bound', async () => {
+        settingValues = {
+            transcriptPendingQueueMaxHeightPx: 80,
+            transcriptPendingQueueExpandedMaxHeightPx: 520,
+            transcriptPendingQueueReorderRowHeightPx: 24,
+        };
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: queuedPendingMessages(),
+                discardedMessages: [],
+            }));
+
+        await act(async () => {
+            screen.findByTestId('pendingMessages.scroll')!.props.onContentSizeChange(0, 400);
+        });
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(QUEUE_CAP_PX);
+
+        const toggle = screen.findByTestId('pendingMessages.headerToggle');
+        expect(toggle).toBeTruthy();
+        await act(async () => { toggle!.props.onPress(); });
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(520);
+        expect(screen.findByType('ScrollView').props.style?.height).toBe(400);
+
+        await act(async () => { screen.findByTestId('pendingMessages.headerToggle')!.props.onPress(); });
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(QUEUE_CAP_PX);
     });
 
     it('does not show a header toggle when pending content fits the compact height', async () => {

@@ -107,8 +107,17 @@ export function projectPendingTranscriptItems<T extends ChatListItem | WorkflowT
     const trailingPending = pending.filter((message) => !message.localId || !placedLocalIds.has(message.localId));
     const trailingDiscarded = discarded.filter((message) => !message.localId || !placedLocalIds.has(message.localId));
     if (trailingPending.length > 0 || trailingDiscarded.length > 0) {
-        items.push({ kind: 'pending-queue', id: 'pending-queue', pendingMessages: trailingPending,
-            pendingQueueContexts: queueContexts, discardedMessages: trailingDiscarded });
+        // An anchored Pending row that nothing follows already sits at the tail: the queue continues in
+        // it, so one titled section holds the whole tail rather than two stacked ones.
+        const last = items.at(-1);
+        const tailRow = last && last.kind === 'pending-queue' ? [...anchoredRows.values()].find((row) => row === last) : undefined;
+        if (tailRow) {
+            tailRow.pendingMessages.push(...trailingPending);
+            tailRow.discardedMessages.push(...trailingDiscarded);
+        } else {
+            items.push({ kind: 'pending-queue', id: 'pending-queue', pendingMessages: trailingPending,
+                pendingQueueContexts: queueContexts, discardedMessages: trailingDiscarded });
+        }
     }
     items.push(...buildPendingUserActionItems(params.pendingUserActionRequests, params.messageIdsOldestFirst, params.messagesById));
     return items;

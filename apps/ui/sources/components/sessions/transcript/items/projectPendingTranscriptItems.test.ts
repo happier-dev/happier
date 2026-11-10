@@ -51,6 +51,17 @@ describe('Pending presentation at committed turn anchors', () => {
         expect(items).toMatchObject([{ kind: 'pending-queue', pendingMessages: [], discardedMessages: [discarded] }]);
     });
 
+    it('folds the trailing queue into an anchored Pending row that nothing follows, so the queue reads as one section', () => {
+        const message: Message = { kind: 'user-text', id: 'user', localId: 'retry-local', createdAt: 3, seq: 1, text: 'Please continue' };
+        const queued: PendingMessage = { id: 'next', localId: 'next-local', createdAt: 5, updatedAt: 5, text: 'And then this',
+            rawRecord: {}, source: 'server_pending' };
+        const items = projectPendingTranscriptItems({
+            items: [{ kind: 'turn', id: 'turn:user', turn: { id: 'turn:user', userMessageId: 'user', content: [] } }],
+            messageIdsOldestFirst: ['user'], messagesById: { user: message }, pendingMessages: [blocked, queued],
+        });
+        expect(items).toMatchObject([{ kind: 'pending-queue', pendingMessages: [blocked, queued] }]);
+    });
+
     it('yields a non-durable discarded twin to its committed message through the canonical crossover', () => {
         const message: Message = { kind: 'user-text', id: 'user', localId: 'retry-local', createdAt: 3, seq: 1, text: 'Please continue' };
         const committed = { kind: 'message' as const, id: 'msg:user', messageId: 'user', createdAt: 3 };

@@ -62,6 +62,7 @@ import { resolvePendingInputServerWireMode } from '@/sync/engine/pending/pending
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { TranscriptSeparatorRow } from '@/components/sessions/transcript/separators/TranscriptSeparatorRow';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
@@ -270,6 +271,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             ? Math.max(1, Math.trunc(maxHeightSetting))
             : settingsDefaults.transcriptPendingQueueMaxHeightPx;
 
+    const expandedMaxHeightSetting = useSetting('transcriptPendingQueueExpandedMaxHeightPx');
+    const expandedMaxHeightPx =
+        typeof expandedMaxHeightSetting === 'number' && Number.isFinite(expandedMaxHeightSetting)
+            ? Math.max(maxHeightPx, Math.trunc(expandedMaxHeightSetting))
+            : Math.max(maxHeightPx, settingsDefaults.transcriptPendingQueueExpandedMaxHeightPx);
+
     const collapseThresholdCharsSetting = useSetting('transcriptPendingMessageCollapseThresholdChars');
     const collapseThresholdChars =
         typeof collapseThresholdCharsSetting === 'number' && Number.isFinite(collapseThresholdCharsSetting)
@@ -311,6 +318,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             : 'unknown';
 
     const [expandedMessageIds, setExpandedMessageIds] = React.useState<Record<string, true>>({});
+    const [isPendingQueueExpanded, setIsPendingQueueExpanded] = React.useState(false);
+    React.useEffect(() => {
+        // An emptied queue starts compact again when the next message arrives.
+        if (pendingCount <= 0) setIsPendingQueueExpanded(false);
+    }, [pendingCount]);
     const [openMenuKey, setOpenMenuKey] = React.useState<string | null>(null);
     const [menuPressAnchor, setMenuPressAnchor] = React.useState<Readonly<{
         menuKey: string;
@@ -1344,14 +1356,21 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         estimatedPendingContentHeightPx,
     );
     // The block's painted bound for this presentation. One owner, shared with the size estimate.
-    // The queue scrolls inside its own bound under the edge fades; its size and waiting state are
-    // said once, on the composer's status line, never by a header over the queue.
-    const maxHeight = resolvePendingQueueScrollMaxHeightPx({
+    // The queue scrolls inside its compact bound under the edge fades; its titled header (0.2's
+    // separation, owner 11-10) expands a queue that overflows that bound and collapses it back.
+    const collapsedMaxHeight = resolvePendingQueueScrollMaxHeightPx({
         pendingCount: pendingPresentation.shownRows.length,
         discardedCount,
         queueMaxHeightPx: maxHeightPx,
         lineHeightPx: transcriptMarkdownTextStyle.lineHeight,
     });
+    const canExpandPendingQueue = pendingCount > 0 && effectiveScrollContentHeightPx > collapsedMaxHeight;
+    const isQueueExpanded = canExpandPendingQueue && isPendingQueueExpanded;
+    const maxHeight = isQueueExpanded ? Math.max(expandedMaxHeightPx, collapsedMaxHeight) : collapsedMaxHeight;
+    // The section counts what it holds: the queue may continue in another section further down.
+    const headerLabel = visiblePendingMessageIds.size > 0
+        ? `${t('session.pendingMessages.title')} (${visiblePendingMessageIds.size})`
+        : t('session.pendingMessages.discarded.title');
     const clampedViewportHeightPx = effectiveScrollContentHeightPx > 0
         ? Math.max(1, Math.min(effectiveScrollContentHeightPx, maxHeight))
         : undefined;
@@ -1361,7 +1380,24 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             <View style={messageContentStyle}>
                 <View style={styles.userMessageContainer}>
                     <View style={constrainedRowStyle}>
-                        <View style={styles.queueTopInset} />
+                        {/* The header sits in the queue's top inset, so the send crossover keeps its geometry. */}
+                        <View style={styles.queueTopInset}>
+                            <TranscriptSeparatorRow
+                                iconName="clock"
+                                title={headerLabel}
+                                titleTestID="pendingMessages.headerLabel"
+                                chipTestID={canExpandPendingQueue ? 'pendingMessages.headerToggle' : undefined}
+                                onPress={canExpandPendingQueue ? () => setIsPendingQueueExpanded(value => !value) : undefined}
+                                accessibilityLabel={canExpandPendingQueue
+                                    ? `${headerLabel}, ${isQueueExpanded ? t('session.pendingMessages.actions.viewLess') : t('session.pendingMessages.actions.viewMore')}`
+                                    : headerLabel}
+                                rightAccessory={canExpandPendingQueue ? (
+                                    <Icon name={isQueueExpanded ? 'caret-down' : 'caret-up'} size={14} color={theme.colors.text.secondary} />
+                                ) : null}
+                                padding="none"
+                                chipChrome="minimal"
+                            />
+                        </View>
 
                         {showNonSteerableNotice ? (
                             <View
@@ -1598,6 +1634,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     queueTopInset: {
         height: PENDING_QUEUE_TOP_INSET_PX,
+        justifyContent: 'center',
     },
     pendingAffordanceRow: {
         flexDirection: 'row',
