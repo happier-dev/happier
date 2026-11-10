@@ -49,6 +49,8 @@ export type ManagedConfigurationReceiptInput = Readonly<{
      * contradict it) and creation-time headroom that no longer describes the host.
      */
     created?: boolean;
+    /** A created resource that no longer exists: it neither runs nor bills, so the receipt is only its record (no cost). */
+    absent?: boolean;
     /** The receipt carries the editable Keep it control: its policy is not also listed as a fact above it. */
     keepEditedBelow?: boolean;
     /** The created detail's shared Keep control already presents the current native Ends fact. */
@@ -115,7 +117,12 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
             : `${buildQualifiedPluginContributionKey(credential.purpose.consumer)} · ${credential.purpose.purpose}`,
             value: account.primaryLabel });
     }
-    if (input.managedBy !== 'account') rows.push({ id: 'controller', label: t('managedMachines.config.managedFrom'), value: controllerName });
+    const cost = resolveManagedConfigurationCost({ prices: facts?.prices, billing: facts?.billing ?? input.declaredBilling,
+        provider: input.providerTitle });
+    // A local machine runs on the computer that manages it, and its cost already says "Runs on" that computer (or pool):
+    // that one line names it. A machine that runs elsewhere (a cloud guest) keeps its Managed from row.
+    const runsOnLine = cost.kind === 'local' && !input.absent;
+    if (input.managedBy !== 'account' && !runsOnLine) rows.push({ id: 'controller', label: t('managedMachines.config.managedFrom'), value: controllerName });
     rows.push(...managedAgentSignInReceiptFacts(input.agentSignIn));
     if (input.homeName) rows.push({ id: 'home', label: t('managedMachines.receipt.joins'), value: input.homeName });
     // The provider's native duration is a contract, not a Keep choice: a resource that only ends says when it
@@ -161,8 +168,6 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
             value: t(input.presetPolicy.wakeOnAcceptedMessage ? 'managedRetention.wakeOn' : 'managedRetention.wakeOff') });
     }
     // Stopped storage is not a receipt row: Keep it's consequence says the stopped cost once, as a short rate (R6).
-    const cost = resolveManagedConfigurationCost({ prices: facts?.prices, billing: facts?.billing ?? input.declaredBilling,
-        provider: input.providerTitle });
     const presentPrice = (price: NonNullable<ManagedConfigurationFactsV1['prices']>[number]) => ({ ...price,
         ...(price.label !== undefined ? { label: localized(price.label) } : {}) });
     const caption = input.caption ?? (input.created ? presetLine ?? t('managedMachines.receipt.asCreated') : t('managedMachines.receipt.yourNewMachine'));
@@ -172,7 +177,7 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
                 // A machine still named after its provider doesn't say the same words twice.
                 : input.providerTitle && input.providerTitle !== input.launch.name ? input.providerTitle : ''), facts: rows,
         ...(facts?.setup ?? input.setup ? { setup: facts?.setup ?? input.setup } : {}),
-        cost: cost.kind === 'price' ? { ...cost, provider: input.providerTitle ?? null,
+        cost: input.absent ? null : cost.kind === 'price' ? { ...cost, provider: input.providerTitle ?? null,
             prices: [presentPrice(cost.prices[0]), ...cost.prices.slice(1).map(presentPrice)] }
             // An unnamed controller is "the computer that manages it" in the cost's sentences, never "Unknown".
             : cost.kind === 'local' ? describeLocalCost({ computer: input.pooledController ? input.pooledController.sentenceName

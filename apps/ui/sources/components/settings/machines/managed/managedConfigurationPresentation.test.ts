@@ -234,15 +234,29 @@ describe('one managed configuration receipt projection', () => {
         const sentence = t('machinePresets.controllerPoolIn', { pool: 'Build servers' });
         const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Docker', reviewedFacts: localFacts,
             controllerName: 'Build servers', pooledController: { sentenceName: sentence } });
-        expect(receipt.facts.find(fact => fact.id === 'controller')?.value).toBe('Build servers');
+        // "Runs on a machine in Build servers" names the pool once; no Managed from row repeats it.
+        expect(receipt.facts.some(fact => fact.id === 'controller')).toBe(false);
         expect(receipt.cost).toEqual({ kind: 'local', computer: sentence, meters: [] });
     });
     it('keeps "Unknown" out of a requester\'s sentences when the controller has no name it can read (VD G2)', () => {
         const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Lima', reviewedFacts: localFacts });
         const computer = t('managedMachines.receipt.managingComputer');
         expect(receipt.cost).toEqual({ kind: 'local', computer, meters: [], note: t('managedMachines.receipt.headroomUnknown', { computer }) });
-        // The labelled fact stays explicit; only sentences use the neutral phrase.
-        expect(receipt.facts.find(fact => fact.id === 'controller')?.value).toBe(t('common.unknown'));
+        // Runs on names the computer once, so no "Unknown" Managed from row stands beside it.
+        expect(receipt.facts.some(fact => fact.id === 'controller')).toBe(false);
+    });
+    it('names a local machine\'s computer once, in Runs on, and keeps Managed from where it runs elsewhere or no longer runs (O-MACH 11-10)', () => {
+        const local = buildManagedConfigurationReceipt({ launch, providerTitle: 'Lima', controllerName: 'Build Mac', reviewedFacts: localFacts });
+        expect(local.facts.some(fact => fact.id === 'controller')).toBe(false);
+        expect(local.cost).toMatchObject({ kind: 'local', computer: 'Build Mac' });
+        // A cloud guest is managed from one computer and runs at the provider: both are said.
+        const cloud = buildManagedConfigurationReceipt({ launch, providerTitle: 'Compute', controllerName: 'Build Mac', reviewedFacts });
+        expect(cloud.facts.find(fact => fact.id === 'controller')?.value).toBe('Build Mac');
+        // A local machine that no longer exists has no Runs on line: its record keeps Managed from and shows no cost.
+        const absent = buildManagedConfigurationReceipt({ launch, providerTitle: 'Lima', controllerName: 'Build Mac', reviewedFacts: localFacts,
+            created: true, absent: true });
+        expect(absent.cost).toBeNull();
+        expect(absent.facts.find(fact => fact.id === 'controller')?.value).toBe('Build Mac');
     });
     it('names the preset in its receipt row by name and revision alone, beside the "Made from" label', () => {
         const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Compute', reviewedFacts: { ...reviewedFacts,

@@ -582,7 +582,8 @@ describe('managed Machine detail', () => {
         expect(screen.getTextContent()).not.toContain(t('common.loading'));
         expect(screen.getTextContent()).toContain(t('managedController.fixedLocalUnnamed'));
         expect(screen.findByTestId('managed-machine.controller.pending')).not.toBeNull();
-        expect(screen.findByTestId('managed-machine.detail.receipt:fact:controller:pending')).not.toBeNull();
+        // A local machine runs on the computer that manages it: the receipt names it once, in Runs on (O-MACH 11-10).
+        expect(screen.findByTestId('managed-machine.detail.receipt:fact:controller')).toBeNull();
         await act(async () => storage.setState({ machineListByServerId: { [serverId]: [named] } }));
         await flushHookEffects({ cycles: 10 });
         const { getMachineDisplayName } = await import('@/utils/sessions/machineDisplayNames');

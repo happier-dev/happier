@@ -619,6 +619,8 @@ export function ManagedMachineSections(props: SectionProps) {
         mark: provisionerPresentation.markAt(MANAGED_PROVISIONER_MARK_SIZE.receipt),
         localized: provisionerPresentation.localized,
         homeName: resolveHomeDisplayLabel(getServerProfileById(props.serverId), props.serverId), preset: machine.preset, created: true,
+        // A resource that no longer exists neither runs nor bills: its receipt is only the record of how it was made.
+        ...(resourceConfirmedAbsent ? { absent: true } : {}),
         nativeLifetimePresented: policyParent?.capabilities.finiteOnly === true,
         // The reviewed controller is usually the current one: then it is the same name, pending or read, as the page's.
         // An Account-created machine has no controller: no Managed from row (58d U4/U7).
@@ -628,8 +630,6 @@ export function ManagedMachineSections(props: SectionProps) {
                 candidate.id === receiptController.machineId
                 && candidate.installationId === receiptController.installationId), controllerMachines),
         credentialPresentations: credentialPresentation.presentationsByKey }),
-        // A resource that no longer exists neither runs nor bills: its receipt is only the record of how it was made.
-        ...(resourceConfirmedAbsent ? { cost: null } : {}),
         ...(allReceiptActions.length ? { secondary: allReceiptActions } : {}) };
     const credentialRowKeys = new Set(managedCredentialReceiptTargets(machine.launch).map(target => target.key));
     const credentialNames = receipt.facts.filter(fact => credentialRowKeys.has(fact.id)).map(fact => fact.value).join(', ');
