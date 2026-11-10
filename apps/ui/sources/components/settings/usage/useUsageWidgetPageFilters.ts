@@ -14,6 +14,8 @@ import { readUsageCoverageGaps, useUsageProjectAnchorOf, useUsageProjectNames, u
 import { useUsageWidgetBatchInventorySelection } from './widgets/usageWidgetBatch';
 
 export const USAGE_SCOPE_FILTER_ALL = '\u0000all';
+// UI option only; persisted scope keeps every original Project key in the group.
+const UNNAMED_PROJECT_OPTION = '\u0000unnamed-projects';
 type ScopeField = 'sources' | 'agents' | 'machines' | 'projects';
 const FIELD_TITLE = { sources: 'usage.board.page.filterSources', agents: 'usage.board.page.filterAgents',
     machines: 'usage.board.page.filterMachines', projects: 'usage.board.page.filterProjects' } as const;
@@ -97,9 +99,38 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
         const slices = inventory ? [inventory] : fallbackSlices;
         return sessionScoped ? [] :
         (['sources', 'agents', 'machines', 'projects'] as const).map(field => {
-            const selected = scope[field];
-            const labels = readUsageScopeOptions(slices, field, selected, field === 'projects' ? projectAnchorOf.resolve : undefined);
+            const scopeSelected = scope[field];
+            const labels = readUsageScopeOptions(slices, field, scopeSelected, field === 'projects' ? projectAnchorOf.resolve : undefined);
             const title = t(FIELD_TITLE[field]);
+            if (field === 'projects') {
+                const groupId = (key: string) => projectNames.displayKey(projectAnchorOf.resolve(key)) ?? UNNAMED_PROJECT_OPTION;
+                const groups = new Map<string, Set<string>>();
+                for (const key of labels.keys()) {
+                    const id = groupId(key);
+                    const members = groups.get(id) ?? new Set<string>();
+                    members.add(projectAnchorOf.resolve(key));
+                    groups.set(id, members);
+                }
+                const selected = [...new Set(scopeSelected.map(groupId))];
+                const listed = [...groups.keys()];
+                return { field, title, selected, options: [
+                    { id: USAGE_SCOPE_FILTER_ALL, label: t('usage.board.page.filterAllOf', { what: title.toLocaleLowerCase() }) },
+                    ...listed.map(id => ({ id, label: projectNames.label(id === UNNAMED_PROJECT_OPTION ? null : id),
+                        subtitle: id === UNNAMED_PROJECT_OPTION ? undefined
+                            : usageMachinePlace(projectNames.machineIds.get(id) ?? [], machineNames) || undefined })),
+                ], select: (id: string, callerContext?: ActionExecutorContext) => {
+                    if (id !== USAGE_SCOPE_FILTER_ALL && !groups.has(id)) return false;
+                    const next = id === USAGE_SCOPE_FILTER_ALL ? [] : toggleUsageScopeSelection(selected, id, listed);
+                    // Expand only a newly selected group; retain exact keys in existing selections,
+                    // including a route that selected only part of the unnamed group.
+                    const projects = next.length === 0 ? [] : [...new Set([
+                        ...scopeSelected.filter(key => next.includes(groupId(key))),
+                        ...(!selected.includes(id) && next.includes(id) ? groups.get(id) ?? [] : []),
+                    ])].sort();
+                    return setScope({ projects }, callerContext);
+                } };
+            }
+            const selected = scopeSelected;
             const listed = [...labels.keys()];
             const gaps = field === 'sources' ? slices.flatMap(slice => readUsageCoverageGaps(slice, ['accounting'])) : [];
             const coverageDetail = field === 'sources' ? [...new Set(slices.map(slice => usageCoverageDescription(slice, ['accounting'])).filter(Boolean))].join(' · ') : '';
@@ -110,9 +141,7 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
                     const sourceAgentId = field === 'sources' ? usageSourceAgentId(id) : null;
                     return { id, label: field === 'agents' ? usageAgentTitle(id, fallback)
                         : field === 'machines' ? machineNames[id] ?? getMachineDisplayName({ id, absence: 'unlisted' })
-                        : field === 'sources' ? sentenceCase(usageSourceTitle(id, fallback))
-                        : projectNames.label(id),
-                        ...(field === 'projects' ? { subtitle: usageMachinePlace(projectNames.machineIds.get(id) ?? [], machineNames) || undefined } : {}),
+                        : sentenceCase(usageSourceTitle(id, fallback)),
                         ...(sourceAgentId ? { agentId: sourceAgentId } : {}),
                         // Where it was read and how it is counted (lab d2filter-SRC); coverage is said once, on
                         // "All sources", so a source with a gap carries the dot and, failing other facts, the short fact.

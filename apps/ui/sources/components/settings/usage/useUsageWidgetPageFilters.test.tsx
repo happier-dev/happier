@@ -172,7 +172,8 @@ it('D21 names accounting-only Project choices from the opened Project owner and 
     try {
         await act(async () => { await owner.refresh(); });
         const options = hook.getCurrent().options.slice(1);
-        expect(options.map(option => option.id)).toEqual(keys);
+        expect(options.slice(0, 3).map(option => option.id)).toEqual(keys.slice(0, 3));
+        expect(options).toHaveLength(keys.length);
         const names = resolveMachineDisplayNames(machines);
         for (const [index, machine] of machines.entries()) {
             expect(options[index]!.label).toContain('happier');
@@ -183,7 +184,7 @@ it('D21 names accounting-only Project choices from the opened Project owner and 
         expect(options[2]!.subtitle).toBe(names.get(machines[1]!.id));
         expect(options[3]!.label).toBe(t('usage.board.work.unknownProject'));
         for (const option of options) expect(`${option.label} ${option.subtitle ?? ''}`).not.toMatch(/[a-f\d]{64}/i);
-        expect(hook.getCurrent().selected).toEqual([keys[3]]);
+        expect(hook.getCurrent().selected).toEqual([options[3]!.id]);
         await act(async () => storage.getState().setProjectAccountRowsStatusForScope(scope, 'locked'));
         for (const option of hook.getCurrent().options.slice(1).filter(option => option.id !== keys[3])) {
             expect(option.label).toBe(t('usage.board.work.unknownProject'));
@@ -191,4 +192,55 @@ it('D21 names accounting-only Project choices from the opened Project owner and 
         await act(async () => storage.getState().setProjectAccountRowsStatusForScope(scope, 'ready'));
         expect(hook.getCurrent().options.find(option => option.id === keys[2])!.label).toBe('Native project');
     } finally { await hook.unmount(); storage.setState(previous, true); }
+});
+
+
+it('R140 folds unnamed Project choices like the ledger and selects their original keys together', async () => {
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { allocateUsageOutcomes } = await import('@happier-dev/protocol/usage/usageOutcomeAllocation');
+    const { summarizeUsageWork } = await import('./widgets/usageWorkPresentation');
+    const { t } = await import('@/text');
+    const previous = storage.getState();
+    const active = getActiveServerSnapshot();
+    publishAppliedActiveServerSnapshot(active);
+    const scope = { serverId: active.serverId, accountId: 'r140-unnamed-account' };
+    storage.setState({ profileScope: scope });
+    const authority = captureActiveServerAccountScopeLifetime();
+    expect(authority).not.toBeNull();
+    const named = ['named-project-a', 'named-project-b', 'other-project'];
+    const unnamed = Array.from({ length: 10 }, (_, index) => (index + 1).toString(16).repeat(64));
+    const query = normalizeUsageQuery({ projects: [unnamed[0]!] });
+    const fixture = usageQaAccountingFixture();
+    const projects = [...named, ...unnamed];
+    const slices = [{ ...resolveUsagePageAggregation({ queries: [query] }).results[0]!, accounting: { v: 1 as const,
+        totals: fixture.totals, breakdowns: { project: projects.map((key, index) => ({ key, ...fixture.totals,
+            ...(index < named.length ? { label: index < 2 ? 'happier' : 'Other project' } : {}) })) } } }];
+    const work = allocateUsageOutcomes({ contributions: projects.map((projectKey, index) => ({ ...fixture.contributions![0]!,
+        id: 'r140-' + index, projectKey, sessionId: 'r140-session', turnId: null })), evidence: [] });
+    const ledger = summarizeUsageWork(work, { metric: 'tokens', costBasis: 'auto' }, new Set(named));
+    expect(ledger.projects.filter(row => row.projectKey === null)).toHaveLength(1);
+    expect(ledger.projects.find(row => row.projectKey === null)!.unnamedProjectCount).toBe(unnamed.length);
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const hook = await renderHook(() => {
+        const page = useUsageWidgetPageContext({ authority, initialFilters: { period: '7days', metric: 'tokens',
+            costMode: 'auto', focus: null, scope: readUsageWidgetPageScope(query) } });
+        return { page, filter: useUsageWidgetPageFilters(page, slices, false, active.serverId)
+            .find(filter => filter.field === 'projects')! };
+    });
+    try {
+        const unnamedOptions = hook.getCurrent().filter.options.filter(option => option.label === t('usage.board.work.unknownProject'));
+        expect(unnamedOptions, 'The filter and ledger expose the same single unnamed group').toHaveLength(1);
+        expect(hook.getCurrent().filter.options.filter(option => option.label === 'happier')).toHaveLength(2);
+        const group = unnamedOptions[0]!;
+        expect(hook.getCurrent().filter.selected).toEqual([group.id]);
+        await act(async () => { expect(hook.getCurrent().filter.select(named[0]!)).toBe(true); });
+        expect(hook.getCurrent().page.scope.projects).toEqual([named[0], unnamed[0]].sort());
+        await act(async () => { expect(hook.getCurrent().filter.select(group.id)).toBe(true); });
+        expect(hook.getCurrent().page.scope.projects).toEqual([named[0]]);
+        await act(async () => { expect(hook.getCurrent().filter.select(group.id)).toBe(true); });
+        expect(hook.getCurrent().page.scope.projects).toEqual([named[0]!, ...unnamed].sort());
+        expect(hook.getCurrent().filter.selected).toEqual(expect.arrayContaining([named[0], group.id]));
+        expect(fetch, 'Grouping Project names does not demand rich accounting rows').not.toHaveBeenCalled();
+    } finally { await hook.unmount(); fetch.mockRestore(); storage.setState(previous, true); }
 });

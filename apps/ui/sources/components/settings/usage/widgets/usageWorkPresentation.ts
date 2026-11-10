@@ -231,6 +231,13 @@ function groupBranches(allocations: UsageWorkProjection['branchAllocations'], ba
     projectKeys: [...row.projects].sort((a, b) => (a ?? '').localeCompare(b ?? '')) })).sort(byAmount);
 }
 
+/** One displayed group for unnamed Projects; named identities retain their canonical anchor. */
+export function usageProjectDisplayKey(key: string | null, namedProjectKeys?: Pick<ReadonlySet<string>, 'has'>,
+  anchorOf?: (key: string) => string): string | null {
+  const project = key === null || !anchorOf ? key : anchorOf(key);
+  return project === null || namedProjectKeys && !namedProjectKeys.has(project) ? null : project;
+}
+
 export function summarizeUsageWork(
   work: UsageWorkProjection,
   basis: UsageWorkAmount,
@@ -242,10 +249,7 @@ export function summarizeUsageWork(
   anchorOf?: (key: string) => string,
 ): UsageWorkSummary {
   const anchor = (key: string | null) => key === null || !anchorOf ? key : anchorOf(key);
-  const displayProjectKey = (key: string | null) => {
-    const project = anchor(key);
-    return project === null || namedProjectKeys && !namedProjectKeys.has(project) ? null : project;
-  };
+  const displayProjectKey = (key: string | null) => usageProjectDisplayKey(key, namedProjectKeys, anchorOf);
   const unallocatedAmounts: Record<UsageWorkUnallocatedReason, AmountAccumulator> = {
     missing_turn: newAmount(),
     missing_evidence: newAmount(),

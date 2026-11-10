@@ -1,3 +1,4 @@
+import { usageProjectDisplayKey } from './usageWorkPresentation';
 import * as React from 'react';
 import type { PluginUiThemeV1 } from '@happier-dev/plugin-sdk/ui';
 import { View, type LayoutChangeEvent } from 'react-native';
@@ -144,6 +145,7 @@ export function useUsageProjectNames(serverId: string, fallbacks: readonly Usage
   labels: ReadonlyMap<string, string>;
   machineIds: ReadonlyMap<string, readonly string[]>;
   label: (key: string | null) => string;
+  displayKey: (key: string | null) => string | null;
 }> {
   const rows = useProjectAccountRows();
   return React.useMemo(() => {
@@ -182,7 +184,8 @@ export function useUsageProjectNames(serverId: string, fallbacks: readonly Usage
         if (!groups.some(group => group.projectKey.projectKey === row.key.projectKey)) name(row.key.projectKey, row.value.label);
       }
     }
-    return { labels, machineIds, label: (key: string | null) => key === null
+    return { labels, machineIds, displayKey: (key: string | null) => usageProjectDisplayKey(key, labels),
+      label: (key: string | null) => key === null
       ? t('usage.board.work.unknownProject') : labels.get(key) ?? t('usage.board.work.unknownProject') };
   }, [rows, serverId, fallbacks]);
 }

@@ -80,7 +80,9 @@ const totals: UsageAnalyticsQueryResponse['totals'] = { eventCount: 1,
 const accounting: UsageAnalyticsQueryResponse = { v: 1, totals, breakdowns: {
     machine: ['machine-a', 'machine-b', 'machine-c', ...Array.from({ length: 24 }, (_, index) => `machine-${index}`)].map(key => ({ key, ...totals })),
     source: ['native', 'runtime', 'legacy'].map(key => ({ key, ...totals })),
-    project: ['project-a', 'project-b', 'project-c', ...Array.from({ length: 24 }, (_, index) => `project-${index}`)].map(key => ({ key, ...totals })),
+    // These journeys choose named Projects; R140 folds nameless anchors into one option.
+    project: ['project-a', 'project-b', 'project-c', ...Array.from({ length: 24 }, (_, index) => `project-${index}`)]
+        .map(key => ({ key, label: `Project ${key}`, ...totals })),
 }, engineTimeline: [{ bucketStartMs: 1000, bucketEndMs: 2000,
     leaders: ['claude:remote', 'codex:local', 'pi'].map(key => ({ key, ...totals })) }] };
 let home: Awaited<ReturnType<typeof serveActionHomes>> | undefined;

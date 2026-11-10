@@ -222,6 +222,8 @@ type UsagePageDocumentProps = Readonly<{
 function UsagePageDocument(props: UsagePageDocumentProps) {
   const layout = useWidgetAreaLayout(props.port, props.context);
   const admittedContext = layout.state.status === 'ready' ? layout.state.context : null;
+  // Keep filter inventory summary-only: full contributions scale with accounting events,
+  // not Projects. Native Machine context stays unknown unless an existing binding supplies it.
   const inventoryQuery = React.useMemo(() => admittedContext ? normalizeUsageQuery({
     ...admittedContext.queryOverrides,
     ...Object.fromEntries(Object.entries(widgetProvidedContext(admittedContext)).map(([path, values]) => [path, values[0]])),
