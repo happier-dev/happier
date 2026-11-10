@@ -854,12 +854,12 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     if (nativeChoices !== undefined) {
         const offeredChoices = choices.filter(isOfferedPermissionChoice);
         const loadingChoiceId = isCurrentRequestLoading ? storedLoadingChoiceId : null;
-        const handleChoose = (choiceId: string) => {
+        const handleChoose = (choiceId: string, feedback?: string) => {
             const choice = offeredChoices.find(candidate => candidate.id === choiceId);
             if (!choice || !isPending || isCurrentRequestLoading || choice.availability?.allowed === false) return;
             const kind = getSessionPermissionChoiceKind(choice);
             void runPermissionAction(kind, (loading) => setLoadingChoiceId(loading ? choiceId : null),
-                () => submitPermissionChoice(choiceId));
+                () => submitPermissionChoice(choiceId, feedback));
         };
         return (
             <View onLayout={onDecisionsLayout} style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>

@@ -12158,6 +12158,7 @@ const enTools = {
     other: 'Other',
     otherDescription: 'Type your own answer',
     otherPlaceholder: 'Type your answer…',
+    notePlaceholder: 'Add a note (optional)',
     notBlocking: 'Not blocking',
     handledBy: ({ name }: { name: string }) => `${name} is handling this`,
     handlerOffline: ({ name }: { name: string }) => `${name} is offline · waiting for you`,

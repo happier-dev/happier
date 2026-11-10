@@ -76,7 +76,8 @@ const OFFERS: Readonly<
 > = {
   two: {
     request: EDIT,
-    choices: [once('once', 'Allow once'), reject('reject', 'Reject')],
+    // The refusal accepts feedback, as an agent's "No, and say what to do instead" does (D21).
+    choices: [once('once', 'Allow once'), { ...reject('reject', 'Reject'), allowsFeedback: true }],
   },
   four: {
     request: EDIT,

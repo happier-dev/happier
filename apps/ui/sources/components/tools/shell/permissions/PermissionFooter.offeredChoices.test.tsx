@@ -195,6 +195,39 @@ describe('PermissionFooter offered native choices', () => {
     });
   });
 
+  it('opens the feedback field for a choice that accepts feedback and sends the words with that choice', async () => {
+    const respondToPermission = vi.fn(async () => {});
+    const feedbackChoices = {
+      ...nativeChoices,
+      choices: nativeChoices.choices.map((choice) =>
+        choice.id === 'opaque:reject' ? { ...choice, label: 'Reject, and say why', allowsFeedback: true } : choice),
+    };
+    const source = createSource(respondToPermission as never);
+    const screen = await renderWithSessionTranscriptSource(
+      <PermissionFooter
+        sessionId="s1"
+        toolName="Edit"
+        metadata={{ flavor: 'native-test' }}
+        canApprovePermissions
+        permission={{ id: 'edit-1', turnId: 'turn-3', status: 'pending', nativeChoices: feedbackChoices }}
+      />,
+      source,
+    );
+    await screen.pressByTestIdAsync('permission-footer.choice.opaque:reject');
+    expect(respondToPermission).not.toHaveBeenCalled();
+    expect(choiceButtons(screen)).toHaveLength(0);
+    await act(async () => {
+      screen.changeTextByTestId('permission-footer.feedback', '  Use the staging schema instead  ');
+    });
+    await screen.pressByTestIdAsync('permission-footer.feedback.send');
+    expect(respondToPermission).toHaveBeenCalledTimes(1);
+    expect(respondToPermission).toHaveBeenCalledWith({
+      id: 'edit-1',
+      turnId: 'turn-3',
+      nativeChoice: { requirementId: 'occurrence-7', choiceId: 'opaque:reject', feedback: 'Use the staging schema instead' },
+    });
+  });
+
   it('does not re-render the decisions for an unrelated transcript update', async () => {
     let commits = 0;
     const { source } = await renderFooter({

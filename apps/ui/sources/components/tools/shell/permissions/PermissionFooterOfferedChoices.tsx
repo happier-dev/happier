@@ -11,6 +11,7 @@ import { t } from '@/text';
 import { isRefusingPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 
 import { PermissionDecisionButton } from './PermissionDecisionButton';
+import { PermissionFeedbackInput } from './PermissionFeedbackInput';
 import {
   arrangeOfferedChoices,
   isOfferedPermissionChoiceAvailable,
@@ -25,7 +26,8 @@ type Props = Readonly<{
   disabled: boolean;
   busyChoiceId: string | null;
   permissionOwnerLabel?: string;
-  onChoose: (choiceId: string) => void;
+  /** `feedback` is present only for a choice that accepts it and only when the person wrote some. */
+  onChoose: (choiceId: string, feedback?: string) => void;
   primaryRef?: React.Ref<View>;
 }>;
 
@@ -86,6 +88,21 @@ export const PermissionFooterOfferedChoices = React.memo(
       (choice) => !isOfferedPermissionChoiceAvailable(choice),
     );
     const ownerRequiredReason = t('capabilities.session.toolAsk.ownerRequired', { owner: props.permissionOwnerLabel });
+    // A choice that accepts feedback opens the feedback field in the choices' place; its own label sends it.
+    const [feedbackChoiceId, setFeedbackChoiceId] = React.useState<string | null>(null);
+    const [feedback, setFeedback] = React.useState('');
+    const feedbackChoice = feedbackChoiceId === null || props.disabled
+      ? null
+      : props.choices.find((choice) => choice.id === feedbackChoiceId && isOfferedPermissionChoiceAvailable(choice)) ?? null;
+    const choose = (choice: OfferedPermissionChoice) => {
+      if (choice.allowsFeedback) setFeedbackChoiceId(choice.id);
+      else props.onChoose(choice.id);
+    };
+    const sendFeedback = (choice: OfferedPermissionChoice) => {
+      const trimmed = feedback.trim();
+      setFeedbackChoiceId(null);
+      props.onChoose(choice.id, trimmed.length > 0 ? trimmed : undefined);
+    };
 
     const renderRowChoice = (
       choice: OfferedPermissionChoice,
@@ -114,7 +131,7 @@ export const PermissionFooterOfferedChoices = React.memo(
                 : styles.rowBordered,
             disabled && !busy && styles.withheld,
           ]}
-          onPress={measuring ? undefined : () => props.onChoose(choice.id)}
+          onPress={measuring ? undefined : () => choose(choice)}
           disabled={measuring || disabled}
           activeOpacity={0.7}
         >
@@ -179,7 +196,7 @@ export const PermissionFooterOfferedChoices = React.memo(
                   : styles.rowBordered,
               disabled && !busy && styles.withheld,
             ]}
-            onPress={() => props.onChoose(choice.id)}
+            onPress={() => choose(choice)}
             disabled={disabled}
             activeOpacity={0.7}
             hitReach={0}
@@ -240,7 +257,44 @@ export const PermissionFooterOfferedChoices = React.memo(
             )}
           </View>
         )}
-        {layout === 'row' ? (
+        {feedbackChoice ? (
+          <View style={styles.feedback}>
+            <PermissionFeedbackInput
+              testID="permission-footer.feedback"
+              value={feedback}
+              onChangeText={setFeedback}
+              placeholder={t('capabilities.session.toolAsk.feedbackPlaceholder')}
+              accessibilityLabel={feedbackChoice.label}
+              editable
+              autoFocus
+            />
+            <View style={styles.row}>
+              <View style={styles.rowStart}>
+                <PermissionDecisionButton
+                  testID="permission-footer.feedback.cancel"
+                  accessibilityRole="button"
+                  style={[styles.rowButton, styles.rowRefusal]}
+                  onPress={() => setFeedbackChoiceId(null)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.label, styles.labelRefusal]} numberOfLines={1}>{t('common.cancel')}</Text>
+                </PermissionDecisionButton>
+              </View>
+              <View style={styles.rowEnd}>
+                <PermissionDecisionButton
+                  testID="permission-footer.feedback.send"
+                  ref={props.primaryRef}
+                  accessibilityRole="button"
+                  style={[styles.rowButton, styles.rowPrimary]}
+                  onPress={() => sendFeedback(feedbackChoice)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.label, styles.labelPrimary]} numberOfLines={1}>{feedbackChoice.label}</Text>
+                </PermissionDecisionButton>
+              </View>
+            </View>
+          </View>
+        ) : layout === 'row' ? (
           <>
             {unavailable ? (
               <View style={styles.reason}>
@@ -278,6 +332,9 @@ export const PermissionFooterOfferedChoices = React.memo(
 const styles = StyleSheet.create((theme) => ({
   container: {
     gap: theme.space.s8,
+  },
+  feedback: {
+    gap: theme.space.s10,
   },
   measure: {
     position: 'absolute',

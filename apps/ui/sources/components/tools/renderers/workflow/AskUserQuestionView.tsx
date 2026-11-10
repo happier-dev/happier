@@ -724,6 +724,8 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     const { theme } = useUnistyles();
     const [selections, setSelections] = React.useState<Map<number, Set<number>>>(new Map());
     const [freeformAnswers, setFreeformAnswers] = React.useState<Map<number, string>>(new Map());
+    // A question that allows a note keeps it beside its answer, never inside it (`answerDetails[id].note`).
+    const [notes, setNotes] = React.useState<Map<number, string>>(new Map());
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     const [submissionOutcome, setSubmissionOutcome] = React.useState<'answered' | 'dismissed' | null>(null);
 
@@ -965,6 +967,10 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                 answers[q.answerKey] = selectedAnswerValues;
             }
         });
+        questions.forEach((q, qIndex) => {
+            const note = q.canonical && q.allowNote ? (notes.get(qIndex) ?? '').trim() : '';
+            if (note.length > 0) answerDetails[q.answerKey] = { ...answerDetails[q.answerKey], note };
+        });
 
         try {
             if (!toolCallId) {
@@ -1080,6 +1086,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
         questions,
         selections,
         freeformAnswers,
+        notes,
         allQuestionsAnswered,
         input.happierDialog,
         isSubmitting,
@@ -1385,6 +1392,24 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                                     );
                                 })}
                             </View>
+                            {question.canonical && question.allowNote ? (
+                                <TextInput
+                                    testID={`ask-user-question.note:${qIndex}`}
+                                    style={styles.freeformInput}
+                                    value={notes.get(qIndex) ?? ''}
+                                    onChangeText={(text) => {
+                                        if (!canInteract) return;
+                                        setNotes((prev) => new Map(prev).set(qIndex, text));
+                                    }}
+                                    onTouchStart={(event) => event.stopPropagation()}
+                                    placeholder={t('tools.askUserQuestion.notePlaceholder')}
+                                    placeholderTextColor={theme.colors.text.secondary}
+                                    multiline
+                                    editable={canInteract}
+                                    accessibilityLabel={t('tools.askUserQuestion.notePlaceholder')}
+                                    accessibilityState={{ disabled: !canInteract }}
+                                />
+                            ) : null}
                         </View>
                     );
                 })}

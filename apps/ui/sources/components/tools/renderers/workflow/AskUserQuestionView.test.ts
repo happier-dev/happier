@@ -834,6 +834,42 @@ describe('AskUserQuestionView', () => {
         }, answerDetails: { goal: { freeText: 'Custom goal, with commas' } } });
     });
 
+    it('sends a question\'s optional note beside its answer, and offers the note only where the question allows one', async () => {
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+
+        const screen = await renderView(makeTool({
+            input: {
+                questions: [{
+                    id: 'duplicates',
+                    question: 'When the same event arrives twice, what should the handler return?',
+                    required: true,
+                    selection: 'single',
+                    options: [{ id: 'ok', label: '200 OK, and skip it' }, { id: 'conflict', label: '409 Conflict' }],
+                    allowNote: true,
+                }, {
+                    id: 'cases',
+                    question: 'Which cases should the test cover?',
+                    required: false,
+                    selection: 'multiple',
+                    options: [{ id: 'twice', label: 'Same event twice' }],
+                }],
+            },
+        }));
+
+        expect(screen.findAllByProps({ testID: 'ask-user-question.note:1' })).toHaveLength(0);
+        await pressPressableByLabel(screen, '200 OK, and skip it');
+        await act(async () => {
+            changeTextTestInstance(screen.findByProps({ testID: 'ask-user-question.note:0' }),
+                '  Log the duplicate with its event id  ', 'ask-user-question note input');
+        });
+        const submit = findPressableByLabel(screen, 'tools.askUserQuestion.submit');
+        await pressTestInstanceAsync(submit, 'tools.askUserQuestion.submit');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith({ id: 'toolu_1', answers: {
+            duplicates: ['ok'],
+        }, answerDetails: { duplicates: { note: 'Log the duplicate with its event id' } } });
+    });
+
     it('preserves selected choices and custom text separately for a canonical multiple-choice answer', async () => {
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 

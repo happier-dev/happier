@@ -11,7 +11,7 @@ import { normalizeToolNameForView } from '@/components/tools/normalization/polic
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolvePermissionDisabledMessage } from '@/components/tools/shell/permissions/permissionDisabledMessage';
@@ -22,6 +22,7 @@ import { useTranscriptFindActive } from '@/components/sessions/transcript/find/T
 import { resolveSessionPermissionChoices } from '@/sync/ops/sessionPermissionChoices';
 import { answerSessionPermission } from '@/sync/ops/sessionPermissionAnswers';
 import { PermissionFooterOfferedChoices } from '@/components/tools/shell/permissions/PermissionFooterOfferedChoices';
+import { PermissionFeedbackInput } from '@/components/tools/shell/permissions/PermissionFeedbackInput';
 import { isOfferedPermissionChoice, selectPrimaryOfferedChoice } from '@/components/tools/shell/permissions/offeredChoiceLayout';
 
 function resolvePlan(tool: ToolViewProps['tool']): string {
@@ -50,16 +51,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     feedbackContainer: {
         paddingHorizontal: theme.space.s8,
         gap: theme.space.s10,
-    },
-    feedbackInput: {
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        borderRadius: 10,
-        paddingHorizontal: theme.space.s12,
-        paddingVertical: theme.space.s10,
-        minHeight: 88,
-        color: theme.colors.text.primary,
-        textAlignVertical: 'top',
     },
     feedbackActions: {
         flexDirection: 'row',
@@ -380,9 +371,9 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
                         primaryId={selectPrimaryOfferedChoice(nativePermissionChoices.filter(isOfferedPermissionChoice))}
                         disabled={isApproving || isRejecting}
                         busyChoiceId={nativeBusyChoiceId}
-                        onChoose={(choiceId) => {
+                        onChoose={(choiceId, feedback) => {
                             setNativeBusyChoiceId(choiceId);
-                            void handleChooseNative(choiceId).finally(() => setNativeBusyChoiceId(null));
+                            void handleChooseNative(choiceId, feedback).finally(() => setNativeBusyChoiceId(null));
                         }}
                         primaryRef={primaryAnswerRef}
                     />
@@ -390,14 +381,11 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
                     <>
                         {isRequestingChanges ? (
                             <View style={styles.feedbackContainer}>
-                                <TextInput
+                                <PermissionFeedbackInput
                                     testID="exit-plan-request-changes-input"
-                                    style={styles.feedbackInput}
                                     value={changeRequestText}
                                     onChangeText={setChangeRequestText}
                                     placeholder={t('tools.exitPlanMode.requestChangesPlaceholder')}
-                                    placeholderTextColor={theme.colors.text.secondary}
-                                    multiline
                                     editable={!isApproving && !isRejecting}
                                 />
                                 <View style={styles.feedbackActions}>

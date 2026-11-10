@@ -8393,6 +8393,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             other: '其他',
             otherDescription: '輸入你自己的答案',
             otherPlaceholder: '輸入你的答案...',
+            notePlaceholder: '新增備註（選填）',
         },
         exitPlanMode: {
             approve: '批准計畫',

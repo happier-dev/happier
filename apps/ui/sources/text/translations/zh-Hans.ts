@@ -10123,6 +10123,7 @@ export const zhHans: TranslationStructure = {
       other: "其他",
       otherDescription: "输入您自己的答案",
       otherPlaceholder: "输入您的答案...",
+      notePlaceholder: '添加备注（可选）',
       notBlocking: '不阻塞',
       handledBy: ({ name }: { name: string }) => `${name} 正在处理`,
       handlerOffline: ({ name }: { name: string }) => `${name} 已离线 · 等待你回答`,

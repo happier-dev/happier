@@ -10702,6 +10702,7 @@ localTailscale: {
       other: "その他",
       otherDescription: "自分の回答を入力",
       otherPlaceholder: "回答を入力...",
+      notePlaceholder: 'メモを追加（任意）',
       notBlocking: 'ブロックしません',
       handledBy: ({ name }: { name: string }) => `${name} が対応中`,
       handlerOffline: ({ name }: { name: string }) => `${name} はオフライン · あなたの回答待ち`,

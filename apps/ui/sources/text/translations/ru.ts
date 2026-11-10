@@ -10323,6 +10323,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       other: "Другое",
       otherDescription: "Введите свой ответ",
       otherPlaceholder: "Введите ваш ответ...",
+      notePlaceholder: 'Добавьте заметку (необязательно)',
       notBlocking: 'Не блокирует',
       handledBy: ({ name }: { name: string }) => `${name} занимается этим`,
       handlerOffline: ({ name }: { name: string }) => `${name} не в сети · ждёт вас`,
