@@ -206,7 +206,7 @@ export function getUsageQueryMachineInvalidationKey(machines: Readonly<Record<st
     return consumedMachineKey(readUsageMachineFacts(machines, nowMs, scope), consumers);
 }
 
-export type UsageQueryStateInvalidation = 'quota-inputs' | 'quota-projection-inputs' | 'material-inputs' | 'projection-inputs';
+export type UsageQueryStateInvalidation = 'quota-inputs' | 'quota-pool-inputs' | 'quota-projection-inputs' | 'material-inputs' | 'projection-inputs';
 
 /** State invalidation for the Account-owned Usage Resource; not a second data reader. */
 export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQueryStateInvalidation) => void,
@@ -272,12 +272,12 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
         // Session targets and Account scopes also serve quota-free Work.
         // Connected accounts, groups and pool selectors serve allowance demand.
         const materialInputsChanged = [0, 4].some(index => changedInputs[index]) || sessionMachineAdmissionChanged;
-        const quotaInputsChanged = [1, 2].some(index => changedInputs[index]) || machineAdmissionChanged;
+        const quotaPoolInputsChanged = [1, 2].some(index => changedInputs[index]) || machineAdmissionChanged;
         observedInputs = inputs;
         observedUsageCapabilities = readUsageCapabilities();
         observedMachineFacts = machineFacts;
         observedReachabilityRevision = reachabilityRevision;
-        if (changed) invalidate(materialInputsChanged ? 'material-inputs' : quotaInputsChanged ? 'quota-inputs'
+        if (changed) invalidate(materialInputsChanged ? 'material-inputs' : quotaPoolInputsChanged ? 'quota-pool-inputs'
             : changedInputs[7] ? 'quota-projection-inputs' : 'projection-inputs');
     };
     return observe(() => {

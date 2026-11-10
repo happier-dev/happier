@@ -231,7 +231,7 @@ describe('usage query captured Resource adapter', () => {
     expect(await read(1), 'a larger cohort must not repeat query normalization for each Session').toBe(single);
   });
 
-  it('writes compact input once per real Session change and never for an unchanged minute', async () => {
+  it('writes each scoped compact fact once per real Session change and never for an unchanged minute', async () => {
     const id = 'compact-write-cost';
     let seq = 1;
     let nowMs = 1_710_000_000_000;
@@ -255,25 +255,32 @@ describe('usage query captured Resource adapter', () => {
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeWorkEvidence: false,
       includeQuotaHistory: false, includeComparison: false, includeTranscriptEvidence: true });
     const writes = () => home!.requests.filter(request => request.method === 'PUT'
-      && request.path === `/v2/sessions/${id}/system-records`).length;
+      && request.path === `/v2/sessions/${id}/system-records`).map(request => {
+        const { content } = SessionSystemRecordStoredUpsertRequestSchema.parse(request.body);
+        const fact = usageWorkEvidence.UsageSessionFactRecordV1Schema.parse(content.t === 'plain' ? content.v : null);
+        return { kind: fact.kind, seq: fact.seq };
+      });
     const read = () => readUiUsageQueryBatch(captured, { queries: [query] });
     const initial = (await read()).results[0];
     expect(home!.requests.filter(request => request.path === `/v2/sessions/${id}/system-records`).map(request => request.method),
-      'complete private evidence is saved with the server-owned PUT contract').toEqual(['PUT']);
+      'complete private evidence saves Coach then work through the server-owned PUT contract').toEqual(['PUT', 'PUT']);
     expect(initial?.howYouWork?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 0 });
-    expect(writes()).toBe(1);
+    expect(writes()).toEqual([{ kind: 'coach', seq: 1 }, { kind: 'work', seq: 1 }]);
     for (let tick = 0; tick < 60; tick++) {
       nowMs += 1000;
       await read();
     }
-    expect(writes(), 'sixty unchanged clock advances produce no extra compact writes').toBe(1);
+    expect(writes(), 'sixty unchanged clock advances produce no extra compact writes')
+      .toEqual([{ kind: 'coach', seq: 1 }, { kind: 'work', seq: 1 }]);
     seq++;
     publishHomeAccountChange(captured.accountLifetime.scope.serverId, [id],
       { changeKinds: ['session'], usageQueryAffects: true, usageAccountingAffects: false });
     expect((await read()).results[0]?.howYouWork?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 0 });
-    expect(writes(), 'a real Session advance persists its replacement once').toBe(2);
+    expect(writes(), 'a real Session advance persists each replacement once').toEqual([
+      { kind: 'coach', seq: 1 }, { kind: 'work', seq: 1 }, { kind: 'coach', seq: 2 }, { kind: 'work', seq: 2 },
+    ]);
     await read();
-    expect(writes()).toBe(2);
+    expect(writes()).toHaveLength(4);
   });
 
   it('checks only named non-member Session candidates when a live Usage window wakes', async () => {
@@ -766,7 +773,7 @@ describe('usage query captured Resource adapter', () => {
       if (request.path !== `/v2/sessions/${id}/system-records` || request.method !== 'PUT') return undefined;
       const record = SessionSystemRecordStoredUpsertRequestSchema.parse(request.body);
       stored.set(record.address.localId, record.content);
-      return Response.json(successfulUsageFactWrite(request.body));
+      return successfulUsageFactWrite(request.body);
     }, undefined, undefined, { credentials, accountMode: mode,
       encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
     const authority = await captureServerRequestAuthorityForServerAccountScope({ scope: captured.accountLifetime.scope,
@@ -3485,6 +3492,7 @@ describe('usage query captured Resource adapter', () => {
         unit: 'requests', status: 'ok', resetsAt: now + 2 * 86_400_000 }] });
     let historyRequests = 0;
     let changedHistory = false;
+    let quotaUnavailable = false;
     let accountingRequests = 0;
     let quotaResolves = 0;
     let quotaRecords = 0;
@@ -3494,6 +3502,15 @@ describe('usage query captured Resource adapter', () => {
     const captured = await context(async request => {
       if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
       if (request.path === '/v2/usage/query') { accountingRequests++; return Response.json(value); }
+      if (request.path === '/v4/connect/qualified/quotas') return quotaUnavailable
+        ? Response.json({ error: 'unavailable' }, { status: 503 })
+        : Response.json(QualifiedConnectedAccountQuotaResponseV4Schema.parse({ ref,
+          sourceResolution: { source, recordId: snapshot.recordId, providerAccountId: 'provider-work',
+            fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs },
+          content: { t: 'plain', v: { v: 1, ref, activeAccountId: 'provider-work', fetchedAt: snapshot.fetchedAtMs,
+            staleAfterMs: snapshot.staleAfterMs, planLabel: null, accountLabel: null, meters: snapshot.meters } },
+          metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'ok' },
+        }));
       if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') {
         quotaResolves++;
         return Response.json({ source, recordId: snapshot.recordId, providerAccountId: 'provider-work', fetchedAt: now, staleAfterMs: 60_000 });
@@ -3531,6 +3548,7 @@ describe('usage query captured Resource adapter', () => {
     const quotaKey = buildQualifiedQuotaSnapshotScopeKey(quotaContext);
     loadQualifiedQuotaSnapshotOnce(quotaKey, quotaContext);
     await expect.poll(() => getQualifiedQuotaSnapshotEntry(quotaKey).read).toBe(true);
+    expect(getQualifiedQuotaSnapshotEntry(quotaKey).snapshot?.activeAccountId).toBe('provider-work');
     const providerScope = buildProviderAccountUsageScopeKey({ serverId: basis.serverId,
       generation: basis.generation, credentialScope: credentialsKey });
     updateProviderAccountUsageCacheEntries(providerScope, entries => ({ ...entries, [snapshot.recordId]: {
@@ -3610,6 +3628,20 @@ describe('usage query captured Resource adapter', () => {
         expect({ historyRequests, accountingRequests }, 'Session membership changes must not reread Capacity').toEqual(afterRelevantWake);
         expect(resourcePublications, 'Session membership must not publish a quota-only revision').toBe(publicationsAfterRelevantWake);
       }
+      quotaUnavailable = true;
+      await reloadQualifiedQuotaSnapshotAfterRecovery(quotaContext);
+      await flushHookEffects({ cycles: 30 });
+      expect(getQualifiedQuotaSnapshotEntry(quotaKey).error).not.toBeNull();
+      const failedReads = { historyRequests, accountingRequests };
+      const failedView = entry.getSnapshot().value;
+      await reloadQualifiedQuotaSnapshotAfterRecovery(quotaContext);
+      await flushHookEffects({ cycles: 30 });
+      expect({ historyRequests, accountingRequests }, 'the same failed quota read is not new admission or recovery').toEqual(failedReads);
+      expect(entry.getSnapshot().value).toBe(failedView);
+      quotaUnavailable = false;
+      await reloadQualifiedQuotaSnapshotAfterRecovery(quotaContext);
+      await flushHookEffects({ cycles: 30 });
+      expect(getQualifiedQuotaSnapshotEntry(quotaKey).error).toBeNull();
       // The rendered countdown uses minute precision. Crossing freshness in
       // the middle of that minute must not alternate cache-stale and read-ready
       // answers for exactly the same exhausted allowance.
@@ -7094,7 +7126,7 @@ describe('usage query captured Resource adapter', () => {
       expect(replacement.results[0]?.howYouWork?.intervals, 'retain the complete admitted population, never only the surviving Session')
         .toEqual(settled.results[0]?.howYouWork?.intervals);
       expect(replacement.results[0]?.sources).toEqual(expect.arrayContaining([
-        expect.objectContaining({ source: 'how_you_work', status: 'stale', errorCode: 'usage_session_evidence_read_failed' }),
+        expect.objectContaining({ source: 'how_you_work', status: 'stale', errorCode: 'http_error' }),
       ]));
     } else {
       expect(replacement.results[0]?.howYouWork).toMatchObject({ detailStatus: 'partial',
@@ -7106,7 +7138,11 @@ describe('usage query captured Resource adapter', () => {
     }
     failing = false;
     if (status === 403) publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['shared'], { changeKinds: ['session'], usageQueryAffects: true });
-    const recovered = await readUiUsageQueryBatch(captured, nextInput, undefined, replacement);
+    const recovered = status === 403
+      ? await readUiUsageQueryBatch(captured, nextInput, undefined, replacement)
+      : decodeUsageQueryResource((await getUsageQueryResourceStore(captured).getEntry({
+        hostRead: 'usage.query', input: projectNativeJsonValueForTransport(nextInput),
+      }).refresh()).value!);
     expect(recovered.results[0]?.howYouWork?.intervals).toEqual(settled.results[0]?.howYouWork?.intervals);
     expect(recovered.results[0]?.sources.find(source => source.source === 'how_you_work')?.errorCode).toBeUndefined();
   });
@@ -7478,7 +7514,8 @@ describe('usage query captured Resource adapter', () => {
         if (failureSource === 'accounting') expect(failed.results[0]!.sources).toContainEqual(expect.objectContaining({ source: 'accounting', status: 'error' }));
         else {
           expect.soft(failed.results[0]!.pending, 'failed evidence has settled, rather than reading forever').toBe(false);
-          expect.soft(failed.results[0]!.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'stale', errorCode: 'usage_session_evidence_read_failed' }));
+          expect.soft(failed.results[0]!.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'stale',
+            errorCode: failureSource === 'turns' ? 'http_error' : 'usage_session_evidence_read_failed' }));
         }
         expect(UsageQueryBatchResultSchema.safeParse(failed).success).toBe(true);
         if (failureSource !== 'accounting') {
@@ -8322,12 +8359,14 @@ describe('Usage projected batch settlement', () => {
     vi.spyOn(Date, 'now').mockReturnValue(nowMs);
     const ids = ['converted-before-interruption', 'unfinished-after-interruption'];
     const saved = createDeferred<void>();
-    const writes: string[] = [];
+    const writes: { path: string; kind: string }[] = [];
     let interrupted = false;
     const captured = await context(request => {
       if (request.path === '/v2/usage/query') return Response.json(value);
       if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) {
-        writes.push(request.path);
+        const { content } = SessionSystemRecordStoredUpsertRequestSchema.parse(request.body);
+        const fact = usageWorkEvidence.UsageSessionFactRecordV1Schema.parse(content.t === 'plain' ? content.v : null);
+        writes.push({ path: request.path, kind: fact.kind });
         saved.resolve();
         return successfulUsageFactWrite(request.body);
       }
@@ -8361,7 +8400,7 @@ describe('Usage projected batch settlement', () => {
     expect((await readUiUsageQueryBatch(captured, { queries: [query] })).results[0]?.howYouWork?.sessionCoverage)
       .toMatchObject({ selected: 2, admitted: 2, notRead: 2 });
     const result = await readUiUsageHistory(captured, { query });
-    expect(writes).toEqual([`/v2/sessions/${ids[0]}/system-records`]);
+    expect(writes).toEqual(['coach', 'work'].map(kind => ({ path: `/v2/sessions/${ids[0]}/system-records`, kind })));
     expect(result).toMatchObject({ status: 'partial', progress: { selected: 2, notRead: 1, completed: 1, failed: 1 } });
     const reopened = await readUiUsageQueryBatch(captured, { queries: [query] });
     expect(reopened.results[0]?.howYouWork?.sessionCoverage).toMatchObject({ selected: 2, admitted: 2, notRead: 1 });
@@ -8371,7 +8410,7 @@ describe('Usage projected batch settlement', () => {
       .filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(1);
     const retried = await readUiUsageHistory(captured, { query });
     expect(retried).toMatchObject({ status: 'complete', progress: { selected: 2, notRead: 0, completed: 1, failed: 0 } });
-    expect(writes).toEqual(ids.map(id => `/v2/sessions/${id}/system-records`));
+    expect(writes).toEqual(ids.flatMap(id => ['coach', 'work'].map(kind => ({ path: `/v2/sessions/${id}/system-records`, kind }))));
     const transcriptDemands = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
       .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests)
       .filter(demand => demand.query.includeTranscriptEvidence);

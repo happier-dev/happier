@@ -254,7 +254,8 @@ async function runLoad(
     const entry = getOrCreateEntry(key);
     if (entry.loadPromise) return entry.loadPromise;
     entry.loading = !entry.view.read || entry.refreshing;
-    entry.error = null;
+    // A background read has no new settled answer until its response arrives.
+    if (entry.loading) entry.error = null;
     publish(key, entry);
 
     const promise = Promise.resolve().then(async () => {

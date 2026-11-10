@@ -25,7 +25,7 @@ it('separates provider allowance publications from mixed, unknown and snapshot a
     ]) expect(isUsageQuotaHomeAccountChange(event)).toBe(false);
 });
 
-it.each(['failed', 'withdrawn'] as const)('distinguishes %s selector presence from confirmed offline Machines', condition => {
+it.each(['failed', 'withdrawn'] as const)('projects %s reachability evidence separately from confirmed offline Machines', condition => {
     const scope = { serverId: 'usage-selector-read-failure.test', accountId: 'account' };
     const machine = createMachineFixture({ id: 'chosen', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
     const machines = { [machine.id]: machine };
@@ -36,7 +36,9 @@ it.each(['failed', 'withdrawn'] as const)('distinguishes %s selector presence fr
         if (condition === 'failed') recordMachineRequestFailed({ ...scope, machineId: 'chosen' });
         else withdrawMachinePresenceForScope(scope);
         expect(getUsageQueryPoolMachineSelection(machines, ['chosen'], scope))
-            .toEqual({ status: 'error', machineId: 'chosen', errorCode: 'MACHINE_RPC_UNREACHABLE' });
+            .toEqual(condition === 'failed'
+                ? { status: 'error', machineId: 'chosen', errorCode: 'MACHINE_RPC_UNREACHABLE' }
+                : { status: 'pending', machineId: 'chosen' });
         clearMachineRequestReachabilityForScope(scope);
         observeMachinePresenceForTest(scope, ['chosen']);
         expect(getUsageQueryPoolMachineSelection({ chosen: { ...machine, active: false } }, ['chosen'], scope))
@@ -362,14 +364,14 @@ it('separates presentation settings and Machine labels from selection eligibilit
             status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
             credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [],
         }] } }));
-        expect(invalidations.splice(0)).toEqual(['quota-inputs']);
+        expect(invalidations.splice(0)).toEqual(['quota-pool-inputs']);
         storage.setState({ machines: { [machine.id]: { ...machine, metadata: { ...machine.metadata!, displayName: 'Renamed' } } } });
         expect(invalidations.splice(0)).toEqual(['projection-inputs']);
         storage.setState({ machines: { [machine.id]: { ...machine, active: false, activeAt: 1 } } });
         expect(invalidations.splice(0)).toEqual(['material-inputs']);
         observesSessionMachine = false;
         storage.setState({ machines: { [machine.id]: machine } });
-        expect(invalidations.splice(0)).toEqual(['quota-inputs']);
+        expect(invalidations.splice(0)).toEqual(['quota-pool-inputs']);
         storage.setState({ settingsScope: { ...scope, accountId: 'other-account' } });
         expect(invalidations.splice(0)).toEqual(['material-inputs']);
     } finally {

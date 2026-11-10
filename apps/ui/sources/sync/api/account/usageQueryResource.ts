@@ -2223,7 +2223,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     if (!accountModeChanged && change === 'session-evidence' && !privateEvidence) return;
                     if (!accountModeChanged && change === 'quota-inputs' && quotaRecordIds !== undefined
                         && !readQuotaRecordIds().some(id => usageQuotaRecordChangeAffects(id, quotaRecordIds))) return;
-                    if (!accountModeChanged && !readsAllowance && (change === 'quota-inputs' || change === 'quota-projection-inputs'
+                    if (!accountModeChanged && !readsAllowance && (change === 'quota-inputs' || change === 'quota-pool-inputs' || change === 'quota-projection-inputs'
                         || typeof change === 'object' && isUsageQuotaHomeAccountChange(change))) return;
                     const accountingChange = typeof change === 'object' && change.usageAccountingChange
                         ? readUsageAccountingChangeScope(change) : undefined;
@@ -2235,7 +2235,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         || typeof change === 'object' && (!readsAllowance || !isUsageProjectionHomeAccountChange(change, true, readQuotaRecordIds())))) return;
                     // Keep acquisition demand with the existing watch record until
                     // its next read. Only this input's own changes demand quota.
-                    const allowanceChanged = readsAllowance && (accountModeChanged || change === undefined || change === 'quota-inputs' || change === 'material-inputs'
+                    const allowanceChanged = readsAllowance && (accountModeChanged || change === undefined || change === 'quota-inputs'
+                        || change === 'quota-pool-inputs' || change === 'material-inputs'
                         || typeof change === 'object' && isUsageProjectionHomeAccountChange(change, true, readQuotaRecordIds()));
                     if (allowanceChanged) {
                         const changedIds = accountModeChanged ? undefined : quotaRecordIds
