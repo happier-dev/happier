@@ -541,7 +541,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             executionOriginSelectionKind: 'selectionRequired',
         } });
         try {
-            for (const method of ['readStoredImage', 'watchLiveStream', 'selectActionInput', 'readResource', 'watchResource'] as const) {
+            for (const method of ['readStoredImage', 'watchLiveStream', 'readResource', 'watchResource'] as const) {
                 expect(controller.admissionMethods).toContain(method);
                 expect(controller.installedMethods).not.toContain(method);
                 const invocation = request(method);
@@ -2788,8 +2788,8 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         // local context, feedback and host-Action presentation. It must not
         // advertise a daemon-contributed Action merely because the renderer is
         // mounted; that binding requires the exact daemon admission separately.
-        // `openNewSession` is locally served from the current Account lifetime,
-        // so it stays installed beside the other local methods, as are the
+        // `selectActionInput` and `openNewSession` are locally served from the current Account lifetime,
+        // so they stay installed beside the other local methods, as are the
         // client-realm linked-Session methods served from the Account's own
         // Session store.
         expect(controller.installedMethods).toEqual([
@@ -2806,6 +2806,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             'readClipboard',
             'writeClipboard',
             'openExternalLink',
+            'selectActionInput',
             'openNewSession',
             'openAutomationEvent',
             'readSession',

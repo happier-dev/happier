@@ -37,6 +37,7 @@ import {
 } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import {
     createPluginUiExecutionOriginCandidatePublication,
+    projectPluginUiProjectionAvailability,
     type PluginUiExecutionOriginCandidateFacts,
 } from '@/sync/domains/plugins/ui/projectionUnion';
 import {
@@ -473,9 +474,9 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     }, []);
     const hasEstablishingMembers = projectionUnion.hasEstablishingMembers;
     const hasCurrentAccountUi = accountUiProjection !== null && isCurrentAccountLifetime(accountLifetime);
-    const interactionEnabled = hasCurrentAccountUi || projectionUnion.interactionEnabled;
-    const phase = hasCurrentAccountUi ? 'current' : projectionUnion.phase;
-    const unavailableReasonCode = hasCurrentAccountUi ? undefined : projectionUnion.unavailableReasonCode;
+    const { interactionEnabled, phase, unavailableReasonCode } = projectPluginUiProjectionAvailability(
+        projectionUnion, hasCurrentAccountUi ? accountUiProjection : null,
+    );
     // A plugin the Account no longer has enabled takes its retained idle values (a Home widget's
     // warm list, for one) with it, instead of keeping them until the Account changes.
     React.useEffect(() => {

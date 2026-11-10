@@ -11,7 +11,7 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 const packaged = vi.hoisted(() => ({ bytes: new Uint8Array(), githubBytes: new Uint8Array(), githubAccountBytes: new Uint8Array(),
-    channelsAccountBytes: new Uint8Array(), detailBytes: new Uint8Array(), pageBytes: new Uint8Array(), mountedBytes: new Uint8Array(), machineRpc: vi.fn() }));
+    channelsAccountBytes: new Uint8Array(), detailBytes: new Uint8Array(), pageBytes: new Uint8Array(), sessionEntriesBytes: new Uint8Array(), mountedBytes: new Uint8Array(), machineRpc: vi.fn() }));
 
 // Only packaged-asset IO is substituted. Compile the current authored Account
 // entry with its production compiler; admission, activation and dispatch stay real.
@@ -85,10 +85,22 @@ vi.mock('./generatedBundledPluginUiArtifacts', async () => {
         entry: mountedPath, digest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: mountedPath, bytes: mountedCompiled.bytes }]),
         files: [{ relativePath: mountedPath, digest: computePluginUiArtifactSha256DigestV1(mountedCompiled.bytes), byteSize: mountedCompiled.bytes.byteLength }],
         builtWith: { bundler: 'esbuild', version: mountedCompiled.esbuildVersion }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0' });
+    const sessionEntriesCompiled = await compileUniversalPluginUiCommonJs({ projectRoot,
+        entryPath: join(projectRoot, 'src/sessions/cockpit/sessionLinkedEntriesSurface.tsx'), artifactId: 'triage-session-entries-native',
+        requestedExports: ['renderSurface'], exportConditions: ['happier-source'],
+        resolveSourceImport: specifier => packages.has(packageNameOfSpecifier(specifier))
+            ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] }) : undefined,
+    });
+    packaged.sessionEntriesBytes = sessionEntriesCompiled.bytes;
+    const sessionEntriesPath = 'react-native/triage-session-entries-native/entry.cjs.bundle';
+    const sessionEntriesArtifact = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: sessionEntriesCompiled.artifactId, tier: 'reactNative',
+        entry: sessionEntriesPath, digest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: sessionEntriesPath, bytes: sessionEntriesCompiled.bytes }]),
+        files: [{ relativePath: sessionEntriesPath, digest: computePluginUiArtifactSha256DigestV1(sessionEntriesCompiled.bytes), byteSize: sessionEntriesCompiled.bytes.byteLength }],
+        builtWith: { bundler: 'esbuild', version: sessionEntriesCompiled.esbuildVersion }, executable: { exports: ['renderSurface'] }, hostUiApiRange: '^1.0.0' });
     const uiDeclaration = { pluginId: manifest.id, pluginVersion: manifest.version, displayName: manifest.displayName,
-        packageName: '@happier-dev/plugins-triage', normalizedManifest: manifest, artifactGraphs: [artifact, detailArtifact, pageArtifact, mountedArtifact],
+        packageName: '@happier-dev/plugins-triage', normalizedManifest: manifest, artifactGraphs: [artifact, detailArtifact, pageArtifact, mountedArtifact, sessionEntriesArtifact],
         collectionContracts,
-        entriesById: projectPluginPortableUiDeclarationsV1(manifest, [artifact, detailArtifact, pageArtifact, mountedArtifact]),
+        entriesById: projectPluginPortableUiDeclarationsV1(manifest, [artifact, detailArtifact, pageArtifact, mountedArtifact, sessionEntriesArtifact]),
         declaredExecution: { daemonActions: true, contributionPoints: true } };
     const githubManifestSource = '../../../../../../../packages/plugins/scm-github/src/manifest';
     const githubModule = await vi.importActual<Readonly<{ PLUGIN_MANIFEST: unknown }>>(githubManifestSource);
@@ -160,7 +172,9 @@ vi.mock('./generatedBundledPluginUiArtifacts', async () => {
         artifactId: channelsArtifact.artifactId, tier: channelsArtifact.tier, digest: channelsArtifact.digest, artifactGraph: channelsArtifact,
         files: [{ relativePath: channelsPath, asset: 6 }] }, { pluginId: manifest.id, releaseVersion: manifest.version,
         artifactId: mountedArtifact.artifactId, tier: mountedArtifact.tier, digest: mountedArtifact.digest, artifactGraph: mountedArtifact,
-        files: [{ relativePath: mountedPath, asset: 7 }] }, ...[detailArtifact, pageArtifact].map((graph, index) => ({
+        files: [{ relativePath: mountedPath, asset: 7 }] }, { pluginId: manifest.id, releaseVersion: manifest.version,
+        artifactId: sessionEntriesArtifact.artifactId, tier: sessionEntriesArtifact.tier, digest: sessionEntriesArtifact.digest, artifactGraph: sessionEntriesArtifact,
+        files: [{ relativePath: sessionEntriesPath, asset: 9 }] }, ...[detailArtifact, pageArtifact].map((graph, index) => ({
             pluginId: manifest.id, releaseVersion: manifest.version, artifactId: graph.artifactId, tier: graph.tier,
             digest: graph.digest, artifactGraph: graph, files: [{ relativePath: graph.entry, asset: index + 3 }],
         }))], BUNDLED_PLUGIN_BRAND_MARKS: [] };
@@ -170,7 +184,8 @@ vi.mock('expo-asset', () => ({ Asset: { fromModule: (asset: number) => ({ localU
 vi.mock('expo-file-system', () => ({ File: class {
     exists = true;
     constructor(private readonly uri: string) {}
-    bytes = async () => this.uri.endsWith('/7.bundle') ? packaged.mountedBytes
+    bytes = async () => this.uri.endsWith('/9.bundle') ? packaged.sessionEntriesBytes
+        : this.uri.endsWith('/7.bundle') ? packaged.mountedBytes
         : this.uri.endsWith('/6.bundle') ? packaged.channelsAccountBytes
         : this.uri.endsWith('/5.bundle') ? packaged.githubAccountBytes
         : this.uri.endsWith('/2.bundle') ? packaged.githubBytes
@@ -192,6 +207,15 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 });
 
 const account = createProviderSettingsAccountHarness();
+const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+const { SessionRightSidebarProvider, SessionActionRail } = await import('@/components/sessions/panes/SessionRightPanel');
+const { RightSidebarActionRail } = await import('@/components/appShell/rightSidebar/RightSidebarActionRail');
+const { useSessionPluginRuntime, createSessionPaneSurfaceScope } = await import('@/components/sessions/plugins/useSessionPluginRuntime');
+const { AppSessionTranscriptSourceProvider } = await import('@/components/sessions/transcript/source/appSessionTranscriptSource');
+const { PluginContextualResourceStoreProvider } = await import('@/components/plugins/surfaces/PluginContextualResourceStoreProvider');
+const { useChatListRootState } = await import('@/components/sessions/transcript/useChatListRootState');
+const { PluginMessageActionHostProvider, PluginMessageActions } = await import('@/components/sessions/transcript/messageActions/PluginMessageActions');
+const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { storage } = await import('@/sync/domains/state/storage');
 const { AppShellPluginUiProjectionProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
 const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
@@ -319,6 +343,134 @@ it.each(['own', 'foreign', 'missing-purpose'] as const)('opens the E2EE GitHub s
     } finally { await screen.unmount(); }
 });
 
+it('publishes late Account linked work and selected message Actions to the real Session without a Machine and retires exact Home custody', async () => {
+    await account.restore({ machines: [], serverIdentityId: 'srv_triage_session_account',
+        features: createRootLayoutFeaturesResponse({ features: { plugins: { enabled: true,
+            ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } } } }) });
+    const lifetime = captureActiveServerAccountScopeLifetime()!;
+    const declaration = BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0]!;
+    const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
+    const { selectPluginRightSidebarTabPlacements } = await import('@/sync/domains/plugins/ui/surfacePlacementSelectors');
+    const { buildPluginSurfaceDestinationId } = await import('@/components/plugins/surfaces/pluginSurfaceDestinations');
+    const linkedWorkTabId = buildPluginSurfaceDestinationId(declaration.pluginId, 'session-entries');
+    const { TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1 } = await import('../../../../../../../packages/plugins/triage/src/actions/tasksProtocol');
+    const address = { serverId: account.serverId, sessionId: 'account-only-session' };
+    const { createSessionFixture, createSessionListRenderableSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const session = createSessionFixture({ id: address.sessionId, serverId: lifetime.scope.serverId, active: true,
+        metadata: { path: '/fixture/account-only', host: 'offline-machine' } });
+    storage.getState().applySessions([session]);
+    storage.getState().applyServerScopedSessionListRows(address.serverId,
+        [createSessionListRenderableSessionFixture(session)], { source: 'rowOnly', mode: 'append' });
+    expect(storage.getState().sessionListRowsByServerId[session.serverId!]?.[session.id]?.access?.role).toBe('owner');
+    const reference = { v: 1, sessionId: session.id, messageId: 'account-assistant-message', observedRevision: 'message-1' } as const;
+    let messageHost: ReturnType<typeof useChatListRootState>['pluginMessageActionHost'];
+    function SelectedMessageEntry() {
+        const { pluginMessageActionHost } = useChatListRootState({ session, sessionSurfaceKey: session.id });
+        messageHost = pluginMessageActionHost;
+        return <PluginMessageActionHostProvider host={pluginMessageActionHost}>
+            <PluginMessageActions messageActionReference={reference} invertedActionsLayout={false} />
+        </PluginMessageActionHostProvider>;
+    }
+    let runtime: ReturnType<typeof useSessionPluginRuntime> | undefined;
+    function SessionEntry(props: Readonly<{ registered?: boolean; serverId?: string }>) {
+        const target = { ...address, serverId: props.serverId ?? address.serverId };
+        const current = useSessionPluginRuntime({ address: target });
+        runtime = current;
+        return <SessionRightSidebarProvider sessionId={target.sessionId}
+            scopeId={createSessionPaneScopeId(target.sessionId, target.serverId)}
+            {...(props.registered ? { paneSurfaceScope: createSessionPaneSurfaceScope(target.sessionId, current) } : {})}>
+            <SessionActionRail />
+            {props.serverId === undefined ? <AppSessionTranscriptSourceProvider sessionId={session.id}
+                serverId={session.serverId} navigation="none"><PluginContextualResourceStoreProvider>
+                <SelectedMessageEntry />
+            </PluginContextualResourceStoreProvider></AppSessionTranscriptSourceProvider> : null}
+        </SessionRightSidebarProvider>;
+    }
+    const scene = (registered = false, serverId?: string) => <AppShellPluginUiProjectionProvider><AppPaneProvider>
+        <SessionEntry registered={registered} serverId={serverId} />
+    </AppPaneProvider></AppShellPluginUiProjectionProvider>;
+    const screen = await renderWithAppProviders(scene());
+    const linkedTabs = () => screen.tree.root.findByType(RightSidebarActionRail).props.actions
+        .filter((action: Readonly<{ id: string }>) => action.id.includes('happier.triage'));
+    try {
+        expect(linkedTabs()).toEqual(expect.arrayContaining([expect.objectContaining({ id: linkedWorkTabId })]));
+        const snapshot = { availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId: declaration.pluginId,
+            response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1,
+                hostingCapability: { enabled: false }, intent: { pluginId: declaration.pluginId, desiredVersion: null,
+                    enabled: true, offlineUiHosting: 'disabled', writableCollections: declaration.collectionContracts, revision: 'session-catalog' },
+                release: null, packageAssets: [], uiArtifacts: [] }) }] };
+        const disabled = { ...snapshot, intentReads: snapshot.intentReads.map(read => ({ ...read,
+            response: { ...read.response, intent: { ...read.response.intent!, enabled: false } },
+        })) };
+        await act(async () => { replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: disabled }); });
+        await flushHookEffects();
+        expect(linkedTabs()).toEqual([]);
+        await act(async () => { replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot }); });
+        await readPluginAccountAvailability(lifetime.scope).ensureCurrentAccountExecution(declaration.pluginId);
+        const produced = readPluginAccountAvailability(lifetime.scope).readUiProjectionInputs()!.accountUiProjection!;
+        expect(selectPluginRightSidebarTabPlacements(produced, 'session').map(row => row.binding.destination.localId))
+            .toContain('session-entries');
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect({ phase: runtime?.phase, interactionEnabled: runtime?.interactionEnabled,
+                serverId: runtime?.serverId, hasAccountLifetime: runtime?.accountLifetime !== null,
+                hasProjection: runtime?.pluginUiProjection !== null, reason: runtime?.unavailableReasonCode })
+                .toEqual({ phase: 'current', interactionEnabled: true, serverId: account.serverId,
+                    hasAccountLifetime: true, hasProjection: true, reason: undefined });
+        });
+        const scopedPlacements = selectPluginRightSidebarTabPlacements(runtime!.pluginUiProjection!, 'session');
+        expect(scopedPlacements.map(row => ({ id: row.binding.destination.localId, availability: row.availability })))
+            .toEqual(selectPluginRightSidebarTabPlacements(produced, 'session')
+                .map(row => ({ id: row.binding.destination.localId, availability: row.availability })));
+        const { resolveRightSidebarPluginTabs } = await import('@/components/appShell/rightSidebar/rightSidebarPluginTabs');
+        expect(resolveRightSidebarPluginTabs({ scope: 'session', placements: scopedPlacements }).map(tab => tab.id),
+            JSON.stringify(scopedPlacements.map(row => ({ id: row.binding.destination.localId,
+                availability: row.availability, display: row.display, policy: row.policy }))))
+            .toContain(linkedWorkTabId);
+        expect(messageHost?.resolveCurrent(reference) ?? null, 'the exact owner transcript must publish its Account Action host').not.toBeNull();
+        const expectLinkedWork = async () => {
+            await flushHookEffects();
+            expect(linkedTabs()).toEqual(expect.arrayContaining([expect.objectContaining({ id: linkedWorkTabId })]));
+        };
+        await expectLinkedWork();
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            const menu = screen.tree.root.findAllByType(DropdownMenu).find(node =>
+                node.props.items?.some((item: Readonly<{ id: string }>) => item.id === `happier.triage/${TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1}`));
+            expect(menu, 'the selected assistant message must offer Create task without daemon authority').toBeDefined();
+        });
+        expect(runtime).toMatchObject({ machineId: null, serverId: account.serverId, interactionEnabled: true, phase: 'current' });
+        expect(runtime?.pluginUiProjection?.actionsById[`happier.triage/${TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1}`]).toBeDefined();
+        const originalMessageHost = messageHost;
+        expect(originalMessageHost?.resolveCurrent(reference)).not.toBeNull();
+        const stable = runtime?.pluginUiProjection;
+        await act(async () => { replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot }); });
+        await flushHookEffects();
+        expect(runtime?.pluginUiProjection).toBe(stable);
+        await screen.update(scene(true));
+        expect(linkedTabs()).toEqual(expect.arrayContaining([expect.objectContaining({ id: linkedWorkTabId })]));
+        await screen.update(scene(false, 'unknown-home'));
+        expect(linkedTabs()).toEqual([]);
+        expect(runtime?.pluginUiProjection).toBeNull();
+        expect(originalMessageHost?.signal?.aborted).toBe(true);
+        await screen.update(scene(true));
+        expect(linkedTabs()).toHaveLength(1);
+        await act(async () => { replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: disabled }); });
+        await flushHookEffects();
+        expect(linkedTabs()).toEqual([]);
+        await act(async () => { replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot }); });
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(linkedTabs()).toHaveLength(1); });
+        const resumedMessageHost = messageHost;
+        expect(resumedMessageHost?.signal?.aborted).toBe(false);
+        await act(async () => { await account.reset(); });
+        await flushHookEffects();
+        expect(lifetime.isCurrent()).toBe(false);
+        expect(linkedTabs()).toEqual([]);
+        expect(resumedMessageHost?.signal?.aborted).toBe(true);
+        expect(packaged.machineRpc).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+});
+
 afterEach(async () => {
     clearPluginAccountAvailabilityProjection();
     await account.reset();
@@ -329,7 +481,8 @@ afterEach(async () => {
 
 const TRIAGE_ACCOUNT_DISPATCH_SCENARIOS = ['client mounted E2EE', 'Account GitHub detail plain', 'Account GitHub detail E2EE', 'Account GitHub Session plain', 'Account GitHub Session E2EE', 'mixed sources', 'personal CRUD', 'personal detail', 'personal search', 'Home search', 'unavailable optional Machine', 'available Machine sources', 'available Machine linked Resource'] as const;
 
-async function prepareTriageAccountDispatchScenario(scenario: typeof TRIAGE_ACCOUNT_DISPATCH_SCENARIOS[number]) {
+async function prepareTriageAccountDispatchScenario(scenario: typeof TRIAGE_ACCOUNT_DISPATCH_SCENARIOS[number] | 'personal send picker') {
+    const personalDetail = scenario === 'personal detail' || scenario === 'personal send picker';
     const availableMachine = scenario === 'available Machine sources' || scenario === 'available Machine linked Resource' || scenario === 'Home search';
     const sessionGithub = scenario === 'Account GitHub Session plain' || scenario === 'Account GitHub Session E2EE';
     const withMachine = scenario === 'unavailable optional Machine' || availableMachine || sessionGithub;
@@ -350,6 +503,14 @@ async function prepareTriageAccountDispatchScenario(scenario: typeof TRIAGE_ACCO
         account.home.answer(account.serverId, `GET /v2/sessions/${session.id}`, {
             body: createPlainSessionByIdResponseFixture(session),
         });
+    }
+    if (scenario === 'personal send picker') {
+        // The rendered Actions catalog reads the plugin's Account KV row,
+        // separately from the legacy Todo KV below. An empty real Account
+        // yields the authored default Actions through the real catalog reader.
+        const { PluginAccountStorageReadResponseV1Schema } = await import('@happier-dev/protocol/plugins/data/accountKvV1');
+        account.home.answer(account.serverId, `GET /v1/account/plugin-storage/${encodeURIComponent(declaration.pluginId)}`,
+            { body: PluginAccountStorageReadResponseV1Schema.parse({ status: 'absent' }) });
     }
     if (sessionGithub) {
         // The Session Machine answers normally but has no GitHub contribution.
@@ -669,7 +830,7 @@ async function prepareTriageAccountDispatchScenario(scenario: typeof TRIAGE_ACCO
                 release: null, packageAssets: [], uiArtifacts: [] }) }] : [])] } });
     // Only the direct-dispatch cases explicitly demand a declaration. The
     // physical page must activate its own cold lazy declaration and detail.
-    if (scenario !== 'personal detail') {
+    if (!personalDetail) {
         await readPluginAccountAvailability(lifetime.scope).ensureCurrentAccountExecution(declaration.pluginId);
         if (withGithub) await readPluginAccountAvailability(lifetime.scope).ensureCurrentAccountExecution(GITHUB_PLUGIN_ID);
         if (accountGithub) await readPluginAccountAvailability(lifetime.scope).ensureCurrentAccountExecution('happier.channels');
@@ -688,11 +849,11 @@ async function prepareTriageAccountDispatchScenario(scenario: typeof TRIAGE_ACCO
             </AppShellPluginUiProjectionProvider>
         </PluginSurfaceFocusEligibilityProvider>;
     }
-    const screen = scenario === 'personal detail' || scenario === 'client mounted E2EE'
+    const screen = personalDetail || scenario === 'client mounted E2EE'
         ? await renderMountedCurrentUiContext(<PhysicalPageScene />)
         : await renderWithAppProviders(<AppShellPluginUiProjectionProvider><></></AppShellPluginUiProjectionProvider>);
     try {
-        if (scenario === 'personal detail') {
+        if (personalDetail) {
             const { PluginReactNativeSurface } = await import('@/components/plugins/reactNative/PluginReactNativeSurface');
             await waitForHomeGovernance(async () => {
                 await flushHookEffects();
@@ -751,6 +912,44 @@ async function prepareTriageAccountDispatchScenario(scenario: typeof TRIAGE_ACCO
         return {
             dispose: async () => { controller.dispose(); await screen.unmount(); },
             run: async () => {
+        if (scenario === 'personal send picker') {
+            const { pressTestInstanceAsync } = await import('@/dev/testkit');
+            const { TranscriptSendToSessionModal } = await import('@/components/sessions/transcript/messageSelection/TranscriptSendToSessionModal');
+            const byLabel = (label: string) => screen.tree.root.findAll(node => typeof node.type === 'string'
+                && node.props.accessibilityLabel === label && typeof node.props.onPress === 'function').at(-1);
+            const labels = () => screen.tree.root.findAll(node => typeof node.type === 'string'
+                && typeof node.props.onPress === 'function').map(node => node.props.accessibilityLabel).filter(Boolean);
+            let options: import('react-test-renderer').ReactTestInstance | undefined;
+            let send: import('react-test-renderer').ReactTestInstance | undefined;
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                send = byLabel('Send to a Session…');
+                options = byLabel('Start options');
+                expect(send ?? options, JSON.stringify(labels())).toBeDefined();
+            });
+            if (!send) {
+                await pressTestInstanceAsync(options, 'Start options');
+                await waitForHomeGovernance(async () => {
+                    await flushHookEffects();
+                    send = byLabel('Send to a Session…');
+                    expect(send, JSON.stringify(labels())).toBeDefined();
+                });
+            }
+            vi.mocked(Modal.show).mockClear();
+            const pressing = pressTestInstanceAsync(send, 'Send to a Session…');
+            try {
+                await vi.waitFor(() => expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({
+                    component: TranscriptSendToSessionModal,
+                    props: expect.objectContaining({ selectionOnly: true, sourceServerId: lifetime.scope.serverId }),
+                })));
+            } finally {
+                const picker = vi.mocked(Modal.show).mock.calls.find(([request]) => request.component === TranscriptSendToSessionModal)?.[0];
+                await act(async () => { picker?.onRequestClose?.(); });
+                await pressing;
+            }
+            expect(packaged.machineRpc).not.toHaveBeenCalled();
+            return;
+        }
         if (scenario === 'client mounted E2EE') {
             const { TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1 } = await import('../../../../../../../packages/plugins/triage/src/actions/tasksProtocol');
             const { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 } = await import('../../../../../../../packages/plugins/triage/src/actions/mountedUiProtocol');
@@ -1160,4 +1359,9 @@ describe.each(TRIAGE_ACCOUNT_DISPATCH_SCENARIOS)('runs actual Triage through the
         fixture ??= await prepareTriageAccountDispatchScenario(scenario);
         await fixture.run();
     });
+});
+
+it('opens the existing Session picker from actual native Task Send without a Machine', async () => {
+    const fixture = await prepareTriageAccountDispatchScenario('personal send picker');
+    try { await fixture.run(); } finally { await fixture.dispose(); }
 });

@@ -369,6 +369,16 @@ export const EMPTY_PLUGIN_UI_PROJECTION_UNION: PluginUiProjectionUnion = Object.
     serverId: null,
 });
 
+/** Account declarations are independently current; Machine rows retain their own stamped origins. */
+export function projectPluginUiProjectionAvailability(
+    runtime: Pick<PluginUiProjectionUnion, 'phase' | 'interactionEnabled' | 'unavailableReasonCode'>,
+    accountUiProjection: PluginUiProjectionModel | null,
+): Pick<PluginUiProjectionUnion, 'phase' | 'interactionEnabled' | 'unavailableReasonCode'> {
+    return accountUiProjection
+        ? { phase: 'current', interactionEnabled: true, unavailableReasonCode: undefined }
+        : runtime;
+}
+
 /** One Account/target publisher owns only its current immutable source inputs. */
 export function createPluginUiProjectionUnionPublication() {
     let members: readonly PluginUiProjectionUnionMember[] | null = null;

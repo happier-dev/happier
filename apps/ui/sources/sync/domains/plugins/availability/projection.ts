@@ -206,6 +206,7 @@ function noAvailabilitySubscription(): () => void { return () => {}; }
 
 function useAvailabilityScopeRetirement(accountId: string | null, serverId: string | null): void {
     React.useEffect(() => {
+        if (!accountId || !serverId) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) return;
         const subscription = lifetime.onRetire(clearPluginAccountAvailabilityProjection);
@@ -216,10 +217,19 @@ function useAvailabilityScopeRetirement(accountId: string | null, serverId: stri
 /** Descriptive App/UI consumers do not subscribe to transport observation revisions. */
 export function useActivePluginAccountUiProjectionInputs(): PluginAccountUiProjectionInputs | null {
     const scope = useActiveServerAccountScope();
-    useAvailabilityScopeRetirement(scope?.accountId ?? null, scope?.serverId ?? null);
-    const readSnapshot = React.useCallback(() => scope
-        ? readPluginAccountAvailability(scope).readUiProjectionInputs() : null, [scope]);
-    return React.useSyncExternalStore(subscribeToReactProjection, readSnapshot, readSnapshot);
+    return usePluginAccountUiProjectionInputs(scope);
+}
+
+/** Exact Home consumers share Availability's descriptive projection and scope admission. */
+export function usePluginAccountUiProjectionInputs(scope: ServerAccountScope | null,
+    options?: Readonly<{ enabled?: boolean }>): PluginAccountUiProjectionInputs | null {
+    const enabled = options?.enabled !== false;
+    useAvailabilityScopeRetirement(enabled ? scope?.accountId ?? null : null, enabled ? scope?.serverId ?? null : null);
+    const readSnapshot = React.useCallback(() => enabled && scope
+        ? readPluginAccountAvailability(scope).readUiProjectionInputs() : null, [enabled, scope]);
+    const subscribe = React.useCallback((listener: () => void) => enabled && scope
+        ? subscribeToReactProjection(listener) : noAvailabilitySubscription(), [enabled, scope]);
+    return React.useSyncExternalStore(subscribe, readSnapshot, readSnapshot);
 }
 
 /**

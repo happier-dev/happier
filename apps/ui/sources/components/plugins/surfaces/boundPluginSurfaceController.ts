@@ -1286,24 +1286,24 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     });
     let actionInputHost = createActionInputHost();
     const createSelectActionInput = (): PluginSurfaceHostApiMethodHandler => (payload, options) => {
-            const current = readActionInputFacts();
-            return createPluginActionInputSelectionHostApiHandler({
-                ...(current.pluginProjectionById
-                    ? { pluginProjectionById: current.pluginProjectionById }
-                    : {}),
-                ...(current.pluginUiProjection
-                    ? { pluginUiProjection: current.pluginUiProjection }
-                    : {}),
-                targetedContributions: current.targetedContributions,
-                // Reuse the mounted raw V2 resolver for execution-realm admission.
-                ...(current.resolveContributedAction
-                    ? { resolveContributedAction: current.resolveContributedAction }
-                    : {}),
-                host: { ...actionInputHost },
-                anchor: input.binding?.readActionInputAnchor?.(),
-                isCurrent,
-            })(payload, options);
-        };
+        const current = readActionInputFacts();
+        return createPluginActionInputSelectionHostApiHandler({
+            ...(current.pluginProjectionById
+                ? { pluginProjectionById: current.pluginProjectionById }
+                : {}),
+            ...(current.pluginUiProjection
+                ? { pluginUiProjection: current.pluginUiProjection }
+                : {}),
+            targetedContributions: current.targetedContributions,
+            // Reuse the mounted raw V2 resolver for execution-realm admission.
+            ...(current.resolveContributedAction
+                ? { resolveContributedAction: current.resolveContributedAction }
+                : {}),
+            host: { ...actionInputHost },
+            anchor: input.binding?.readActionInputAnchor?.(),
+            isCurrent,
+        })(payload, options);
+    };
     const createOpenNewSessionBinding = () => accountLifetime
         ? (executeSelectedOperation: PluginSurfaceHostApiMethodHandler) => (
             createPluginOpenNewSessionHostApiHandler({
