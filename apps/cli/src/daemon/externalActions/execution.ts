@@ -574,10 +574,18 @@ resolveServerFeaturesSnapshot?: () =>
           ...(ingress?.requesterSessionBootstrap ? { requesterSessionBootstrap: ingress.requesterSessionBootstrap } : {}),
         };
       };
+      let workflowTriggerList: import('@/session/actions/workflowFamily').CliWorkflowTriggerList | undefined;
       const deploymentDeps = (needsDeploymentDeps || actionId === 'approval.request.decide') && deploymentHomeId ? createRequesterBoundDeploymentActionDeps({
         ...(readRequesterDeploymentArtifactStore(executionContext?.externalActionExecutionAuthorization)
           ? { accountArtifacts: readRequesterDeploymentArtifactStore(executionContext?.externalActionExecutionAuthorization)! } : {}),
         credentials, installedCredentials: params.credentials, serverId: deploymentHomeId,
+        readActiveBackupAutomationIds: async (environment, context) => {
+          if (!workflowTriggerList) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+          const result = await workflowTriggerList({ deploymentBackupEnvironment: {
+            serverId: deploymentHomeId, environmentId: environment.environment.id,
+          } }, context);
+          return result.sets.map(set => set.automationId);
+        },
         resolveRequesterIdentity: async context => apiMachineForSessions
           ? await apiMachineForSessions.resolveDeploymentSourceRequesterIdentity(context)
           : { kind: 'unknown', reason: 'requester_authority_unavailable' },
@@ -594,7 +602,8 @@ resolveServerFeaturesSnapshot?: () =>
           operationId, context: withDeploymentIngress(context),
         }), readBackupOperations: (target, context) => apiMachineForSessions.readDeploymentBackupOperations({
           target, context: withDeploymentIngress(context),
-        }) } : {}),
+        }), acquireUpload: (input, context) => apiMachineForSessions.acquireDeploymentRestoreUpload(input,
+          withDeploymentIngress(context)) } : {}),
         ...(requesterAccountContext ? { savedSecretOperationContext: requesterAccountContext.savedSecretOperationContext }
           : requesterRuntime ? { savedSecretOperationContext: requesterRuntime.bootstrap.savedSecretOperationContext } : {}),
         serverHttpBaseUrl: requesterAccountContext?.serverHttpBaseUrl ?? requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl,
@@ -773,6 +782,7 @@ resolveServerFeaturesSnapshot?: () =>
       const executor: ReturnType<
         typeof createCliActionExecutorFromCredentials
       > = await trace('daemon.cli_factory', () => createCliActionExecutorFromCredentials({
+        registerWorkflowTriggerList: list => { workflowTriggerList = list; },
         ...(requesterAccountContext ? { workflowRequesterCustody: createWorkflowRequesterCustody({
           credentials: requesterAccountContext.credentials, happyHomeDir: configuration.happyHomeDir,
           attribution: { serverId: params.serverId, accountId: requesterAccountContext.authorization.binding.accountId,
@@ -941,6 +951,7 @@ resolveServerFeaturesSnapshot?: () =>
           projectReadinessRead: deploymentDeps.projectReadinessRead,
           prepareDeploymentEnvironmentCreate: deploymentDeps.prepareDeploymentEnvironmentCreate,
           deploymentTemplateInstantiate: deploymentDeps.deploymentTemplateInstantiate,
+          deploymentMoveToRepository: deploymentDeps.deploymentMoveToRepository,
           prepareDeploymentTemplateInstantiation: deploymentDeps.prepareDeploymentTemplateInstantiation,
           resolveEnvironmentApprovalScope: deploymentDeps.resolveEnvironmentApprovalScope,
           prepareDeploymentAction: deploymentDeps.prepareDeploymentAction,

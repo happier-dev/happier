@@ -165,6 +165,8 @@ export type CliActionExactHomeTarget =
   | Readonly<{ serverId: string; serverHttpBaseUrl: string }>;
 export type CliActionDepsParams = Readonly<{
   token: string;
+  /** Host-local read capability for the existing Workflow family. */
+  registerWorkflowTriggerList?: (list: import('../workflowFamily').CliWorkflowTriggerList) => void;
   /** Additional canonical owner (API token) of private exact-operation consent. */
   readApprovedOperation?: ActionExecutorDeps['readApprovedOperation'];
   /** Local delivery only; a host without a link consumer refuses creation before HTTP. */
@@ -206,6 +208,7 @@ export type CliActionDepsParams = Readonly<{
   prepareHostReviewedChildren?: ActionExecutorDeps['prepareHostReviewedChildren'];
   deploymentPrepare?: ActionExecutorDeps['deploymentPrepare'];
   deploymentTemplateInstantiate?: ActionExecutorDeps['deploymentTemplateInstantiate'];
+  deploymentMoveToRepository?: ActionExecutorDeps['deploymentMoveToRepository'];
   prepareDeploymentTemplateInstantiation?: ActionExecutorDeps['prepareDeploymentTemplateInstantiation'];
   /** Receiving daemon's target-local Activity Undo owner; clients retain exact Machine transport. */
   machineGuardAction?: ActionExecutorDeps['machineGuardAction'];

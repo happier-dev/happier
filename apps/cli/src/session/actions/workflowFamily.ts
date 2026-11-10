@@ -117,6 +117,7 @@ export type CliWorkflowFamily = Readonly<{
   waitForCombinedWorkflow: (request: WorkflowCombinedRunStartV1, runId: string) => Promise<unknown>;
   readCombinedWorkflowInvocations: (request: WorkflowCombinedRunStartV1, input: WorkflowActionExecuteArgs<'workflow.run.invocations.list'>['input']) => Promise<unknown>;
 }>;
+export type CliWorkflowTriggerList = NonNullable<CliWorkflowFamily['workflowTriggers']>['list'];
 export function createCliWorkflowFamily(
   params: CliActionDepsParams,
   host: CliWorkflowFamilyHost,

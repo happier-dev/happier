@@ -3,6 +3,9 @@ import { DeploymentBackupRestorePrepareInputV1Schema } from '../../deployments/d
 import { DeploymentDataQueryInputV1Schema } from '../../deployments/deploymentReadsV1.js';
 import { ProjectReadinessReadInputV1Schema } from '../../projects/readinessV1.js';
 import type { WorkflowDefinitionV1 } from '../workflowV1.js';
+import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1,
+  DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { input, literal, result } from './definitionParts.js';
 
 // The public backup schema owns the configured target fields. Each saved
@@ -10,6 +13,21 @@ import { input, literal, result } from './definitionParts.js';
 const backupTargetReferences = () => Object.fromEntries(Object.keys(DeploymentBackupRunInputV1Schema.shape)
   .map(name => [name, { kind: 'input' as const, name: 'backupTarget', path: [name] }]));
 const targetInput = { name: 'backupTarget', valueType: 'json' as const, required: true };
+
+/** The one current-Environment producer shared by standing consent and schedule discovery. */
+export function readDeploymentBackupOccurrenceV1(definition: WorkflowDefinitionV1,
+  leaf: Extract<WorkflowDefinitionV1['blocks'][number], { kind: 'action' }>) {
+  if (leaf.actionId !== DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 && leaf.actionId !== DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1) return null;
+  const first = leaf.input.serverId;
+  if (first?.kind !== 'result' || first.producer.scope.kind !== 'current') return null;
+  const producer = definition.blocks.find(block => block.id === first.producer.blockId);
+  if (producer?.kind !== 'action' || producer.actionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
+    || producer.input.backupPolicy === undefined) return null;
+  const references = Object.fromEntries(Object.keys(DeploymentBackupRunInputV1Schema.shape)
+    .map(field => [field, result(producer.id, ['backupTarget', field])]));
+  return Object.entries(references).every(([field, reference]) => sameStrictJsonValue(leaf.input[field], reference))
+    ? { producer, references } : null;
+}
 
 /** Reuses a person-selected isolated Environment; its retained grants never become Workflow inputs. */
 export function createRestoreDrillWorkflowV1(): WorkflowDefinitionV1 {
@@ -102,24 +120,30 @@ export function createBackupVerifyWorkflowV1(): WorkflowDefinitionV1 {
 }
 
 export function createNightlyBackupsWorkflowV1(): WorkflowDefinitionV1 {
-  const target = backupTargetReferences();
+  const target = (outer = false) => Object.fromEntries(Object.keys(DeploymentBackupRunInputV1Schema.shape)
+    .map(field => [field, result('current', ['backupTarget', field], outer ? { kind: 'outer', levels: 1 } : { kind: 'current' })]));
   return {
-  version: 1, defaults: {}, inputs: [targetInput,
+  version: 1, defaults: {}, inputs: [
+    { name: 'backupEnvironment', valueType: 'json', required: true },
+    { name: 'backupPolicy', valueType: 'json', required: true },
     { name: 'verificationLevel', valueType: 'string', required: true },
-    { name: 'retention', valueType: 'json', required: true },
   ],
   blocks: [
-    { kind: 'action', id: 'backup', name: 'Back up the configured data', actionId: 'deployments.backups.run', input: target },
+    { kind: 'action', id: 'current', name: 'Read the current backup target', actionId: DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, input: {
+      serverId: input('backupEnvironment', ['serverId']), environmentId: input('backupEnvironment', ['environmentId']),
+      backupPolicy: input('backupPolicy'),
+    } },
+    { kind: 'action', id: 'backup', name: 'Back up the configured data', actionId: DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, input: target() },
     { kind: 'loop', id: 'snapshots', name: 'Verify every returned snapshot',
       repetition: { kind: 'items', items: result('backup', ['manifests']), execution: 'sequential', failurePolicy: 'fail_stop' },
       body: [{ kind: 'action', id: 'verify', name: 'Verify this backup snapshot', actionId: 'deployments.backups.verify',
-        input: { ...target, backupOperationId: result('backup', ['operationId'], { kind: 'outer', levels: 1 }),
+        input: { ...target(true), backupOperationId: result('backup', ['operationId'], { kind: 'outer', levels: 1 }),
           snapshotId: { kind: 'item', field: 'value', path: ['snapshot', 'snapshotId'] }, level: input('verificationLevel') } }],
     },
     // The prune owner checks existing verified receipts and the configured
     // retention policy. Failure of any verification stops before this Action.
     { kind: 'action', id: 'prune', name: 'Apply the chosen retention policy', actionId: 'deployments.backups.prune',
-      input: { ...target, retention: input('retention') } },
+      input: { ...target(), retention: input('backupPolicy', ['retention']) } },
   ],
   finalOutput: result('prune'),
   };

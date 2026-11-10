@@ -6,7 +6,7 @@ import type {
 import { AutomationV3RunMutationResponseSchema, type AutomationV3RunMutationResponse } from '../../automations/automationApiV3.js';
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
 import { isDeploymentReceiptEventSourceV1, readDeploymentReceiptEventSubjectV1 } from '../../deployments/deploymentReceiptEventsV1.js';
-import { isHealthCheckEventSourceV1, readHealthCheckEventSubjectV1 } from '../../deployments/healthCheckSourceV1.js';
+import { HealthCheckSourceConfigV1Schema, isHealthCheckEventSourceV1, readHealthCheckEventSubjectV1 } from '../../deployments/healthCheckSourceV1.js';
 import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '../../automations/automationEventV1.js';
 import { readAutomationTemplateStoredEnvelopeV1 } from '../../automations/automationTemplateStoredV1.js';
 import {
@@ -34,6 +34,7 @@ import {
   type SessionTriggerUpdateRequestV1, type SessionTriggerRemoveRequestV1,
   type SessionPullRequestLinkV1, type SessionTriggerDefinitionV1,
   type WorkflowTriggerSummaryInputV1,
+  type WorkflowTriggerHealthSourceV1,
   WorkflowDeploymentBackupTargetV1Schema,
   summarizeWorkflowTriggerRowsV1,
   SessionInitialTriggerV1Schema, type SessionInitialTriggerV1, type SessionInitialTriggerDefinitionV1,
@@ -67,6 +68,8 @@ import type { WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefini
 import { resolveInitialDeploymentApprovalV1 } from '../../deployments/deploymentApprovalScopeV1.js';
 import type { DeploymentDeploySemanticInputV1 } from '../../deployments/deploymentDeployIntentV1.js';
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+import { readDeploymentBackupOccurrenceV1 } from '../../workflows/builtins/backupExamples.js';
+import { DeploymentEnvironmentGetInputV1Schema } from '../../deployments/deploymentActionsV1.js';
 import { WORKFLOW_TRIGGER_SET_STORAGE_NAME, workflowTriggerDisplayNameV1 } from '../../workflows/workflowStepLabel.js';
 
 type Caller = WorkflowActionExecuteArgs['context'];
@@ -200,6 +203,40 @@ async function automationRows<T>(readPage: (input: Readonly<Partial<AutomationDe
     cursor = page.nextCursor ?? undefined;
   } while (cursor);
   return rows;
+}
+
+/** The retained Event owner supplies saved health configuration and the actual remote watcher together. */
+export async function readSavedHealthCheckSourceSnapshotV1(deps: Readonly<{
+  automations: Pick<WorkflowTriggerAutomationOperations, 'listDetails'>;
+  openPluginEventTrigger?: WorkflowTriggerActionsDependencies['openPluginEventTrigger'];
+}>): Promise<ReadonlyMap<string, WorkflowTriggerHealthSourceV1>> {
+  if (!deps.openPluginEventTrigger) refuse('source_unavailable');
+  const candidates = new Map<string, WorkflowTriggerHealthSourceV1>();
+  const priority = (candidate: WorkflowTriggerHealthSourceV1) => candidate.enabled ? candidate.observer ? 2 : 1 : 0;
+  for (const row of await automationRows(deps.automations.listDetails, {})) {
+    for (const trigger of row.triggers) {
+      if (trigger.kind !== 'pluginEvent' || !isHealthCheckEventSourceV1(trigger)) continue;
+      const definition = await deps.openPluginEventTrigger(row, trigger);
+      const sourceInstanceId = definition.sourceInstanceId;
+      const candidate = { sourceInstanceId, revision: `${row.id}:${trigger.id}:${trigger.revision}`,
+        source: HealthCheckSourceConfigV1Schema.parse(definition.sourceConfig), enabled: row.enabled && trigger.enabled,
+        observer: trigger.observation.kind === 'checkpointedPull' ? trigger.observation.watcher : null,
+        automationId: row.id, triggerId: trigger.id } satisfies WorkflowTriggerHealthSourceV1;
+      const previous = candidates.get(sourceInstanceId);
+      if (!previous || priority(candidate) > priority(previous)) candidates.set(sourceInstanceId, candidate);
+    }
+  }
+  return candidates;
+}
+
+export async function readSavedHealthCheckSourcesV1(sourceInstanceIds: readonly string[],
+  deps: Parameters<typeof readSavedHealthCheckSourceSnapshotV1>[0]): Promise<WorkflowTriggerHealthSourceV1[]> {
+  if (sourceInstanceIds.length === 0) return [];
+  const snapshot = await readSavedHealthCheckSourceSnapshotV1(deps);
+  return [...new Set(sourceInstanceIds)].flatMap(id => {
+    const source = snapshot.get(id);
+    return source ? [source] : [];
+  });
 }
 async function scopedRows(automations: Pick<WorkflowTriggerAutomationOperations, 'list'>, sessionId: string | null = null,
   filter: Readonly<Partial<AutomationDefinitionListRequest>> = {}) {
@@ -611,6 +648,10 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     },
     list: async (raw: WorkflowTriggerListRequestV1, caller?: Caller) => {
       const input = WorkflowTriggerListRequestV1Schema.parse(raw);
+      if ('healthSource' in input) {
+        const healthSources = await readSavedHealthCheckSourcesV1(input.healthSource.sourceInstanceIds, deps);
+        return { sets: [], healthSources };
+      }
       if ('triggerId' in input) {
         const row = await read(input.automationId);
         return { sets: [await projection(row)], triggerDefinition: await eventDefinition(row, input.triggerId) };
@@ -624,7 +665,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       }
       const managedTarget = 'managedTarget' in input ? input.managedTarget : null;
       const deploymentBackup = 'deploymentBackup' in input ? input.deploymentBackup : null;
-      const all = deploymentBackup !== null || managedTarget !== null || ('scope' in input && input.scope === 'account_all');
+      const deploymentBackupEnvironment = 'deploymentBackupEnvironment' in input ? input.deploymentBackupEnvironment : null;
+      const all = deploymentBackup !== null || deploymentBackupEnvironment !== null || managedTarget !== null
+        || ('scope' in input && input.scope === 'account_all');
       const rows = await automationRows(deps.automations.listDetails, managedTarget
         ? { managedTarget, includeUnindexedManagedTargets: true } : all ? {} : 'workflow' in input
           ? { workflowDefinitionId: input.workflow } : { scope: 'account_inline' });
@@ -635,7 +678,8 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const uniqueRows = [...new Map(selectedRows.map((row) => [row.id, row])).values()];
       const projected = await Promise.allSettled(uniqueRows.map(async (item) => {
         const row = item;
-        if (deploymentBackup) {
+        if (deploymentBackup || deploymentBackupEnvironment) {
+          if (deploymentBackupEnvironment && (!row.enabled || !row.triggers.some(trigger => trigger.enabled))) return null;
           const { set, definition, children } = await projectedDefinition(row);
           if (set.health !== 'available') refuse('source_unavailable');
           if (!definition || !set.context) return null;
@@ -644,12 +688,25 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
             const frame = pending.pop()!;
             for (const leaf of collectWorkflowLeavesV1(frame.definition)) {
               if (leaf.kind !== 'action' && leaf.kind !== 'workflow') continue;
+              const occurrence = deploymentBackupEnvironment && leaf.kind === 'action'
+                ? readDeploymentBackupOccurrenceV1(frame.definition, leaf) : null;
+              if (occurrence) {
+                for (const bound of bindWorkflowLeafInputsV1(frame.definition, occurrence.producer, { inputs: frame.inputs,
+                  origin: { kind: 'direct', ...(set.scopeSessionId ? { originSessionId: set.scopeSessionId } : {}) } }, 'definition')) {
+                  const selected = DeploymentEnvironmentGetInputV1Schema.safeParse(bound);
+                  if (selected.success && selected.data.serverId === deploymentBackupEnvironment!.serverId
+                    && selected.data.environmentId === deploymentBackupEnvironment!.environmentId) return set;
+                }
+              }
               for (const bound of bindWorkflowLeafInputsV1(frame.definition, leaf, { inputs: frame.inputs,
                 origin: { kind: 'direct', ...(set.scopeSessionId ? { originSessionId: set.scopeSessionId } : {}) } }, 'definition')) {
                 if (leaf.kind === 'action' && leaf.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1) {
                   const target = WorkflowDeploymentBackupTargetV1Schema.safeParse(Object.fromEntries(
                     Object.keys(WorkflowDeploymentBackupTargetV1Schema.shape).map(key => [key, bound[key]])));
-                  if (target.success && sameStrictJsonValue(target.data, deploymentBackup)) return set;
+                  if (target.success && (deploymentBackupEnvironment
+                    ? target.data.serverId === deploymentBackupEnvironment.serverId
+                      && target.data.environmentId === deploymentBackupEnvironment.environmentId
+                    : sameStrictJsonValue(target.data, deploymentBackup))) return set;
                 } else if (leaf.kind === 'workflow' && !frame.refs.has(leaf.workflowRef)) {
                   const child = children?.get(leaf.workflowRef);
                   if (child) pending.push({ definition: child, inputs: resolveWorkflowRunStartInputsV1(child, bound),

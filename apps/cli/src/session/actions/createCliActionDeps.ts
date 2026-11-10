@@ -1,4 +1,5 @@
 import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
+import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { createCliWorkspaceSyncActionDeps } from './cliActionDeps/workspaceSync';
 import { createDeploymentArtifactHeaderReader } from '@/deployments/readArtifactHeadersForHost';
 import { prepareCliManagedProvisionerAdmission } from '@/machines/managed/provisionerAdmission';
@@ -780,13 +781,15 @@ export function createCliActionDeps(params: CliActionDepsParams,
     return withProjectHome(() => roleArtifactStore.read(artifactId, { signal: context.signal,
       prepareRecipients: false, includeSharedAudience: false }));
   };
-  const readOpenedDeploymentEnvironment = async (environmentId: string, context: ActionExecutorContext) => {
+  const readOpenedDeploymentEnvironment = async (environmentId: string, context: ActionExecutorContext,
+    backupPolicy?: import('@happier-dev/protocol/deployments/deploymentBackupActionsV1').DeploymentBackupPolicyV1,
+    serverId = projectHomeId) => {
     const { readDeploymentEnvironmentForHost } = await import('@/deployments/readEnvironmentForHost');
     await assertDeploymentReadCurrent(context);
-    return readDeploymentEnvironmentForHost({ environmentId, context }, {
+    return readDeploymentEnvironmentForHost({ environmentId, context, ...(backupPolicy ? { backupPolicy } : {}) }, {
       readMetadata: async request => {
         const loaded = await deploymentStorage('deployments.environments.get', {
-          serverId: projectHomeId, environmentId: request.environmentId,
+          serverId, environmentId: request.environmentId,
         }, request.context);
         const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(loaded);
         if (!parsed.success || !parsed.data.ok) {
@@ -1087,6 +1090,16 @@ export function createCliActionDeps(params: CliActionDepsParams,
     deploymentReadArtifactHeaders: createDeploymentArtifactHeaderReader({ serverHttpBaseUrl: todoHomeBaseUrl, assertCurrent: assertDeploymentReadCurrent,
       ...(roleArtifactStore ? { artifacts: roleArtifactStore } : {}) }),
     deploymentAction: async (actionId, input, context, hostChild) => {
+      if (actionId === 'deployments.environments.get' && 'backupPolicy' in input && input.backupPolicy) {
+        try {
+          const opened = await readOpenedDeploymentEnvironment(input.environmentId, context, input.backupPolicy, input.serverId);
+          return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, environment: opened.environment,
+            targetLinks: opened.targetLinks, backupTarget: opened.backupTarget, backupPolicy: opened.backupPolicy });
+        } catch (error) {
+          return projectDeploymentFailure(error instanceof Error && 'code' in error && typeof error.code === 'string'
+            ? error.code : 'deployment_content_unavailable', error);
+        }
+      }
       if (params.deploymentAction) return params.deploymentAction(actionId, input, context, hostChild);
       const authorization = context.externalActionExecutionAuthorization;
       if (isDeploymentObservationReadActionIdV1(actionId) && authorization && isDeploymentTargetLinkActionIdV1(authorization.binding.actionId)

@@ -9,7 +9,8 @@ import { AutomationTriggerIdSchema } from '../../automations/automationTriggerId
 import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';
 import { AutomationManualIdempotencyKeyV1Schema } from '../../automations/automationOccurrenceV1.js';
 import { AutomationTriggerDetailSchema, AutomationScheduleTriggerProjectionSchema,
-  AutomationPluginEventTriggerProjectionSchema, AutomationSessionLifecycleTriggerProjectionSchema } from '../../automations/automationTriggerProjectionV1.js';
+  AutomationPluginEventTriggerProjectionSchema, AutomationSessionLifecycleTriggerProjectionSchema,
+  AutomationCheckpointedPullObservationSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { AutomationRunLifecycleTriggerSchema } from '../../automations/automationRunLifecycle.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { AutomationDeploymentTriggerFilterV1Schema, AutomationManagedTargetV1Schema, AutomationObservationOnlyDefinitionV1Schema, AutomationStoredWorkflowDefinitionV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
@@ -22,6 +23,8 @@ import { AutomationSessionLifecyclePolicySchema } from '../../automations/automa
 import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '../../automations/automationEventV1.js';
 import { ScmHostingProviderKindSchema } from '../../scm/pullRequests.js';
 import { HealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubjectV1.js';
+import { HealthCheckSourceConfigV1Schema } from '../../deployments/healthCheckSourceV1.js';
+import { AutomationEventSourceInstanceIdV1Schema } from '../../automations/automationEventJsonBoundsV1.js';
 
 const Revision = z.number().check(z.int(), z.nonnegative(), z.int());
 /** Only public list-safe inputs consumed by the shared human-readable trigger summary. */
@@ -35,6 +38,7 @@ export const WorkflowTriggerSummaryInputV1Schema = lazyZodSchema(() => {
       ...historyIdentity,
       /** Exact enabled occurrence from the scheduler; older summaries omit it. */
       nextRunAt: zMini.optional(AutomationScheduleTriggerProjectionSchema.shape.nextRunAt),
+      remainingOccurrences: AutomationScheduleTriggerProjectionSchema.shape.remainingOccurrences,
     }),
     zMini.extend(zMini.pick(AutomationPluginEventTriggerProjectionSchema, { kind: true, eventRef: true }), historyIdentity),
     zMini.extend(zMini.pick(AutomationSessionLifecycleTriggerProjectionSchema, { kind: true, events: true }), historyIdentity),
@@ -65,7 +69,8 @@ export function summarizeWorkflowTriggerRowsV1(rows: readonly Readonly<{
       switch (trigger.kind) {
         case 'schedule': {
           const nextRunAt = row.enabled && trigger.enabled ? trigger.nextRunAt : null;
-          summary.triggers.push({ ...historyIdentity, kind: trigger.kind, schedule: trigger.schedule, nextRunAt });
+          summary.triggers.push({ ...historyIdentity, kind: trigger.kind, schedule: trigger.schedule, nextRunAt,
+            ...(trigger.remainingOccurrences === undefined ? {} : { remainingOccurrences: trigger.remainingOccurrences }) });
           if (nextRunAt !== null) summary.nextRunAt = summary.nextRunAt === null ? nextRunAt : Math.min(summary.nextRunAt, nextRunAt);
           break;
         }
@@ -86,6 +91,11 @@ export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ workflow: WorkflowDefinitionRefV1StringSchema }),
   z.strictObject({ managedTarget: AutomationManagedTargetV1Schema }),
   z.strictObject({ deploymentBackup: WorkflowDeploymentBackupTargetV1Schema }),
+  z.strictObject({ deploymentBackupEnvironment: z.strictObject({
+    serverId: WorkflowDeploymentBackupTargetV1Schema.shape.serverId,
+    environmentId: WorkflowDeploymentBackupTargetV1Schema.shape.environmentId,
+  }) }),
+  z.strictObject({ healthSource: z.strictObject({ sourceInstanceIds: z.array(AutomationEventSourceInstanceIdV1Schema) }) }),
   z.strictObject({ scope: z.enum(['account_inline', 'account_all']) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), review: z.literal(true) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), triggerId: AutomationTriggerIdSchema }),
@@ -196,8 +206,20 @@ export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
 const WorkflowTriggerEventDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
   triggerId: AutomationTriggerIdSchema, definition: AutomationEventTriggerDefinitionStoredPayloadV1Schema,
 }));
+/** Saved health configuration and its observer are one private source-owner answer. */
+export const WorkflowTriggerHealthSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
+  revision: z.string().check(z.minLength(1)),
+  source: HealthCheckSourceConfigV1Schema,
+  enabled: z.boolean(),
+  observer: AutomationCheckpointedPullObservationSchema.shape.watcher,
+  automationId: asProtocolZod(AutomationIdV1Schema),
+  triggerId: AutomationTriggerIdSchema,
+}));
+export type WorkflowTriggerHealthSourceV1 = z.infer<typeof WorkflowTriggerHealthSourceV1Schema>;
 export const WorkflowTriggerListResultV1Schema = lazyZodSchema(() => z.strictObject({
   sets: z.array(WorkflowTriggerSetV1Schema), triggerDefinition: z.optional(WorkflowTriggerEventDefinitionV1Schema),
+  healthSources: z.optional(z.array(WorkflowTriggerHealthSourceV1Schema)),
 }));
 export const WorkflowTriggerWriteResultV1Schema = lazyZodSchema(() => z.strictObject({
   set: WorkflowTriggerSetV1Schema,
