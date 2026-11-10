@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactElement, type ReactNode } from 'react';
+import { useState, type ReactElement, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import {
@@ -15,8 +15,6 @@ import { Badge } from './Foundation.js';
 import type { HappierMarkColor } from '../presentation/semantics.js';
 import { usePropertyCommit } from './propertyCommit.js';
 import { HappierTextActionEdgeContext } from '../presentation/interaction/textActionEdge.js';
-import { isHappierPageRowNarrow, readHappierVisibleLayoutWidth } from '../presentation/layout/pageMetrics.js';
-import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js';
 
 /** One choice a property can take: a stable id the author maps back to its value, and the words people read. */
 export type PropertyChoice = Readonly<{
@@ -174,14 +172,8 @@ function validCalendarDay(text: string): boolean {
  */
 export function PropertyList(props: PropertyListProps): ReactElement {
   const theme = usePluginTheme();
-  const [stacked, setStacked] = useState(false);
-  const onLayout = useCallback((event: HappierLayoutChangeEvent) => {
-    const width = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
-    if (width !== null) setStacked(isHappierPageRowNarrow(width));
-  }, []);
   return (
     <View
-      onLayout={onLayout}
       accessibilityLabel={props.accessibilityLabel}
       testID={props.testID}
       style={{ gap: theme.spacing.xsmall }}
@@ -195,13 +187,15 @@ export function PropertyList(props: PropertyListProps): ReactElement {
               : `${props.testID}.${item.id}`
           }
           style={{
-            flexDirection: stacked ? 'column' : 'row',
-            alignItems: stacked ? 'stretch' : 'center',
-            gap: stacked ? theme.spacing.xsmall : theme.spacing.medium,
+            // A value is a short summary that opens its picker, so it stays beside its label on every width
+            // (ui-craft: only a switch, a short value or a chevron sits right of a label).
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: theme.spacing.medium,
             minHeight: theme.spacing.xlarge + theme.spacing.small,
           }}
         >
-          <View style={{ ...(stacked ? {} : { width: PROPERTY_LABEL_WIDTH_PX }), flexShrink: 0 }}>
+          <View style={{ width: PROPERTY_LABEL_WIDTH_PX, flexShrink: 0 }}>
             <Text
               variant="meta"
               tone="secondary"
@@ -209,7 +203,7 @@ export function PropertyList(props: PropertyListProps): ReactElement {
               numberOfLines={1}
             />
           </View>
-          <View style={{ ...(stacked ? {} : { flex: 1 }), minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xsmall }}>
+          <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xsmall }}>
             {item.value === null || item.valueLeading === undefined ? null : (
               // Decoration: the value's words already name it, so the mark is not announced a second time.
               <View aria-hidden importantForAccessibility="no-hide-descendants">{item.valueLeading}</View>

@@ -50,7 +50,9 @@ function typeInto(input: HTMLInputElement, value: string) {
 }
 
 describe('public PropertyList', () => {
-  it('moves the value beneath its label on a phone and retains the open editor across a resize', async () => {
+  // A property's value is a short summary that opens its picker, so on a phone it stays beside its label (ui-craft:
+  // only a switch, a short value or a chevron sits right of a label) instead of doubling every row's height.
+  it('keeps the value beside its label on a phone and retains the open editor across a resize', async () => {
     const mount = mountWithPopoverHost(<PluginUi.PropertyList testID="props" items={[
       { id: 'assignee', label: 'Assignee', value: 'Ada Lovelace', editor: {
         kind: 'choice', value: 'member:1', choices: [{ id: 'member:1', label: 'Ada Lovelace' }], searchable: true, onCommit: () => {},
@@ -58,15 +60,15 @@ describe('public PropertyList', () => {
     ]} />);
     try {
       const box = mount.container.querySelector<HTMLElement>('[data-testid="props"]')!;
+      // A list that measures its pane is given each width; one that does not has nothing to recompose.
       const onLayout = (box as unknown as { __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void }).__reactLayoutHandler;
-      expect(onLayout, 'the list measures its containing pane').toBeTypeOf('function');
       await act(async () => { mount.container.querySelector<HTMLElement>('[data-testid="props.assignee.value"]')!.click(); });
       const search = mount.container.querySelector<HTMLInputElement>('[data-testid="props.assignee.value.search"]')!;
       await act(async () => { typeInto(search, 'Ada'); });
       for (const width of [900, 390, 0, 900]) {
-        act(() => { onLayout!({ nativeEvent: { layout: { x: 0, y: 0, width, height: 200 } } }); });
+        act(() => { onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width, height: 200 } } }); });
         const row = mount.container.querySelector<HTMLElement>('[data-testid="props.assignee"]')!;
-        expect(row.style.flexDirection).toBe(width === 390 || width === 0 ? 'column' : 'row');
+        expect(row.style.flexDirection).toBe('row');
         expect(mount.container.querySelector('[data-testid="props.assignee.value.search"]')).toBe(search);
         expect(search.value).toBe('Ada');
       }
@@ -133,6 +135,42 @@ describe('public PropertyList', () => {
       expect(rows.map(row => row.querySelector('[data-testid="menu-item-face"]') !== null)).toEqual([true, false]);
       const name = rows[0]!.querySelector('[data-testid="menu-item-face"]')!.closest('[aria-hidden="true"]');
       expect(name, 'the row is already named by its label').not.toBeNull();
+    } finally { mount.unmount(); }
+  });
+
+  it('reads a directory of choices when its picker opens, says while it reads, and offers one retry when it cannot', async () => {
+    const opened: string[] = [];
+    function Directory(): ReactElement {
+      const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'unavailable'>('idle');
+      const choices = status === 'ready' ? [{ id: 'ada', label: 'Ada Lovelace', subtitle: '@ada', person: 'Ada Lovelace' }] : [];
+      return <PluginUi.PropertyList testID="props" items={[{
+        id: 'assignee', label: 'Assignees', value: null, editor: { kind: 'choices', value: [], searchable: true, onCommit: () => {}, choices,
+          directory: { status: status === 'idle' ? 'loading' : status, onOpen: () => { opened.push('open'); setStatus('loading'); },
+            ...(status === 'unavailable' ? { retry: () => { opened.push('retry'); setStatus('ready'); } } : {}) } },
+      }]} />;
+    }
+    const mount = mountWithPopoverHost(<Directory />);
+    try {
+      expect(opened, 'nothing is read before the picker opens').toEqual([]);
+      await act(async () => { mount.container.querySelector<HTMLElement>('[data-testid="props.assignee.value"]')!.click(); });
+      expect(opened).toEqual(['open']);
+      expect(mount.container.querySelector('input:not([type="search"])[aria-label="Assignees"]'), 'a person is picked, never typed').toBeNull();
+      const rows = () => Array.from(mount.container.querySelectorAll<HTMLElement>('[role^="menuitem"]'));
+      expect(rows().map(row => row.textContent)).toEqual(['Loading…']);
+      expect(rows()[0]!.getAttribute('aria-disabled')).toBe('true');
+      await act(async () => { mount.container.querySelector<HTMLElement>('[data-testid="props.assignee.value"]')!.click(); });
+      // The owner reports the read failed; reopening says so in one line and offers one retry.
+      const failed = mountWithPopoverHost(<PluginUi.PropertyList testID="failed" items={[{
+        id: 'assignee', label: 'Assignees', value: null, editor: { kind: 'choices', value: [], searchable: true, onCommit: () => {}, choices: [],
+          directory: { status: 'unavailable', retry: () => { opened.push('retry'); } } },
+      }]} />);
+      try {
+        await act(async () => { failed.container.querySelector<HTMLElement>('[data-testid="failed.assignee.value"]')!.click(); });
+        const failedRows = Array.from(failed.container.querySelectorAll<HTMLElement>('[role^="menuitem"]'));
+        expect(failedRows.map(row => row.textContent)).toEqual(['This list couldn’t be loaded', 'Try again']);
+        await act(async () => { failedRows[1]!.click(); });
+        expect(opened).toEqual(['open', 'retry']);
+      } finally { failed.unmount(); }
     } finally { mount.unmount(); }
   });
 
