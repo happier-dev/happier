@@ -9020,6 +9020,12 @@ confirmation host; a caller must not put another yes/no dialog or two-step butto
 Dialogs that collect a different scope, choose recovery after a refusal, or discard an unsent
 local draft remain separate decisions.
 
+For plugin installation in unreleased 0.3, the native confirmation and approval
+Artifact paths carry the accepted daemon candidate through the same host-only
+approved replay context. Plugin administration consumes that exact review rather
+than preparing another change or rereading the approval Artifact at dispatch.
+Native confirmation does not create an approval Artifact.
+
 Unreleased 0.3 approval records preserve a signed ordinary Account automation
 caller's descriptive `requestedSurface` (for example, MCP), even when its
 immutable execution origin uses the host's UI/CLI representation. That label

@@ -435,7 +435,7 @@ export async function executePluginDevLoopAction(
   }
 
   if (params.actionId === 'plugins.install') {
-    if (params.context?.presentUserApproval && services.approvedInstallReview) {
+    if (services.approvedInstallReview) {
       return await settleApprovedInstallReview(services.approvedInstallReview, params, services);
     }
     const source = readInput(input.source);

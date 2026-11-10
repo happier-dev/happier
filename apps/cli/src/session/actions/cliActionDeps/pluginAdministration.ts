@@ -4,7 +4,6 @@ import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/art
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { decideUserPluginChange, requestUserPluginChange } from '@/plugins/daemon/changeClient';
 import type { DaemonPluginChangeService } from '@/plugins/daemon/changeService';
-import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { executePluginDevLoopAction } from '@/plugins/devLoop/actions';
 import type { executePluginSettingsAdministrationAction } from '@/plugins/settings/administration';
@@ -124,12 +123,8 @@ pluginsDevLoopAction: async ({ actionId, input, context }) => {
         if (registryResult && !registryResult.ok) return registryResult;
         const registry = registryResult?.registry ?? null;
         const [{ executePluginDevLoopAction }, { createMarketplaceIndexService }] = await Promise.all([import("@/plugins/devLoop/actions"), import("@/plugins/store/marketplace/service")]);
-        const approvedInstallReview = actionId === 'plugins.install' && context.presentUserApproval?.artifactId && approvalsStore
-          ? readPluginInstallApprovalPendingReview(readRecord(await approvalsStore.approvalsGet({
-              artifactId: context.presentUserApproval.artifactId,
-              serverId: null,
-            })).preview)
-          : null;
+        const approvedInstallReview = actionId === 'plugins.install'
+          ? context.approvedActionReplay?.pluginInstallReview : undefined;
         if (actionId === 'plugins.install' && context.presentUserApproval?.artifactId && !approvedInstallReview) {
           return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
         }

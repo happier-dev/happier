@@ -1,7 +1,6 @@
-import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ApprovalRequestV2Schema, artifactIdScopeMatchesAccountV1, deriveAccountScopedArtifactIdV1, type ApprovalRequest } from '@happier-dev/protocol';
+import { ApprovalRequestV2Schema, artifactIdScopeMatchesAccountV1, deriveAccountScopedArtifactIdV1, type ApprovalRequest, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
 import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -28,10 +27,6 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import * as daemonPublication from '@/daemon/multiDaemon';
 import * as daemonHttp from '@/daemon/controlHttp';
 import { createDaemonControlApp } from '@/daemon/controlServer';
-import tweetnacl from 'tweetnacl';
-import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
-import { computeExternalActionRequestEnvelopeDigestV1, openExternalActionResponseV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createTestNpmTarball } from '@/plugins/distribution/testkit/npmTarball';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 
@@ -207,8 +202,8 @@ describe('plugin install approval Artifact rejoin', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
-  it.each([['install', 'plain'], ['install', 'e2ee'], ['superseded', 'plain'], ['changed_target', 'plain']] as const)(
-    'binds UI-created approval Artifacts to each real Machine candidate: %s in %s', async (outcome, mode) => {
+  it.each([['install', 'plain'], ['install', 'e2ee'], ['cancel', 'plain'], ['unmounted', 'plain']] as const)(
+    'uses product confirmation for the exact Machine candidate: %s in %s', async (outcome, mode) => {
       accountMode = mode;
       const root = await mkdtemp(join(tmpdir(), 'happier-plugin-approval-machines-'));
       const store = createStore();
@@ -236,7 +231,6 @@ describe('plugin install approval Artifact rejoin', () => {
           resolveCurrentMachineExecutionOriginContext: async () => currentOrigin,
         });
         const preparation = { calls: 0 };
-        const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(machineId === 'machine-a' ? 31 : 32));
         const deps = createCliActionDeps({ token, credentials: credentials(), sessionId: 'cli-global',
           mode: 'plain', ctx: null, serverId: 'home-1', serverHttpBaseUrl: 'http://plugin-approval.invalid', happyHomeDir,
           pluginChangeService: { ...owner.changeService, requestPluginChange: (...args) => {
@@ -244,101 +238,48 @@ describe('plugin install approval Artifact rejoin', () => {
             return owner.changeService.requestPluginChange(...args);
           } },
         });
+        const reviews: string[] = [];
+        // The mounted product presenter is the human UI boundary. Candidate
+        // preparation and installation use the real owners.
+        const presentUserActionConfirmation: NonNullable<ActionExecutorDeps['presentUserActionConfirmation']> = async ({ preview }) => {
+          const candidate = readPluginInstallApprovalPendingReview(preview);
+          if (!candidate) throw new Error('Missing daemon-evaluated review');
+          expect(candidate.review.source).toMatchObject({ kind: 'archive', locator: source });
+          expect(await owner.changeService.statusPluginChange({ pendingChangeId: candidate.pendingChangeId }))
+            .toMatchObject({ kind: 'reviewRequired', pendingChangeId: candidate.pendingChangeId });
+          expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]).toBeUndefined();
+          reviews.push(candidate.pendingChangeId);
+          // Consent applies to the retained candidate, even if its source changes.
+          if (outcome === 'install') await writeCandidate('2.0.0');
+          return outcome === 'install';
+        };
         const executor = createActionExecutor({ ...deps, ...store,
-          isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
-            accountId: 'account-1', machineId, serverId: 'home-1',
-            resolveCurrentMachineExecutionOriginContext: async () => currentOrigin,
-            resolveTarget: createDaemonExternalActionTargetResolver({ credentials: credentials() }),
-            externalActionMachinePublicKey: installation.publicKey,
-            verifyExternalExecutionAuthorization: async () => true,
-            // Account eligibility and token inventory are remote Home boundaries.
-            isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }),
-          }),
+          ...(outcome === 'unmounted' ? {} : { presentUserActionConfirmation }),
         });
-        return { machineId, happyHomeDir, source, writeCandidate, reloadController, owner, executor, currentOrigin, preparation, installation };
+        return { machineId, happyHomeDir, source, reloadController, owner, executor, reviews, preparation };
       }));
       try {
-        const reviewed = [];
         for (const machine of machines) {
-          const input = { kind: 'archive', path: machine.source, machineId: machine.machineId };
-          const target = { kind: 'machine' as const, machineId: machine.machineId };
-          const authentication = { kind: 'account' as const, tokenEpoch: 0 };
-          const binding = { actionId: 'plugins.install' as const, target, authentication,
-            serverIdentityId, accountId: 'account-1', requestId: `install-${machine.machineId}` };
-          const material = { type: 'dataKey' as const, machineKey };
-          const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input, randomBytes: tweetnacl.randomBytes })
-            : { v: 1 as const, requestId: binding.requestId, target, input };
-          const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-install-proof', binding: {
-            ...binding, machineId: machine.machineId, custodianAccountId: 'account-1',
-            installationId: `installation-${machine.machineId}`, accountEncryptionMode: mode,
-            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-          } });
-          const remote = await executeExternalAction({ actionId: 'plugins.install', envelope,
-            principal: { accountId: 'account-1', authentication, authority: 'present_user' },
-            executionAuthorization: authorization, currentAccountId: 'account-1',
-            currentMachineId: machine.machineId, currentServerId: 'home-1',
-            currentInstallationId: `installation-${machine.machineId}`,
-            externalActionMachineRequestPrivateKey: machine.installation.secretKey,
-            verifyExecutionAuthorization: async () => true,
-            resolveEncryption: async () => ({ serverIdentityId, material }),
-            resolveTarget: createDaemonExternalActionTargetResolver({ credentials: credentials() }),
-            executor: machine.executor,
-          });
-          if (remote.kind !== 'response') throw new Error(`Remote install refused: ${JSON.stringify(remote)}`);
-          const result = envelope.v === 2 ? openExternalActionResponseV2({ envelope: remote.response, binding, material, request: envelope })
-            : remote.response.v === 1 ? remote.response.execution : null;
-          if (!result) throw new Error('Missing remote execution result');
-          if (!result.ok) throw new Error(`Install initiation refused: ${result.errorCode}: ${result.error}`);
-          expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-          const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(result.result);
-          const request = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId: 'home-1' }));
-          expect(request).toMatchObject({ status: 'open', requestedSurface: 'ui', executionOriginV1: {
-            surface: 'ui', machineId: machine.machineId, target,
-          } });
-          const candidate = readPluginInstallApprovalPendingReview(request?.preview);
-          if (!candidate) throw new Error('Missing daemon-evaluated review');
-          expect(candidate.review.source).toMatchObject({ kind: 'archive', locator: machine.source });
-          expect(await machine.owner.changeService.statusPluginChange({ pendingChangeId: candidate.pendingChangeId }))
-            .toMatchObject({ kind: 'reviewRequired', pendingChangeId: candidate.pendingChangeId });
-          expect(machine.preparation.calls).toBe(1);
-          expect((await createPluginRegistryStateStore({ happyHomeDir: machine.happyHomeDir }).read()).plugins[pluginId]).toBeUndefined();
-          reviewed.push({ ...machine, artifactId, candidate });
-        }
-        expect(reviewed[0]!.candidate.pendingChangeId).not.toBe(reviewed[1]!.candidate.pendingChangeId);
-        expect(await reviewed[1]!.owner.changeService.statusPluginChange({ pendingChangeId: reviewed[0]!.candidate.pendingChangeId }))
-          .toEqual({ kind: 'expired' });
-        for (const machine of reviewed) {
-          // Source mutation after staging must not substitute new bytes at consent.
-          await machine.writeCandidate('2.0.0');
-          let successorId: string | undefined;
-          if (outcome === 'superseded') {
-            await machine.owner.changeService.decidePluginChange({ pendingChangeId: machine.candidate.pendingChangeId, decision: 'cancel' });
-            const successor = await machine.owner.changeService.requestPluginChange({ kind: 'installArchive', locator: machine.source }, { retainReview: true });
-            if (successor.kind !== 'reviewRequired') throw new Error('Missing successor review');
-            successorId = successor.pendingChangeId;
-            expect(successorId).not.toBe(machine.candidate.pendingChangeId);
-          }
-          if (outcome === 'changed_target') machine.currentOrigin.machineId = 'replacement-machine';
-          const preparationsBeforeDecision = machine.preparation.calls;
-          const decision = await machine.executor.execute('approval.request.decide', {
-            artifactId: machine.artifactId, decision: 'approve',
+          const result = await machine.executor.execute('plugins.install', {
+            kind: 'archive', path: machine.source, machineId: machine.machineId,
           }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-            serverId: 'home-1', serverIdentityId, runtimeAccountId: 'account-1' });
-          const settled = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId: machine.artifactId, serverId: 'home-1' }));
-          expect(machine.preparation.calls).toBe(preparationsBeforeDecision);
-          if (outcome === 'install') {
-            expect(decision, JSON.stringify(settled?.execution)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
-            expect((await createPluginRegistryStateStore({ happyHomeDir: machine.happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.0.0');
-          } else {
-            if (outcome === 'changed_target') expect(decision).toMatchObject({ ok: false, errorCode: 'approval_stale' });
-            else expect(settled, JSON.stringify(settled?.execution)).toMatchObject({ status: 'failed', execution: {
-              ok: false, errorCode: 'plugin_change_superseded',
-            } });
-            expect((await createPluginRegistryStateStore({ happyHomeDir: machine.happyHomeDir }).read()).plugins[pluginId]).toBeUndefined();
-            if (successorId) expect(await machine.owner.changeService.statusPluginChange({ pendingChangeId: successorId }))
-              .toMatchObject({ kind: 'reviewRequired', pendingChangeId: successorId });
-          }
+            serverId: 'home-1', serverIdentityId, runtimeAccountId: 'account-1',
+            actionRequestId: `install-${machine.machineId}` });
+          expect(result, JSON.stringify(result)).toMatchObject(outcome === 'install'
+            ? { ok: true, result: { ok: true, outcome: 'applied' } }
+            : { ok: false, errorCode: outcome === 'unmounted' ? 'action_interactive_review_required' : 'approval_canceled' });
+          expect(machine.reviews).toHaveLength(outcome === 'unmounted' ? 0 : 1);
+          expect(machine.preparation.calls).toBe(outcome === 'unmounted' ? 0 : 1);
+          expect((await createPluginRegistryStateStore({ happyHomeDir: machine.happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion)
+            .toBe(outcome === 'install' ? '1.0.0' : undefined);
         }
+        if (outcome !== 'unmounted') {
+          expect(machines[0]!.reviews[0]).not.toBe(machines[1]!.reviews[0]);
+          expect(await machines[1]!.owner.changeService.statusPluginChange({ pendingChangeId: machines[0]!.reviews[0]! }))
+            .toEqual({ kind: 'expired' });
+        }
+        // Native product review must never manufacture an agent approval Artifact.
+        expect(rows.size).toBe(0);
       } finally {
         for (const machine of machines) {
           await machine.owner.changeService.shutdown();
