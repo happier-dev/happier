@@ -499,6 +499,8 @@ export const DeploymentReceiptDetail = React.memo(
                 } } : {})}
               />
             ) : null}
+            {/* The agent's finding follows what failed: it is the answer the page exists for, read before the record. */}
+            {outcomeInput ? <OperationsOutcomeGroup input={outcomeInput} testID="project-deployments.receipt.outcome" openReceipt={openOutcomeReceipt} /> : null}
             {stripFacts.length > 0 ? (
               <ItemGroup surface="none" testID="project-deployments.receipt.facts">
                 <View style={styles.facts}>
@@ -566,8 +568,6 @@ export const DeploymentReceiptDetail = React.memo(
                 {...stepLogs}
               />
             )}
-            {/* The agent's finding arrives after its Session is read; it closes the page, so it never moves what the receipt already drew. */}
-            {outcomeInput ? <OperationsOutcomeGroup input={outcomeInput} testID="project-deployments.receipt.outcome" openReceipt={openOutcomeReceipt} /> : null}
           </ItemList>
           {phone && pinned ? (
             <KeyboardStickyFooter>

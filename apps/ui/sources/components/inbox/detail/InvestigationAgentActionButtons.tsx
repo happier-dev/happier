@@ -20,13 +20,16 @@ export function InvestigationAgentActionButtons(props: Readonly<{
   actions: readonly InvestigationAgentActionButtonModel[];
   pending: boolean;
   compact: boolean;
-  /** The surrounding view's primary action decides whether these lead; default filled, the failure pages' one action. */
+  /**
+   * Whether the first record leads (filled, the default: a failure page's one next step) or the surrounding view's own
+   * primary does. Every record after the first stays secondary, so a page never shows two filled agent actions.
+   */
   emphasis?: 'primary' | 'secondary';
   onLaunch: (mode: 'start' | 'review', actionId: string | undefined) => void;
 }>): React.ReactElement | null {
   const navigation = usePluginSurfaceDestinationNavigationBinding();
   if (props.actions.length === 0) return null;
-  const buttons = props.actions.map((action) => (
+  const buttons = props.actions.map((action, index) => (
     <AgentActionButton
       key={action.actionId ?? 'default'}
       title={action.label}
@@ -40,7 +43,7 @@ export function InvestigationAgentActionButtons(props: Readonly<{
       } })}
       disabled={props.pending}
       compact={props.compact}
-      emphasis={props.emphasis}
+      emphasis={index === 0 ? props.emphasis : 'secondary'}
     />
   ));
   // Core draws the public presenter inside the core Happier UI scope, as every other core consumer does.

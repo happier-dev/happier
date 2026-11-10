@@ -163,6 +163,8 @@ describe('failed deployment migration recovery', () => {
         await act(async () => { await waitForTestEvent(screen.subscribe, () => offered().length, count => count === 2); });
         expect(offered().map(button => [button.props.title, button.props.launchMode]))
           .toEqual([['Investigate', 'start'], ['Fix this deploy', 'review']]);
+        // One next step leads; the person's other records stay beside it, quieter (STORE-ACCEPT-1110 item 4).
+        expect(offered().map(button => button.props.emphasis ?? 'primary')).toEqual(['primary', 'secondary']);
         await act(async () => { await controller.refreshDemanded(); });
         // With no recovery to offer, the agent actions are the failed receipt's way forward (D5). A press starts the
         // record it names through the configured run, with this exact receipt as the item and the mode chosen.
