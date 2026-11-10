@@ -61,6 +61,7 @@ const { createUiSessionCapabilityActionDeps } = await import('@/sync/ops/actions
 const { readSessionCapabilityApplyChange, sessionCapabilityApplyNotice } = await import('./sessionCapabilityApplyNotice');
 const { McpAlwaysAllowDecision } = await import('@/components/tools/shell/permissions/McpAlwaysAllowDecision');
 const { PermissionPromptCard } = await import('@/components/tools/shell/permissions/PermissionPromptCard');
+const { PermissionFooter } = await import('@/components/tools/shell/permissions/PermissionFooter');
 const { ResolvedMcpToolIdentityV1Schema } = await import('@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1');
 const { useMcpAlwaysAllow } = await import('@/components/tools/shell/permissions/useMcpAlwaysAllow');
 const { createReducer, reducer } = await import('@happier-dev/session-core/reducer');
@@ -138,25 +139,28 @@ it('keeps the native catalog failure visible after retirement and remounts a cat
             machine: async () => { throw new Error('Catalog consent never starts a process'); },
         }),
     });
-    const identity = readPermission().mcpTool!;
-    const scope = { serverId, accountId };
-    const answerForSession = async () => { requireActionSuccess(await executor.execute('session.permission.respond', {
-        sessionId: 'session', requestId: 'native-mcp', nativeChoice: { requirementId: 'occurrence', choiceId: 'remember' },
-    }, { surface: 'ui', authority: 'present_user', serverId, runtimeAccountId: accountId })); };
-    let screen = await renderScreen(React.createElement(McpAlwaysAllowDecision, { requestId: 'native-mcp', choiceId: 'remember',
-        identity, scope, canWriteCatalog: true, pending: true, followUp, answerForSession,
-        renderDecision: decision => React.createElement('Button', { testID: 'native-remember', onPress: decision.onPress }) }));
-    await vi.waitFor(() => expect(screen.findByTestId('native-remember')).toBeTruthy());
-    await act(async () => { screen.pressByTestId('native-remember'); });
+    const source = createTestSessionTranscriptSource({ sessionId: 'session', serverId,
+        interaction: { canSendMessages: true, canApprovePermissions: true }, actions: {
+            respondToPermission: async ({ id, nativeChoice, turnId }) => {
+                requireActionSuccess(await executor.execute('session.permission.respond', {
+                    sessionId: 'session', requestId: id, nativeChoice,
+                    ...(turnId ? { turnId } : {}),
+                }, { surface: 'ui', authority: 'present_user', serverId, runtimeAccountId: accountId }));
+            },
+            answerUserAction: async () => {}, abort: async () => {}, submitMessage: async () => {},
+        } });
+    const footer = () => wrapWithSessionTranscriptSource(React.createElement(PermissionFooter, {
+        sessionId: 'session', serverId, toolName: 'McpTool', canApprovePermissions: true, permission: readPermission(),
+    }), source);
+    let screen = await renderScreen(footer());
+    await vi.waitFor(() => expect(screen.findByTestId('permission-footer.choice.remember')).toBeTruthy());
+    await act(async () => { screen.pressByTestId('permission-footer.choice.remember'); });
     await vi.waitFor(() => expect(screen.findByTestId('permission-footer.always-allow-retry')).toBeTruthy());
     expect(pending).toBe(false);
     const settled = readPermission();
     expect(settled).toMatchObject({ mcpTool, nativeChoices, nativeChoice: { requirementId: 'occurrence', choiceId: 'remember' } });
     await act(async () => screen.tree.unmount());
-    screen = await renderScreen(React.createElement(McpAlwaysAllowDecision, { requestId: 'native-mcp', choiceId: 'remember',
-        identity: settled.mcpTool!, scope, canWriteCatalog: true, pending: false,
-        followUp: settled.nativeChoices?.choices.find(choice => choice.id === settled.nativeChoice?.choiceId)?.followUp,
-        answerForSession: async () => { throw new Error('Occurrence retired'); }, renderDecision: () => null }));
+    screen = await renderScreen(footer());
     await vi.waitFor(() => expect(screen.findByTestId('permission-footer.always-allow-retry')).toBeTruthy());
     refuseSave = false;
     await act(async () => { screen.pressByTestId('permission-footer.always-allow-retry'); });

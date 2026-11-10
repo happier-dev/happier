@@ -28,6 +28,7 @@ import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { PermissionDecisionButton } from './PermissionDecisionButton';
 import { PermissionFooterOfferedChoices } from './PermissionFooterOfferedChoices';
+import { PermissionFooterCatalogChoice } from './PermissionFooterCatalogChoice';
 import { isOfferedPermissionChoice, selectPrimaryOfferedChoice } from './offeredChoiceLayout';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
@@ -495,6 +496,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         action: PermissionActionFailureKind,
         setLoading: (loading: boolean) => void,
         operation: () => Promise<void>,
+        propagateFailure = false,
     ) => {
         if (!canApprovePermissions || (executionRun === undefined && actions === null)) return;
         if (isSamePermissionRequest(permissionActionInFlight.current?.requestIdentity ?? null, requestIdentity)) {
@@ -539,6 +541,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 // Keep the sanitized operational record, but do not project stale failure UI.
                 recordPermissionActionFailure(action, error, null);
             }
+            if (propagateFailure) throw error;
         } finally {
             if (permissionActionInFlight.current?.token === token) {
                 permissionActionInFlight.current = null;
@@ -861,18 +864,28 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             void runPermissionAction(kind, (loading) => setLoadingChoiceId(loading ? choiceId : null),
                 () => submitPermissionChoice(choiceId, feedback));
         };
+        const choicesProps: React.ComponentProps<typeof PermissionFooterOfferedChoices> = {
+            choices: offeredChoices,
+            permissionOwnerLabel: projectedRequest?.permissionOwnerLabel ?? permission.permissionOwnerLabel,
+            primaryId: selectPrimaryOfferedChoice(offeredChoices),
+            disabled: !isPending || answerUnconfirmed || isCurrentRequestLoading,
+            busyChoiceId: loadingChoiceId,
+            onChoose: handleChoose,
+            primaryRef: primaryAnswerRef,
+        };
+        const catalogChoice = offeredChoices.find((choice): choice is typeof choice & Required<Pick<typeof choice, 'catalog' | 'followUp'>> =>
+            choice.catalog !== undefined && choice.followUp !== undefined);
         return (
             <View onLayout={onDecisionsLayout} style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
                 <View style={answerUnconfirmed ? styles.buttonContainerWithheld : null}>
-                    <PermissionFooterOfferedChoices
-                        choices={offeredChoices}
-                        permissionOwnerLabel={projectedRequest?.permissionOwnerLabel ?? permission.permissionOwnerLabel}
-                        primaryId={selectPrimaryOfferedChoice(offeredChoices)}
-                        disabled={!isPending || answerUnconfirmed || isCurrentRequestLoading}
-                        busyChoiceId={loadingChoiceId}
-                        onChoose={handleChoose}
-                        primaryRef={primaryAnswerRef}
-                    />
+                    {catalogChoice ? <PermissionFooterCatalogChoice
+                        choice={catalogChoice} requestId={permission.id} turnId={projectedTurnId}
+                        scope={catalogScope} canWriteCatalog={canApprovePermissions} pending={isPending}
+                        choicesProps={choicesProps}
+                        answer={(feedback) => runPermissionAction(getSessionPermissionChoiceKind(catalogChoice),
+                            (loading) => setLoadingChoiceId(loading ? catalogChoice.id : null),
+                            () => submitPermissionChoice(catalogChoice.id, feedback), true)}
+                    /> : <PermissionFooterOfferedChoices {...choicesProps} />}
                 </View>
                 {actionFailureNode}
             </View>
