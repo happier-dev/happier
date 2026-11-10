@@ -1,5 +1,17 @@
 # Compatibility and version skew
 
+## Voice ending presentation (unreleased 0.3)
+
+The existing local Voice teardown projects `ending` through the closed read-only
+attempt presentation and public Action status. Transport status retains its
+existing connected/connecting value until physical cleanup finishes; `ending`
+does not claim completion or change stop admission. Matching Protocol, generated
+SDK Action DTOs and UI readers reload together under the unpublished 0.3 direct
+cut: older strict development readers reject the new presentation variant.
+No persisted format, wire epoch, gate or compatibility adapter is added. The
+inspected `../0.2` frontier at `7b37d65ca75e58560f8f3ca850958ac5407d2e75`,
+including scoped local changes, has no `voice/attemptPresentation.ts` contract.
+
 ## Requester profile admission (unreleased 0.3)
 
 Requester identity admission in current development source reads the existing

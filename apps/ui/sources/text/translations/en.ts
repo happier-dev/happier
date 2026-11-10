@@ -10727,6 +10727,7 @@ const enModelPickerOverlay = {
 };
 
 const enVoiceAssistant = {
+  ending: 'Ending…',
   connected: 'Connected',
   connecting: 'Connecting…',
   reconnecting: 'Reconnecting…',

@@ -1659,7 +1659,10 @@ describe('createVoiceSessionLifecycleController', () => {
             }
         });
 
-        it('keeps Global sign-in recovery on the admitted Agent and machine after preferences change', async () => {
+        it.each([
+            { agentSource: 'agent' as const, agentId: 'codex', agentTitle: 'Codex' },
+            { agentSource: 'session' as const, agentId: 'claude', agentTitle: 'Claude' },
+        ])('keeps Global sign-in recovery on the admitted $agentSource Agent and machine after preferences change', async ({ agentSource, agentId, agentTitle }) => {
             const state = await getStorage();
             const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
             const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
@@ -1670,12 +1673,16 @@ describe('createVoiceSessionLifecycleController', () => {
             const { executeVoiceConversationAction } = await import('@/sync/ops/actions/voiceConversationAction');
             const { getVoiceSessionPresentedAttemptId } = await import('./voiceSessionStore');
             const { t } = await import('@/text');
+            const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
+            rememberLastUsedBackendSelection(state.getState().settingsScope, {
+                lastUsedAgent: agentId, lastUsedBackendTarget: { kind: 'backend', backendId: agentId },
+            });
             const settings = state.getState().settings;
             const config = readLocalConversationVoiceSettings(settings.voice);
             state.__setState({ settings: { ...settings, voice: { ...settings.voice, providerId: 'local_conversation',
                 executionMachine: { mode: 'fixed', machineId: 'machine-1' },
                 providers: { ...settings.voice.providers, local_conversation: { schemaVersion: 1, config: { ...config,
-                    conversationMode: 'agent', agent: { ...config.agent, agentSource: 'agent', agentId: 'codex' } } } },
+                    conversationMode: 'agent', agent: { ...config.agent, agentSource, agentId } } } },
             } } });
             await loadLocalVoiceEngineWithCompatState();
             const incumbent = machineRpcWithServerScope.getMockImplementation()!;
@@ -1689,7 +1696,7 @@ describe('createVoiceSessionLifecycleController', () => {
                 await act(async () => { await controller.toggle(null).catch(() => undefined); });
                 expect(controller.getSnapshot()).toMatchObject({ errorCode: 'authentication_required', errorMessage: 'agent_signed_out', canStop: false });
                 const caption = hook.getCurrent().captionLabel;
-                expect(caption).toContain('Codex');
+                expect(caption).toContain(agentTitle);
                 const next = state.getState().settings;
                 await act(async () => { state.__setState({ settings: { ...next, voice: { ...next.voice,
                     executionMachine: { mode: 'fixed', machineId: 'machine-unobserved' },
@@ -1697,14 +1704,14 @@ describe('createVoiceSessionLifecycleController', () => {
                         conversationMode: 'agent', agent: { ...config.agent, agentSource: 'agent', agentId: 'claude' } } } },
                 } } }); });
                 expect(hook.getCurrent().captionLabel).toBe(caption);
-                expect(hook.getCurrent().recoveryLabel).toBe(t('voiceSurface.setUpAgent', { agent: 'Codex' }));
+                expect(hook.getCurrent().recoveryLabel).toBe(t('voiceSurface.setUpAgent', { agent: agentTitle }));
                 let destination: unknown;
                 const result = await executeVoiceConversationAction('ui.voice_global.recover', {
                     expectedAttempt: getVoiceSessionPresentedAttemptId(),
                 }, { navigate: href => { destination = href; } });
                 expect(result.status).toBe('completed');
                 expect(destination).toMatchObject({ pathname: '/(app)/settings/agents/[agentId]', params: {
-                    agentId: 'codex', machineId: 'machine-1', pluginId: 'happier.agent.codex',
+                    agentId, machineId: 'machine-1', pluginId: `happier.agent.${agentId}`,
                     serverIdentityId: 'srv_voice_recovery_home',
                 } });
             } finally { await hook.unmount(); await runtime.unmount(); }
@@ -1797,6 +1804,52 @@ describe('createVoiceSessionLifecycleController', () => {
                 expect(localVoiceSpeechOutputBoundary.fileRecording.start).toHaveBeenCalledTimes(activeRecordings);
                 expect(spawnChoices).toHaveLength(2);
             } finally { await runtime.unmount(); }
+        });
+
+        it('accepts the first End action and presents ending while physical cleanup is pending', async () => {
+            const state = await getStorage();
+            const settings = state.getState().settings;
+            state.__setState({ settings: { ...settings, voice: { ...settings.voice, providerId: 'local_direct' } } });
+            await loadLocalVoiceEngineWithCompatState();
+            const { renderHook, renderScreen } = await import('@/dev/testkit');
+            const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
+            const { getVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
+            const { useVoiceAttemptControl } = await import('@/components/voice/attempt/useVoiceAttemptControl');
+            const { executeVoiceConversationAction } = await import('@/sync/ops/actions/voiceConversationAction');
+            const { getVoiceSessionEndedAttempt } = await import('./voiceSessionStore');
+            const { t } = await import('@/text');
+            const runtime = await renderScreen(React.createElement(VoiceSessionRuntime));
+            const controller = getVoiceSessionLifecycleController();
+            if (!controller) throw new Error('Mounted Voice lifecycle unavailable');
+            const hook = await renderHook(() => useVoiceAttemptControl({ kind: 'session',
+                sessionAddress: { serverId: localVoiceHomeId, sessionId: 's1' } }));
+            const cleanupReached = createDeferred<void>();
+            const cleanupRelease = createDeferred<void>();
+            let ending: Promise<unknown> | undefined;
+            try {
+                await act(async () => { await controller.toggle({ serverId: localVoiceHomeId, sessionId: 's1' }); });
+                localVoiceSpeechOutputBoundary.fileRecording.stop.mockImplementationOnce(async () => {
+                    cleanupReached.resolve();
+                    await cleanupRelease.promise;
+                });
+                await act(async () => {
+                    ending = hook.getCurrent().onPrimaryAction();
+                    await cleanupReached.promise;
+                });
+                expect(hook.getCurrent()).toMatchObject({ surfaceState: 'ending', statusLabel: t('voiceAssistant.ending'),
+                    canStop: true, canMute: false, canCommitInput: false });
+                expect(getVoiceSessionEndedAttempt()).toBeNull();
+                expect(await executeVoiceConversationAction('ui.voice_global.get', {}, { navigate() {} }))
+                    .toMatchObject({ status: 'completed', voice: { presentation: { surfaceState: 'ending' } } });
+                await act(async () => { cleanupRelease.resolve(); await ending; });
+                expect(hook.getCurrent().ended).not.toBeNull();
+                expect(controller.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
+            } finally {
+                cleanupRelease.resolve();
+                await ending;
+                await hook.unmount();
+                await runtime.unmount();
+            }
         });
 
         it('fences a late suspension release from a same-id replacement adapter', async () => {

@@ -16,6 +16,7 @@ export function resolveVoiceAttemptLightStop(state: VoiceSurfaceState): VoiceLig
         case 'idle':
         case 'live':
         case 'connecting':
+        case 'ending':
         case 'listening':
             return 'cool';
         case 'transcribing':

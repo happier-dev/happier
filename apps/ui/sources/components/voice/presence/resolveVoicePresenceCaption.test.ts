@@ -14,6 +14,12 @@ const { resolveVoiceCompactLine, resolveVoicePresenceCaption } =
 const base = { live: true, muted: false, captionLabel: '' } as const;
 
 describe('Voice presence captions for a bound Session target', () => {
+  it('keeps ending ahead of mute, Session attention and the previous transcript', () => {
+    const voice = { ...base, surfaceState: 'ending', muted: true, statusCell: 'needs_you' } as const;
+    expect(resolveVoicePresenceCaption(voice)).toBe(t('voiceAssistant.ending'));
+    expect(resolveVoiceCompactLine(voice, 'Earlier reply', 'Release captain'))
+      .toEqual({ kind: 'caption', text: t('voiceAssistant.ending') });
+  });
   it('keeps a connected call phase-neutral and captions the actual microphone state', () => {
     const voice = { ...base, surfaceState: 'live', captionLabel: t('voiceSurface.a11y.microphoneInactive') } as const;
     expect(resolveVoicePresenceCaption(voice)).toBe(voice.captionLabel);

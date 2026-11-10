@@ -8999,6 +8999,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
   },
 
   voiceAssistant: {
+    ending: 'Fin de l’appel…',
     connected: 'Connecté',
     connecting: "Connexion…",
     reconnecting: "Reconnexion…",

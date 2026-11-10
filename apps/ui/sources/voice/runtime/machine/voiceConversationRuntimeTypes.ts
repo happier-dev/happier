@@ -18,7 +18,7 @@ export type VoiceMachineError = Readonly<{
     kind: VoiceMachineErrorKind;
     reason: string;
     /** Producer-authored operation diagnosis, distinct from the presentation policy phase. */
-    failureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1;
+    failureCause?: import('@/voice/runtime/voiceRuntimeFailureCode').VoiceRuntimeFailureCause;
     effectAttempted?: boolean;
     /** Sanitized provider prose admitted by the shared error-copy owner. */
     providerMessage?: string;

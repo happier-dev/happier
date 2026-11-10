@@ -64,6 +64,16 @@ describe('resolveVoiceAttemptControl', () => {
         expect(resolveVoiceAttemptControl({ ...base, sessionStatus: { state: 'thinking', statusText: 'Working' } }))
             .toMatchObject({ statusCell: null });
     });
+    it.each(['thinking', 'permission_required'] as const)('keeps ending ahead of Session %s and retires input controls', (state) => {
+        expect(resolveVoiceAttemptControl({
+            ...base, surfaceState: 'ending', status: 'connected', tone: 'pending',
+            sessionId: 'carrier', canStop: true, canCommitInput: true,
+            sessionStatus: { state, statusText: 'Pending Session work' },
+        })).toMatchObject({
+            live: true, canStart: false, canStop: true, primaryAction: 'end',
+            canMute: false, canCommitInput: false, awaitingSend: false, statusCell: null,
+        });
+    });
     it.each(['listening', 'speaking'] as const)('keeps %s for blocked input and genuine requests actionable', (surfaceState) => {
         const live = { ...base, status: 'connected' as const, surfaceState, canStop: true,
             sessionId: 'carrier' };

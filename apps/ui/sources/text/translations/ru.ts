@@ -9606,6 +9606,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
   },
 
       voiceAssistant: {
+        ending: 'Завершение…',
         connected: 'Подключено',
         connecting: "Подключение...",
         reconnecting: "Переподключение…",

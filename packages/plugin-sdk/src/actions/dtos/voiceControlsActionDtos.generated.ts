@@ -306,7 +306,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -391,7 +391,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -476,7 +476,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -561,7 +561,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -646,7 +646,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -731,7 +731,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -816,7 +816,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -901,7 +901,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -986,7 +986,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -1071,7 +1071,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -1156,7 +1156,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -1241,7 +1241,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -1348,7 +1348,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -1433,7 +1433,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -1518,7 +1518,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -1603,7 +1603,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -1688,7 +1688,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -1773,7 +1773,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -1858,7 +1858,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -1943,7 +1943,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -2028,7 +2028,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -2113,7 +2113,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -2198,7 +2198,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -2283,7 +2283,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -2368,7 +2368,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -2453,7 +2453,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -2554,7 +2554,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -2639,7 +2639,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -2724,7 +2724,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -2809,7 +2809,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -2894,7 +2894,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -2979,7 +2979,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -3064,7 +3064,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -3149,7 +3149,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -3234,7 +3234,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -3319,7 +3319,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -3404,7 +3404,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -3489,7 +3489,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -3574,7 +3574,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -3659,7 +3659,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -3744,7 +3744,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -3829,7 +3829,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -3915,7 +3915,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -4001,7 +4001,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -4086,7 +4086,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;
@@ -4171,7 +4171,7 @@ export type VoiceControlsActionResultById = {
             };
             presentation?: undefined | {
                 attemptId: null | string;
-                surfaceState: 'connecting' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
+                surfaceState: 'connecting' | 'ending' | 'error' | 'idle' | 'interrupted' | 'listening' | 'live' | 'permission_required' | 'reconnecting' | 'speaking' | 'thinking' | 'transcribing';
                 live: boolean;
                 muted: boolean;
                 canStart: boolean;

@@ -1,4 +1,12 @@
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+
+/** Exact Agent chosen by binding readiness, before carrier creation can fail. */
+export type VoiceAgentSelectionObserver = (selection: Readonly<{
+    identity: PluginContributionIdentityV1;
+    machineId: string;
+    serverId: string;
+}>) => void;
 
 export type VoiceConversationTranscriptMode = 'native_session' | 'synthetic';
 

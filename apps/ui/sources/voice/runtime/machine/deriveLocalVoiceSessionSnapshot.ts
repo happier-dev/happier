@@ -206,11 +206,13 @@ export function deriveLocalVoiceSessionSnapshot(
                 ...(snapshot.error.uxDiagnostic ? { errorConnectedServiceDiagnostic: snapshot.error.uxDiagnostic } : {}),
             }
             : {}),
-        ...(snapshot.reconnecting
-            ? { presentationState: 'reconnecting' as const }
-            : snapshot.state === 'interrupted'
-                ? { presentationState: 'interrupted' as const }
-                : {}),
+        ...(snapshot.state === 'ending'
+            ? { presentationState: 'ending' as const }
+            : snapshot.reconnecting
+                ? { presentationState: 'reconnecting' as const }
+                : snapshot.state === 'interrupted'
+                    ? { presentationState: 'interrupted' as const }
+                    : {}),
         ...(snapshot.reconnectRetryAvailable ? { reconnectRetryAvailable: true } : {}),
     };
 }

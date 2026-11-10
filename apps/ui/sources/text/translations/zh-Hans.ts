@@ -8826,6 +8826,7 @@ export const zhHans: TranslationStructure = {
   },
 
   voiceAssistant: {
+    ending: '正在结束…',
     connected: '已连接',
     connecting: "连接中...",
     reconnecting: "正在重新连接…",

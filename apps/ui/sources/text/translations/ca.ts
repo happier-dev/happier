@@ -8498,6 +8498,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
       },
 
       voiceAssistant: {
+          ending: 'Finalitzant…',
           connected: 'Connectat',
           connecting: 'Connectant...',
           reconnecting: 'S’està tornant a connectar…',

@@ -9169,6 +9169,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     },
 
     voiceAssistant: {
+        ending: 'Wird beendet…',
         connected: 'Verbunden',
         connecting: 'Verbindet…',
         reconnecting: 'Verbindet neu…',

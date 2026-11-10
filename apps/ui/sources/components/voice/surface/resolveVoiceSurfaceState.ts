@@ -16,6 +16,7 @@ export function resolveVoiceSurfaceState(input: Readonly<{
   errorPresentation?: VoiceMachineErrorPresentation;
   presentationState?: VoiceSessionPresentationState;
 }>): VoiceSurfaceState {
+  if (input.presentationState === 'ending') return 'ending';
   if (input.presentationState === 'reconnecting') return 'reconnecting';
   if (input.presentationState === 'interrupted') return 'interrupted';
   if (input.errorPresentation === 'permission_required') return 'permission_required';

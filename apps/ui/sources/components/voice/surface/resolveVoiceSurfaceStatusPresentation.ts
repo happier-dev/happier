@@ -15,6 +15,7 @@ export type VoiceSurfaceStatusPresentation = Readonly<{
     | 'voiceAssistant.label'
     | 'voiceAssistant.connected'
     | 'voiceAssistant.connecting'
+    | 'voiceAssistant.ending'
     | 'voiceAssistant.reconnecting'
     | 'voiceAssistant.listening'
     | 'voiceAssistant.transcribing'
@@ -42,6 +43,8 @@ export function resolveVoiceSurfaceStatusPresentation(
       return { tone: 'active', labelKey: 'voiceAssistant.connected' };
     case 'connecting':
       return { tone: 'pending', labelKey: 'voiceAssistant.connecting' };
+    case 'ending':
+      return { tone: 'pending', labelKey: 'voiceAssistant.ending' };
     case 'reconnecting':
       return { tone: 'pending', labelKey: 'voiceAssistant.reconnecting' };
     case 'listening':

@@ -9159,6 +9159,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
   },
 
   voiceAssistant: {
+    ending: 'Finalizando…',
     connected: 'Conectado',
     connecting: "Conectando...",
     reconnecting: "Reconectando…",

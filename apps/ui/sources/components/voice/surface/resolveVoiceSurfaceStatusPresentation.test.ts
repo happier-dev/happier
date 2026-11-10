@@ -13,6 +13,7 @@ const expectedByState = {
   idle: { tone: 'neutral', labelKey: 'voiceAssistant.label' },
   live: { tone: 'active', labelKey: 'voiceAssistant.connected' },
   connecting: { tone: 'pending', labelKey: 'voiceAssistant.connecting' },
+  ending: { tone: 'pending', labelKey: 'voiceAssistant.ending' },
   reconnecting: { tone: 'pending', labelKey: 'voiceAssistant.reconnecting' },
   listening: { tone: 'active', labelKey: 'voiceAssistant.listening' },
   transcribing: { tone: 'pending', labelKey: 'voiceAssistant.transcribing' },

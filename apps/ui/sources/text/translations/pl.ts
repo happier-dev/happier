@@ -8994,6 +8994,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
   },
 
   voiceAssistant: {
+    ending: 'Kończenie…',
     connected: 'Połączono',
     connecting: "Łączenie...",
     reconnecting: "Ponowne łączenie…",

@@ -16,6 +16,7 @@ const ENERGY_BY_STATE: Readonly<Record<VoiceSurfaceState, VoiceEnergyState>> = O
     // Connected without a provider phase claims no listening or output activity.
     live: Object.freeze({ luminosity: 0.18, energized: false, direction: 'none' }),
     connecting: Object.freeze({ luminosity: 0.4, energized: false, direction: 'orbit' }),
+    ending: Object.freeze({ luminosity: 0.18, energized: false, direction: 'none' }),
     listening: Object.freeze({ luminosity: 0.55, energized: true, direction: 'inward' }),
     transcribing: Object.freeze({ luminosity: 0.5, energized: false, direction: 'inward' }),
     thinking: Object.freeze({ luminosity: 0.62, energized: false, direction: 'orbit' }),

@@ -2338,6 +2338,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     voiceAssistant: {
+      ending: '正在結束…',
       connected: '已連線',
       reconnecting: '正在重新連線…',
       listening: '正在聆聽',

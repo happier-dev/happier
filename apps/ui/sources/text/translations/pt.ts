@@ -9265,6 +9265,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
   },
 
   voiceAssistant: {
+    ending: 'Encerrando…',
     connected: 'Conectado',
     connecting: "Conectando...",
     reconnecting: "A ligar de novo…",

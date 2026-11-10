@@ -9382,6 +9382,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
   },
 
   voiceAssistant: {
+    ending: 'Chiusura in corso…',
     connected: 'Connesso',
     connecting: "Connessione...",
     reconnecting: "Riconnessione…",

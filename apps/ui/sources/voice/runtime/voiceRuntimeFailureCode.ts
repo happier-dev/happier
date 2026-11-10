@@ -3,6 +3,7 @@ import { normalizeVoiceFailureCode } from '@happier-dev/protocol/voice/providerO
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { isVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
 import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SessionRuntimeFailureCauseV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type {
   VoiceConversationSessionMetadataCommitReason,
 } from '@/voice/persistence/voiceConversationSession';
@@ -135,16 +136,23 @@ export function normalizeVoiceRuntimeFailureCode(code: unknown): string {
   return normalizeVoiceFailureCode(code) ?? 'voice_connection_failed';
 }
 
+export type VoiceRuntimeFailureCause = ActionFailureCauseV1
+  | Omit<NonNullable<SessionRuntimeIssueV1['failureCause']>, 'providerErrorMessage'>;
+
 /** Keep only the producer's closed, content-free operation facts. */
 export function readSafeVoiceRuntimeFailureFacts(error: unknown): Readonly<{
-  failureCause?: ActionFailureCauseV1;
+  failureCause?: VoiceRuntimeFailureCause;
   effectAttempted?: boolean;
 }> {
   const cause = isVoiceTextTurnRejectedBeforeEffectError(error) ? error.cause : error;
   if (!cause || typeof cause !== 'object') return {};
-  const failureCause = 'failureCause' in cause ? ActionFailureCauseV1Schema.safeParse(cause.failureCause) : null;
+  const actionCause = 'failureCause' in cause ? ActionFailureCauseV1Schema.safeParse(cause.failureCause) : null;
+  const sessionCause = !actionCause?.success && 'failureCause' in cause
+    ? SessionRuntimeFailureCauseV1Schema.safeParse(cause.failureCause) : null;
+  const failureCause = actionCause?.success ? actionCause.data : sessionCause?.success
+    ? (({ providerErrorMessage: _privateMessage, ...safeCause }) => safeCause)(sessionCause.data) : undefined;
   return {
-    ...(failureCause?.success ? { failureCause: failureCause.data } : {}),
+    ...(failureCause ? { failureCause } : {}),
     ...('effectAttempted' in cause && typeof cause.effectAttempted === 'boolean' ? { effectAttempted: cause.effectAttempted } : {}),
   };
 }

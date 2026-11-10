@@ -8,7 +8,7 @@ const CAPTIONED: ReadonlySet<string> = new Set<CaptionedState>(['connecting', 'l
 const FAILED: ReadonlySet<string> = new Set(['permission_required', 'error']);
 
 /** States in which what the call needs matters more than the last thing said. */
-const CALL_FIRST: ReadonlySet<string> = new Set(['connecting', 'reconnecting', 'permission_required', 'error']);
+const CALL_FIRST: ReadonlySet<string> = new Set(['connecting', 'ending', 'reconnecting', 'permission_required', 'error']);
 
 type CaptionFacts = Pick<VoiceAttemptControlProjection, 'live' | 'muted' | 'surfaceState' | 'captionLabel'>
     & Partial<Pick<VoiceAttemptControlProjection, 'statusCell' | 'canCommitInput' | 'awaitingSend'>>;
@@ -23,6 +23,7 @@ type CaptionFacts = Pick<VoiceAttemptControlProjection, 'live' | 'muted' | 'surf
  * existing connecting state, not a new lifecycle step. `targetName` is null in global mode.
  */
 export function resolveVoicePresenceCaption(voice: CaptionFacts, targetName: string | null = null): string | null {
+    if (voice.surfaceState === 'ending') return t('voiceAssistant.ending');
     if (FAILED.has(voice.surfaceState)) return voice.captionLabel.trim() || null;
     if (voice.live && voice.muted) return t('voicePresence.captions.muted');
     if (voice.live && voice.statusCell === 'needs_you') return t('voicePresence.captions.needsYou');

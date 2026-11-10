@@ -347,13 +347,19 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             providerId: adapter.id, sessionId: ownedSessionId,
             requestedTargetSessionAddress, recoveryTarget, conversationSelection,
         };
+        const canUpdateAttemptBinding = () => !disposed && startingAdapter === startAttempt
+            && recoveryBinding === attemptBinding && configuredProviderId === adapter.id
+            && getRegistry().get(adapter.id) === adapter;
+        const onAgentSelection: NonNullable<Parameters<VoiceAdapterController['start']>[0]['onAgentSelection']> = (selection) => {
+            if (!canUpdateAttemptBinding()) return;
+            attemptBinding = { ...attemptBinding,
+                recoveryTarget: captureVoiceAttemptRecoveryTarget(null, null, selection) };
+            recoveryBinding = attemptBinding;
+        };
         const onConversationSelection = (selection: VoiceConversationSelection): void => {
             // Binding admission alone chooses policy and exact identity. Late
             // results cannot restore recovery after End or an authority change.
-            if (disposed || startingAdapter !== startAttempt
-                || recoveryBinding !== attemptBinding
-                || configuredProviderId !== adapter.id
-                || getRegistry().get(adapter.id) !== adapter) return;
+            if (!canUpdateAttemptBinding()) return;
             attemptBinding = { ...attemptBinding, conversationSelection: selection };
             recoveryBinding = attemptBinding;
             const pending = pendingAdapterSwitch;
@@ -369,7 +375,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             ensureAttemptConnectivityLease(adapter, ownedSessionId, requestedTargetSessionAddress);
             startingAdapter = startAttempt;
             try {
-                await adapter.start({ sessionId, requestedTargetSessionAddress, ...(conversationSelection ? { conversationSelection } : {}), onConversationSelection });
+                await adapter.start({ sessionId, requestedTargetSessionAddress, ...(conversationSelection ? { conversationSelection } : {}), onConversationSelection, onAgentSelection });
                 if (getRegistry().get(adapter.id) !== adapter) {
                     // Registration withdrawal is a synchronous authority
                     // boundary. A provider that finishes setup afterwards

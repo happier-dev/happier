@@ -9455,6 +9455,7 @@ localTailscale: {
   },
 
   voiceAssistant: {
+    ending: '終了中…',
     connected: '接続済み',
     connecting: "接続中...",
     reconnecting: "再接続中…",

@@ -157,7 +157,7 @@ export function resolveVoiceAttemptControl(input: Readonly<{
         canStart,
         canStop,
         canDismissFailedAttempt,
-        canCommitInput: input.status === 'connected' && Boolean(input.sessionId)
+        canCommitInput: input.status === 'connected' && input.surfaceState !== 'ending' && Boolean(input.sessionId)
             && input.canCommitInput === true,
         awaitingSend: input.status === 'connected' && Boolean(input.sessionId)
             && input.canCommitInput === true && input.inputEndsOnSilence !== true
@@ -166,6 +166,7 @@ export function resolveVoiceAttemptControl(input: Readonly<{
         // temporarily closed capture; the preference still governs the next capture window.
         canMute:
             input.status === 'connected'
+            && input.surfaceState !== 'ending'
             && canStop
             && typeof input.sessionId === 'string'
             && input.sessionId.trim().length > 0,
@@ -182,7 +183,7 @@ export function resolveVoiceAttemptControl(input: Readonly<{
             : input.surfaceState === 'connecting' || input.surfaceState === 'reconnecting'
                 ? 'shadow'
                 : input.status === 'disconnected' ? 'mic' : 'light',
-        statusCell: input.status !== 'connected' ? null
+        statusCell: input.status !== 'connected' || input.surfaceState === 'ending' ? null
             : resolveVoiceSessionNeedsYou(input.sessionStatus)
                 ? 'needs_you'
                 : input.sessionStatus?.state === 'thinking' ? 'working'

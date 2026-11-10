@@ -1,3 +1,4 @@
+import type { VoiceAgentSelectionObserver } from '@/voice/binding/voiceConversationBindingTypes';
 import type { PendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { readConnectedServiceUxDiagnosticFromError, type ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
@@ -13,7 +14,7 @@ export type VoiceAdapterId = string;
 export type VoiceAdapterEngineKind = 'local' | 'realtime';
 export type VoiceSessionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 export type VoiceSessionMode = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking';
-export type VoiceSessionPresentationState = 'reconnecting' | 'interrupted';
+export type VoiceSessionPresentationState = 'reconnecting' | 'interrupted' | 'ending';
 export type VoiceAdapterTranscriptMode = 'native_session' | 'synthetic';
 export type VoiceInterruptionPolicy = 'disabled' | 'client_two_stage' | 'provider_immediate';
 export type VoiceConversationTargeting = 'route_target' | 'bound_conversation';
@@ -46,7 +47,8 @@ export type VoiceAdapterContextChannel = Readonly<{
   /** Which host-authored context this provider's execution kind authorizes. */
   hostAuthoredContext: VoiceHostAuthoredContextScope;
   sendContextualUpdate(update: string, contextClass: HostAuthoredContextClass): void;
-  sendTextMessage(text: string): void;
+  /** Context reaches the provider without becoming the person's visible request. */
+  sendTextMessage(text: string, context?: string): void;
   announceAssistantText?(text: string): void;
 }>;
 
@@ -86,7 +88,7 @@ export type VoiceSessionSnapshot = Readonly<{
   errorProviderMessage?: string;
   errorProviderError?: import('@happier-dev/protocol/providers/errors').ProviderErrorV1;
   errorUsageLimit?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineError['usageLimit'];
-  errorFailureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1;
+  errorFailureCause?: import('@/voice/runtime/voiceRuntimeFailureCode').VoiceRuntimeFailureCause;
   /** Native/provider turn dispatch only; Pending persistence can remain indeterminate. */
   errorEffectAttempted?: boolean;
   errorConnectedServiceDiagnostic?: ConnectedServiceUxDiagnosticV1;
@@ -116,6 +118,7 @@ export type VoiceAdapterController = Readonly<{
   start(input: Readonly<{
     conversationSelection?: VoiceConversationSelection;
     onConversationSelection?: (selection: VoiceConversationSelection) => void;
+    onAgentSelection?: VoiceAgentSelectionObserver;
     sessionId: string;
     requestedTargetSessionAddress: SessionAddress | null;
     initialContext?: string;
@@ -157,6 +160,7 @@ export type VoiceAdapterController = Readonly<{
   resolveConversationBinding?(input: Readonly<{
     conversationSelection?: VoiceConversationSelection;
     onConversationSelection?: (selection: VoiceConversationSelection) => void;
+    onAgentSelection?: VoiceAgentSelectionObserver;
     controlSessionId: string;
     requestedTargetSessionAddress: SessionAddress | null;
     settings: unknown;
