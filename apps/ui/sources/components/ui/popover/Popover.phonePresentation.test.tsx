@@ -35,6 +35,12 @@ const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPort
 
 afterEach(() => { viewport.width = 390; viewport.height = 844; });
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!style) return {};
+    if (Array.isArray(style)) return style.reduce<Record<string, unknown>>((acc, entry) => ({ ...acc, ...flattenStyle(entry) }), {});
+    return typeof style === 'object' ? style as Record<string, unknown> : {};
+}
+
 describe('Popover phone presentation', () => {
     it('hosts a composer sheet at the screen boundary so its choices and outside dismissal remain reachable', async () => {
         const selected = vi.fn();
@@ -317,6 +323,36 @@ describe('Popover phone presentation', () => {
         await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
         expect(screen.findByTestId('menu-row')).toBeNull();
         expect(screen.findByTestId('picker-choice')).toBeNull();
+    });
+
+    // Native QA (PHONE-POPOVERS-1109, iOS 26.4): a root popover's glass stayed clear while a view pushed into it
+    // later was frosted. UIKit renders no visual effect created under an ancestor with alpha < 1, and the
+    // popover was hidden by opacity while it measured, then faded in.
+    it('never hides or fades a native popover\'s material through opacity on its ancestors', async () => {
+        const opacityAncestors = (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+            const child = screen.findByType('PopoverChild' as never);
+            const found: unknown[] = [];
+            for (let node = child?.parent ?? null; node; node = node.parent) {
+                const flat = flattenStyle(node.props?.style);
+                if ('opacity' in flat && flat.opacity !== 1) found.push(flat.opacity);
+            }
+            return found;
+        };
+        function Anchored() {
+            const anchorRef = React.useRef<React.ElementRef<typeof View>>(null);
+            return <OverlayPortalProvider>
+                <View ref={anchorRef} collapsable={false}><Text>Home</Text></View>
+                <Popover open anchorRef={anchorRef} phonePresentation="panel" portal={{ native: true }} onRequestClose={() => {}}>
+                    {() => React.createElement('PopoverChild')}
+                </Popover>
+                <OverlayPortalHost />
+            </OverlayPortalProvider>;
+        }
+        const screen = await renderScreen(<Anchored />);
+        expect(screen.findByType('PopoverChild' as never)).toBeTruthy();
+        expect(opacityAncestors(screen)).toEqual([]);
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+        expect(opacityAncestors(screen)).toEqual([]);
     });
 
     it('keeps the anchored presentation on a wide viewport when phone sheets are requested', async () => {

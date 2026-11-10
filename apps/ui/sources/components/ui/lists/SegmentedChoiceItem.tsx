@@ -34,6 +34,8 @@ export type SegmentedChoiceItemProps<T extends string> = Omit<ItemProps, 'rightE
     testIDPrefix?: string;
     accessoryLayout?: ItemProps['accessoryLayout'];
     labelSize?: 'default' | 'field';
+    /** The shared compact segmented size, for a dense list whose control stays on its label's line. */
+    compact?: boolean;
     /** `inherited`: the value follows a default and draws as an outlined thumb (R8). Default `set`. */
     valueSource?: 'set' | 'inherited';
 }>;
@@ -47,7 +49,7 @@ export type SegmentedChoiceItemProps<T extends string> = Omit<ItemProps, 'rightE
  * the one segmented control, whose default tab semantics belong to view switches.
  */
 export function SegmentedChoiceItem<T extends string>(props: SegmentedChoiceItemProps<T>) {
-    const { options, value, onChange, testIDPrefix, disabled, accessoryLayout = 'adaptive', labelSize, valueSource, ...itemProps } = props;
+    const { options, value, onChange, testIDPrefix, disabled, accessoryLayout = 'adaptive', labelSize, compact, valueSource, ...itemProps } = props;
     // The shared row rule (plugin-ui): which segments are unavailable and what the row says about them.
     // Core keeps its own hosts (the page/menu `Item` and the sliding-thumb bar) over that one rule.
     const row = React.useMemo(() => resolveHappierSegmentedChoiceRow({ options, value }), [options, value]);
@@ -79,6 +81,7 @@ export function SegmentedChoiceItem<T extends string>(props: SegmentedChoiceItem
                     activeTabId={value}
                     onSelectTab={onChange}
                     labelSize={labelSize}
+                    compact={compact}
                     // Content width in every placement: under its label too, equal segments across the row
                     // read as a tab bar, not a value choice (lab tsAuth-A, R-TH-5).
                     segmentSizing="content"

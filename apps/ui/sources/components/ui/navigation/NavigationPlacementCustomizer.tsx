@@ -306,6 +306,11 @@ function PlacementRows(props: PlacementRowsProps) {
                                 : hasGlyphColumn ? <View style={GLYPH_SLOT_STYLE} /> : null}
                         </View>}
                         value={selectedPlacement(item, props.preferences, placements.effectivePlacements[item.id])}
+                        // One line per place (owner, 11-10): handle, glyph and name, then the compact choice at the
+                        // row's end, also at 390.
+                        accessoryLayout="inline"
+                        compact
+                        titleLines={1}
                         // Every row offers the same segments, so the columns line up; a placement this item
                         // cannot take stays visible and disabled, explained by its note.
                         options={buildNavigationPlacementOptions(item, props.placementLabels)}

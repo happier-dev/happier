@@ -233,6 +233,9 @@ export function AgentInputChipPickerPanel(
             {focusedOption ? (
               <View style={[
                 detailContainerStyle,
+                // A detail that owns its scroll (the model list) takes the room under the Agent strip: on native a
+                // flexing list under an auto-height parent collapses to nothing (iOS QA: an empty model area).
+                detailedLayout === "stacked" && props.detailContentOwnsScroll === true ? styles.detailStackedFill : null,
                 detailedLayout === "stacked" && props.detailContentOwnsScroll === true ? styles.detailScrollContentFlush : null,
               ]}>
                 <View
@@ -355,6 +358,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingBottom: theme.space.s10,
   },
   detailScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  detailStackedFill: {
     flex: 1,
     minHeight: 0,
   },

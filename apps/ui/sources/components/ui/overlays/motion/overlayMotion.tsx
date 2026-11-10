@@ -171,6 +171,12 @@ export function useOverlayMotionAnimation(params: Readonly<{
     preset: OverlayMotionPreset;
     /** Web frames animate as a whole; one holding material paint moves by transform, and on exit fades its paint and content, never the frame. */
     elementRef?: React.RefObject<unknown>;
+    /**
+     * The frame holds material paint (glass) on native. It moves by transform alone: UIKit renders no visual
+     * effect created or shown under an ancestor with alpha below 1, so a fade left the glass clear (iOS 26 QA).
+     * The web finds material paint in its own element instead.
+     */
+    material?: boolean;
 }>): Readonly<{
     exitMs: number;
     progress: Animated.Value;
@@ -217,11 +223,14 @@ export function useOverlayMotionAnimation(params: Readonly<{
     });
 
     const fadeOnly = reducedMotion && reducedMs > 0;
+    const nativeMaterial = params.material === true && Platform.OS !== 'web';
     return {
         exitMs: params.disabled ? 0 : reducedMotion ? reducedMs : params.preset.exitMs,
         progress,
         style: webElementMotion
             ? {}
+            : nativeMaterial
+            ? (fadeOnly ? {} : { transform: [{ translateX }, { translateY }, { scale }] })
             : fadeOnly
             ? { opacity: progress }
             : {
@@ -483,6 +492,8 @@ export function OverlayMotionFrame(props: Readonly<{
     direction?: OverlayMotionDirection;
     style?: StyleProp<ViewStyle>;
     pointerEvents?: 'box-none' | 'none' | 'auto' | 'box-only';
+    /** See `useOverlayMotionAnimation`'s `material`. */
+    material?: boolean;
     children: React.ReactNode;
 }>): React.ReactElement {
     const elementRef = React.useRef<React.ComponentRef<typeof Animated.View>>(null);
@@ -497,6 +508,7 @@ export function OverlayMotionFrame(props: Readonly<{
         disabled: props.disabled,
         preset,
         elementRef,
+        material: props.material,
     });
     const pointerEvents = resolveOverlayPointerEvents(
         props.pointerEvents ?? (props.visible ? 'auto' : 'none'),

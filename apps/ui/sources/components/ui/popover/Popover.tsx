@@ -367,6 +367,9 @@ function hasOpenNestedWebPopover(owner: OpenWebPopoverEntry): boolean {
     });
 }
 
+/** Where a native popover waits, laid out but out of sight, until its placement is measured. */
+const NATIVE_UNPLACED_STYLE = { transform: [{ translateX: -100000 }] } as const;
+
 /** A phone panel's inset from the screen's sides: the composer's phone picker gutter. */
 const PHONE_PANEL_GUTTER_PX = 12;
 
@@ -2139,7 +2142,10 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                     nativePortalShadowPaddingStyle,
                     // A content-sized popover carries its own (narrower) bounds in `placementStyle`.
                     typeof placementStyle.maxWidth === 'number' ? null : { maxWidth: contentContainerMaxWidth },
-                    (shouldPortalWeb || shouldPortalNative) ? { opacity: portalOpacity } : null,
+                    shouldPortalWeb ? { opacity: portalOpacity }
+                        // A native popover waits for its placement offscreen, never by opacity: UIKit renders no
+                        // glass created under an ancestor with alpha below 1 (iOS 26 QA: a root popover stayed clear).
+                        : shouldPortalNative && portalOpacity === 0 ? NATIVE_UNPLACED_STYLE : null,
                     shouldPortal ? { zIndex: portalZ + 1 } : null,
                     // The legacy prop used to take precedence over caller-owned styles.
                     contentPointerEvents.webStyle,
@@ -2212,6 +2218,8 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                         disabled={portalOpacity === 0}
                         kind="popover"
                         direction={popoverMotionDirection}
+                        // A popover's content stands on floating glass: native moves it by transform alone.
+                        material
                         {...(props.passive ? { pointerEvents: 'none' as const } : {})}
                     >
                         {renderedChildren}

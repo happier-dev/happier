@@ -73,6 +73,18 @@ function findNativePortalBackdropPressable(tree: ReturnType<typeof renderer.crea
     }) ?? null;
 }
 
+/**
+ * A native popover waits for its placement out of sight by translation, never by opacity: UIKit renders no glass
+ * created under an ancestor with alpha below 1 (iOS QA, PHONE-POPOVERS-1109).
+ */
+function nativeUnplacedState(view: { props?: { style?: unknown } } | null | undefined): Readonly<{ hidden: boolean; faded: boolean }> {
+    const style = flattenTestStyle(view?.props?.style) as { opacity?: unknown; transform?: unknown };
+    const transforms = Array.isArray(style.transform) ? style.transform as Array<Record<string, unknown>> : [];
+    const hidden = transforms.some((entry) => typeof entry.translateX === 'number' && entry.translateX <= -10000);
+    const faded = typeof style.opacity === 'number' && style.opacity < 1;
+    return { hidden, faded };
+}
+
 describe('Popover (native portal)', () => {
     let restorePopoverWebGlobals: (() => void) | null = null;
 
@@ -569,7 +581,7 @@ describe('Popover (native portal)', () => {
         expect(measureCalls).toBeGreaterThanOrEqual(2);
 
         const contentView = tree ? findPopoverContentView(tree) : null;
-        expect(flattenTestStyle(contentView?.props?.style).opacity).toBe(1);
+        expect(nativeUnplacedState(contentView)).toEqual({ hidden: false, faded: false });
     });
 
     it('renders inline when no OverlayPortalProvider is present', async () => {
@@ -725,28 +737,28 @@ describe('Popover (native portal)', () => {
                 ))).tree;
 
         const contentView = tree ? findPopoverContentView(tree) : null;
-        expect(flattenTestStyle(contentView?.props?.style).opacity).toBe(0);
+        expect(nativeUnplacedState(contentView)).toEqual({ hidden: true, faded: false });
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
         const contentViewAfterMeasure = tree ? findPopoverContentView(tree) : null;
-        expect(flattenTestStyle(contentViewAfterMeasure?.props?.style).opacity).toBe(0);
+        expect(nativeUnplacedState(contentViewAfterMeasure)).toEqual({ hidden: true, faded: false });
 
         await act(async () => {
             contentViewAfterMeasure?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 0 } } });
         });
 
         const contentViewAfterFirstLayout = tree ? findPopoverContentView(tree) : null;
-        expect(flattenTestStyle(contentViewAfterFirstLayout?.props?.style).opacity).toBe(0);
+        expect(nativeUnplacedState(contentViewAfterFirstLayout)).toEqual({ hidden: true, faded: false });
 
         await act(async () => {
             contentViewAfterFirstLayout?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 120 } } });
         });
 
         const contentViewAfterLayout = tree ? findPopoverContentView(tree) : null;
-        expect(flattenTestStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
+        expect(nativeUnplacedState(contentViewAfterLayout)).toEqual({ hidden: false, faded: false });
     });
 
     it('can spotlight the anchor so it stays crisp above the blur', async () => {
