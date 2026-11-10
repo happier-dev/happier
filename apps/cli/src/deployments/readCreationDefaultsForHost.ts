@@ -25,7 +25,7 @@ export type DeploymentCreationDefaultRequestForHost = Readonly<{
 type CreationDefaultsHost = Readonly<{
     serverId: string; serverHttpBaseUrl: string; accountId: string; expectedScopeKey: string;
     assertCurrent(context: ActionExecutorContext): Promise<void>;
-    headers(context: ActionExecutorContext, actionId: CreationPreparationActionId,
+    headers(context: ActionExecutorContext, actionId: string,
         request: Readonly<{ method: string; path: string }>): Promise<Readonly<Record<string, string>>>;
     open(artifactId: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
     readAccountSnapshot(): ActiveAccountSettingsSnapshot | null | Promise<ActiveAccountSettingsSnapshot | null>;
@@ -53,8 +53,7 @@ export async function prepareDeploymentCreationDefaultsForHost(request: Readonly
             await host.assertCurrent(context);
             return serverId === host.serverId ? null : { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
         },
-        // Preparation spends the admitted create/template root, not fresh Source-read authority.
-        resolveRequestHeaders: (context, _actionId, transport) => host.headers(context, request.actionId, transport),
+        resolveRequestHeaders: host.headers,
     });
     const source = await sources.projectSourcesRead!({ serverId: host.serverId, sourceId: request.projectSourceId }, request.context);
     if (!source.ok) return refuse('errorCode' in source ? source : source.error);
