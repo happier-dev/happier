@@ -155,10 +155,9 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     const setPageTitle = publisher?.setPageTitle;
     const setChromeBack = publisher?.setBack;
     React.useEffect(() => {
-        if (!setPageTitle) return;
-        setPageTitle(props.title);
-        return () => setPageTitle(undefined);
+        setPageTitle?.(props.title);
     }, [props.title, setPageTitle]);
+    React.useEffect(() => () => setPageTitle?.(undefined), [setPageTitle]);
     React.useEffect(() => {
         if (!setChromeTitle) return;
         // Entity identity stays in the body. Leave its generic destination

@@ -19,7 +19,7 @@ import { useOpenAppRightSidebarTab } from '../rightSidebar/appScopeRightSidebarN
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ConnectedAccountActionApprovalNotice } from '@/components/settings/connectedServices/ConnectedAccountActionApprovalNotice';
 import { t } from '@/text';
-import { DestinationInstanceHost, useDestinationInstanceKey, useDestinationParams, useDestinationRouter } from './DestinationInstanceHost';
+import { DestinationInstanceHost, useDestinationInstanceKey, useDestinationPageTitle, useDestinationParams, useDestinationRouter } from './DestinationInstanceHost';
 import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { WorkspaceProvider } from './WorkspaceProvider';
 import { buildBotTemplateRecipientRoute, readBotTemplateRecipientRoute } from '@/components/sessions/bots/templates/botTemplateRecipientDestination';
@@ -1646,20 +1646,51 @@ describe('consumed workspace navigation owner', () => {
             history: { state: null, replaceState() {}, pushState() {}, go() {} }, sessionStorage: { getItem: () => 'main' } });
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: true, friends: false } });
         let broadRenders = 0;
+        let editorTitle = 'Draft';
+        let publishedTitle: string | undefined;
+        const committedTitles: Readonly<{ editor: string; published: string | undefined }>[] = [];
         // A whole-workspace reader (the shell, the strip host, the composer drop target) reads
         // tabs, groups and commands; a title is not one of its facts.
         function BroadReader() { broadRenders++; return React.createElement('WorkspaceOwner', { navigation: useOptionalWorkspaceNavigation() }); }
-        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}><BroadReader /></WorkspaceProvider>);
-        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
-        const tabId = navigation().state.groups[navigation().state.focusedGroupId].activeTabId;
-        const ref = navigation().state.tabs[tabId].target;
+        function EditableTitle() {
+            const [title, setTitle] = React.useState('Draft');
+            editorTitle = title;
+            return <PageHeader alwaysShowTitle title={title} titleEditor={{ value: title, onChangeText: setTitle,
+                placeholder: 'Name', accessibilityLabel: 'Name', testID: 'live-page-title' }} />;
+        }
+        function TitleReader() {
+            const workspace = useOptionalWorkspaceNavigation()!;
+            const tab = workspace.state.tabs[workspace.state.groups[workspace.state.focusedGroupId].activeTabId];
+            const entries = React.useMemo(() => [{ key: tab.id, ref: tab.target }], [tab.id, tab.target]);
+            publishedTitle = useDestinationInstanceTitles(catalog, entries).get(tab.id);
+            return null;
+        }
+        function EditingDestination() {
+            const workspace = useOptionalWorkspaceNavigation()!;
+            const tab = workspace.state.tabs[workspace.state.groups[workspace.state.focusedGroupId].activeTabId];
+            return <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={boundary.pathname} focused visible
+                navigation={workspace.navigationForTab(tab.id)}><EditableTitle /></DestinationInstanceHost>;
+        }
+        const screen = await renderScreen(<React.Profiler id="title-publication" onRender={() => {
+            committedTitles.push({ editor: editorTitle, published: publishedTitle });
+        }}>
+            <WorkspaceProvider enabled catalog={catalog}><BroadReader /><TitleReader /><EditingDestination /></WorkspaceProvider>
+        </React.Profiler>);
         const before = broadRenders;
+        const beforeCommits = committedTitles.length;
         // One keystroke each: the editor's name is the tab's page title.
         for (const title of ['p', 'p0', 'p03']) {
-            await act(async () => { navigation().publishDestinationTitle?.(tabId, ref, title); });
+            await act(async () => { screen.changeTextByTestId('live-page-title', title); });
         }
         expect(document.title).toBe('p03');
         expect(broadRenders - before).toBe(0);
+        // Each edit commits its text and the canonical workspace title. A staged
+        // chrome copy adds a passive commit between them and compounds rapid typing.
+        expect(committedTitles.slice(beforeCommits)).toEqual([
+            { editor: 'p', published: 'Draft' }, { editor: 'p', published: 'p' },
+            { editor: 'p0', published: 'p' }, { editor: 'p0', published: 'p0' },
+            { editor: 'p03', published: 'p0' }, { editor: 'p03', published: 'p03' },
+        ]);
     });
     it('settles a deleted Session in the actual strip and window title without removing the closable tab', async () => {
         boundary.platform = 'web';
@@ -1745,29 +1776,46 @@ describe('consumed workspace navigation owner', () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
             externalSessions: false, inbox: false, workflows: false, friends: false,
         } });
-        let options: React.ComponentProps<typeof Stack.Screen>['options'] = { headerTitle: 'Session info' };
+        let options: React.ComponentProps<typeof Stack.Screen>['options'] = { headerTitle: 'Generic navigation chrome' };
+        let pageTitle: string | undefined;
+        let hosted = true;
+        function PageIdentity() { useDestinationPageTitle(pageTitle); return null; }
         const element = () => <WorkspaceProvider enabled catalog={catalog}>{navigation => {
             const group = navigation.state.groups[navigation.state.focusedGroupId];
             const tab = navigation.state.tabs[group.activeTabId];
             return <>
                 <DestinationTitlesProbe navigation={navigation} catalog={catalog} />
-                <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={boundary.pathname} focused visible
+                {hosted ? <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={boundary.pathname} focused visible
                     navigation={navigation.navigationForTab(tab.id)}>
                     <Stack.Screen options={options} />
-                </DestinationInstanceHost>
+                    <PageIdentity />
+                </DestinationInstanceHost> : null}
             </>;
         }}</WorkspaceProvider>;
         const screen = await renderScreen(element());
         const titles = () => screen.root.findByType('DestinationTitles').props.titles as ReadonlyMap<string, string>;
-        expect([...titles().values()]).toEqual([t('session.untitled')]);
+        expect([...titles().values()]).toEqual([t('sessionInfo.title')]);
         options = { title: 'A named app page' };
+        await screen.update(element());
+        expect([...titles().values()]).toEqual(['A named app page']);
+        pageTitle = 'The current page';
+        await screen.update(element());
+        expect([...titles().values()]).toEqual(['The current page']);
+        pageTitle = undefined;
         await screen.update(element());
         expect([...titles().values()]).toEqual(['A named app page']);
         options = { title: undefined, headerTitle: 'App page' };
         await screen.update(element());
-        // Withdrawing a declaration preserves the last known name for this
-        // same destination; a chrome-only label does not replace that identity.
-        expect([...titles().values()]).toEqual(['A named app page']);
+        // Withdrawing the leaf title restores the inherited screen identity;
+        // the generic chrome label never becomes the page's name.
+        expect([...titles().values()]).toEqual([t('sessionInfo.title')]);
+        options = { title: 'Inherited screen identity' };
+        pageTitle = 'Last settled page';
+        await screen.update(element());
+        expect([...titles().values()]).toEqual(['Last settled page']);
+        hosted = false;
+        await screen.update(element());
+        expect([...titles().values()]).toEqual(['Last settled page']);
     });
     it('shares live page identity across tabs, keeps inactive names fresh and retires it before a new route loads without persisting title publication', async () => {
         boundary.pathname = '/workflows/deploy'; boundary.params = { id: 'deploy' };

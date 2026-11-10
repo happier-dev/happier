@@ -142,13 +142,13 @@ function DestinationNavigationChrome(props: Readonly<{
     const nativeShowsTitle = useNavigationTitleChromeShowsTitle();
     const nativeShowsBack = useNavigationChromeShowsBack();
     const ref = instance?.ref;
+    const tabId = instance?.tabId;
     const publishTitle = useOptionalWorkspaceNavigation(value => value?.publishDestinationTitle);
     // The publication owner changes with the Account even when a retained
     // route happens to reuse the same target object.
     type TitleIdentity = Readonly<{ ref: typeof ref; owner: typeof publishTitle }>;
     const [declared, setDeclared] = React.useState<TitleIdentity & Readonly<{ options: NativeStackNavigationOptions }>>({ ref, owner: publishTitle, options: {} });
     const [chromeTitle, setChromeTitle] = React.useState<TitleIdentity & Readonly<{ title: string | null | undefined }>>({ ref, owner: publishTitle, title: undefined });
-    const [pageIdentity, setPageIdentity] = React.useState<TitleIdentity & Readonly<{ title: string | null | undefined }>>({ ref, owner: publishTitle, title: undefined });
     const isCurrent = (identity: TitleIdentity) => identity.ref === ref && identity.owner === publishTitle;
     const overrides = isCurrent(declared) ? declared.options : EMPTY_SCREEN_OPTIONS;
     const options = React.useMemo<NativeStackNavigationOptions>(() => ({
@@ -157,7 +157,35 @@ function DestinationNavigationChrome(props: Readonly<{
         ...Object.fromEntries(Object.entries(overrides).filter(([, value]) => value !== undefined)),
     }), [overrides, props.baseOptions]);
     const title = isCurrent(chromeTitle) ? chromeTitle.title : undefined;
-    const pageTitle = isCurrent(pageIdentity) ? pageIdentity.title : undefined;
+    // Page identity goes straight to its workspace owner. Staging each keystroke
+    // in chrome state adds another passive update before title readers settle.
+    const titlePublication = React.useMemo(() => {
+        let pageTitle: string | null | undefined;
+        let fallbackTitle: string | null | undefined;
+        let mounted = false;
+        let dispose: (() => void) | undefined;
+        const publish = () => {
+            if (!mounted || !publishTitle || !tabId || !ref) return;
+            const title = pageTitle !== undefined ? pageTitle : fallbackTitle;
+            if (title !== undefined) dispose = publishTitle(tabId, ref, title?.trim() ? title : null);
+        };
+        return {
+            mount: () => {
+                mounted = true;
+                return () => { mounted = false; dispose?.(); };
+            },
+            setPageTitle: (title: string | null | undefined) => { pageTitle = title; publish(); },
+            setFallbackTitle: (title: string | null | undefined) => {
+                fallbackTitle = title;
+                if (pageTitle === undefined) publish();
+            },
+        };
+    }, [publishTitle, ref, tabId]);
+    // Close publication before descendant effect cleanup withdraws its page
+    // declaration, preserving the owner's last-known title through host removal.
+    React.useLayoutEffect(titlePublication.mount, [titlePublication]);
+    const fallbackTitle = Object.hasOwn(options, 'title') ? options.title ?? null : undefined;
+    React.useEffect(() => { titlePublication.setFallbackTitle(fallbackTitle); }, [fallbackTitle, titlePublication]);
     const [back, setBack] = React.useState<React.ReactNode>(null);
     const updateOptions = React.useCallback((next: NativeStackNavigationOptions) => {
         setDeclared(previous => {
@@ -169,9 +197,9 @@ function DestinationNavigationChrome(props: Readonly<{
     }, [ref, publishTitle]);
     const publisher = React.useMemo(() => ({
         setTitle: (title: string | null | undefined) => setChromeTitle(previous => previous.ref === ref && previous.owner === publishTitle && previous.title === title ? previous : { ref, owner: publishTitle, title }),
-        setPageTitle: (title: string | null | undefined) => setPageIdentity(previous => previous.ref === ref && previous.owner === publishTitle && previous.title === title ? previous : { ref, owner: publishTitle, title }),
+        setPageTitle: titlePublication.setPageTitle,
         setBack,
-    }), [ref, publishTitle]);
+    }), [ref, publishTitle, titlePublication]);
     const identityPublisher = React.useMemo(() => publicationOnly ? { setPageTitle: publisher.setPageTitle } : publisher, [publicationOnly, publisher]);
     const canGoBack = props.navigation?.canGoBack?.() ?? false;
     const tintColor = options.headerTintColor ?? theme.colors.chrome.header.foreground;
@@ -185,13 +213,6 @@ function DestinationNavigationChrome(props: Readonly<{
     // actions of its own hands the pane's scope through, so the page's header draws those controls.
     const enclosingScope = useEnclosingHeaderActionsScope();
     const declaredTitle = typeof options.headerTitle === 'string' ? options.headerTitle : options.title;
-    // headerTitle belongs to navigation chrome; title and PageHeader supply
-    // screen identity. A page's explicit null withdraws its previous identity.
-    const instanceTitle = pageTitle !== undefined ? pageTitle : Object.hasOwn(options, 'title') ? options.title ?? null : undefined;
-    React.useEffect(() => {
-        if (!publishTitle || !instance || instanceTitle === undefined) return;
-        return publishTitle(instance.tabId, instance.ref, instanceTitle?.trim() ? instanceTitle : null);
-    }, [instance?.ref, instance?.tabId, instanceTitle, publishTitle]);
     const titleNode = title !== undefined
         ? (title === null ? null : <NavigationHeaderTitle title={title} tintColor={tintColor} />)
         : typeof options.headerTitle === 'function' ? options.headerTitle({ children: declaredTitle ?? '', tintColor })
@@ -231,10 +252,9 @@ export function DestinationTitlePublication(props: Readonly<{ instance: Readonly
 export function useDestinationPageTitle(title: string | null | undefined): void {
     const setPageTitle = useNavigationTitleChromePublisher()?.setPageTitle;
     React.useEffect(() => {
-        if (!setPageTitle || title === undefined) return;
-        setPageTitle(title?.trim() ? title : null);
-        return () => setPageTitle(undefined);
+        setPageTitle?.(title === undefined ? undefined : title?.trim() ? title : null);
     }, [setPageTitle, title]);
+    React.useEffect(() => () => setPageTitle?.(undefined), [setPageTitle]);
 }
 
 /** Screen declarations target this retained destination; named layout declarations remain inventory. */
