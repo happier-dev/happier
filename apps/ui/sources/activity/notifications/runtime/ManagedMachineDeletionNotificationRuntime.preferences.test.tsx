@@ -51,12 +51,12 @@ describe('managed Machine deletion reminder Account preference', () => {
                     rule: { kind: 'after-stop', afterMs: 14 * day }, consequence: 'disk-deleted' }] },
         });
         const sibling = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_sibling_reminders', custodianAccountId: 'sibling-owner' });
-        const homes = await serveActionHomes({ homes: [{ key: 'reminders',
-            serverUrl: 'https://deletion-preferences.test', serverIdentityId: homeId, accountId: 'owner', currentAccount: true,
-            settings: { managedMachineDeletionReminderLeadTimeMs: day },
-        }, { key: 'sibling', serverUrl: 'https://sibling-reminders.test', serverIdentityId: sibling.homeId,
+        const homes = await serveActionHomes({ homes: [{ key: 'sibling', serverUrl: 'https://sibling-reminders.test', serverIdentityId: sibling.homeId,
             accountId: sibling.custodianAccountId, currentAccount: true,
             settings: { managedMachineDeletionReminderLeadTimeMs: 2 * day },
+        }, { key: 'reminders',
+            serverUrl: 'https://deletion-preferences.test', serverIdentityId: homeId, accountId: 'owner', currentAccount: true,
+            settings: { managedMachineDeletionReminderLeadTimeMs: day },
         }], route: request => {
             if (request.path === '/v1/machines/managed/actions/list') {
                 const archived = request.body && typeof request.body === 'object' && 'archived' in request.body && request.body.archived;

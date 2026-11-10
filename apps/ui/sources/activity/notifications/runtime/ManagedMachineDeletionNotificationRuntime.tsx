@@ -1,12 +1,11 @@
 import * as React from 'react';
 
-import { useManagedMachineDeletionSource,
+import { useManagedMachineDeletionSource, useManagedMachineDeletionLeadTime,
     type ManagedMachineDeletionEntry } from '@/activity/source/useManagedMachineDeletionSource';
 import { updateManagedMachineDeletionNotification } from '../managedMachineDeletionNotification';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { useSetting } from '@/sync/domains/state/storage';
 
 const MachineReminder = React.memo(function MachineReminder({ entry, leadTimeMs }: Readonly<{ entry: ManagedMachineDeletionEntry; leadTimeMs: number }>) {
     React.useEffect(() => {
@@ -24,6 +23,9 @@ const MachineReminder = React.memo(function MachineReminder({ entry, leadTimeMs 
 
 export function ManagedMachineDeletionNotificationRuntime({ serverIds }: Readonly<{ serverIds: readonly string[] }>) {
     const entries = useManagedMachineDeletionSource(serverIds);
-    const leadTimeMs = useSetting('managedMachineDeletionReminderLeadTimeMs');
-    return <>{entries.map(entry => <MachineReminder key={entry.key} entry={entry} leadTimeMs={leadTimeMs} />)}</>;
+    const resolveLeadTime = useManagedMachineDeletionLeadTime(entries);
+    return <>{entries.map(entry => {
+        const leadTimeMs = resolveLeadTime(entry);
+        return leadTimeMs === null ? null : <MachineReminder key={entry.key} entry={entry} leadTimeMs={leadTimeMs} />;
+    })}</>;
 }

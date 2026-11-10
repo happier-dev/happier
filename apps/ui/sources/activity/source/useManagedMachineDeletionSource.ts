@@ -5,7 +5,9 @@ import { readManagedMachineDeletionAttention } from '@/activity/attention/manage
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { resolveInboxItemPageRoute } from '@/components/inbox/inboxItemFocus';
-import { useSetting } from '@/sync/domains/state/storage';
+import { useExactHomeAccountSettings } from '@/activity/delivery/useExactHomeAccountSettings';
+
+const DELETION_SETTING_KEYS = ['managedMachineDeletionReminderLeadTimeMs'] as const;
 
 type DeletionFacts = Pick<Parameters<typeof resolveProviderDeletionReminderV1>[0], 'observation' | 'retentionCapabilities'>;
 export type ManagedMachineDeletionEntry = DeletionFacts & Readonly<{
@@ -33,14 +35,29 @@ export function useManagedMachineDeletionSource(serverIds: readonly string[]): r
     }, [inventory.entries]);
 }
 
+/** Inventory already names each Home's Account; consume only its synchronized preference. */
+export function useManagedMachineDeletionLeadTime(
+    entries: readonly ManagedMachineDeletionEntry[],
+): (entry: ManagedMachineDeletionEntry) => number | null {
+    const scopes = React.useMemo(() => new Map(entries.map(entry => [entry.serverId, {
+        serverId: entry.serverId, accountId: entry.accountId,
+    }])), [entries]);
+    const resolveSettings = useExactHomeAccountSettings(scopes, DELETION_SETTING_KEYS);
+    return React.useCallback((entry: ManagedMachineDeletionEntry) => (
+        resolveSettings(entry.serverId)?.managedMachineDeletionReminderLeadTimeMs ?? null
+    ), [resolveSettings]);
+}
+
 /** Evaluate on app/Inbox open and pushed changes, with the existing typed deadline owner. */
 export function useManagedMachineDeletionAttention(serverId: string | null) {
     const serverIds = React.useMemo(() => serverId ? [serverId] : [], [serverId]);
     const entries = useManagedMachineDeletionSource(serverIds);
-    const leadTimeMs = useSetting('managedMachineDeletionReminderLeadTimeMs');
+    const resolveLeadTime = useManagedMachineDeletionLeadTime(entries);
     return React.useMemo(() => entries.flatMap(entry => {
+        const leadTimeMs = resolveLeadTime(entry);
+        if (leadTimeMs === null) return [];
         const reminder = readManagedMachineDeletionAttention({ ...entry,
             leadTimeMs, nowMs: Date.now() });
         return reminder ? [{ ...entry, reminder }] : [];
-    }), [entries, leadTimeMs]);
+    }), [entries, resolveLeadTime]);
 }

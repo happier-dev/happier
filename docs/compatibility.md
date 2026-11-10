@@ -1807,8 +1807,11 @@ The deletion-reminder lead time is the deliberate Account preference
 `managedMachineDeletionReminderLeadTimeMs`, defaulting to two days when absent.
 The existing Settings Actions expose it as
 `machines.defaults.deletionReminderLeadTime`, also rendered on Machine defaults.
-Inbox attention and native notification scheduling subscribe to that key;
-editing it updates the existing notification schedule. Unknown Account keys
+Inbox attention and native notification scheduling subscribe to that key for
+each inventory entry's exact Home and Account through the shared exact-Home
+settings owner. Unsynchronized or absent Account settings withhold new
+reminders; the focused Account never supplies another Home's preference.
+Editing it updates the existing notification schedule. Unknown Account keys
 remain preserved by older readers. This additive development preference needs
 no migration, scheduler or additional deadline store.
 
