@@ -24,7 +24,7 @@ describe('xAI Realtime protocol adapter', () => {
     expect(adapter.decodeControl(frame)).toEqual([]);
   });
 
-  it('preserves generated session.spawn_new tool metadata without a live-value depth quota', () => {
+  it('preserves the complete spawnSession schema in a JSON argument envelope', () => {
     const spec = getActionSpec('session.spawn_new');
     const parameters = zodSchemaToJsonSchemaObject(spec.inputSchema);
     const tool = {
@@ -39,8 +39,25 @@ describe('xAI Realtime protocol adapter', () => {
       resumptionEnabled: false,
       model: { kind: 'pinned', id: 'grok-voice-think-fast-2.0' },
     }, [tool])).toMatchObject({
-      type: 'session.update', session: { tools: [{ type: 'function', ...tool }] },
+      type: 'session.update', session: { tools: [{ type: 'function', name: tool.name, description: tool.description,
+        parameters: { type: 'object', required: ['arguments_json'], properties: {
+          arguments_json: { type: 'string', description: expect.stringContaining(JSON.stringify(parameters)) },
+        } },
+      }] },
     });
+  });
+
+  it.each([
+    { value: { workflow: { kind: 'parallel', branches: [{ blocks: [{ kind: 'loop', body: [{ kind: 'wait' }] }] }] } } },
+    { arguments_json: '{"literal":"host field"}' },
+  ])('decodes one JSON argument envelope before canonical tool admission: %j', original => {
+    const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
+    adapter.decodeControl({ type: 'response.function_call_arguments.done', event_id: 'encoded-call',
+      response_id: 'response-encoded', call_id: 'call-encoded', name: 'spawnSession', output_index: 0,
+      arguments: JSON.stringify({ arguments_json: JSON.stringify(original) }) });
+    expect(adapter.decodeControl({ type: 'response.done', event_id: 'encoded-done', response: { id: 'response-encoded' } }))
+      .toContainEqual({ type: 'tool_calls', responseId: 'response-encoded', calls: [{ v: 1,
+        responseId: 'response-encoded', callId: 'call-encoded', toolName: 'spawnSession', order: 0, arguments: original }] });
   });
 
   it('writes only the documented nested session configuration', () => {
@@ -74,8 +91,9 @@ describe('xAI Realtime protocol adapter', () => {
           description: 'Send a message to the selected coding session.',
           parameters: {
             type: 'object',
-            properties: { message: { type: 'string' } },
-            required: ['message'],
+            properties: { arguments_json: { type: 'string', description:
+              'A JSON-encoded argument object matching this JSON Schema: {"type":"object","properties":{"message":{"type":"string"}},"required":["message"]}' } },
+            required: ['arguments_json'],
           },
         }],
         turn_detection: { type: 'server_vad', threshold: 0.7, silence_duration_ms: 900, prefix_padding_ms: 333 },

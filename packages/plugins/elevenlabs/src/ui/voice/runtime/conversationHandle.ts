@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
 import {
+  decodeVoiceToolJsonArguments,
   VoiceRealtimeToolCallV1Schema,
   VoiceRealtimeToolResultV1Schema,
   type VoiceRealtimeJsonValue,
@@ -16,7 +17,6 @@ import type {
 } from '@elevenlabs/client';
 
 import { installElevenLabsNativeSessionStrategy } from './nativeSessionStrategy.js';
-import { readElevenLabsToolArguments } from '../toolParameters.js';
 
 type MessagePayload = Parameters<NonNullable<Callbacks['onMessage']>>[0];
 type AgentResponseCorrectionPayload =
@@ -149,7 +149,7 @@ export function createElevenLabsConversationHandle(params: Readonly<{
             // actual tool_call_id is therefore also the single-call grouping.
             const parsed = VoiceRealtimeToolCallV1Schema.safeParse({
                 v: 1, responseId: tool.tool_call_id, callId: tool.tool_call_id,
-                toolName: tool.tool_name, order: 0, arguments: readElevenLabsToolArguments(readRecord(parameters)),
+                toolName: tool.tool_name, order: 0, arguments: decodeVoiceToolJsonArguments(parameters),
             });
             if (parsed.success && parsed.data.toolName === tool.tool_name) {
                 callsByParameters.set(parameters, parsed.data);

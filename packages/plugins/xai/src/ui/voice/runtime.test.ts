@@ -428,7 +428,11 @@ describe('xAI Realtime public runtime contribution', () => {
     expect(FakeWebSocket.instances.at(-1)?.sent.map(JSON.parse)).toEqual([{
       type: 'session.update',
       session: expect.objectContaining({
-        tools: [{ type: 'function', ...SENTINEL_TOOL }],
+        tools: [{ type: 'function', name: SENTINEL_TOOL.name, description: SENTINEL_TOOL.description,
+          parameters: { type: 'object', required: ['arguments_json'], properties: {
+            arguments_json: { type: 'string', description: expect.stringContaining(JSON.stringify(SENTINEL_TOOL.parameters)) },
+          } },
+        }],
         instructions: expect.stringContaining('Only use admitted tools. Reply in fr-FR.'),
       }),
     }]);

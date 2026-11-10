@@ -52,6 +52,8 @@ export { buildVoiceClientToolAgentPrompt } from '../client.js';
 export { createVoiceTranscriptLadderMapper } from '../client.js';
 export { describeActionForVoiceTool } from '../client.js';
 export { describeActionInputFieldForVoice } from '../client.js';
+export { describeVoiceToolJsonArguments } from '../client.js';
+export { decodeVoiceToolJsonArguments } from '../client.js';
 export { isVoiceSdkSafeActionSpec } from '../client.js';
 export { listVoiceSdkSafeToolActionSpecs } from '../client.js';
 export { normalizeVoiceFailureCode } from '../client.js';

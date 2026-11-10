@@ -1,6 +1,8 @@
 /** xAI Realtime Voice protocol translation. */
 import {
   createVoiceTranscriptLadderMapper,
+  decodeVoiceToolJsonArguments,
+  describeVoiceToolJsonArguments,
   normalizeVoiceFailureCode,
   VoiceRealtimeJsonValueSchema,
   VoiceRealtimeToolCallV1Schema,
@@ -47,7 +49,7 @@ function providerEventId(value: unknown): string | null {
 
 function parseArguments(value: unknown): VoiceRealtimeJsonValue {
   if (typeof value !== 'string') return null;
-  try { return VoiceRealtimeJsonValueSchema.parse(JSON.parse(value)); } catch { return null; }
+  try { return VoiceRealtimeJsonValueSchema.parse(decodeVoiceToolJsonArguments(JSON.parse(value))); } catch { return null; }
 }
 
 function optionalEntries(input: Readonly<Record<string, unknown>>): Record<string, VoiceRealtimeJsonValue> {
@@ -97,7 +99,12 @@ export function createXaiSessionUpdate(
         type: 'function',
         name: tool.name,
         description: tool.description,
-        parameters: tool.parameters,
+        // xAI rejects the recursive Workflow branches in spawnSession with
+        // internal_error. Preserve the full host contract as encoded arguments,
+        // using the same codec as other restricted realtime tool providers.
+        parameters: { type: 'object', required: ['arguments_json'], properties: {
+          arguments_json: { type: 'string', description: describeVoiceToolJsonArguments(tool.parameters) },
+        } },
       })),
       turn_detection: turnDetection,
       resumption: { enabled: settings.resumptionEnabled },

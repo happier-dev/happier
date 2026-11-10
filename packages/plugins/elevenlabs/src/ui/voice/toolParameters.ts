@@ -1,4 +1,4 @@
-import type { VoiceRealtimeJsonValue } from '@happier-dev/plugin-sdk/voice/client';
+import { describeVoiceToolJsonArguments, type VoiceRealtimeJsonValue } from '@happier-dev/plugin-sdk/voice/client';
 
 /**
  * ElevenLabs API 1.0 (2026-11-06) accepts a restricted property model, not
@@ -14,12 +14,6 @@ export function toElevenLabsToolParameters(schema: Record<string, unknown>): Voi
     arguments_json: { type: 'string', enum: null, is_system_provided: false,
       dynamic_variable: '', allowed_values: null, allowed_values_dynamic_variable: '',
       constant_value: '', is_omitted: false, description:
-      `A JSON-encoded argument object matching this JSON Schema: ${JSON.stringify(schema)}` },
+      describeVoiceToolJsonArguments(schema) },
   } };
-}
-
-/** Retained agents authored before this adapter still send native arguments. */
-export function readElevenLabsToolArguments(parameters: Record<string, unknown>): unknown {
-  if (Object.keys(parameters).length !== 1 || typeof parameters.arguments_json !== 'string') return parameters;
-  try { return JSON.parse(parameters.arguments_json); } catch { return null; }
 }

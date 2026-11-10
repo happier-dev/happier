@@ -1815,20 +1815,29 @@ runtimes are separate from this Action placement contract.
 
 In 0.3 development, a person's settled Account Action confirmation travels with
 that relay in the existing private invocation context. It binds the exact
-`action.invoke` operand, approved target source and declaration, Account, Home,
+`action.invoke` operand, Account, Home,
 request and selected execution target. The receiving
 target consumes that consent while retaining the Plugin caller and its automation
 authority; placement does not ask the person again. This does not confer host
 authority or consent to another Action or changed input. Native execution and
-mounted daemon Actions retain their existing confirmation paths.
+mounted daemon Actions retain their existing confirmation paths. Consumption is
+single-use. The admitted invocation retains its original operands and does not
+ask again or compare them with a recomputed policy, plugin declaration, source or
+version. Policy changes apply to the next admission.
 
 In development, `plugin_action_current_intent_mismatch` carries
 `details.currentIntentMismatch.field` in the existing PluginError detail envelope.
 The admission owner names the failed comparison category without including either
-value. `fingerprint_source` identifies the aggregate input/declaration/source/version
-fingerprint; it does not establish which constituent changed. The Account relay
+value. The retained `fingerprint_source` category identifies an exact-operand
+digest mismatch; plugin source and declaration are no longer consent inputs. The Account relay
 and UI retain this detail for a traced replay. Admission and single-use consent
-remain unchanged.
+remain at the approval consumption boundary.
+
+The daemon's target admission owner also writes the comparison category to its
+local file log before error projection. Carried Account confirmation refusals
+name that lookup branch and record confirmation and parent-approval presence
+only. Neither the diagnostic payload nor the file log includes compared
+values, proofs or digests.
 
 Failure projection also retains the canonical dispatch owner's `notStarted`
 proof through Account and mounted daemon Action carriers. Callers can classify
@@ -3849,6 +3858,18 @@ an ordinary handler failure or lost create reply remains uncertain and needs
 the existing reconciliation path.
 
 Native facts retain labelled size, image, location and network identities through the public SDK's `MachineProvisionerNativeOptionFactsV1` and `MachineProvisionerOptionsResultV1`. A size can include observed CPU cores, memory bytes and disk bytes; omitted dimensions and measurements remain unknown. Images may include a localized `description` and a declarative `preview` naming an exact packaged PNG Resource (`resource: {pluginId, localId}`) with an optional localized `accessibilityLabel` for the existing public Image renderer. Locations may include the native ISO alpha-2 `countryCode`; no country is inferred from a label or region id. A `network` fact labels which public addresses a server gets and remains its own row beside size, image and location; the configurator keeps the provider's first declared variant selected until the person picks another. Hetzner projects its returned image description and location country code; DigitalOcean projects its returned image description and leaves country absent. Both omit previews because their native catalogs supply none.
+
+In unreleased 0.3 source, `ManagedLocalResourceFactsV1` also carries optional
+`totalCpuCores` (host cores) and `allocatedCpuCores` (cores assigned to running
+guests). These are allocation facts, never idle-CPU measurements. Lume fills
+allocation from running macOS VM rows in its native list and topology from the
+host; stopped guests and Linux guests do not contribute. Unknown inventory or
+missing CPU counts leave allocation omitted, while an observed empty running
+macOS set reports zero. The existing receipt CPU progress line shows allocated
+against total cores; memory and disk retain free amounts. Matching development
+Protocol, SDK, provider and UI readers reload together; no older-host support
+for the new optional fields is claimed. No sampler or polling is involved.
+
 
 In 0.3 development source, the shared managed configurator warns on cloud sizes below its evidence-based memory recommendation for Happier and an Agent. It reads native size facts for every provisioner and keeps those sizes selectable; this advice does not affect availability or acquisition. Missing memory facts and local sizes receive no cloud warning. The owner constant records the measured boundary and its evidence; the recommendation is not a guarantee for every workload.
 
@@ -6022,6 +6043,20 @@ connection-owned Promise tail that preserves semantic order. Cancellation retire
 skips its remaining callbacks, while a normal stream end drains admitted work
 before reconnecting. The single SSE parser and connection provenance classifier
 remain the admission owners.
+
+### Shared usage row (0.3 development source)
+
+`@happier-dev/plugin-ui/presentation` owns `UsageMeterRow`, `UsageMeterStack`
+and their typed props and column metrics. Core's connected-services
+`UsageMeterRow` is its domain adapter: percentage normalization, quota tone,
+estimated/unavailable wording, reset phrases and accessible descriptions stay
+in the host. The public presentation owns inline/stacked anatomy, shared name
+measurement, responsive reset columns and the existing progress/capacity
+geometry. Uncapped amounts retain their value without a bar; unknown and zero
+remain distinct. Neither row acquires usage or schedules time updates. The
+public-import example is `packages/plugin-ui/fixtures/external-authoring/src/usageMeterSurface.tsx`;
+the [author guide](../apps/docs/content/docs/plugins/ui/react-native.mdx#usage-meter-rows-03-development)
+shows the same public seam.
 
 ## Public seam and authority
 
@@ -8829,6 +8864,14 @@ belonged to the selected `happier_voice_config_v1`-tagged agent and are absent
 from its updated tool list. The vendor's `force=false` DELETE preserves other
 agents' and branches' references; refusal remains visible as incomplete cleanup.
 Matching workspace tool names never authorize a cleanup sweep.
+
+The xAI realtime session projection uses the same argument envelope and shared
+Protocol codec through the public Voice SDK. A loaded November 10 comparison
+returned `internal_error` for `spawnSession` with recursive Workflow branches
+under `initialTriggers`, while the full schema carried in the string description
+completed a response. Neither adapter removes host inputs or changes the host's
+validation and approval authority; decoding unwraps one envelope only.
+
 Host-mediated JSON HTTP 422 failures may retain validation locations and known
 validation categories within the operation's existing response-byte budget.
 Provider messages, input values, context and registered credentials are excluded;

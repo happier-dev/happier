@@ -35,6 +35,15 @@ import { HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE as canonicalHappierVoiceBi
 import type { VoiceCredentialAccess, VoiceSchema } from './contracts.js';
 import { projectProtocolValue } from '../protocol/projectProtocolValue.js';
 import { normalizeVoiceFailureCode as canonicalNormalizeVoiceFailureCode } from '@happier-dev/protocol/voice/providerOperations';
+import {
+    describeVoiceToolJsonArguments as canonicalDescribeVoiceToolJsonArguments,
+    decodeVoiceToolJsonArguments as canonicalDecodeVoiceToolJsonArguments,
+} from '@happier-dev/protocol/voice/realtime/toolArguments';
+
+export const describeVoiceToolJsonArguments: (schema: Readonly<Record<string, unknown>>) => string =
+    /* @__PURE__ */ projectProtocolValue(canonicalDescribeVoiceToolJsonArguments);
+export const decodeVoiceToolJsonArguments: (parameters: unknown) => unknown =
+    /* @__PURE__ */ projectProtocolValue(canonicalDecodeVoiceToolJsonArguments);
 
 export const normalizeVoiceFailureCode: (value: unknown) => string | null =
     /* @__PURE__ */ projectProtocolValue(canonicalNormalizeVoiceFailureCode);
