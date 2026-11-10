@@ -35,6 +35,7 @@ export type ProjectSessionRuntimeFixture = Readonly<{
 
 /** Real ordinary Session admission; only Home endpoints are substituted. */
 export async function createProjectSessionRuntimeFixture(options: Readonly<{
+  registerCleanup?: (cleanup: () => void | Promise<void>) => void;
   serverId?: string; serverUrl?: string; accountSettings?: Readonly<Record<string, unknown>>; boundSessionId?: string;
   credentials?: StoredCredentials;
   accountId?: string;
@@ -48,22 +49,23 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
   const accountId = options.accountId ?? 'requester';
   const mcpCatalog = options.mcpCatalog ? McpServerCatalogV1Schema.parse(options.mcpCatalog) : undefined;
   const lifetime = new AbortController();
-  onTestFinished(() => lifetime.abort());
+  const registerCleanup = options.registerCleanup ?? onTestFinished;
+  registerCleanup(() => lifetime.abort());
   const directory = await mkdtemp(join(tmpdir(), 'project-session-runtime-'));
   const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL']);
+  registerCleanup(async () => { env.restore(); reloadConfiguration(); await rm(directory, { recursive: true, force: true }); });
   env.patch({ HAPPIER_HOME_DIR: directory,
     ...(options.serverId ? { HAPPIER_ACTIVE_SERVER_ID: options.serverId } : {}),
     ...(options.serverUrl ? { HAPPIER_SERVER_URL: options.serverUrl } : {}) });
   reloadConfiguration();
-  onTestFinished(async () => { env.restore(); reloadConfiguration(); await rm(directory, { recursive: true, force: true }); });
   if (options.homeServerIdentityId) {
     await seedTestServerProfile({ id: options.serverId ?? 'session-home', homeId: options.homeServerIdentityId,
       serverUrl: options.serverUrl ?? 'https://session-home.test' });
   }
   const installation = await readOrCreateInstallationIdentity();
   const channel = await createRequesterCurrentnessSocketHarness();
-  onTestFinished(() => channel.close());
-  onTestFinished(installAxiosRequestMethodAdapter());
+  registerCleanup(() => channel.close());
+  registerCleanup(installAxiosRequestMethodAdapter());
   let current = true;
   const promptRows = new Map<string, { revision: number; content: PromptLibraryContentV1 | null }>();
   const mutatePromptLibraryRow = (rawKey: string, body: unknown) => {
@@ -138,13 +140,13 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
       ...(options.boundSessionId ? { boundSessionId: options.boundSessionId } : {}),
       verifyMachineAdmissionCurrent: async () => current });
     if (!prepared) throw new Error('Session admission failed');
-    onTestFinished(prepared.cleanupOnFailure);
+    registerCleanup(prepared.cleanupOnFailure);
     // This fixture supplied the Home at the original admission. Persist its
     // exact bound birth before a separately started daemon recovers custody.
     if (options.boundSessionId && options.homeServerIdentityId) {
       const bound = await prepared.admitted.bindExistingSession(options.boundSessionId);
       if (!bound) throw new Error('Original Session custody could not be retained');
-      onTestFinished(bound.cleanup);
+      registerCleanup(bound.cleanup);
     }
     // Cold synchronous host setup shares this test's event loop with Home.
     // Finish both ends of the real upgrade before that work can exhaust Engine.IO's upgrade window.

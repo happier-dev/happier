@@ -17,7 +17,7 @@ import { acquireDeploymentRestoreUpload } from '../targets/deploymentRestoreUplo
 import { configuration } from '@/configuration';
 
 describe('retained native filesystem RPC transfer', () => {
-  it.each(['admitted', 'idle'] as const)('keeps completed native import custody until its actual owner settles (%s)', async state => {
+  it.each(['admitted', 'idle', 'aborted'] as const)('keeps completed native import custody until its actual owner settles (%s)', async state => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     try { await withTempDir('happier-native-restore-upload-', async root => {
       const context = createFilesystemOwnerRpcContext();
@@ -77,11 +77,15 @@ describe('retained native filesystem RPC transfer', () => {
           expect(await admitted.source.readChunk({ offset: 0, length: bytes.length })).toEqual(bytes);
           // The parent admitted this finite read. The retained requester store
           // must not apply its own transfer expiry halfway through that read.
-          await vi.advanceTimersByTimeAsync(configuration.filesTransferSessionTtlMs + 1);
-          expect(await admitted.source.readChunk({ offset: 0, length: bytes.length })).toEqual(bytes);
+          if (state === 'admitted') {
+            await vi.advanceTimersByTimeAsync(configuration.filesTransferSessionTtlMs + 1);
+            expect(await admitted.source.readChunk({ offset: 0, length: bytes.length })).toEqual(bytes);
+          }
         }
         finally { admitted.release(); }
-        await registration.transferSessionStore.cleanupExpired(Number.MAX_SAFE_INTEGER);
+        if (state === 'aborted') expect(await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT, { uploadId: initialized.uploadId }))
+          .toMatchObject({ success: true });
+        else await registration.transferSessionStore.cleanupExpired(Number.MAX_SAFE_INTEGER);
         await expect(readFile(artifact.filePath)).rejects.toMatchObject({ code: 'ENOENT' });
         expect(acquireDeploymentRestoreUpload(registration.transferSessionStore,
           { transferId: initialized.uploadId, environmentId: 'environment', accountId })).toBeNull();

@@ -10,6 +10,7 @@ import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/
 /** Real installed Machine receiver; only authenticated Home HTTP is substituted.
  * No saved exact Home descriptor is needed when the connection holds its Home. */
 export async function createInstalledFilesystemMachineFixture(options: Readonly<{
+    registerCleanup?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['registerCleanup'];
     accountSettings?: Readonly<Record<string, unknown>>;
     credentials?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['credentials'];
     accountId?: string;
@@ -24,6 +25,7 @@ export async function createInstalledFilesystemMachineFixture(options: Readonly<
     const accountId = options.accountId ?? 'requester';
     const homeServerIdentityId = 'srv_filesystem_held_owner';
     const f = await createProjectSessionRuntimeFixture({ serverId: 'filesystem-profile',
+        ...(options.registerCleanup ? { registerCleanup: options.registerCleanup } : {}),
         homeServerIdentityId, serverUrl: 'https://session-home.test',
         ...(options.credentials ? { credentials: options.credentials } : {}),
         accountId,
@@ -51,10 +53,10 @@ export async function createInstalledFilesystemMachineFixture(options: Readonly<
             get workspaceSync() { return options.readWorkspaceSync?.(); },
             ...(options.createProjectFiniteRuntime ? { createProjectFiniteRuntime: options.createProjectFiniteRuntime } : {}),
             ...(options.agentIsolation ? { agentIsolation: options.agentIsolation } : {}) });
+    (options.registerCleanup ?? onTestFinished)(() => machine.shutdown());
     machine.setRPCHandlers({ spawnSession: async () => { throw new Error('No Session spawn expected'); },
         stopSession: async () => true, requestShutdown() {},
         ...(options.directTransferExport ? { directTransferExport: options.directTransferExport } : {}) });
-    onTestFinished(() => machine.shutdown());
     // Network transport entry: retain actual authorization and its constructed
     // currentness callback rather than calling filesystem handlers directly.
     const manager: unknown = Reflect.get(machine, 'rpcHandlerManager');

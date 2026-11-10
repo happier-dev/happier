@@ -283,7 +283,11 @@ export function createTransferSessionLifecycle(params: Readonly<{
             params.store.cleanupExpiredBestEffort();
             if (!input.uploadId) return { aborted: false };
             const activeOperation = params.store.beginUploadSessionOperation(input.uploadId);
-            if (!activeOperation) return { aborted: false };
+            if (!activeOperation) {
+                if (!params.store.readCompletedUpload(input.uploadId)) return { aborted: false };
+                await params.store.abortUploadSession(input.uploadId);
+                return { aborted: true };
+            }
             try {
                 await params.store.abortUploadSession(input.uploadId);
                 return { aborted: true };
