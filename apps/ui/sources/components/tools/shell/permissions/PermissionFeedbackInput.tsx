@@ -1,12 +1,15 @@
 import * as React from 'react';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-
+import type { StyleProp, TextStyle } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { OfferedChoiceFeedbackInput, type OfferedChoiceFeedbackInputHostProps } from '@happier-dev/plugin-ui/presentation';
+import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { TextInput } from '@/components/ui/text/Text';
 
-/**
- * The words a person sends with a decision: a plan's requested changes, or the feedback an offered choice
- * accepts. One multiline field, so every prompt card asks for feedback the same way.
- */
+/** Native input binding; the public presentation owner supplies the feedback field's geometry. */
+export function renderPermissionFeedbackInput(props: OfferedChoiceFeedbackInputHostProps): React.ReactNode {
+  return <TextInput {...props} style={props.style as StyleProp<TextStyle>} multiline />;
+}
+
 export function PermissionFeedbackInput(
   props: Readonly<{
     testID: string;
@@ -19,33 +22,6 @@ export function PermissionFeedbackInput(
   }>,
 ): React.ReactElement {
   const { theme } = useUnistyles();
-  return (
-    <TextInput
-      testID={props.testID}
-      style={styles.input}
-      value={props.value}
-      onChangeText={props.onChangeText}
-      placeholder={props.placeholder}
-      placeholderTextColor={theme.colors.text.secondary}
-      multiline
-      editable={props.editable}
-      {...(props.accessibilityLabel === undefined
-        ? {}
-        : { accessibilityLabel: props.accessibilityLabel })}
-      {...(props.autoFocus ? { autoFocus: true } : {})}
-    />
-  );
+  const presentationTheme = usePluginUiTheme(theme);
+  return <OfferedChoiceFeedbackInput {...props} theme={presentationTheme} renderInput={renderPermissionFeedbackInput} />;
 }
-
-const styles = StyleSheet.create((theme) => ({
-  input: {
-    borderWidth: 1,
-    borderColor: theme.colors.border.default,
-    borderRadius: 10,
-    paddingHorizontal: theme.space.s12,
-    paddingVertical: theme.space.s10,
-    minHeight: 88,
-    color: theme.colors.text.primary,
-    textAlignVertical: 'top',
-  },
-}));

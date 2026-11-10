@@ -1691,3 +1691,7 @@ export { HappierRegistryShelf, type RegistryShelfProps, type RegistryShelfProjec
 export { HappierRegistryShelfAddControl, type RegistryShelfAddControlProps, type RegistryShelfAddState, type RegistryShelfAddControlHost } from './capabilities/RegistryShelfAddControl.js';
 export { HappierRegistrySourcesUnavailable, type RegistrySourceFailure, type RegistrySourcesUnavailableProps, type RegistrySourcesUnavailableLabels, type RegistrySourcesUnavailableStateProps, type RegistrySourcesUnavailableHost } from './capabilities/RegistrySourcesUnavailable.js';
 export { HappierPoliteAccessibilityStatus } from './feedback/PoliteAccessibilityStatus.js';
+
+export { UsageMeterRow, UsageMeterStack, USAGE_METER_METRICS, type UsageMeterRowProps, type UsageMeterStackProps, type UsageMeterSize, type UsageMeterTone } from './data/UsageMeterRow.js';
+
+export { OfferedChoices, OfferedChoiceFeedbackInput, type OfferedChoice, type OfferedChoicesProps, type OfferedChoiceButtonProps, type OfferedChoiceFeedbackInputProps, type OfferedChoiceFeedbackInputHostProps } from './interaction/OfferedChoices.js';

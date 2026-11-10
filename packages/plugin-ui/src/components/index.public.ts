@@ -1739,3 +1739,6 @@ export { HorizontalScrollEdgeMask, type HorizontalScrollEdgeMaskProps } from './
 export { RegistryShelf, RegistryShelfAddControl, RegistrySourcesUnavailable, type RegistryShelfProps, type RegistryShelfProjection, type RegistryShelfUnavailable, type RegistryShelfAddControlProps, type RegistryShelfAddState, type RegistrySourceFailure, type RegistrySourcesUnavailableProps } from './RegistryShelf.js';
 export { CollectionTitleButton, CollectionTitleNaturalWidthContext, type CollectionTitleButtonProps } from './CollectionTitleButton.js';
 export { CollectionSpaceIcon, type CollectionSpaceIconProps } from './CollectionSpaceIcon.js';
+
+export { UsageMeterRow, UsageMeterStack, USAGE_METER_METRICS, type UsageMeterRowProps, type UsageMeterStackProps, type UsageMeterSize, type UsageMeterTone } from './UsageMeterRow.js';
+export { OfferedChoices, OfferedChoiceFeedbackInput, type OfferedChoice, type OfferedChoicesProps, type OfferedChoiceFeedbackInputProps } from './OfferedChoices.js';

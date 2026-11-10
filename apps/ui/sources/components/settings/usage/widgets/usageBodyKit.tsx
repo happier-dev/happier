@@ -13,10 +13,9 @@ import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemePro
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { USAGE_METER_METRICS } from '@/components/settings/connectedServices/usage/UsageMeterRow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
-import { HAPPIER_FRESHNESS_LINE_METRICS, HappierListOverflowFooter, HappierSkeletonBlock, USAGE_SUMMARY_STAT_BASIS_PX, leadHappierListRows } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FRESHNESS_LINE_METRICS, HappierListOverflowFooter, HappierSkeletonBlock, USAGE_METER_METRICS, USAGE_SUMMARY_STAT_BASIS_PX, leadHappierListRows } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import {

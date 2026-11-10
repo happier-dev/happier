@@ -27,6 +27,56 @@ inventory](https://github.com/happier-dev/happier/blob/v0.3/packages/plugin-ui/A
 `node_modules/@happier-dev/plugin-ui/API.md` in the generated project is the
 exact installed inventory. Do not guess exports from examples or app source.
 
+## Usage meter rows (0.3 development)
+
+Use `UsageMeterRow` and `UsageMeterStack` from
+`@happier-dev/plugin-ui/components` for the same usage presentation as core.
+The stack aligns name columns. Rows support inline or stacked layouts, loading,
+unknown values, remaining capacity and optional pace facts. Supply formatted
+values, reset wording and accessible labels from your domain's localization;
+the component does not read accounts, choose quota thresholds or start a timer.
+
+```tsx
+import { UsageMeterRow, UsageMeterStack } from '@happier-dev/plugin-ui/components';
+
+function Usage() {
+  return <UsageMeterStack>
+    <UsageMeterRow label="Weekly" remainingPct={42}
+      value="~42% left" valueKnown resetText="in 2h"
+      accessibilityLabel="Weekly, approximately 42% left, resets in 2 hours" />
+    <UsageMeterRow label="Requests" remainingPct={null}
+      amount value="320 requests" valueKnown
+      accessibilityLabel="Requests, 320 requests" />
+  </UsageMeterStack>;
+}
+```
+
+An uncapped `amount` with `remainingPct={null}` keeps its reported value and
+draws no bar. A known zero uses `remainingPct={0}` and keeps an empty bar.
+For missing observations, pass localized unavailable wording and
+`valueKnown={false}`. Use `size="wide"` with `wideResetText` and
+`wideAccessibilityLabel` to include clock-time wording when the row has room;
+narrow rows keep `resetText` and `accessibilityLabel`.
+
+## Offered decisions (0.3 development)
+
+`OfferedChoices` from `@happier-dev/plugin-ui/components` renders core's adaptive decision row,
+ordered list, withheld-choice explanation and optional feedback field. Supply resolved `refusal`,
+`available`, `description` and `allowsFeedback` facts per choice, a `primaryId`, localized
+`unavailableReason`, `feedbackPlaceholder` and `cancelLabel`, and `onChoose`.
+The presenter keeps opaque choice IDs and labels, sends trimmed optional feedback and preserves the
+caller's list order. Permission scope, eligibility and submission remain with their existing owners.
+
+```tsx
+<OfferedChoices choices={choices} primaryId="once"
+  disabled={false} busyChoiceId={null} unavailableReason="Ask the owner"
+  feedbackPlaceholder="What should change?" cancelLabel="Cancel"
+  onChoose={(id, feedback) => submitOfferedChoice(id, feedback)} />
+```
+
+`OfferedChoiceFeedbackInput` shares the multiline field with core's plan-change prompt.
+Both components receive their theme from the mounted plugin surface.
+
 ## Agent action launch controls (0.3 development)
 
 Use `AgentActionButton` from `@happier-dev/plugin-ui/components` when a
