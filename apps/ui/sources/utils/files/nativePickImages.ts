@@ -49,6 +49,9 @@ export async function nativePickImages(params?: Readonly<{ multiple?: boolean }>
         mediaTypes: mediaTypeImages,
         allowsMultipleSelection: multiple,
         quality: 1,
+        // Photos can preserve HEIC originals that our native image decoder cannot
+        // open. Let the platform supply a compatible representation at acquisition.
+        preferredAssetRepresentationMode: 'compatible',
     });
     if (!result || result.canceled) return [];
 

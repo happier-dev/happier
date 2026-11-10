@@ -86,6 +86,27 @@ describe('nativePickImages', () => {
         expect(picked).toEqual([{ kind: 'web', file }]);
     });
 
+    it('acquires a compatible JPEG representation of an iOS HEIC photo', async () => {
+        const ImagePicker = await import('expo-image-picker');
+        // Expo 55's iOS picker preserves the original HEIC with its current-mode
+        // fast path; compatible mode asks Photos for bytes our image consumers decode.
+        vi.mocked(ImagePicker.launchImageLibraryAsync).mockImplementationOnce(async options => {
+            const compatible = options?.preferredAssetRepresentationMode === 'compatible';
+            const extension = compatible ? 'jpg' : 'heic';
+            return { canceled: false, assets: [{
+                uri: `file:///picker/photo.${extension}`, fileName: `photo.${extension}`,
+                mimeType: compatible ? 'image/jpeg' : 'image/heic',
+                fileSize: 3452, width: 100, height: 100,
+            }] };
+        });
+
+        const { nativePickImages } = await import('./nativePickImages');
+        expect(await nativePickImages({ multiple: false })).toEqual([{
+            kind: 'native', uri: 'file:///picker/photo.jpg', name: 'photo.jpg',
+            sizeBytes: 3452, mimeType: 'image/jpeg',
+        }]);
+    });
+
     it('returns no files when the native image picker module is unavailable', async () => {
         nativeImagePickerModule.current = null;
         const ImagePicker = await import('expo-image-picker');
