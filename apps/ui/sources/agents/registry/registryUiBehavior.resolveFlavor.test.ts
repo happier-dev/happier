@@ -75,8 +75,7 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
             },
         });
 
-        expect(behavior?.permissions?.footer?.stopHandling).toBe('denyOnly');
-        expect(behavior?.permissions?.footer?.supportsExecPolicyAmendment).toBe(true);
+        expect(behavior?.contextWindow?.getDefaultContextWindowTokens?.()).toBe(372_000);
     });
 
     it('resolves layout-v1 Agent behavior only from the owner metadata view', () => {
@@ -110,11 +109,10 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
         })).toBeNull();
     });
 
-    it('keeps codex-specific permission footer overrides on the native codex agent', () => {
+    it('resolves the declared context window for the native codex flavor', () => {
         const behavior = resolveAgentUiBehaviorFromFlavor('codex');
 
-        expect(behavior?.permissions?.footer?.stopHandling).toBe('denyOnly');
-        expect(behavior?.permissions?.footer?.supportsExecPolicyAmendment).toBe(true);
+        expect(behavior?.contextWindow?.getDefaultContextWindowTokens?.()).toBe(372_000);
     });
 
     it('projects Claude context-window fallbacks through provider UI behavior', () => {
@@ -142,11 +140,10 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
         expect(contextWindow?.getContextWindowTokensForModel?.({ modelId: 'gpt-5.4-mini' })).toBe(272_000);
     });
 
-    it('uses the generic codex-decision footer behavior for opencode flavors', () => {
+    it('resolves declared guidance for opencode flavor aliases', () => {
         const behavior = resolveAgentUiBehaviorFromFlavor('open-code');
 
-        expect(behavior?.permissions?.footer?.stopHandling).toBe('denyAndAbortRun');
-        expect(behavior?.permissions?.footer?.supportsExecPolicyAmendment).toBe(false);
+        expect(behavior?.guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
     });
 
     it('uses a neutral fallback for unknown backend/provider ids instead of the custom ACP behavior profile', () => {

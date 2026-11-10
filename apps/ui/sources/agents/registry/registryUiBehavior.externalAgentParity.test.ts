@@ -396,7 +396,7 @@ describe('public Agent UI grammar conformance with the descriptor interpreter', 
         const declaration = PluginAgentUiBehaviorContributionV2Schema.parse({
             behavior: {
                 descriptorId: 'acme.uiBehavior.v1',
-                permissions: { footer: { usePermissionUpdates: true, stopHandling: 'denyAndAbortRun' } },
+                guidance: { includeInSessionGettingStartedCliExamples: true },
                 pendingDelivery: { interruptAndRun: true },
                 newSession: {
                     transcriptStorageModes: ['persisted', 'direct'],

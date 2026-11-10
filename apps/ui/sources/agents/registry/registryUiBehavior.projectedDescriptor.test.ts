@@ -56,8 +56,8 @@ async function activateServerAccount(serverUrl: string, accountId: string, serve
     return connection.home;
 }
 
-function footerDescriptor(usePermissionUpdates: boolean): Readonly<Record<string, unknown>> {
-    return { permissions: { footer: { usePermissionUpdates } } };
+function guidanceDescriptor(includeInSessionGettingStartedCliExamples: boolean): Readonly<Record<string, unknown>> {
+    return { guidance: { includeInSessionGettingStartedCliExamples } };
 }
 
 /**
@@ -175,7 +175,7 @@ describe('daemon-projected agent UI behavior descriptors', () => {
             });
     });
 
-    it('keeps opposing Stop policies isolated for two routed servers sharing a machine', async () => {
+    it('keeps opposing guidance declarations isolated for two routed servers sharing a machine', async () => {
         const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
         await activateServerAccount('https://behavior-b.example.test', 'account-b');
         const serverB = getActiveServerSnapshot().serverId;
@@ -184,23 +184,23 @@ describe('daemon-projected agent UI behavior descriptors', () => {
         const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
         const scopeA = createServerAccountScope(serverA, 'account-a');
         const scopeB = createServerAccountScope(serverB, 'account-b');
-        for (const [accountScope, stopHandling] of [
-            [scopeA, 'denyAndAbortRun'],
-            [scopeB, 'denyOnly'],
+        for (const [accountScope, includeInSessionGettingStartedCliExamples] of [
+            [scopeA, false],
+            [scopeB, true],
         ] as const) {
             publishProjectedAgentUiBehaviorDescriptors({
                 accountScope,
                 machineId: 'shared-machine',
                 descriptorsByAgentId: {
-                    [EXTERNAL_AGENT_ID]: { permissions: { footer: { stopHandling } } },
+                    [EXTERNAL_AGENT_ID]: { guidance: { includeInSessionGettingStartedCliExamples } },
                 },
             });
         }
         const metadata = sessionOnMachine('shared-machine');
         const behaviorA = resolveAgentUiBehaviorFromSessionMetadata(metadata, scopeA);
         const behaviorB = resolveAgentUiBehaviorFromSessionMetadata(metadata, scopeB);
-        expect(behaviorA?.permissions?.footer?.stopHandling).toBe('denyAndAbortRun');
-        expect(behaviorB?.permissions?.footer?.stopHandling).toBe('denyOnly');
+        expect(behaviorA?.guidance?.includeInSessionGettingStartedCliExamples).toBe(false);
+        expect(behaviorB?.guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
         expect(resolveAgentUiBehaviorFromSessionMetadata(metadata, scopeA)).toBe(behaviorA);
     });
 
@@ -213,11 +213,10 @@ describe('daemon-projected agent UI behavior descriptors', () => {
             machineId: 'shared-machine',
             accountLifetime,
             descriptorsByAgentId: {
-                [EXTERNAL_AGENT_ID]: { permissions: { footer: { stopHandling: 'denyOnly' } } },
+                [EXTERNAL_AGENT_ID]: { guidance: { includeInSessionGettingStartedCliExamples: true } },
             },
         });
-        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, 'shared-machine').permissions?.footer?.stopHandling)
-            .toBe('denyAndAbortRun');
+        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, 'shared-machine').guidance).toBeUndefined();
     });
 
     it('keys resume experiment reads to the exact machine declaration, never another machine', () => {
@@ -296,14 +295,7 @@ describe('daemon-projected agent UI behavior descriptors', () => {
                     agentId: EXTERNAL_AGENT_ID,
                     version: 1,
                     behavior: {
-                        permissions: {
-                            footer: {
-                                usePermissionUpdates: true,
-                                forceReadOnlyAfterStop: false,
-                                supportsExecPolicyAmendment: true,
-                                stopHandling: 'denyOnly',
-                            },
-                        },
+                        guidance: { includeInSessionGettingStartedCliExamples: true },
                         newSession: { transcriptStorageModes: ['persisted', 'direct'] },
                     },
                 },
@@ -312,12 +304,7 @@ describe('daemon-projected agent UI behavior descriptors', () => {
 
         const behavior = resolveAgentUiBehavior(EXTERNAL_AGENT_ID);
 
-        expect(behavior.permissions?.footer).toEqual({
-            usePermissionUpdates: true,
-            forceReadOnlyAfterStop: false,
-            supportsExecPolicyAmendment: true,
-            stopHandling: 'denyOnly',
-        });
+        expect(behavior.guidance).toEqual({ includeInSessionGettingStartedCliExamples: true });
         expect(supportsStorageMode(EXTERNAL_AGENT_ID, 'persisted')).toBe(true);
         expect(supportsStorageMode(EXTERNAL_AGENT_ID, 'direct')).toBe(true);
     });
@@ -326,7 +313,7 @@ describe('daemon-projected agent UI behavior descriptors', () => {
         publishProjectedAgentUiBehaviorDescriptors({
             machineId: 'machine-a',
             descriptorsByAgentId: {
-                [EXTERNAL_AGENT_ID]: { permissions: { footer: { usePermissionUpdates: true } } },
+                [EXTERNAL_AGENT_ID]: { guidance: { includeInSessionGettingStartedCliExamples: true } },
             },
         });
 
@@ -385,12 +372,7 @@ describe('daemon-projected agent UI behavior descriptors', () => {
     it('keeps the unknown fallback for an external Agent that ships no descriptor', () => {
         const behavior = resolveAgentUiBehavior('acme.undeclared');
 
-        expect(behavior.permissions?.footer).toEqual({
-            usePermissionUpdates: false,
-            forceReadOnlyAfterStop: true,
-            supportsExecPolicyAmendment: false,
-            stopHandling: 'denyAndAbortRun',
-        });
+        expect(behavior.guidance).toBeUndefined();
         expect(supportsStorageMode('acme.undeclared', 'persisted')).toBe(false);
     });
 
@@ -400,14 +382,14 @@ describe('daemon-projected agent UI behavior descriptors', () => {
         publishProjectedAgentUiBehaviorDescriptors({
             machineId: 'machine-a',
             descriptorsByAgentId: {
-                claude: { permissions: { footer: { usePermissionUpdates: false, stopHandling: 'denyOnly' } } },
+                claude: { guidance: { includeInSessionGettingStartedCliExamples: false } },
             },
         });
 
         expect(resolveAgentUiBehavior('claude')).toBe(before);
         expect(resolveAgentUiBehavior('claude', 'machine-a')).not.toBe(before);
-        expect(resolveAgentUiBehavior('claude', 'machine-a').permissions?.footer?.stopHandling)
-            .toBe('denyOnly');
+        expect(resolveAgentUiBehavior('claude', 'machine-a').guidance?.includeInSessionGettingStartedCliExamples)
+            .toBe(false);
         expect(resolveAgentUiBehavior('claude', 'machine-b')).toBe(before);
     });
 
@@ -415,11 +397,11 @@ describe('daemon-projected agent UI behavior descriptors', () => {
         await activateServerAccount('https://scoped.example.test', 'account-1');
         publishProjectedAgentUiBehaviorDescriptors({
             machineId: 'machine-a',
-            descriptorsByAgentId: { [EXTERNAL_AGENT_ID]: footerDescriptor(true) },
+            descriptorsByAgentId: { [EXTERNAL_AGENT_ID]: guidanceDescriptor(true) },
         });
         publishProjectedAgentUiBehaviorDescriptors({
             machineId: 'machine-b',
-            descriptorsByAgentId: { [EXTERNAL_AGENT_ID]: footerDescriptor(false) },
+            descriptorsByAgentId: { [EXTERNAL_AGENT_ID]: guidanceDescriptor(false) },
         });
 
         const sessionOnB = sessionOnMachine('machine-b');
@@ -428,9 +410,9 @@ describe('daemon-projected agent UI behavior descriptors', () => {
         // Lexicographically lowest machine id is 'machine-a'. A machine-blind
         // resolution would hand machine-a's declaration to a Session that runs
         // on machine-b.
-        expect(resolveAgentUiBehaviorFromSessionMetadata(sessionOnB)?.permissions?.footer?.usePermissionUpdates)
+        expect(resolveAgentUiBehaviorFromSessionMetadata(sessionOnB)?.guidance?.includeInSessionGettingStartedCliExamples)
             .toBe(false);
-        expect(resolveAgentUiBehaviorFromSessionMetadata(sessionOnA)?.permissions?.footer?.usePermissionUpdates)
+        expect(resolveAgentUiBehaviorFromSessionMetadata(sessionOnA)?.guidance?.includeInSessionGettingStartedCliExamples)
             .toBe(true);
     });
 
@@ -464,13 +446,13 @@ describe('daemon-projected agent UI behavior descriptors', () => {
         await activateServerAccount('https://scoped.example.test', 'account-1');
         publishProjectedAgentUiBehaviorDescriptors({
             machineId: 'machine-a',
-            descriptorsByAgentId: { [EXTERNAL_AGENT_ID]: footerDescriptor(true) },
+            descriptorsByAgentId: { [EXTERNAL_AGENT_ID]: guidanceDescriptor(true) },
         });
 
         const sessionOnB = sessionOnMachine('machine-b');
 
-        expect(resolveAgentUiBehaviorFromSessionMetadata(sessionOnB)?.permissions?.footer?.usePermissionUpdates)
-            .toBe(false);
+        expect(resolveAgentUiBehaviorFromSessionMetadata(sessionOnB)?.guidance?.includeInSessionGettingStartedCliExamples)
+            .toBeUndefined();
     });
 
     it('keeps same-machine declarations separate across concurrent Home Accounts', async () => {
@@ -480,45 +462,45 @@ describe('daemon-projected agent UI behavior descriptors', () => {
         publishProjectedAgentUiBehaviorDescriptors({
             accountScope: homeA,
             machineId: 'shared-machine',
-            descriptorsByAgentId: { [EXTERNAL_AGENT_ID]: footerDescriptor(true) },
+            descriptorsByAgentId: { [EXTERNAL_AGENT_ID]: guidanceDescriptor(true) },
         });
         publishProjectedAgentUiBehaviorDescriptors({
             accountScope: homeB,
             machineId: 'shared-machine',
-            descriptorsByAgentId: { [EXTERNAL_AGENT_ID]: footerDescriptor(false) },
+            descriptorsByAgentId: { [EXTERNAL_AGENT_ID]: guidanceDescriptor(false) },
         });
         expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, 'shared-machine', homeA)
-            .permissions?.footer?.usePermissionUpdates).toBe(true);
+            .guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
         expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, 'shared-machine', homeB)
-            .permissions?.footer?.usePermissionUpdates).toBe(false);
+            .guidance?.includeInSessionGettingStartedCliExamples).toBe(false);
         expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, 'shared-machine', {
             ...homeA, accountId: 'replacement-account',
-        }).permissions?.footer?.usePermissionUpdates).toBe(false);
+        }).guidance?.includeInSessionGettingStartedCliExamples).toBeUndefined();
         expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, 'shared-machine', null)
-            .permissions?.footer?.usePermissionUpdates).toBe(false);
+            .guidance?.includeInSessionGettingStartedCliExamples).toBeUndefined();
         publishProjectedAgentUiBehaviorDescriptors({
             accountScope: homeB, machineId: 'shared-machine', descriptorsByAgentId: {},
         });
         expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, 'shared-machine', homeA)
-            .permissions?.footer?.usePermissionUpdates).toBe(true);
+            .guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
     });
 
     it('never reads a descriptor published under a retired Account', async () => {
         await activateServerAccount('https://scoped.example.test', 'account-1');
         publishProjectedAgentUiBehaviorDescriptors({
             machineId: 'machine-a',
-            descriptorsByAgentId: { [EXTERNAL_AGENT_ID]: footerDescriptor(true) },
+            descriptorsByAgentId: { [EXTERNAL_AGENT_ID]: guidanceDescriptor(true) },
         });
-        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, 'machine-a').permissions?.footer?.usePermissionUpdates)
+        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, 'machine-a').guidance?.includeInSessionGettingStartedCliExamples)
             .toBe(true);
 
         await activateServerAccount('https://scoped.example.test', 'account-2');
 
         // The store is a module global with no Account key of its own before
         // this fence: account-2 would inherit account-1's Agent declarations.
-        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, 'machine-a').permissions?.footer?.usePermissionUpdates)
-            .toBe(false);
-        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID).permissions?.footer?.usePermissionUpdates).toBe(false);
+        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, 'machine-a').guidance?.includeInSessionGettingStartedCliExamples)
+            .toBeUndefined();
+        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID).guidance?.includeInSessionGettingStartedCliExamples).toBeUndefined();
     });
 
     it('reports the interpreter refusals an external descriptor produced, per machine', async () => {
@@ -548,13 +530,13 @@ describe('daemon-projected agent UI behavior descriptors', () => {
         publishProjectedAgentUiBehaviorDescriptors({
             machineId: 'machine-a',
             descriptorsByAgentId: {
-                [EXTERNAL_AGENT_ID]: { permissions: { footer: { usePermissionUpdates: true } } },
+                [EXTERNAL_AGENT_ID]: { guidance: { includeInSessionGettingStartedCliExamples: true } },
             },
         });
-        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID).permissions?.footer?.usePermissionUpdates).toBe(true);
+        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID).guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
 
         publishProjectedAgentUiBehaviorDescriptors({ machineId: 'machine-a', descriptorsByAgentId: {} });
 
-        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID).permissions?.footer?.usePermissionUpdates).toBe(false);
+        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID).guidance?.includeInSessionGettingStartedCliExamples).toBeUndefined();
     });
 });

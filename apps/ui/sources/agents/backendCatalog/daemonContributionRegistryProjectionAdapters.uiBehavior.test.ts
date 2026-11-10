@@ -26,14 +26,7 @@ function projectionWithExternalAgent(): PluginProjectionV2 {
                 providerOwnedEnvironmentKeys: [],
                 ui: {
                     behavior: {
-                        permissions: {
-                            footer: {
-                                usePermissionUpdates: true,
-                                forceReadOnlyAfterStop: false,
-                                supportsExecPolicyAmendment: true,
-                                stopHandling: 'denyOnly',
-                            },
-                        },
+                        guidance: { includeInSessionGettingStartedCliExamples: true },
                         newSession: { transcriptStorageModes: ['direct'] },
                     },
                     session: {
@@ -60,14 +53,7 @@ function projectionWithExternalAgent(): PluginProjectionV2 {
                 providerOwnedEnvironmentKeys: [],
                 ui: {
                     behavior: {
-                        permissions: {
-                            footer: {
-                                usePermissionUpdates: true,
-                                forceReadOnlyAfterStop: false,
-                                supportsExecPolicyAmendment: true,
-                                stopHandling: 'denyOnly',
-                            },
-                        },
+                        guidance: { includeInSessionGettingStartedCliExamples: true },
                     },
                 },
             },
@@ -111,12 +97,7 @@ describe('daemon-projected Agent UI behavior descriptors', () => {
 
         publishProjectedAgentUiBehaviorDescriptors({ machineId: 'm1', descriptorsByAgentId });
 
-        expect(resolveAgentUiBehavior('acme.agent').permissions?.footer).toEqual({
-            usePermissionUpdates: true,
-            forceReadOnlyAfterStop: false,
-            supportsExecPolicyAmendment: true,
-            stopHandling: 'denyOnly',
-        });
-        expect(resolveAgentUiBehavior('acme.plain').permissions?.footer?.stopHandling).toBe('denyAndAbortRun');
+        expect(resolveAgentUiBehavior('acme.agent').guidance).toEqual({ includeInSessionGettingStartedCliExamples: true });
+        expect(resolveAgentUiBehavior('acme.plain').guidance).toBeUndefined();
     });
 });

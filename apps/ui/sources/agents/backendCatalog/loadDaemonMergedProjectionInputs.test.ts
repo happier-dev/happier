@@ -710,10 +710,10 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
                     [agentId]: {
                         id: agentId, identity: agentIdentity,
                         title: 'Acme', channel: 'plugin', providerOwnedEnvironmentKeys: [],
-                        ui: { behavior: { permissions: { footer: {
-                            usePermissionUpdates: serverId === homeB.id,
-                            stopHandling: 'denyOnly',
-                        } } } },
+                        ui: { behavior: {
+                            guidance: { includeInSessionGettingStartedCliExamples: serverId === homeB.id },
+                            contextWindow: { defaultTokens: 100_000 },
+                        } },
                     },
                 },
             },
@@ -726,9 +726,9 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             .map(({ serverUrl, token }) => [serverUrl, token ? parseToken(token) : null])).toEqual([
             [homeA.serverUrl, 'account-a'], [homeB.serverUrl, 'account-b'],
         ]);
-        expect(resolveAgentUiBehavior(agentId, 'shared-machine', scopeB).permissions?.footer?.usePermissionUpdates).toBe(true);
-        expect(resolveAgentUiBehavior(agentId, 'shared-machine').permissions?.footer?.usePermissionUpdates).toBe(false);
-        expect(resolveAgentUiBehavior(agentId, 'shared-machine', scopeA).permissions?.footer?.stopHandling).toBe('denyOnly');
+        expect(resolveAgentUiBehavior(agentId, 'shared-machine', scopeB).guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
+        expect(resolveAgentUiBehavior(agentId, 'shared-machine').guidance?.includeInSessionGettingStartedCliExamples).toBe(false);
+        expect(resolveAgentUiBehavior(agentId, 'shared-machine', scopeA).contextWindow?.getDefaultContextWindowTokens?.()).toBe(100_000);
 
         let complete!: (value: ReturnType<typeof projectionForHome>) => void;
         projectionDescribeMock.mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
@@ -739,8 +739,8 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         await expect(pending).resolves.toBeNull();
         expect(readCachedDaemonMergedProjectionCacheEntry({ machineId: 'shared-machine', serverId: homeB.id })).toBeNull();
         expect(readCachedDaemonMergedProjectionCacheEntry({ machineId: 'shared-machine', serverId: homeA.id })?.kind).toBe('ready');
-        expect(resolveAgentUiBehavior(agentId, 'shared-machine', scopeB).permissions?.footer?.usePermissionUpdates).toBe(false);
-        expect(resolveAgentUiBehavior(agentId, 'shared-machine', scopeA).permissions?.footer?.stopHandling).toBe('denyOnly');
+        expect(resolveAgentUiBehavior(agentId, 'shared-machine', scopeB).guidance?.includeInSessionGettingStartedCliExamples).toBeUndefined();
+        expect(resolveAgentUiBehavior(agentId, 'shared-machine', scopeA).contextWindow?.getDefaultContextWindowTokens?.()).toBe(100_000);
     });
 
     it('retains the last ready projection as inert cached metadata after a transport error', async () => {
