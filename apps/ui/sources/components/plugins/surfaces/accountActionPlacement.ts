@@ -2,6 +2,8 @@ import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/action
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { randomUUID } from '@/platform/randomUUID';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { readPluginActionFailureAuthorPayload, readPluginActionFailureHandlerInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import { ActionExecuteResultSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -58,8 +60,11 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
             const parsed = ActionExecuteResultSchema.safeParse(response);
             if (parsed.success && !parsed.data.ok) {
                 const failure = parsed.data;
-                throw new PluginError({ code: failure.errorCode, message: failure.error,
-                    failureCause: failure.failureCause ?? projectActionFailureCauseV1({ code: failure.errorCode }, 'dispatch') });
+                const data = { code: failure.errorCode, message: failure.error,
+                    ...readPluginActionFailureAuthorPayload(failure.details),
+                    failureCause: failure.failureCause ?? projectActionFailureCauseV1({ code: failure.errorCode }, 'dispatch') };
+                throw readPluginActionFailureHandlerInvocation({ code: failure.errorCode, message: failure.error, data: failure.details })
+                    ? createPluginActionHandlerNotStartedError(data) : new PluginError(data);
             }
             return response;
         } finally { account.dispose(); }

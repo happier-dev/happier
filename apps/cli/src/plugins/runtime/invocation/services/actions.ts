@@ -31,7 +31,7 @@ import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protoco
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionPluginCaller, ActionCaller, ActionId } from '@happier-dev/protocol/actions';
 import { arePluginMachineMaterializationRefsEqual, getPluginMachineExecutionRouting, PluginMachineExecutionOriginV1Schema, PluginMachineExecutionRoutingV1Schema, type PluginMachineExecutionRoutingV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { readPluginActionFailureAuthorPayload, readPluginActionFailureHandlerInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { QualifiedConnectedAccountRef, PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
 import type { PluginUiSelectedActionInputCarrierV1, PluginUiTargetedContributionOperationV1 } from '@happier-dev/protocol/plugins/ui';
@@ -141,7 +141,8 @@ export function projectContributedActionExecuteResult(result: ActionExecuteResul
     return { status: 'failed', code: result.errorCode, message: result.error,
         ...(pluginFailure ? { data: pluginFailure,
             ...(typeof pluginFailure.retryable === 'boolean' ? { retryable: pluginFailure.retryable } : {}),
-            ...(pluginFailure.actionHandlerInvocation === 'notStarted' ? { actionHandlerInvocation: 'notStarted' as const } : {}),
+            ...(readPluginActionFailureHandlerInvocation({ code: result.errorCode, message: result.error, data: pluginFailure })
+                ? { actionHandlerInvocation: 'notStarted' as const } : {}),
         } : {}) };
 }
 

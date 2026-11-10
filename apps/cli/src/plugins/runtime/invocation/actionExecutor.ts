@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createPluginActionPresentUserGate, projectPluginActionUnavailableOutcomeCode, readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
+import type { CurrentIntentMismatchV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
 import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalExecutionV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -129,7 +130,7 @@ export type TargetActionCurrentIntentResult = Readonly<
     }>) => Promise<void>;
   }
   | { status: 'deferred'; artifactId: string }
-  | { status: 'rejected' | 'unavailable'; code: string }
+  | { status: 'rejected' | 'unavailable'; code: string; mismatch?: CurrentIntentMismatchV1 }
 >;
 
 function stable(value: unknown): string {
@@ -166,12 +167,13 @@ export function fingerprintTargetActionPolicy(action: NormalizedTargetActionPoli
   })).digest('hex');
 }
 
-function unavailable(code: string): TargetActionExecutionResult {
+function unavailable(code: string, data?: JsonValue): TargetActionExecutionResult {
   return Object.freeze({
     status: 'unavailable',
     code,
     message: code,
     actionHandlerInvocation: 'notStarted',
+    ...(data === undefined ? {} : { data }),
   });
 }
 
@@ -431,7 +433,7 @@ export function createTargetActionExecutor(deps: Readonly<{
         }
         return Object.freeze({
           kind: 'settled' as const,
-          result: await finish(unavailable(admission.code)),
+          result: await finish(unavailable(admission.code, admission.data)),
         });
       }
       const { action: admittedAction, serviceBinding } = admission.action;

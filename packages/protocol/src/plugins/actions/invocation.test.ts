@@ -7,6 +7,7 @@ import {
   createPluginActionPresentUserGate,
   fingerprintPluginActionCurrentIntent,
   projectPluginActionUnavailableOutcomeCode,
+  readPluginActionFailureHandlerInvocation,
 } from './invocation.js';
 import {
   defineProtocolLiteral,
@@ -439,6 +440,45 @@ describe('createPluginActionInvocation', () => {
       status: 'unavailable',
       code: 'plugin_action_generation_retired',
     });
+  });
+
+  it.each(['returned fingerprint', 'changed policy'] as const)('identifies a current-intent mismatch without exposing values: %s', async phase => {
+    let approved = false;
+    const gate = createPluginActionPresentUserGate({
+      resolve: () => {
+        const resolution = currentIntentResolution();
+        return phase === 'changed policy' && approved
+          ? { ...resolution, policy: { ...resolution.policy, fingerprintContext: { accountId: 'private-other-account' } } }
+          : resolution;
+      },
+      requestCurrentIntent: async ({ fingerprint }) => {
+        approved = true;
+        return { status: 'approved', fingerprint: phase === 'returned fingerprint' ? 'private-other-fingerprint' : fingerprint };
+      },
+    });
+    const result = await gate.admit({ input: { confidential: 'private-input' }, surface: 'ui', invocationSurface: 'ui' });
+    expect(result).toEqual({ status: 'unavailable', code: 'plugin_action_current_intent_mismatch',
+      message: 'plugin_action_current_intent_mismatch', data: { details: { currentIntentMismatch: { field: 'fingerprint_source' } } } });
+  });
+
+  it.each(['matching', 'other failure', 'bare marker'] as const)('reads the dispatch proof only from its matching public failure envelope: %s', kind => {
+    const data = kind === 'bare marker' ? { actionHandlerInvocation: 'notStarted' }
+      : { name: 'PluginError', code: kind === 'matching' ? 'source_refused' : 'other_failure',
+        message: 'Source refused', actionHandlerInvocation: 'notStarted' };
+    expect(readPluginActionFailureHandlerInvocation({ code: 'source_refused', message: 'Source refused', data }))
+      .toBe(kind === 'matching' ? 'notStarted' : undefined);
+  });
+
+  it('retains an admission mismatch detail before the handler can start', async () => {
+    const invocation = createInvocation();
+    const data = { details: { currentIntentMismatch: { field: 'fingerprint_source' } } };
+    const prepared = invocation.prepare({});
+    if (prepared.kind !== 'ready') throw new Error('Expected valid prepared input');
+    const result = await prepared.invoke({ preDispatch: () => ({ status: 'unavailable',
+      code: 'plugin_action_current_intent_mismatch', message: 'plugin_action_current_intent_mismatch', data }),
+      handler: () => { throw new Error('Refused admission must not start the handler'); } });
+    expect(result).toEqual({ status: 'unavailable', code: 'plugin_action_current_intent_mismatch',
+      message: 'plugin_action_current_intent_mismatch', actionHandlerInvocation: 'notStarted', data });
   });
 
   it('rejects SDK byte ceilings and unsafe integers before Action dispatch', async () => {

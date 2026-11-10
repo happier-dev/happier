@@ -1,10 +1,12 @@
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE,
     PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
     projectPluginActionUnavailableOutcomeCode,
     readPluginActionFailureAuthorPayload,
+    readPluginActionFailureHandlerInvocation,
     pluginActionDeclarationIsReadOnlyForInput,
     type PluginActionInvocationResult,
 } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -33,6 +35,7 @@ export type PluginSurfaceActionDispatchOutcome =
         phase?: PluginUiHostApiErrorPayloadV1['phase'];
         details?: PluginUiJsonValueV1;
         failureCause?: ActionFailureCauseV1;
+        actionHandlerInvocation?: 'notStarted';
     }>;
 
 type Failure = Extract<PluginSurfaceActionDispatchOutcome, Readonly<{ ok: false }>>;
@@ -50,6 +53,7 @@ export function createPluginSurfaceActionFailure(code: string, reason: string, a
         ...(author?.phase === undefined ? {} : { phase: author.phase }),
         ...(author?.details === undefined ? {} : { details: author.details }),
         ...(author?.failureCause === undefined ? {} : { failureCause: author.failureCause }),
+        ...(author?.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: author.actionHandlerInvocation }),
     };
 }
 
@@ -61,20 +65,22 @@ export function createPluginSurfaceActionFailurePayload(outcome: Failure,
 }
 
 export function createPluginSurfaceActionFailureError(outcome: Failure, requestId?: string): PluginError {
-    return new PluginError({
+    const data = {
         ...createPluginSurfaceHostApiPluginErrorData(outcome.reason === 'plugin_ui_action_outcome_unknown'
             ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE : outcome.reason,
             outcome.diagnostics ?? [outcome.reason], outcome.message, { ...outcome, requestId }),
         ...(outcome.remediation === undefined ? {} : { remediation: outcome.remediation }),
         ...(outcome.details === undefined ? {} : { details: outcome.details }),
         ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }),
-    });
+    };
+    return outcome.actionHandlerInvocation === 'notStarted'
+        ? createPluginActionHandlerNotStartedError(data) : new PluginError(data);
 }
 
 /** A deliberate decline remains a decision, not an unavailable operation. */
-export function actionDeclinedFailure(code: string): Failure | null {
+export function actionDeclinedFailure(code: string, author?: FailureMetadata): Failure | null {
     return code === PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE
-        ? createPluginSurfaceActionFailure('denied', code) : null;
+        ? createPluginSurfaceActionFailure('denied', code, author) : null;
 }
 
 /** Unknown mutations retain indeterminate effects; declared reads allow manual retry. */
@@ -91,7 +97,7 @@ export function actionOutcomeUnknownFailure(
 }
 
 export function clientActionFailure(code: string, author?: FailureMetadata): Failure {
-    return actionDeclinedFailure(code) ?? createPluginSurfaceActionFailure(
+    return actionDeclinedFailure(code, author) ?? createPluginSurfaceActionFailure(
         author?.layer ? code : code === 'plugin_action_generation_retired' ? 'stale_surface' : 'unavailable', code, author);
 }
 
@@ -102,7 +108,11 @@ export function clientActionPreparationFailure(error: unknown): Failure {
     const metadata = readPluginSurfaceHostApiFailureMetadata(error);
     const authored = isPluginError(error) ? error : undefined;
     const author = readPluginActionFailureAuthorPayload(authored?.data);
+    const actionHandlerInvocation = authored ? readPluginActionFailureHandlerInvocation({
+        code: authored.code, message: authored.message, data: authored.data,
+    }) : undefined;
     return clientActionFailure(code, {
+        ...(actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation }),
         ...metadata,
         ...(authored?.data.message === undefined
             ? metadata.layer ? { message: resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: code }).body } : {}
@@ -127,11 +137,18 @@ export function projectClientActionInvocationFailure(
     if (result.status === 'invalid') return clientActionFailure(result.code);
     if (result.status === 'unavailable') {
         const code = projectPluginActionUnavailableOutcomeCode(result.code, result.actionHandlerInvocation);
-        return actionOutcomeUnknownFailure(code, declaration, input) ?? clientActionFailure(code);
+        const author = readPluginActionFailureAuthorPayload(result.data);
+        const metadata: FailureMetadata = {
+            ...(author.details === undefined ? {} : { details: author.details }),
+            ...(result.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: result.actionHandlerInvocation }),
+        };
+        return actionOutcomeUnknownFailure(code, declaration, input, metadata) ?? clientActionFailure(code, metadata);
     }
     const author = readPluginActionFailureAuthorPayload(result.data);
+    const actionHandlerInvocation = result.actionHandlerInvocation ?? readPluginActionFailureHandlerInvocation(result);
     const metadata: FailureMetadata = {
         message: result.message,
+        ...(actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation }),
         ...readPluginSurfaceHostApiFailureMetadata(author.details),
         ...(author.details === undefined ? {} : { details: author.details }),
         ...(author.failureCause === undefined ? {} : { failureCause: author.failureCause }),

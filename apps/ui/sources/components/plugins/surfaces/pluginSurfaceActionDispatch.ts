@@ -1535,6 +1535,7 @@ async function executeClientContributedAction(
                         status: 'unavailable' as const,
                         code: admission.code,
                         message: admission.message,
+                        ...(admission.data === undefined ? {} : { data: admission.data }),
                     });
             }
             // Approval is followed by the shared gate's fresh policy pass; this
@@ -2458,7 +2459,7 @@ async function executeContributedAction(
     }
     const outcomeUnknown = actionOutcomeUnknownFailure(result.result.code, projectedAction, actionInput);
     if (outcomeUnknown) return outcomeUnknown;
-    return staleDaemonProjectionFailure(result.result.code, projectionScope, projectionRevision, binding.accountLifetime)
+    const refused = staleDaemonProjectionFailure(result.result.code, projectionScope, projectionRevision, binding.accountLifetime)
         ?? actionDeclinedFailure(result.result.code)
         ?? failure('unavailable', result.result.code, {
             ...(result.result.message === undefined ? {} : { message: result.result.message }),
@@ -2469,6 +2470,8 @@ async function executeContributedAction(
                 ? {}
                 : { remediation: result.result.remediation }),
         });
+    return result.result.actionHandlerInvocation === 'notStarted'
+        ? { ...refused, actionHandlerInvocation: result.result.actionHandlerInvocation } : refused;
     };
     if (input.spokenActionRequest && (input.invocationSurface ?? 'ui') === 'voice') {
         return executePreparedPluginSurfaceAction({ input, identity, action: projectedAction,

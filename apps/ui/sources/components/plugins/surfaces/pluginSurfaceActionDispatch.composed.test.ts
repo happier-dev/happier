@@ -753,6 +753,7 @@ function resolveDaemonTargetAction(
 describe('mounted picker approval through the Account relay to the daemon', () => {
     it.each([
         { name: 'executes the exact approved mutation once without another approval Artifact', change: 'none' },
+        { name: 'executes the exact bundled approved mutation once', change: 'bundled' },
         { name: 'retains the acquired declaration when the mounted Account row is cold', change: 'cold-declaration' },
         { name: 'does not execute a declined picker mutation', change: 'decline' },
         { name: 'does not transfer consent to a changed Account source', change: 'source' },
@@ -780,7 +781,9 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         let secondArtifacts = 0;
         let receivedCaller: unknown;
         let receivedAuthority: unknown;
-        const accountSource = { kind: 'account_release' as const, pluginId, version: '1.2.3', archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
+        const accountSource = change === 'bundled'
+            ? { kind: 'bundled_first_party' as const, packagedRuntime: { kind: 'cli_version_root' as const, versionRootId: 'fixture-cli-root' } }
+            : { kind: 'account_release' as const, pluginId, version: '1.2.3', archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
         const runtimeOptions = { localId, surfaces: ['ui', 'plugin'] as const, placementBindings: ['detailsPanel'] as const, executionTarget: 'account' as const,
             pluginVersion: '1.2.3', sourceCustody: accountSource, onInput: (value: unknown) => expect(value).toEqual(input) };
         const runtime = createExternalActionRuntime('global', pluginId, () => { effects++; }, undefined, undefined,
@@ -822,7 +825,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
             serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'machine-local',
             actionId: 'action.invoke', tokenEpoch: 0, failure: value => {
                 const failure = ActionExecuteFailureSchema.safeParse(value);
-                return failure.success ? { errorCode: failure.data.errorCode, error: failure.data.error } : null;
+                return failure.success ? failure.data : null;
             }, execute: async (_value, context) => {
                 if (changedRuntime !== runtime) await published.adopt(changedRuntime, change === 'source' ? `sha256:${'b'.repeat(64)}` : undefined);
                 receivedCaller = context.invocation.caller;
@@ -922,10 +925,10 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                     await editor.onCommit('alice');
                 }
             });
-            if (change === 'none' || change === 'cold-declaration') {
+            if (change === 'none' || change === 'cold-declaration' || change === 'bundled') {
                 expect(settledExecution, JSON.stringify({ confirmations, effects, secondArtifacts, receivedCaller, receivedAuthority, requests: network.httpRequests.map(request => ({ method: request.method, path: new URL(request.url).pathname })), execution: settledExecution })).toMatchObject({ status: 'success' });
             }
-            expect({ settledStatus, effects, secondArtifacts }).toEqual(change === 'none' || change === 'cold-declaration' || change === 'raw-host'
+            expect({ settledStatus, effects, secondArtifacts }).toEqual(change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'raw-host'
                 ? { settledStatus: change === 'raw-host' ? 'idle' : 'success', effects: 1, secondArtifacts: 0 }
                 : { settledStatus: rawHost ? 'idle' : 'error', effects: 0, secondArtifacts: 0 });
             expect({ confirmations, execution: settledExecution }).toMatchObject({ confirmations: rawHost ? 0 : 1 });
@@ -2265,6 +2268,64 @@ describe('Account Action placement through the executable dispatcher', () => {
             expect(reads).toBe(2);
             expect(handler).toHaveBeenCalledTimes(2);
         } finally { storage.setState(previous); await activation.composition.unload(); accountLifetime.retire(); }
+    });
+
+    it('retains the Account refusal proof through the HTTP carrier and client invocation', async () => {
+        const { executeAccountActionAtRuntimeHost } = await import('./accountActionPlacement');
+        const { createPluginSurfaceActionFailureError, projectClientActionInvocationFailure } = await import('./actionFailure');
+        const { triageTaskWriteInvocationFailureV1 } = await import('../../../../../../packages/plugins/triage/src/actions/taskWriteFailure');
+        const { createPluginActionInvocation } = await import('@happier-dev/protocol/plugins/actions/invocation');
+        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const home = rpcHomes.get('server-client-action')!;
+        const lifetime = clientAccountLifetime(home.id);
+        const code = 'plugin_action_current_intent_mismatch';
+        const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
+            serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'machine-local',
+            actionId: 'action.invoke', tokenEpoch: 0, failure: () => ({ errorCode: code, error: code,
+                details: { name: 'PluginError', code, message: code, actionHandlerInvocation: 'notStarted' } }),
+            execute: () => ({ ok: false, errorCode: code, error: code,
+                details: { name: 'PluginError', code, message: code, actionHandlerInvocation: 'notStarted' } }),
+        });
+        network.setHttpResponder(async (url, init) => await boundary.handle(new URL(String(url)), init)
+            ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
+        try {
+            const invocation = createPluginActionInvocation({ pluginId: 'acme.releases', localId: 'publish',
+                occurrenceSignal: new AbortController().signal, isCurrent: () => true });
+            const result = await invocation.invoke({}, { handler: () => executeAccountActionAtRuntimeHost({
+                accountScope: lifetime.scope, action: { pluginId: 'acme.releases', localId: 'publish' },
+                execution: { target: 'account', account: { artifactId: 'fixture', exportName: 'publish' } }, input: {},
+                context: { surface: 'plugin', authority: 'account_automation',
+                    externalActionTarget: { kind: 'machine', machineId: boundary.machine.id } },
+                signal: new AbortController().signal, executeLocal: () => { throw new Error('Expected relay'); },
+            }) });
+            expect(result.status).toBe('failed');
+            if (result.status === 'executed') throw new Error('Expected refusal');
+            const outcome = projectClientActionInvocationFailure(result, { readOnly: false }, {});
+            expect(triageTaskWriteInvocationFailureV1(createPluginSurfaceActionFailureError(outcome)))
+                .toEqual({ kind: 'refused', reason: code });
+        } finally { lifetime.retire(); }
+    });
+
+    it.each(['notStarted', undefined] as const)('retains the daemon dispatch evidence for a nested source refusal (%s)', async actionHandlerInvocation => {
+        const { createPluginSurfaceActionFailureError } = await import('./actionFailure');
+        const { triageTaskWriteInvocationFailureV1 } = await import('../../../../../../packages/plugins/triage/src/actions/taskWriteFailure');
+        // The daemon RPC is a process boundary; the real dispatcher, error
+        // projection and Triage outcome owner remain underneath this response.
+        const contributed: PluginSurfaceContributedActionTransport = async () => ({
+            supported: true, result: { ok: false, code: 'plugin_action_current_intent_unavailable',
+                ...(actionHandlerInvocation ? { actionHandlerInvocation } : {}) },
+        });
+        const outcome = await dispatchPluginSurfaceAction({ action: { pluginId: 'acme.releases', localId: 'publish' },
+            input: { serverId: 'server-composed' },
+            resolveContributedAction: resolveConfirmedDaemonTargetAction,
+            requestCurrentIntent: async ({ fingerprint }) => ({ status: 'approved', fingerprint }),
+            contributedAction: { machineId: 'machine-1', serverId: 'server-composed', execute: contributed },
+        });
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) throw new Error('Expected source refusal');
+        expect(triageTaskWriteInvocationFailureV1(createPluginSurfaceActionFailureError(outcome)))
+            .toEqual(actionHandlerInvocation ? { kind: 'refused', reason: 'plugin_action_current_intent_unavailable' }
+                : { kind: 'uncertain', failure: { class: 'unknown', code: 'plugin_action_current_intent_unavailable' } });
     });
 
     it('lets the daemon Environment admission request UI confirmation without a second UI policy read', async () => {

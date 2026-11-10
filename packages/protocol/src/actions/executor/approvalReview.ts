@@ -3,7 +3,7 @@ import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { ACTION_INVOKE_ACTION_ID_V1, type ActionId } from '../actionIds.js';
 import type { ActionExecutorContext } from './types.js';
-import { isPresentUserHostInvocation, isHomeAdmittedPresentUserHostInvocation, isPluginActionInvokeConfirmationV1 } from '../invocationAuthority.js';
+import { isPresentUserHostInvocation, isHomeAdmittedPresentUserHostInvocation, pluginActionInvokeConfirmationMismatchV1 } from '../invocationAuthority.js';
 
 /** Both a witnessed Artifact decision and a native Confirm record the same reviewed parent. */
 export function recordPresentUserApprovalV1(args: Readonly<{
@@ -28,29 +28,36 @@ export function recordPresentUserApprovalV1(args: Readonly<{
 // Confirmation belongs to one invocation. Weak membership retains no completed operation or timer.
 const consumedConfirmations = new WeakSet<object>();
 
-function matchesConfirmation(actionId: ActionId, input: unknown, context: ActionExecutorContext,
-  inputDigest?: string): boolean {
+/** Comparison categories only: never include either compared value. */
+export type CurrentIntentMismatchV1 = Readonly<{
+  field: 'account' | 'binding' | 'fingerprint_source' | 'version' | 'surface' | 'child_proof';
+}>;
+
+function confirmationMismatch(actionId: ActionId, input: unknown, context: ActionExecutorContext,
+  inputDigest?: string): CurrentIntentMismatchV1 | null {
   const confirmation = context.presentUserConfirmation;
   const binding = context.externalActionExecutionAuthorization?.binding;
-  return Boolean(confirmation && !consumedConfirmations.has(confirmation) && confirmation.actionId === actionId
-    && !context.externalActionCredential && !context.rpcSessionAuthorization
-    && (!binding || 'authentication' in binding && (binding.authentication.kind === 'account'
+  if (!confirmation || consumedConfirmations.has(confirmation) || confirmation.actionId !== actionId) return { field: 'child_proof' };
+  if (!context.runtimeAccountId || confirmation.accountId !== context.runtimeAccountId
+    || binding && binding.accountId !== context.runtimeAccountId) return { field: 'account' };
+  if (context.externalActionCredential || context.rpcSessionAuthorization
+    || binding && !('authentication' in binding && (binding.authentication.kind === 'account'
         || binding.authentication.kind === 'terminal' && context.surface === 'cli')
       && !binding.sessionActionOrigin && !binding.workflowActionOrigin
-      && binding.accountId === context.runtimeAccountId && binding.requestId === context.actionRequestId
+      && binding.requestId === context.actionRequestId
       && binding.actionId === actionId && sameStrictJsonValue(binding.target, context.externalActionTarget))
-    && context.runtimeAccountId && context.actionRequestId
-    && confirmation.accountId === context.runtimeAccountId && confirmation.requestId === context.actionRequestId
-    && confirmation.serverId === (context.serverIdentityId ?? context.serverId)
-    && sameStrictJsonValue(confirmation.target ?? null, context.externalActionTarget ?? null)
-    && confirmation.inputDigest === (inputDigest ?? computeActionInputApprovalDigestV1(actionId, input, context.sessionTargetsV1)));
+    || !context.actionRequestId || confirmation.requestId !== context.actionRequestId
+    || confirmation.serverId !== (context.serverIdentityId ?? context.serverId)
+    || !sameStrictJsonValue(confirmation.target ?? null, context.externalActionTarget ?? null)) return { field: 'binding' };
+  return confirmation.inputDigest === (inputDigest ?? computeActionInputApprovalDigestV1(actionId, input, context.sessionTargetsV1))
+    ? null : { field: 'fingerprint_source' };
 }
 
 /** Consume the host's completed confirmation for this exact normalized invocation. */
 export function admitPresentUserConfirmationV1(actionId: ActionId, input: unknown,
   context: ActionExecutorContext): NonNullable<ActionExecutorContext['presentUserApproval']> | null {
   if (!isPresentUserHostInvocation({ ...context, externalActionExecutionAuthorization: undefined })
-    || context.actionCaller?.kind !== 'host' || !matchesConfirmation(actionId, input, context)) return null;
+    || context.actionCaller?.kind !== 'host' || confirmationMismatch(actionId, input, context)) return null;
   consumedConfirmations.add(context.presentUserConfirmation!);
   return recordPresentUserApprovalV1({ actionId, input, requestId: context.actionRequestId!,
     requestSurface: context.surface, decidingAccountId: context.runtimeAccountId, decidedAtMs: Date.now() });
@@ -58,23 +65,30 @@ export function admitPresentUserConfirmationV1(actionId: ActionId, input: unknow
 
 /** The target gate consumes only this Account relay's exact already-confirmed wrapper. */
 export function admitAccountActionInvokeConfirmationV1(input: unknown, context: ActionExecutorContext,
-  pluginInputDigest: string | null): boolean {
+  pluginInputDigest: string | null): Readonly<{ admitted: true } | { admitted: false; mismatch: CurrentIntentMismatchV1 }> {
+  const refused = (mismatch: CurrentIntentMismatchV1) => ({ admitted: false as const, mismatch });
   const binding = context.externalActionExecutionAuthorization?.binding;
   if (!binding || !('authentication' in binding) || binding.authentication.kind !== 'account'
     || binding.sessionActionOrigin || binding.sessionActionSource || binding.workflowActionOrigin
-    || binding.serverIdentityId !== (context.serverIdentityId ?? context.serverId)) return false;
-  if (pluginInputDigest && isPluginActionInvokeConfirmationV1(context)
-    && matchesConfirmation(ACTION_INVOKE_ACTION_ID_V1, input, context, pluginInputDigest)) {
+    || binding.serverIdentityId !== (context.serverIdentityId ?? context.serverId)) return refused({ field: 'binding' });
+  const originMismatch = pluginActionInvokeConfirmationMismatchV1(context);
+  const mismatch = context.presentUserConfirmation
+    ? originMismatch ? { field: originMismatch }
+      : !pluginInputDigest ? { field: 'fingerprint_source' as const }
+        : confirmationMismatch(ACTION_INVOKE_ACTION_ID_V1, input, context, pluginInputDigest)
+    : { field: 'child_proof' as const };
+  if (!mismatch) {
     consumedConfirmations.add(context.presentUserConfirmation!);
-    return true;
+    return { admitted: true };
   }
   // The generic host Action executor already consumed and admitted its private proof.
   const review = context.presentUserApproval;
   if (typeof readRecord(input).expectedContributorOccurrenceId !== 'string'
     || !isHomeAdmittedPresentUserHostInvocation(context, ACTION_INVOKE_ACTION_ID_V1)
-    || !review || consumedConfirmations.has(review) || review.actionId !== ACTION_INVOKE_ACTION_ID_V1
-    || review.requestId !== context.actionRequestId || review.decidingAccountId !== context.runtimeAccountId
-    || review.inputDigest !== computeActionInputApprovalDigestV1(ACTION_INVOKE_ACTION_ID_V1, input)) return false;
+    || !review || consumedConfirmations.has(review) || review.actionId !== ACTION_INVOKE_ACTION_ID_V1) return refused(mismatch);
+  if (review.requestId !== context.actionRequestId) return refused({ field: 'binding' });
+  if (review.decidingAccountId !== context.runtimeAccountId) return refused({ field: 'account' });
+  if (review.inputDigest !== computeActionInputApprovalDigestV1(ACTION_INVOKE_ACTION_ID_V1, input)) return refused({ field: 'fingerprint_source' });
   consumedConfirmations.add(review);
-  return true;
+  return { admitted: true };
 }

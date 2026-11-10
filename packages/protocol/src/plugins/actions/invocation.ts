@@ -13,9 +13,10 @@ import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../../crypto/canonicalDigest.js';
 import { readHostReviewedChildOperationV1, isHostAdmittedReviewedChildPolicyV1 } from '../../actions/executor/deploymentRoleChild.js';
 import type { ActionExecutorContext } from '../../actions/executor/types.js';
+import type { CurrentIntentMismatchV1 } from '../../actions/executor/approvalReview.js';
 import type { JsonValue as StrictJsonValue } from '../../json/strictJsonValue.js';
 import { z } from 'zod/mini';
-import { isPluginError } from '../errors.js';
+import { isPluginError, isPluginErrorData } from '../errors.js';
 import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 import type {
   PluginContributionIdentityV1,
@@ -86,6 +87,7 @@ export type PluginActionInvocationResult = Readonly<
     message: string;
     /** Present only when canonical admission proves the handler did not begin. */
     actionHandlerInvocation?: 'notStarted';
+    data?: StrictJsonValue;
   }
   | {
     status: 'invalid';
@@ -178,6 +180,7 @@ type PluginActionInvocationPreDispatchResult = Readonly<{
   status: 'unavailable' | 'invalid';
   code: string;
   message: string;
+  data?: StrictJsonValue;
 }>;
 
 const invalidInput = Object.freeze({
@@ -240,12 +243,13 @@ function unavailable(code: string, message: string): PluginActionInvocationResul
   return Object.freeze({ status: 'unavailable', code, message });
 }
 
-function unavailableBeforeHandler(code: string, message: string): Extract<PluginActionInvocationResult, { status: 'unavailable' }> {
+function unavailableBeforeHandler(code: string, message: string, data?: StrictJsonValue): Extract<PluginActionInvocationResult, { status: 'unavailable' }> {
   return Object.freeze({
     status: 'unavailable',
     code,
     message,
     actionHandlerInvocation: 'notStarted',
+    ...(data === undefined ? {} : { data }),
   });
 }
 
@@ -259,10 +263,12 @@ function readPreDispatchResult(
     || typeof record.code !== 'string'
     || typeof record.message !== 'string'
   ) return null;
+  const data = AgentRuntimeJsonValueV1Schema.safeParse(record.data);
   return Object.freeze({
     status: record.status,
     code: record.code,
     message: record.message,
+    ...(data.success ? { data: data.data } : {}),
   });
 }
 
@@ -439,6 +445,16 @@ export function readPluginActionError(error: unknown): Readonly<{
   });
 }
 
+/** Read the dispatch owner's proof from the matching public failure envelope. */
+export function readPluginActionFailureHandlerInvocation(failure: Readonly<{
+  code: string; message: string; data?: unknown;
+}>): 'notStarted' | undefined {
+  const data = failure.data;
+  return isPluginErrorData(data) && data.code === failure.code && (data.message ?? data.code) === failure.message
+    && 'actionHandlerInvocation' in data && data.actionHandlerInvocation === 'notStarted'
+    ? 'notStarted' : undefined;
+}
+
 /**
  * The author vocabulary a canonical PluginError publishes alongside its code.
  * Protocol owns the wire decision so the daemon Action host and the SDK test
@@ -586,18 +602,19 @@ export type PluginActionCurrentIntentRequest<TAction> = Readonly<{
 export type PluginActionCurrentIntentResult = Readonly<
   | { status: 'approved'; fingerprint: string; artifactId?: string }
   | { status: 'deferred'; artifactId: string }
-  | { status: 'rejected' | 'unavailable'; code: string }
+  | { status: 'rejected' | 'unavailable'; code: string; mismatch?: CurrentIntentMismatchV1 }
 >;
 
 export type PluginActionPresentUserGateResult<TAction> = Readonly<
   | { status: 'admitted'; action: TAction; artifactId?: string }
   | { status: 'deferred'; artifactId: string }
-  | { status: 'unavailable'; code: string; message: string }
+  | { status: 'unavailable'; code: string; message: string; data?: StrictJsonValue }
   | Extract<PluginActionInvocationResult, { status: 'failed' }>
 >;
 
-function presentUserUnavailable(code: string, message = code): PluginActionPresentUserGateResult<never> {
-  return Object.freeze({ status: 'unavailable', code, message });
+function presentUserUnavailable(code: string, message = code, mismatch?: CurrentIntentMismatchV1): PluginActionPresentUserGateResult<never> {
+  return Object.freeze({ status: 'unavailable', code, message,
+    ...(mismatch === undefined ? {} : { data: { details: { currentIntentMismatch: { field: mismatch.field } } } }) });
 }
 
 function presentUserFailed(code: string, message: string): PluginActionPresentUserGateResult<never> {
@@ -875,9 +892,9 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
           ? presentUserDeferred(artifactId)
           : presentUserUnavailable('plugin_action_current_intent_unavailable');
       }
-      if (intent.status !== 'approved') return presentUserUnavailable(intent.code);
+      if (intent.status !== 'approved') return presentUserUnavailable(intent.code, intent.code, intent.mismatch);
       if (intent.fingerprint !== fingerprint) {
-        return presentUserUnavailable('plugin_action_current_intent_mismatch');
+        return presentUserUnavailable('plugin_action_current_intent_mismatch', undefined, { field: 'fingerprint_source' });
       }
 
       const current = await readResolved();
@@ -898,7 +915,7 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
         return presentUserUnavailable('plugin_action_current_intent_unavailable');
       }
       if (currentFingerprint !== fingerprint) {
-        return presentUserUnavailable('plugin_action_current_intent_mismatch');
+        return presentUserUnavailable('plugin_action_current_intent_mismatch', undefined, { field: 'fingerprint_source' });
       }
       return Object.freeze({ status: 'admitted' as const, action: current.action,
         ...(intent.artifactId === undefined ? {} : { artifactId: intent.artifactId }) });
@@ -1083,7 +1100,7 @@ export function createPluginActionInvocation(params: Readonly<{
             return unavailableBeforeHandler('plugin_action_generation_retired', 'Plugin action occurrenceId retired before dispatch');
           }
           const result = readPreDispatchResult(settlement.value);
-          if (result) return result.status === 'invalid' ? result : unavailableBeforeHandler(result.code, result.message);
+          if (result) return result.status === 'invalid' ? result : unavailableBeforeHandler(result.code, result.message, result.data);
           if (settlement.value !== null) {
             return unavailableBeforeHandler(
               'plugin_action_pre_dispatch_unavailable',

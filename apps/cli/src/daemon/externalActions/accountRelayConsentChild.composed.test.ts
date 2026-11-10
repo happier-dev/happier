@@ -28,7 +28,9 @@ describe('Account relay consent at a contributed child admission', () => {
     { scenario: 'matching Account', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: true },
     { scenario: 'binding belongs to another Account', bindingAccountId: 'bob', confirmationAccountId: 'alice', allowed: false },
     { scenario: 'confirmation belongs to another Account', bindingAccountId: 'alice', confirmationAccountId: 'bob', allowed: false },
-  ])('binds carried consent to the runtime Account: $scenario', async ({ bindingAccountId, confirmationAccountId, allowed }) => {
+    { scenario: 'fingerprint differs', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: false, change: 'fingerprint' },
+    { scenario: 'binding request differs', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: false, change: 'binding' },
+  ])('binds carried consent to the runtime Account: $scenario', async ({ bindingAccountId, confirmationAccountId, allowed, change }) => {
     let effects = 0;
     const sourceCustody = { kind: 'account_release', pluginId: 'acme.account', version: '1.0.0',
       archiveDigestSha256: `sha256:${'a'.repeat(64)}` } as const;
@@ -51,7 +53,7 @@ describe('Account relay consent at a contributed child admission', () => {
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'account-relay-proof', binding: {
       serverIdentityId: 'account-home', accountId: bindingAccountId, custodianAccountId: bindingAccountId,
       authentication: { kind: 'account', tokenEpoch: 0 }, installationId: 'account-installation',
-      machineId: target.machineId, actionId: 'action.invoke', requestId: 'account-relay-request',
+      machineId: target.machineId, actionId: 'action.invoke', requestId: change === 'binding' ? 'another-request' : 'account-relay-request',
       requestEnvelopeDigest: 'A'.repeat(43), target,
     } });
     const installation = tweetnacl.sign.keyPair();
@@ -67,10 +69,13 @@ describe('Account relay consent at a contributed child admission', () => {
           signExternalActionApprovalInputV1({ authorizationToken: authorization.token, actionId,
             input: signedInput, target: signedTarget, requesterConfirmation, privateKey: installation.secretKey }),
         presentUserConfirmation: { actionId: 'action.invoke', requestId: 'account-relay-request',
-          accountId: confirmationAccountId, serverId: 'account-home', target, inputDigest },
+          accountId: confirmationAccountId, serverId: 'account-home', target, inputDigest: change === 'fingerprint' ? 'another-fingerprint' : inputDigest },
       });
       expect(result).toMatchObject(allowed ? { ok: true }
-        : { ok: false, errorCode: 'plugin_action_current_intent_mismatch' });
+        : { ok: false, errorCode: 'plugin_action_current_intent_mismatch',
+          details: { actionHandlerInvocation: 'notStarted',
+            details: { currentIntentMismatch: { field: change === 'fingerprint' ? 'fingerprint_source' : change ?? 'account' } } } });
+      if (!allowed) expect(projectContributedActionExecuteResult(result)).toMatchObject({ actionHandlerInvocation: 'notStarted' });
       expect(effects).toBe(allowed ? 1 : 0);
     } finally { await published.dispose(); }
   });

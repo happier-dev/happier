@@ -96,7 +96,14 @@ export function resolveInvocationAuthority(
 /** Private consent for one Plugin Account relay never raises the caller's authority. */
 export function isPluginActionInvokeConfirmationV1(context: Pick<ActionExecutorContext,
   'surface' | 'authority' | 'actionCaller' | 'presentUserConfirmation'>): boolean {
-  return context.actionCaller?.kind === 'plugin' && context.authority === 'account_automation'
-    && (context.surface === 'ui' || context.surface === 'voice' || context.surface === 'plugin')
-    && context.presentUserConfirmation?.actionId === ACTION_INVOKE_ACTION_ID_V1;
+  return pluginActionInvokeConfirmationMismatchV1(context) === null;
+}
+
+/** Same origin decision, with a value-free comparison category for admission diagnostics. */
+export function pluginActionInvokeConfirmationMismatchV1(context: Pick<ActionExecutorContext,
+  'surface' | 'authority' | 'actionCaller' | 'presentUserConfirmation'>): 'child_proof' | 'binding' | 'surface' | null {
+  if (context.actionCaller?.kind !== 'plugin'
+    || context.presentUserConfirmation?.actionId !== ACTION_INVOKE_ACTION_ID_V1) return 'child_proof';
+  if (context.authority !== 'account_automation') return 'binding';
+  return context.surface === 'ui' || context.surface === 'voice' || context.surface === 'plugin' ? null : 'surface';
 }

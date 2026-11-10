@@ -11,6 +11,7 @@ import { inputTypeResourceReference } from '@happier-dev/protocol/inputs/runtime
 import { PluginActionExecutionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 
 import type { ResolvedActionContribution, ResolvedActionDefinition } from '@/plugins/projection/registry/types';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
@@ -185,7 +186,8 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
           const digest = fingerprintPluginAccountActionConfirmation({ input: wrapper, pluginId: request.action.pluginId,
             pluginVersion: request.action.pluginVersion, sourceCustody: request.action.sourceCustody,
             declaration: request.action.accountActionDeclaration });
-          if (admitAccountActionInvokeConfirmationV1(wrapper, context, digest)) {
+          const admission = admitAccountActionInvokeConfirmationV1(wrapper, context, digest);
+          if (admission.admitted) {
             // Retain the native review at its admission owner. Nested Actions
             // keep plugin authority and consume this existing private parent.
             approvalContext.hostReviewedChild ??= createHostReviewedChildPortV1({
@@ -193,7 +195,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
             });
             return { status: 'approved', fingerprint: request.fingerprint };
           }
-          if (hasCarriedConsent) return { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' };
+          if (hasCarriedConsent) return { status: 'unavailable', code: 'plugin_action_current_intent_mismatch', mismatch: admission.mismatch };
           return input.requestCurrentIntent ? await input.requestCurrentIntent(request)
             : { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
         } } : {}),
@@ -223,9 +225,11 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
       // existing details field; private top-level transport data is stripped
       // by ordinary Action normalization.
       if (attempt.result.details !== undefined) return attempt.result;
-      const error = new PluginError({ code: attempt.result.errorCode, message: attempt.result.error,
+      const errorData = { code: attempt.result.errorCode, message: attempt.result.error,
         ...(attempt.result.retryable === undefined ? {} : { retryable: attempt.result.retryable }),
-        ...readPluginActionFailureAuthorPayload(attempt.result.data) });
+        ...readPluginActionFailureAuthorPayload(attempt.result.data) };
+      const error = attempt.result.actionHandlerInvocation === 'notStarted'
+        ? createPluginActionHandlerNotStartedError(errorData) : new PluginError(errorData);
       return { ...attempt.result, ...(error.data.failureCause ? { failureCause: error.data.failureCause } : {}), details: error.data };
     } finally {
       purposeLease?.dispose();
