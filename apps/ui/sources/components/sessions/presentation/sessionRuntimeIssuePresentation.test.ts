@@ -11,7 +11,7 @@ import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/s
 import { SUPPORTED_LANGUAGE_CODES, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 
 import { presentSessionActivationFailure, presentSessionRuntimeIssue, presentSessionStartupFailureCause } from './sessionRuntimeIssuePresentation';
-import { getPendingMessageVisualState, resolvePendingMessageHeightBearingChrome, resolveSessionDeliveryFailure } from '@/components/sessions/pending/pendingMessageVisualState';
+import { getPendingMessageVisualState, pendingMessageStatesBlockedReason, resolveSessionDeliveryFailure } from '@/components/sessions/pending/pendingMessageVisualState';
 import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
 import { shouldShowAbortButtonForSessionState } from '@/utils/sessions/sessionUtils';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
@@ -324,7 +324,7 @@ describe('a Session whose Agent account refused queued input: one message and on
         expect(resolveSessionDeliveryFailure([blocked], session, false)).toEqual({
             message: t('workflows.problem.conversationUnavailable'), recovery: 'new_session' });
         const visual = getPendingMessageVisualState(blocked, { session });
-        expect(resolvePendingMessageHeightBearingChrome(visual)).toBe('none');
+        expect(pendingMessageStatesBlockedReason(visual)).toBe(false);
         expect(resolveSessionDeliveryFailure([blocked], { ...session, active: true }, false)).toBeNull();
         expect(resolveSessionDeliveryFailure([blocked], { ...session, lastRuntimeIssue: issue({ code: 'provider_unavailable' }) }, false)).toBeNull();
         expect(resolveSessionDeliveryFailure([{ ...blocked, pendingDeliveryStatus: 'server_queued' }], session, false)).toBeNull();
@@ -351,7 +351,7 @@ describe('a Session whose Agent account refused queued input: one message and on
         expect(resolveSessionDeliveryFailure([blockedFirstInput], session, false)).toEqual(presentSessionActivationFailure(reconnect));
         const row = getPendingMessageVisualState(blockedFirstInput, { session });
         expect(row.deliveryBlockedPresentation?.message).toBeUndefined();
-        expect(resolvePendingMessageHeightBearingChrome(row)).toBe('none');
+        expect(pendingMessageStatesBlockedReason(row)).toBe(false);
         expect(resolvePendingActivationBanner({ authorization: failed, activeAt: 100, active: false, machineReachable: true,
             canWrite: true, pendingMessages: [blockedFirstInput] })).not.toHaveProperty('titleKey');
     });

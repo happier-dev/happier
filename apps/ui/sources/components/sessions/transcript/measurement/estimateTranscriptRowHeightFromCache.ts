@@ -9,7 +9,6 @@ import {
     PENDING_QUEUE_SCROLL_PADDING_TOP_PX,
     PENDING_QUEUE_TOP_INSET_PX,
     PENDING_MESSAGE_ACTION_ROW_HEIGHT_PX as PENDING_QUEUE_MESSAGE_ACTION_ROW_PX,
-    PENDING_MESSAGE_BLOCKED_NOTICE_HEIGHT_PX as PENDING_QUEUE_MESSAGE_NOTICE_PX,
     estimatePendingFollowNoticeHeightPx,
     estimatePendingFollowNoticeBodyHeightPx,
     resolvePendingMessageGapPx,
@@ -352,7 +351,6 @@ const ESTIMATE_TOOL_CARD_ROW_PX = 327;
  * The reorder gate is PER ROW in this repo, so this term is resolved inside the per-message loop
  * from that row's own `deliveryMutationPolicy`, never hoisted for the block.
  */
-/** `blockedDeliveryNotice` (this repo): marginTop 8, paddingVertical 5 ×2, hairline border, 14px text line. */
 // `nonSteerableNotice` (the one notice rendered OUTSIDE the capped scroll box) is deliberately NOT
 // modelled in this repo: `showNonSteerableNotice` is decided by live session capabilities
 // (`inFlightSteerUnavailableReason`, `terminalComposerDraftPresent`, runtime activity), none of
@@ -398,11 +396,8 @@ function estimatePendingQueueRowPx(
         } else {
             scrollContentPx += PENDING_QUEUE_MESSAGE_BUBBLE_PADDING_PX + estimatePendingQueueTextPx(pendingMessage);
         }
-        // F-P2: switched over the owner's height-bearing descriptor — the very thing
-        // `transcriptRowShellSignature` keys the row's size version on — so the estimate and the key
-        // can never disagree about which in-flow notice exists. This removed a 43px phantom the
-        // estimate added for every `send_failed` row: the block paints no send-failed notice, only a
-        // retry affordance inside its constant-height web action row.
+        // No delivery state adds height: a blocked reason reads on the row's one status line (CALM-1110),
+        // and a send-failed row paints only a retry affordance inside its constant-height web action row.
         // PER ROW, from this row's own delivery-mutation policy — the same gate the block paints
         // the reorder handle from (`hasEffectPossibleDelivery`). Hoisting it for the block would
         // mis-model a mixed queue by 20px per row.
@@ -411,13 +406,6 @@ function estimatePendingQueueRowPx(
             canReorderPendingMessages: row.queueLength > 1 && row.canReorder,
         }) && row.canMutate && !row.isHostInput) {
             scrollContentPx += PENDING_QUEUE_MESSAGE_ACTION_ROW_PX;
-        }
-        switch (row.isHostInput ? 'none' : row.heightBearingChrome) {
-            case 'blocked-notice':
-                scrollContentPx += PENDING_QUEUE_MESSAGE_NOTICE_PX;
-                break;
-            case 'none':
-                break;
         }
     }
     if (item.discardedMessages.length > 0) {

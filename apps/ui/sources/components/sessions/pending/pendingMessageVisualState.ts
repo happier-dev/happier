@@ -72,36 +72,13 @@ export type PendingDeliveryBlockedReasonPresentation = Readonly<{
 }>;
 
 /**
- * The IN-FLOW chrome a pending row paints for its current delivery state — i.e. the only part of its
- * delivery presentation that can change the row's HEIGHT.
- *
- * F-P2 (2026-08-10). The status chip (`PendingMessagesTranscriptBlock` `pendingAffordanceChip`) paints
- * one constant line on the action band, so every state that only swaps the chip's icon/spinner/label — including
- * the whole `queuedReason` vocabulary, which this block paints INSIDE that chip — leaves the row's
- * box byte-identical. `blockedDeliveryNotice` is the single in-flow status notice this block paints.
- * This matters because `ChatListInternal` wires Legend's vendored `getItemSizeVersion` to
- * `transcriptRowShellSignature`, and `validateItemSizeVersion` DELETES `sizesKnown` + `sizes`
- * whenever that version moves: keying the pending row on `visualState.kind` threw away its measured
- * height on every step of a send while the painted box never changed.
- *
- * The block SELECTS its notice from this descriptor, so there is one decision-maker rather than a
- * mapping restated in the renderer, the size key and the estimator. Counterpart of
- * `groupedToolCallRowPaintDependsOnGroupExpansion` for the pending row.
+ * Whether a pending row states its own blocked reason. The block paints it as one line of meta on the
+ * row's status line ("Blocked · reason", CALM-1110), so no delivery state changes the row's height.
+ * Read off the presentation the block renders the reason from, not off a list of kinds. A block the
+ * Session owns (its account) is said once by the Session, never on the row.
  */
-export type PendingMessageHeightBearingChrome =
-    /** Chip only — one constant line, cannot move the row. */
-    | 'none'
-    /** `blockedDeliveryNotice`. */
-    | 'blocked-notice';
-
-export function resolvePendingMessageHeightBearingChrome(
-    visualState: PendingMessageVisualState,
-): PendingMessageHeightBearingChrome {
-    // Read off the presentation the block itself renders the notice from, not off a list of kinds,
-    // so a state that starts carrying a blocked presentation cannot drop out of the size version.
-    // A block the Session owns (its account) is said once by the Session, never as a row notice.
-    return visualState.deliveryBlockedPresentation !== undefined && visualState.deliveryBlockedPresentation.recovery === undefined
-        ? 'blocked-notice' : 'none';
+export function pendingMessageStatesBlockedReason(visualState: PendingMessageVisualState): boolean {
+    return visualState.deliveryBlockedPresentation !== undefined && visualState.deliveryBlockedPresentation.recovery === undefined;
 }
 
 /** The actual pending paint, shared by the presenter, reorder binding and transcript measurement. */
@@ -122,7 +99,8 @@ export type PendingMessagePresentation = PendingMessageContentPresentation & Rea
     aggregate: boolean;
     count: number;
     opensSourceSession: boolean;
-    heightBearingChrome: PendingMessageHeightBearingChrome;
+    /** `pendingMessageStatesBlockedReason`, except a new Bot's first-run seed, which never states one. */
+    statesBlockedReason: boolean;
     canMutate: boolean;
     canReorder: boolean;
     queueLength: number;
@@ -177,7 +155,7 @@ export function resolvePendingMessagesPresentation(
             const visualState = getPendingMessageVisualState(row.message, { ...options,
                 hasProviderDeliveryInFlight: queue.hasProviderDeliveryInFlight });
             return { ...row, visualState,
-                heightBearingChrome: row.hostOnboarding ? 'none' as const : resolvePendingMessageHeightBearingChrome(visualState) };
+                statesBlockedReason: !row.hostOnboarding && pendingMessageStatesBlockedReason(visualState) };
         });
         return { ...queue, rows, rowsById: new Map(rows.map((row) => [row.message.id, row])),
             shownRows: rows.filter((row) => !row.folded),
@@ -204,7 +182,7 @@ export function resolvePendingMessagesPresentation(
             count: aggregate ? group.count : 1,
             needsYou,
             opensSourceSession: needsYou && followInput !== null && 'sourceSessionId' in followInput.original,
-            heightBearingChrome: row.hostOnboarding ? 'none' : resolvePendingMessageHeightBearingChrome(row.visualState),
+            statesBlockedReason: !row.hostOnboarding && pendingMessageStatesBlockedReason(row.visualState),
             canMutate: !folded && !aggregate,
             canReorder: !folded && !aggregate && row.visualState.deliveryMutationPolicy !== 'effect_possible'
                 && !isLaunchOwnedPendingMessage(row.message) };

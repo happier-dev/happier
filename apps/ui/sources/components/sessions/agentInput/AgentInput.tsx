@@ -224,9 +224,10 @@ import {
     AGENT_INPUT_ACTION_CHIP_STYLE,
     AGENT_INPUT_FIELD_PADDING_Y,
     AGENT_INPUT_PANEL_PADDING_BOTTOM,
-    AGENT_INPUT_PANEL_PADDING_TOP,
     AGENT_INPUT_ACTION_CHIP_GAP_X,
     AGENT_INPUT_CARD_CONTENT_LEADING_INSET,
+    AGENT_INPUT_FIELD_CONTAINER_PADDING_Y,
+    resolveAgentInputPanelPaddingTop,
     resolveAgentInputPhonePanelPaddingX,
     NATIVE_ACTION_CHIP_GAP_Y,
     resolveAgentInputActionChipTextStyle,
@@ -362,11 +363,10 @@ const WEB_ACTION_BAR_ROW_GAP_MOBILE_Y = NATIVE_ACTION_CHIP_GAP_Y;
 const ACTION_BAR_SCROLL_CONTENT_PADDING_RIGHT = 30;
 const STATUS_ROW_ITEM_GAP = 8;
 const STATUS_ROW_WRAP_GAP = 4;
-const AGENT_INPUT_CONTAINER_VERTICAL_PADDING = 4;
+const AGENT_INPUT_CONTAINER_VERTICAL_PADDING = AGENT_INPUT_FIELD_CONTAINER_PADDING_Y;
 const AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT = AGENT_INPUT_CONTAINER_VERTICAL_PADDING * 2;
 // Panel padding and corner radius come from the composer chrome owner; the radius is shared by the
 // panel surface, its cast-shadow wrapper and the auxiliary banners stacked above the panel.
-const AGENT_INPUT_PANEL_VERTICAL_CHROME_HEIGHT = AGENT_INPUT_PANEL_PADDING_TOP + AGENT_INPUT_PANEL_PADDING_BOTTOM;
 const AGENT_INPUT_VARIABLE_SECTION_CONTENT_PADDING_BOTTOM = 4;
 const AGENT_INPUT_COMMAND_MENU_TEST_ID = 'agent-input-command-menu';
 const AGENT_INPUT_COMBOBOX_EXPANDED_STATE = { expanded: true } as const;
@@ -907,7 +907,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     // background + hairline surface border, no drop shadow.
     unifiedPanel: resolveAgentInputPanelLayoutStyle(theme),
     // A phone's card puts its content on the composer's phone line (card on 16, content on 28).
-    unifiedPanelPhone: { paddingHorizontal: resolveAgentInputPhonePanelPaddingX(theme) },
+    unifiedPanelPhone: {
+        paddingHorizontal: resolveAgentInputPhonePanelPaddingX(theme),
+        paddingTop: resolveAgentInputPanelPaddingTop(resolveAgentInputPhonePanelPaddingX(theme)),
+    },
     // Over a picture or the planet the composer's edge is the flat ink edge (light), never a white line.
     unifiedPanelBackedEdge: resolveAgentInputPanelBackedEdgeStyle(theme) ?? {},
     // The composer style changes its shadow; the Elements material owns its fill. The edge stays
@@ -1417,7 +1420,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         ? actionFooterHeightPx
             + composerAttentionHeightPx
             + variableContentBeforeInputHeightPx
-            + AGENT_INPUT_PANEL_VERTICAL_CHROME_HEIGHT
+            + resolveAgentInputPanelPaddingTop(isMobileLayoutWidth(screenWidth) ? resolveAgentInputPhonePanelPaddingX(theme) : theme.space.s8)
+            + AGENT_INPUT_PANEL_PADDING_BOTTOM
             + AGENT_INPUT_VARIABLE_SECTION_CONTENT_PADDING_BOTTOM
         : undefined;
     const resolvedInputMaxHeight = React.useMemo(() => {

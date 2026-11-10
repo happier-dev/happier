@@ -7,12 +7,7 @@ import { installBrowserClipboardBoundary } from '@/dev/testkit';
 import { SessionFollowInputV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
-import {
-    getPendingMessageVisualState,
-    resolvePendingMessageHeightBearingChrome,
-    resolvePendingMessagesPresentationByRecipient,
-    type PendingMessageHeightBearingChrome,
-} from './pendingMessageVisualState';
+import { resolvePendingMessagesPresentationByRecipient } from './pendingMessageVisualState';
 import { installPendingMessagesCommonModuleMocks } from './pendingMessagesTestHelpers';
 import { resolvePendingQueueHeadMaxHeightPx } from './pendingQueueContentClipping';
 
@@ -985,12 +980,10 @@ describe('PendingMessagesTranscriptBlock', () => {
 
 
     /**
-     * F-P2 (2026-08-10): `resolvePendingMessageHeightBearingChrome` is what the transcript
-     * measurement layer keys the pending row's SIZE VERSION on, and it is only sound while it names
-     * the same in-flow notice this block actually paints. Asserted from BOTH ends here: the
-     * descriptor's answer, and the notice that appears in the tree.
+     * CALM-1110: a blocked row states its reason as one line of meta in its own status row ("Blocked ·
+     * reason"), never as a separate bordered notice, so no delivery state can change the row's height.
      */
-    it('paints exactly the in-flow notice its height-bearing chrome descriptor names', async () => {
+    it('states a blocked reason inside the status row, in one line, and paints no separate notice', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const row = (overrides: Partial<PendingMessage>): PendingMessage => ({
             id: 'p1',
@@ -1004,35 +997,30 @@ describe('PendingMessagesTranscriptBlock', () => {
             ...overrides,
         } as PendingMessage);
 
-        const cases: readonly Readonly<{
-            chrome: PendingMessageHeightBearingChrome;
-            message: PendingMessage;
-        }>[] = [
-            { chrome: 'none', message: row({ pendingDeliveryStatus: 'server_queued' }) },
-            { chrome: 'none', message: row({ pendingDeliveryStatus: 'server_delivering' }) },
-            { chrome: 'none', message: row({ source: 'local_outbound' }) },
-            // The state the sibling repository paints a notice for, and this one does not.
-            { chrome: 'none', message: row({ source: 'local_outbound', sendState: 'failed' }) },
-            {
-                chrome: 'blocked-notice',
-                message: row({ pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'payload_too_large' }),
-            },
+        const cases: readonly Readonly<{ blocked: boolean; message: PendingMessage }>[] = [
+            { blocked: false, message: row({ pendingDeliveryStatus: 'server_queued' }) },
+            { blocked: false, message: row({ pendingDeliveryStatus: 'server_delivering' }) },
+            { blocked: false, message: row({ source: 'local_outbound' }) },
+            { blocked: false, message: row({ source: 'local_outbound', sendState: 'failed' }) },
+            { blocked: true, message: row({ pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'provider_unavailable_before_acceptance' }) },
         ];
 
-        for (const { chrome, message } of cases) {
-            expect(resolvePendingMessageHeightBearingChrome(getPendingMessageVisualState(message)), JSON.stringify(message.pendingDeliveryStatus ?? message.sendState ?? message.source))
-                .toBe(chrome);
-
+        for (const { blocked, message } of cases) {
             const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [message],
                 discardedMessages: [],
             }));
-
-            expect(
-                screen.findByTestId('pendingMessages.blockedDeliveryNotice:p1') !== null,
-                `blocked notice painted for ${chrome}`,
-            ).toBe(chrome === 'blocked-notice');
+            const label = JSON.stringify(message.pendingDeliveryStatus ?? message.sendState ?? message.source);
+            expect(screen.findByTestId('pendingMessages.blockedDeliveryNotice:p1'), label).toBeNull();
+            const reason = screen.findByTestId('pendingMessages.blockedDeliveryReason:p1');
+            expect(reason !== null, label).toBe(blocked);
+            if (!reason) continue;
+            const affordance = screen.findByTestId('pendingMessages.pendingAffordance:p1')!;
+            expect(affordance.findAll(node => node === reason)).toHaveLength(1);
+            expect(reason.props.numberOfLines).toBe(1);
+            const reasonText = t('session.pendingMessages.deliveryBlockedReasons.providerUnavailableBeforeAcceptance');
+            expect(String(affordance.props.accessibilityLabel)).toContain(reasonText);
         }
     });
 
@@ -1106,7 +1094,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         await hoverPendingMessageRow(screen, 'p1');
 
-        expect(screen.findByTestId('pendingMessages.blockedDeliveryNotice:p1')).toBeTruthy();
+        expect(screen.findByTestId('pendingMessages.blockedDeliveryReason:p1')).toBeTruthy();
         expect(screen.findByTestId('pendingMessages.retryDelivery:p1')).toBeNull();
         expect(screen.findByTestId('pendingMessages.markDeliveryHandled:p1')).toBeTruthy();
         expect(screen.findByTestId('pendingMessages.steerNow:p1')).toBeTruthy();

@@ -7,6 +7,8 @@ export type SessionStartFailureNotice = Readonly<{
     /** The localized cause and recovery step for the closed startup failure. */
     message: string;
     retryable: boolean;
+    /** The stored issue the notice states; its raw cause stays one press away under the notice. */
+    issue: SessionRuntimeIssueV1;
 }>;
 
 /**
@@ -26,5 +28,18 @@ export function resolveSessionStartFailureNotice(input: Readonly<{
         message,
         retryable: issue.code !== 'codex_refresh_free_auth_unsupported' && issue.code !== 'plugin_disabled'
             && issue.failureCause?.failureReason !== 'model_selection_required',
+        issue,
     };
+}
+
+/**
+ * The notice is the one voice for a start that failed: the transcript row the host committed for that
+ * same failure defers to it while it is shown, and reads as history once the Session recovers.
+ */
+export function isRuntimeIssueStatedByStartFailureNotice(
+    rowIssue: Pick<SessionRuntimeIssueV1, 'code' | 'occurredAt'>,
+    input: Parameters<typeof resolveSessionStartFailureNotice>[0],
+): boolean {
+    const notice = resolveSessionStartFailureNotice(input);
+    return notice !== null && notice.issue.code === rowIssue.code && notice.issue.occurredAt === rowIssue.occurredAt;
 }

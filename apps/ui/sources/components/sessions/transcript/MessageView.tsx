@@ -58,6 +58,7 @@ import { isRuntimeIssueMessageMeta, readRuntimeIssueMessageMeta } from '@/compon
 import { TeamCredentialDenialRecovery } from '@/components/sessions/transcript/events/TeamCredentialDenialRecovery';
 import { AgentAuthRequiredRecovery } from '@/components/sessions/transcript/events/AgentAuthRequiredRecovery';
 import { RuntimeIssueDetails } from '@/components/sessions/transcript/events/RuntimeIssueDetails';
+import { isRuntimeIssueStatedByStartFailureNotice } from '@/components/sessions/startFailure/sessionStartFailureNotice';
 import { useTranscriptRuntimeIssueRepeatCount } from '@/components/sessions/transcript/events/runtimeIssueRepeatProjection';
 import { isHostAuthoredInputMeta, isHostOnboardingInputMeta, readDiscussionInputOrigin, readHostDiscussionInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
 import { useDiscussionTitles } from '@/components/discussions/useDiscussionTitles';
@@ -97,7 +98,7 @@ import {
   useTranscriptSessionCommon,
 } from '@/components/sessions/transcript/transcriptSessionCommon';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
-import { getStorage, useSessionDisplayNameSource } from '@/sync/domains/state/storage';
+import { getStorage, useSessionDisplayNameSource, useSessionSelector } from '@/sync/domains/state/storage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createWorkflowInvocationRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
@@ -865,8 +866,15 @@ function TranscriptTextNoticeRow(props: Readonly<{
   const recovery = runtimeIssue?.source === 'team_credential'
     ? <TeamCredentialDenialRecovery issue={runtimeIssue} address={sessionAddress} />
     : runtimeIssue?.source === 'auth_error' ? <AgentAuthRequiredRecovery issue={runtimeIssue} /> : null;
+  // A start failure is said once, by the composer notice (with its action and Details) while it stands;
+  // the row reads as history once the Session recovers.
+  const statedByStartFailureNotice = useSessionSelector(props.sessionId, props.serverId, (session) => (
+    runtimeIssue !== null && session !== null && isRuntimeIssueStatedByStartFailureNotice(runtimeIssue, {
+      issue: session.lastRuntimeIssue, sessionActive: session.active === true,
+    })));
   // Every typed failure keeps its raw cause one press away, under any recovery it offers.
   const footer = runtimeIssue ? <>{recovery}<RuntimeIssueDetails issue={runtimeIssue} /></> : undefined;
+  if (statedByStartFailureNotice) return null;
   return (
     <TranscriptJumpAttention
       sessionAddress={sessionAddress}

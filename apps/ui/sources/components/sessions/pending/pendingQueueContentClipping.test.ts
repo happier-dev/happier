@@ -109,7 +109,7 @@ describe('pending queue geometry', () => {
 });
 
 describe('Follow notice height', () => {
-    it('adds only the blocked reason chip to the queued notice height', () => {
+    it('keeps a blocked notice the queued height: its reason reads on the status line', () => {
         const message: PendingMessage = {
             id: 'follow', localId: 'follow-local', createdAt: 1, updatedAt: 1,
             source: 'server_pending', text: 'provider prompt', rawRecord: null,
@@ -124,11 +124,8 @@ describe('Follow notice height', () => {
         }]).shownRows[0]!;
         expect(queued.followInput).toBeTruthy();
         expect(blocked.followInput).toBeTruthy();
-        expect(blocked.heightBearingChrome).toBe('blocked-notice');
-        // Both presentations have the same pull-up. Only the chip box remains:
-        // paddingVertical 5×2 + text line 14 + border allowance 1 = 25.
-        // The ordinary notice's +8 top margin is replaced by the host pull-up.
-        expect(estimatePendingFollowNoticeHeightPx(blocked, true, false)
-            - estimatePendingFollowNoticeHeightPx(queued, true, false)).toBe(25);
+        expect(blocked.visualState.deliveryBlockedPresentation).toBeTruthy();
+        expect(estimatePendingFollowNoticeHeightPx(blocked, true, false))
+            .toBe(estimatePendingFollowNoticeHeightPx(queued, true, false));
     });
 });

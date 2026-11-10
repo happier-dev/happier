@@ -151,8 +151,7 @@ export function resolvePluginTranscriptActivityCanDismiss(
  * card paints it: a group title, a status title/detail, an optional fixed-width progress rail,
  * one `Item` per checklist/action, and the dismiss `Item`.
  *
- * This is the counterpart of `resolvePendingMessageHeightBearingChrome` for this row — the painter
- * declares what it paints, and `buildTranscriptRowShellSignature` decides how to key each painted
+ * The painter declares what it paints, and `buildTranscriptRowShellSignature` decides how to key each painted
  * LINE (by rendered extent, exactly as it already keys the pending row's text). It deliberately does
  * NOT return an already-compressed key: how a painted line maps to a size version is a measurement
  * decision with one owner, and this module must not restate it.

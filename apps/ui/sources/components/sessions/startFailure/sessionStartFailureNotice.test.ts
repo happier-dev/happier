@@ -36,6 +36,7 @@ describe('resolveSessionStartFailureNotice', () => {
             code: 'native_agent_privileged_effect_authority_unavailable',
             message: t('session.startFailure.cause.native_agent_privileged_effect_authority_unavailable'),
             retryable: true,
+            issue: startFailure,
         });
     });
 

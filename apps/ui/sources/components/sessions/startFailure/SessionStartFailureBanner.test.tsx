@@ -23,9 +23,21 @@ const notice = {
     code: 'native_agent_privileged_effect_authority_unavailable',
     message: 'Runner daemon authority is unavailable. Check the target Machine, then retry the Session.',
     retryable: true,
+    issue: SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1,
+        code: 'native_agent_privileged_effect_authority_unavailable', source: 'dependency_failure' }),
 };
 
 describe('SessionStartFailureBanner', () => {
+    it('keeps the raw cause one press away under the notice, as the transcript row did', async () => {
+        const issue = SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1,
+            code: 'agent_startup_model_reconciliation_failed', source: 'agent_session_error',
+            failureCause: { phase: 'client_start', failureReason: 'unknown', requestId: 'req-7' } });
+        const screen = await renderScreen(<SessionStartFailureBanner
+            notice={resolveSessionStartFailureNotice({ issue, sessionActive: false })!} retry={null} />);
+        await pressTestInstanceAsync(screen.findByTestId('transcript-event-runtime-issue-details-toggle'));
+        expect(screen.getTextContent()).toContain('agent_startup_model_reconciliation_failed');
+    });
+
     it('opens the existing model picker for a model-required refusal, offering no action without a writable composer', async () => {
         const issue = SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1,
             code: 'agent_startup_model_reconciliation_failed', source: 'agent_session_error',
@@ -62,7 +74,8 @@ describe('SessionStartFailureBanner', () => {
     it('opens plugin recovery for a disabled Agent while its Machine is unavailable', async () => {
         const managePlugin = vi.fn();
         const screen = await renderScreen(<SessionStartFailureBanner
-            notice={{ code: 'plugin_disabled', message: 'This Agent plugin is disabled.', retryable: false }}
+            notice={{ code: 'plugin_disabled', message: 'This Agent plugin is disabled.', retryable: false,
+                issue: { ...notice.issue, code: 'plugin_disabled' } }}
             retry={null}
             managePlugin={managePlugin}
         />);

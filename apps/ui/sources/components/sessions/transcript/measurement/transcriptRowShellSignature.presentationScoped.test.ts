@@ -132,14 +132,11 @@ describe('pending row signatures are presentation-scoped', () => {
     });
 
     /**
-     * F-P2 (2026-08-10): delivery status selects the row's status CHIP, and that chip is
-     * `position: 'absolute'` (`PendingMessagesTranscriptBlock` `pendingAffordanceChip`), so it can
-     * never move the row's height. In THIS repository the chip is the only thing delivery status
-     * selects — the block's single in-flow status notice is `blockedDeliveryNotice`, and even the
-     * `queuedReason` copy is painted inside that absolute chip. So a plain send walks
-     * `saving → send_unconfirmed → queued → delivering` painting a byte-identical box.
+     * Delivery status only swaps the row's one-line status (icon, label and, when blocked, the reason as
+     * meta on the same line; CALM-1110), so no delivery state can move the row's height. A send walks
+     * `saving → send_unconfirmed → queued → delivering` and may end `blocked`, painting one box.
      */
-    it('holds the key across a delivery-status walk that paints an identical box', () => {
+    it('holds the key across every delivery status, blocked reasons included', () => {
         const walk = [
             pendingMessage(),
             pendingMessage({ sendState: 'unconfirmed' }),
@@ -149,27 +146,11 @@ describe('pending row signatures are presentation-scoped', () => {
             pendingMessage({ source: 'server_pending', deliveryStatus: 'queued', pendingDeliveryStatus: 'external_handoff' }),
             pendingMessage({ sendState: 'failed' }),
             pendingMessage({ pendingOutboxOperation: 'cancel' }),
+            pendingMessage({ source: 'server_pending', pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'terminal_composer_draft' }),
+            pendingMessage({ source: 'server_pending', pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'payload_too_large' }),
         ].map((message) => signatureFor(pendingQueueItem([message])).structuralKey);
 
         expect(new Set(walk).size).toBe(1);
-    });
-
-    it('moves when the row switches to a state that paints extra chrome', () => {
-        const queued = signatureFor(pendingQueueItem([pendingMessage({ source: 'server_pending' })]));
-        const blocked = signatureFor(pendingQueueItem([pendingMessage({
-            source: 'server_pending',
-            pendingDeliveryStatus: 'blocked',
-            pendingDeliveryBlockedReason: 'terminal_composer_draft',
-        })]));
-        // Same notice box, different copy — hence a different line count at narrow widths.
-        const blockedOtherReason = signatureFor(pendingQueueItem([pendingMessage({
-            source: 'server_pending',
-            pendingDeliveryStatus: 'blocked',
-            pendingDeliveryBlockedReason: 'payload_too_large',
-        })]));
-
-        expect(blocked.structuralKey).not.toBe(queued.structuralKey);
-        expect(blockedOtherReason.structuralKey).not.toBe(blocked.structuralKey);
     });
 
     it('sizes discarded rows by their own presentation, not by a record serialization', () => {

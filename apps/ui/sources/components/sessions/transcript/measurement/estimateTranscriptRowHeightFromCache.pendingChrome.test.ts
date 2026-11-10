@@ -154,7 +154,7 @@ describe('pending-queue estimate is chrome-aware', () => {
         expect(failed).toBeCloseTo(saving, 1);
     });
 
-    it('adds the per-message notice a blocked delivery paints inside the scroll box', () => {
+    it('models no extra chrome for a blocked delivery, whose reason reads on the one status line', () => {
         const queued = estimatePendingQueue([pendingMessage({ source: 'server_pending' })]) as number;
         const blocked = estimatePendingQueue([pendingMessage({
             source: 'server_pending',
@@ -162,7 +162,7 @@ describe('pending-queue estimate is chrome-aware', () => {
             pendingDeliveryBlockedReason: 'terminal_composer_draft',
         })]) as number;
 
-        // Person-input notices retain both the chip box (25) and its top margin (8).
-        expect(blocked - queued).toBe(33);
+        // CALM-1110: the reason is truncating meta on the status line, not a separate notice.
+        expect(blocked).toBe(queued);
     });
 });

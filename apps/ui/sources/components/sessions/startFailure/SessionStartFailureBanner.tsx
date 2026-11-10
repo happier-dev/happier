@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { ComposerAuxiliaryFrame } from '@/components/sessions/shell/view/ComposerAuxiliaryFrame';
 import { WarningActionBanner } from '@/components/sessions/shell/view/WarningActionBanner';
+import { RuntimeIssueDetails } from '@/components/sessions/transcript/events/RuntimeIssueDetails';
 import { t } from '@/text';
 
 import type { SessionStartFailureNotice } from './sessionStartFailureNotice';
@@ -24,6 +25,8 @@ export const SessionStartFailureBanner = React.memo(function SessionStartFailure
                 tone={retry ? 'warning' : 'neutral'}
                 title={t('session.startFailure.title')}
                 body={notice.message}
+                // The transcript row for this failure defers to the notice, so its raw cause moves here.
+                content={<RuntimeIssueDetails issue={notice.issue} />}
                 {...(notice.code === 'plugin_disabled' && props.managePlugin
                     ? {
                         actionTestID: 'session-start-failure-manage-plugin',

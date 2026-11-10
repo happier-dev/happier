@@ -315,20 +315,11 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
     // This is the same rule message rows already follow (`buildMessageShellStructuralKey`:
     // "Never serialize the message itself"); these shapes never got it.
     if (item.kind === 'pending-queue') {
-        // F-P2 (2026-08-10): HEIGHT-bearing presentation only, not visible-state. The J/D2 fix above
-        // stopped serializing the record and keyed on `getPendingMessageVisualState(...).kind`
-        // instead — but that kind is a STATUS, and the chrome it selects splits in two: the status
-        // chip paints one constant line on the action band (`pendingStatusRow`) whatever the state, so it
-        // cannot move the row, while `blockedDeliveryNotice` is in flow and varies. In THIS repository the chip is the only thing the
-        // other states select — the whole `queuedReason` vocabulary is painted INSIDE that chip — so
-        // a plain send (`saving → send_unconfirmed → queued → delivering`) moved this key several
-        // times with the painted box byte-identical, and every move deleted the row's measured size
-        // (Legend `validateItemSizeVersion`) and its reservation
-        // (`resetReservationForStructuralChange`). `resolvePendingMessageHeightBearingChrome` is the
-        // owner's own answer to "which in-flow notice does this row paint", the same rule F-P1 states
-        // for grouped tool rows; the block renders from that descriptor, so key and paint cannot
-        // drift. `deliveryBlockedPresentation.labelKey` stays because it decides the notice's own
-        // copy, hence its line count.
+        // HEIGHT-bearing presentation only, not visible-state. Delivery status selects only the row's one
+        // status line (`pendingStatusRow`: icon, label and, when blocked, the reason as truncating meta;
+        // CALM-1110), so no delivery state can move the row. Keying it would delete the row's measured size
+        // (Legend `validateItemSizeVersion`) and its reservation (`resetReservationForStructuralChange`)
+        // on every step of a send while the painted box never changed.
         //
         // Follow folding, attention and source actions come from the same presentation as the block.
         // Its local materialization can unfold a notice without a new item: that path reports a
@@ -522,12 +513,10 @@ function buildPendingTextPresentationKey(message: Pick<PendingMessage, 'text' | 
 function buildPendingMessagePresentationKey(
     presentation: PendingMessagePresentation,
 ): string {
-    const { message, visualState } = presentation;
+    const { message } = presentation;
     return [
         message.id,
         message.localId ?? '',
-        presentation.heightBearingChrome,
-        visualState.deliveryBlockedPresentation?.labelKey ?? '',
         presentation.followInput ? JSON.stringify(['follow', presentation.followSourceKey, presentation.count,
             presentation.needsYou, presentation.opensSourceSession])
             : `${presentation.isHostInput ? 'host:' : ''}${buildPendingTextPresentationKey(message)}`,

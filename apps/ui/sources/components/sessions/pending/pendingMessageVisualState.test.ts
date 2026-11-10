@@ -10,7 +10,7 @@ import {
     getPendingMessageVisualState,
     canUseDirectPendingDeliveryActions,
     getSessionInputFailureLabelKey,
-    resolvePendingMessageHeightBearingChrome,
+    pendingMessageStatesBlockedReason,
     resolvePendingMessagesPresentation,
     resolveSessionDeliveryFailure,
     type PendingMessageVisualStateKind,
@@ -60,7 +60,7 @@ describe('getPendingMessageVisualState', () => {
             { state: 'failed' as const, message: 'Couldn’t start the session. (Error spawn_failed)', draftId: 'draft-1' }]) {
             const state = getPendingMessageVisualState(pendingMessage({ source: 'local_outbound', pendingLaunch }), { session });
             expect(state).toEqual({ kind: 'launch_failed', showSpinner: false, iconName: 'warning-circle' });
-            expect(resolvePendingMessageHeightBearingChrome(state)).not.toBe('blocked-notice');
+            expect(pendingMessageStatesBlockedReason(state)).toBe(false);
         }
     });
     it('paints a launch-owned first message as starting, then as a launch refusal with its typed reason', () => {
@@ -71,12 +71,12 @@ describe('getPendingMessageVisualState', () => {
         const failedState = getPendingMessageVisualState(failed);
         expect(failedState).toMatchObject({ kind: 'launch_failed', showSpinner: false,
             deliveryBlockedPresentation: { labelKey: 'session.pendingMessages.deliveryStatus.notStarted', message: 'The model is not available.' } });
-        expect(resolvePendingMessageHeightBearingChrome(failedState)).toBe('blocked-notice');
+        expect(pendingMessageStatesBlockedReason(failedState)).toBe(true);
         // A terminal wait that ended without an outcome never keeps spinning as "starting".
         const unresolvedState = getPendingMessageVisualState(pendingMessage({ source: 'local_outbound', pendingLaunch: { state: 'unresolved' } }));
         // One voice: the row's status line says the outcome is unknown; no second notice repeats it.
         expect(unresolvedState).toEqual({ kind: 'launch_unresolved', showSpinner: false, iconName: 'warning-circle' });
-        expect(resolvePendingMessageHeightBearingChrome(unresolvedState)).toBe('none');
+        expect(pendingMessageStatesBlockedReason(unresolvedState)).toBe(false);
         // A launch-owned row is never the composer's direct send/steer target, whatever its delivery status.
         expect(canUseDirectPendingDeliveryActions({ ...starting, source: undefined })).toBe(false);
         expect(canUseDirectPendingDeliveryActions({ ...failed, source: undefined })).toBe(false);
@@ -349,7 +349,7 @@ describe('getPendingMessageVisualState', () => {
         const blocked = pendingMessage({ pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'runtime_config_blocked' });
         // The row defers: its reason belongs to the Session's account, said once with its next action.
         expect(getPendingMessageVisualState(blocked).deliveryBlockedPresentation?.recovery).toBe('choose_account');
-        expect(resolvePendingMessageHeightBearingChrome(getPendingMessageVisualState(blocked))).toBe('none');
+        expect(pendingMessageStatesBlockedReason(getPendingMessageVisualState(blocked))).toBe(false);
         const failure = resolveSessionDeliveryFailure([pendingMessage({ id: 'q', localId: 'q' }), blocked], null, false);
         expect(failure?.recovery).toBeNull();
         expect(failure?.message).toBe(t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'));
@@ -408,25 +408,21 @@ describe('getPendingMessageVisualState', () => {
 });
 
 /**
- * F-P2 (2026-08-10): the transcript MEASUREMENT layer needs to know which delivery states can change
- * the row's HEIGHT, and only this owner knows. `PendingMessagesTranscriptBlock` selects its in-flow
- * notice from this descriptor, so the descriptor is the single decision-maker rather than a third
- * restatement of the mapping. In THIS repository every state except `blocked` paints only the
- * absolutely-positioned status chip — including the `queuedReason` copy — so only `blocked` bears
- * height.
+ * Which rows state their own blocked reason (CALM-1110: one line of meta on the row's status line).
+ * Only `blocked` does; a Session-owned block is said once by the Session, never on the row.
  */
-describe('resolvePendingMessageHeightBearingChrome', () => {
+describe('pendingMessageStatesBlockedReason', () => {
     const EXPECTED_BY_KIND = {
-        saving: 'none',
-        send_unconfirmed: 'none',
-        send_failed: 'none',
-        cancelling: 'none',
-        cancel_failed: 'none',
-        queued: 'none',
-        delivering: 'none',
-        materializing: 'none',
-        blocked: 'blocked-notice',
-    } as const satisfies Record<PendingMessageVisualStateKind, string>;
+        saving: false,
+        send_unconfirmed: false,
+        send_failed: false,
+        cancelling: false,
+        cancel_failed: false,
+        queued: false,
+        delivering: false,
+        materializing: false,
+        blocked: true,
+    } as const satisfies Record<PendingMessageVisualStateKind, boolean>;
 
     const REACHED_BY: Readonly<Record<PendingMessageVisualStateKind, () => PendingMessage>> = {
         saving: () => pendingMessage({ source: 'local_outbound' }),
@@ -451,19 +447,19 @@ describe('resolvePendingMessageHeightBearingChrome', () => {
                 typedKind === 'materializing' ? { materializingLocalIds: new Set(['p1']) } : undefined,
             );
             expect(visualState.kind, `fixture for ${kind} drifted`).toBe(typedKind);
-            expect(resolvePendingMessageHeightBearingChrome(visualState), kind).toBe(expected);
+            expect(pendingMessageStatesBlockedReason(visualState), kind).toBe(expected);
         }
     });
 
-    it('reads the blocked notice off the presentation the block itself renders', () => {
-        // The block paints `blockedDeliveryNotice` iff `deliveryBlockedPresentation` exists, so a new
-        // kind that starts carrying one cannot silently drop out of the size version.
-        expect(resolvePendingMessageHeightBearingChrome({
+    it('reads the blocked reason off the presentation the block itself renders', () => {
+        // The block states a reason iff `deliveryBlockedPresentation` exists, so a new kind that starts
+        // carrying one states it too.
+        expect(pendingMessageStatesBlockedReason({
             kind: 'queued',
             showSpinner: false,
             iconName: 'clock',
             deliveryBlockedPresentation: { labelKey: 'session.pendingMessages.deliveryBlockedReasons.unknown', isUnknown: true },
-        })).toBe('blocked-notice');
+        })).toBe(true);
     });
 });
 
@@ -527,13 +523,13 @@ describe('a new Bot\'s first-run seed while it is pending', () => {
     it('is the host\'s quiet line, not the person\'s bubble, and never paints its own blocked notice', () => {
         const [row] = resolvePendingMessagesPresentation([seed({
             pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'runtime_config_blocked' })]).rows;
-        expect(row).toMatchObject({ isHostInput: true, hostOnboarding: true, heightBearingChrome: 'none' });
+        expect(row).toMatchObject({ isHostInput: true, hostOnboarding: true, statesBlockedReason: false });
     });
 
     it('leaves an ordinary message the person typed as their own', () => {
         const [row] = resolvePendingMessagesPresentation([pendingMessage({
             pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'runtime_config_blocked' })]).rows;
         // Still the person's own message; its account block is said once by the Session line (JOURNEY-UX-1107 B).
-        expect(row).toMatchObject({ isHostInput: false, hostOnboarding: false, heightBearingChrome: 'none' });
+        expect(row).toMatchObject({ isHostInput: false, hostOnboarding: false, statesBlockedReason: false });
     });
 });

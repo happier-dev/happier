@@ -21,7 +21,6 @@ type Theme = UnistylesThemes[keyof UnistylesThemes];
 export const AGENT_INPUT_ACTION_CHIP_GAP_X = 4;
 /** The gap between wrapped chip lines: native rows state it as margins, web rows as `rowGap`; the rails' hit areas split this one value. */
 export const NATIVE_ACTION_CHIP_GAP_Y = 1;
-export const AGENT_INPUT_PANEL_PADDING_TOP = 2;
 
 /**
  * The field's book and microphone accessories: sideways they touch each other, above them a new session's
@@ -42,7 +41,8 @@ export const AGENT_INPUT_EXPANSION_TOGGLE_HIT_REACH = { bottom: 4 } as const;
 export const AGENT_INPUT_PANEL_PADDING_BOTTOM = 8;
 /**
  * The field's own breathing room above and below its text: the step between the typed line and the chip rail.
- * At rest the card reads 10 above the field, a one-line field, 6 to the chips (phone lab D13: card 88 tall).
+ * The card's top padding is derived from its side padding (`resolveAgentInputPanelPaddingTop`), so the typed
+ * line sits as far down as it sits in: 12 on a phone (lab D13's content inset), 18 on wider layouts.
  */
 export const AGENT_INPUT_FIELD_PADDING_Y = 5;
 
@@ -74,7 +74,7 @@ export function resolveAgentInputPanelLayoutStyle(theme: Theme) {
         borderRadius: theme.parts.composer.radius,
         ...resolveAgentInputPanelEdgeStyle(theme),
         overflow: 'hidden' as const,
-        paddingTop: AGENT_INPUT_PANEL_PADDING_TOP,
+        paddingTop: resolveAgentInputPanelPaddingTop(theme.space.s8),
         paddingBottom: AGENT_INPUT_PANEL_PADDING_BOTTOM,
         paddingHorizontal: theme.space.s8,
     };
@@ -82,6 +82,17 @@ export function resolveAgentInputPanelLayoutStyle(theme: Theme) {
 
 /** The field's and the chip rail's own leading inset inside the card: the typed line and an icon chip's glyph. */
 export const AGENT_INPUT_CARD_CONTENT_LEADING_INSET = 8;
+/** The field row's own inset above and below the field (`AgentInput` `inputContainer`). */
+export const AGENT_INPUT_FIELD_CONTAINER_PADDING_Y = 4;
+
+/**
+ * The card's top padding for a given side padding: the typed line stands as far below the card's top edge as
+ * it stands in from the leading edge (owner 2026-11-10: the top read tighter than the side).
+ */
+export function resolveAgentInputPanelPaddingTop(panelPaddingX: number): number {
+    return Math.max(0, panelPaddingX + AGENT_INPUT_CARD_CONTENT_LEADING_INSET
+        - AGENT_INPUT_FIELD_CONTAINER_PADDING_Y - AGENT_INPUT_FIELD_PADDING_Y);
+}
 
 /**
  * A phone composer's side padding, derived so its content lands `COMPOSER_PHONE_CARD_CONTENT_INSET` in from the

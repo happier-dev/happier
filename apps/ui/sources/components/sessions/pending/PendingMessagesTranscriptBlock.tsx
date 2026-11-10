@@ -46,7 +46,6 @@ import {
     PENDING_QUEUE_TOP_INSET_PX,
     PENDING_QUEUE_SCROLL_PADDING_TOP_PX,
     estimatePendingFollowNoticeHeightPx,
-    PENDING_MESSAGE_BLOCKED_NOTICE_MARGIN_TOP_PX,
     resolvePendingFollowNoticePullUpPx,
     resolvePendingMessageGapPx,
     resolvePendingQueueMessagePresentation,
@@ -611,11 +610,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             && !isLaunchOwnedPendingMessage(message)
             && !isAcceptedLocalPendingProjection(message);
         const deliveryBlockedPresentation = visualState.deliveryBlockedPresentation ?? null;
-        // F-P2: the ONE in-flow notice this row paints. Selected from the visual-state owner's own
-        // descriptor rather than inline, because `transcriptRowShellSignature` keys the row's Legend
-        // size version on exactly this answer — a notice the key cannot see is a stale reservation,
-        // and a key move with no notice is a discarded measurement.
-        const heightBearingChrome = presentation.heightBearingChrome;
         const providerDeliveryLabelKey = session && visualState.kind === 'delivering'
             ? resolvePendingDeliveryLabelKeyForSession({
                 session,
@@ -687,12 +681,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         : visualState.queuedReason === 'waiting_for_runtime'
                             ? t('session.pendingMessages.queuedReasons.waitingForRuntime')
                             : null;
-        const deliveryStateAccessibilityLabel = queuedReasonLabel
-            ? `${deliveryStateLabel}. ${queuedReasonLabel}`
-            : deliveryStateLabel;
-        const blockedDeliveryLabel = deliveryBlockedPresentation
+        // The row's own blocked reason reads on its status line, after the state (the owner decides whether
+        // the row states one); assistive tech hears it in full even where the line truncates.
+        const blockedDeliveryLabel = presentation.statesBlockedReason && deliveryBlockedPresentation
             ? deliveryBlockedPresentation.message ?? t(deliveryBlockedPresentation.labelKey)
             : null;
+        const deliveryStateAccessibilityLabel = [deliveryStateLabel, blockedDeliveryLabel, queuedReasonLabel]
+            .filter((part): part is string => Boolean(part)).join('. ');
         const canUseDirectDeliveryActions = canUseDirectPendingDeliveryActions(message, visualState, session);
         const canSendAsNew = message.pendingRecovery?.canSendAsNew === true;
 
@@ -891,29 +886,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             ) : null}
                         </PendingUtteranceSurface>
 
-                        {heightBearingChrome === 'blocked-notice' && blockedDeliveryLabel ? (
-	                            <View
-	                                testID={`pendingMessages.blockedDeliveryNotice:${message.id}`}
-                                style={[
-                                    styles.blockedDeliveryNotice,
-                                    isHostFollowInput ? styles.hostBlockedDeliveryNotice : null,
-                                    {
-                                        backgroundColor: theme.colors.surface.base,
-                                        borderColor: theme.colors.border.default,
-                                    },
-                                ]}
-                            >
-                                <Icon name="warning-circle" size={14} color={theme.colors.text.secondary} />
-	                                <Text
-	                                    testID={deliveryBlockedPresentation?.isUnknown ? `pendingMessages.unknownDeliveryStatus:${message.id}` : `pendingMessages.blockedDeliveryReason:${message.id}`}
-	                                    style={[styles.blockedDeliveryNoticeText, { color: theme.colors.text.secondary }]}
-	                                >
-	                                    {blockedDeliveryLabel}
-	                                </Text>
-	                            </View>
-	                        ) : null}
-
-                        <View style={[styles.pendingStatusRow, isHostFollowInput ? (heightBearingChrome === 'blocked-notice' && blockedDeliveryLabel ? styles.hostBlockedStatusRow : styles.hostStatusRow) : null]}>
+                        <View style={[styles.pendingStatusRow, isHostFollowInput ? styles.hostStatusRow : null]}>
                             {followInput ? <TranscriptFollowSourceAction followInput={followInput} serverId={props.serverId}
                                 testID={`pendingMessages.followSourceOpen:${message.id}`} style={styles.hostSourceAction} /> : null}
                             {isHostOnboarding ? null : <View
@@ -943,6 +916,16 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 >
                                     {deliveryStateLabel}
                                 </Text>
+                                {blockedDeliveryLabel ? <>
+                                    <Text style={[styles.pendingAffordanceText, { color: theme.colors.text.secondary }]}>·</Text>
+                                    <Text
+                                        testID={deliveryBlockedPresentation?.isUnknown ? `pendingMessages.unknownDeliveryStatus:${message.id}` : `pendingMessages.blockedDeliveryReason:${message.id}`}
+                                        numberOfLines={1}
+                                        style={[styles.pendingAffordanceReasonText, { color: theme.colors.text.secondary }]}
+                                    >
+                                        {blockedDeliveryLabel}
+                                    </Text>
+                                </> : null}
                             </View>}
 
                             {isWeb && presentation.canMutate ? (
@@ -1578,14 +1561,22 @@ function PendingUtteranceSurface(props: Readonly<{
     children: React.ReactNode;
 }>) {
     if (props.isHostFollowInput) return <View onLayout={props.onLayout} testID={props.testID}>{props.children}</View>;
+    // The bubble hugs its own words: a status line under it that runs longer (a blocked reason) widens the
+    // row's aligner, not the bubble.
     return (
-        <UserMessageBubble padding="parts" discarded={props.discarded} onLayout={props.onLayout} testID={props.testID}>
-            {props.children}
-        </UserMessageBubble>
+        <View style={styles.pendingBubbleHug}>
+            <UserMessageBubble padding="parts" discarded={props.discarded} onLayout={props.onLayout} testID={props.testID}>
+                {props.children}
+            </UserMessageBubble>
+        </View>
     );
 }
 
 const styles = StyleSheet.create((theme) => ({
+    pendingBubbleHug: {
+        alignSelf: 'flex-end',
+        maxWidth: '100%',
+    },
     messageContainer: {
         flexDirection: 'row',
         justifyContent: 'center',
@@ -1623,6 +1614,7 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         alignSelf: 'flex-end',
+        maxWidth: '100%',
         gap: theme.space.s8,
     },
     // A notice carries the transcript's row rhythm as space below it; its delivery mark reads as that row's
@@ -1633,41 +1625,23 @@ const styles = StyleSheet.create((theme) => ({
         alignSelf: 'flex-start',
         marginLeft: EVENT_ICON_CONTAINER_SIZE + theme.space.s10,
     },
-    // A blocked notice's reason chip takes the pull instead (it reads under the notice's words, like the queued
-    // status), and the status band follows it on the same edge.
-    hostBlockedDeliveryNotice: {
-        marginTop: -resolvePendingFollowNoticePullUpPx(theme.space),
-        alignSelf: 'flex-start',
-        marginLeft: EVENT_ICON_CONTAINER_SIZE + theme.space.s10,
-    },
     // The action is a text button: its label, not its box, reads on the edge the status label below it uses
     // (the mark and its gap), so it takes the button's own inset back.
     hostSourceAction: {
         marginLeft: PENDING_AFFORDANCE_ICON_SIZE_PX + theme.space.s4 - theme.space.s10,
     },
-    hostBlockedStatusRow: {
-        alignSelf: 'flex-start',
-        marginLeft: EVENT_ICON_CONTAINER_SIZE + theme.space.s10,
-    },
+    // One line whatever the state: a blocked reason truncates rather than wraps, so it never moves the row.
     pendingAffordanceChip: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s4,
+        flexShrink: 1,
+        minWidth: 0,
     },
-    blockedDeliveryNotice: {
-        marginTop: PENDING_MESSAGE_BLOCKED_NOTICE_MARGIN_TOP_PX,
-        alignSelf: 'flex-end',
-        maxWidth: '82%',
-        borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 8,
-        paddingHorizontal: 8,
-        paddingVertical: 5,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 5,
-    },
-    blockedDeliveryNoticeText: {
-        ...Typography.variant('micro', 'semiBold'),
+    pendingAffordanceReasonText: {
+        ...Typography.variant('meta'),
+        flexShrink: 1,
+        minWidth: 0,
     },
     nonSteerableNotice: {
         marginTop: 8,

@@ -137,6 +137,23 @@ describe('MessageView runtime failure rows', () => {
         expect(screen.getTextContent()).toContain('session.startFailure.requestId');
     });
 
+    it('leaves a start failure to the composer notice while it states it, and keeps the row once the Session recovers', async () => {
+        // CALM-1110: the same "couldn't start" cause read in a top banner and again as a transcript row.
+        const { MessageView } = await import('./MessageView');
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const issue = { v: 1, scope: 'primary_session', status: 'failed', code: 'agent_startup_model_reconciliation_failed',
+            source: 'agent_session_error', occurredAt: 2_000, sanitizedPreview: 'model rejected' } as const;
+        const messages = projectPersistedRows([{ id: 'start-failure', data: { type: 'message', message: 'model rejected' },
+            meta: { source: 'runtime', runtimeIssueV1: issue } }]);
+        storage.getState().applySessions([createSessionFixture({ id: 's1', serverId: 'home-a', active: false, lastRuntimeIssue: issue })]);
+        const screen = await renderScreen(<MessageView message={messages[0]!} metadata={null} sessionId="s1" serverId="home-a" />,
+            createTestSessionTranscriptSource({ sessionId: 's1', serverId: 'home-a', messages }));
+        expect(screen.findByTestId('transcript-event-runtime-issue')).toBeNull();
+        await act(() => { storage.getState().applySessions([createSessionFixture({ id: 's1', serverId: 'home-a', active: true, lastRuntimeIssue: issue })]); });
+        expect(screen.findByTestId('transcript-event-runtime-issue')).not.toBeNull();
+    });
+
     it('renders an input rejection the same way', async () => {
         const { MessageView } = await import('./MessageView');
         const rejection = 'custom-acp input rejected: Internal error: Cannot connect to API';

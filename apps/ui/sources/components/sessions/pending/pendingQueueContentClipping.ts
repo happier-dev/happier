@@ -67,11 +67,6 @@ export const PENDING_QUEUE_MESSAGE_BUBBLE_PADDING_PX = 16;
 export const PENDING_QUEUE_MESSAGE_GAP_PX = 8;
 /** The drawn 18 px actions plus the band's 4 px top margin (`PendingMessagesTranscriptBlock` `messageActionContainer`). */
 export const PENDING_MESSAGE_ACTION_ROW_HEIGHT_PX = 22;
-/** Chip box only: the existing text/padding/border estimate, without its ordinary top margin. */
-export const PENDING_MESSAGE_BLOCKED_NOTICE_CHIP_HEIGHT_PX = 25;
-export const PENDING_MESSAGE_BLOCKED_NOTICE_MARGIN_TOP_PX = 8;
-export const PENDING_MESSAGE_BLOCKED_NOTICE_HEIGHT_PX =
-    PENDING_MESSAGE_BLOCKED_NOTICE_CHIP_HEIGHT_PX + PENDING_MESSAGE_BLOCKED_NOTICE_MARGIN_TOP_PX;
 
 /** Shared with the renderer; callers with a theme retain its density-specific spacing. */
 export function resolvePendingFollowNoticePullUpPx(space: Readonly<{ s16: number }> = HAPPIER_SPACE_STEPS): number {
@@ -85,19 +80,18 @@ export function estimatePendingFollowNoticeBodyHeightPx(needsYou: boolean): numb
 
 /** Source-derived notice geometry, shared by the scroll box's initial size and the list estimate.
  * TranscriptEventRow has 22px below its label; attention adds a meta line and s2. The status band
- * pulls up by s16, and a blocked notice's reason chip takes that pull instead, so either way the delivery
- * band reads under the notice's own words; its source action uses RoundButton small.
+ * pulls up by s16, so the delivery band (a blocked reason included, on its one line) reads under the
+ * notice's own words; its source action uses RoundButton small.
  * The estimate assumes one source-label line; natural onLayout owns actual localized wrapping.
  */
 export function estimatePendingFollowNoticeHeightPx(
-    row: Pick<PendingMessagePresentation, 'needsYou' | 'opensSourceSession' | 'heightBearingChrome' | 'canMutate' | 'canReorder'>,
+    row: Pick<PendingMessagePresentation, 'needsYou' | 'opensSourceSession' | 'canMutate' | 'canReorder'>,
     platformIsWeb: boolean,
     queueCanReorder: boolean,
 ): number {
     const actionBand = row.canMutate && (platformIsWeb || (queueCanReorder && row.canReorder)) ? PENDING_MESSAGE_ACTION_ROW_HEIGHT_PX : 0;
     return estimatePendingFollowNoticeBodyHeightPx(row.needsYou)
         - resolvePendingFollowNoticePullUpPx()
-        + (row.heightBearingChrome === 'blocked-notice' ? PENDING_MESSAGE_BLOCKED_NOTICE_CHIP_HEIGHT_PX : 0)
         + Math.max(HAPPIER_TYPE_SCALE.meta.lineHeight, actionBand,
             row.opensSourceSession ? HAPPIER_PAGE_METRICS.smallControlHeightPx : 0);
 }
