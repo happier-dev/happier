@@ -224,7 +224,8 @@ describe('Muse account runtime', () => {
     if (connected.status !== 'connected') throw new Error('Muse key was not connected');
     expect(museNativeConnectedAccountPurpose.credentialKinds).toContain(connected.credentialKind);
     await expect(runtime.materialize({ kind: 'environment', keys: ['META_API_KEY'] }, f.context)).resolves.toEqual({ kind: 'environment', env: { META_API_KEY: 'synthetic-manual-key' } });
-    await expect(runtime.materialize({ kind: 'environment', keys: ['MUSE_CODE_CREDENTIAL'] }, f.context)).rejects.toMatchObject({ code: 'plugin_connected_account_materialization_unsupported' });
+    await expect(runtime.materialize({ kind: 'environment', keys: ['MUSE_CODE_CREDENTIAL'] }, f.context)).resolves.toEqual({ kind: 'environment', env: {} });
+    await expect(runtime.materialize({ kind: 'environment', keys: ['META_API_KEY', 'MUSE_CODE_CREDENTIAL'] }, f.context)).resolves.toEqual({ kind: 'environment', env: { META_API_KEY: 'synthetic-manual-key' } });
     await expect(runtime.materialize({ kind: 'files', fileIds: ['muse/auth.json'] }, f.context)).resolves.toEqual({ kind: 'files', files: {} });
     await expect(runtime.quota?.(f.context)).rejects.toMatchObject({ code: 'plugin_connected_account_usage_unavailable' });
     expect(f.requests).toHaveLength(0);
@@ -265,7 +266,7 @@ describe('Muse account runtime', () => {
     f.values.set('accountToken', 'native-account-token');
     f.values.set('inferenceKey', 'native-api-key');
     await expect(runtime.materialize({ kind: 'environment', keys: ['META_API_KEY'] }, f.context)).resolves.toEqual({ kind: 'environment', env: { META_API_KEY: 'native-api-key' } });
-    await expect(runtime.materialize({ kind: 'environment', keys: ['MUSE_CODE_CREDENTIAL'] }, f.context)).rejects.toMatchObject({ code: 'plugin_connected_account_materialization_unsupported' });
+    await expect(runtime.materialize({ kind: 'environment', keys: ['MUSE_CODE_CREDENTIAL'] }, f.context)).resolves.toEqual({ kind: 'environment', env: {} });
     expect(f.requests).toHaveLength(0);
   });
 });

@@ -174,7 +174,7 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
       const env: Record<string, string> = request.keys.includes(META_API_KEY_ENV_KEY) ? { [META_API_KEY_ENV_KEY]: key } : {};
       if (request.keys.includes(MUSE_CODE_CREDENTIAL_ENV_KEY)) {
         const mechanism = await read(context.credentials, 'nativeMechanism', options);
-        if (mode !== 'native' || mechanism !== '"oauth"') throw new PluginError({ code: 'plugin_connected_account_materialization_unsupported', message: 'Muse subscription credentials require an OAuth account.' });
+        if (mode !== 'native' || mechanism !== '"oauth"') return { kind: 'environment', env };
         const accessToken = await read(context.credentials, 'accountToken', options);
         if (!accessToken || (expiry && Number(expiry) <= Date.now())) {
           throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'The Muse account token is unavailable or expired; reconnect the account.' });
