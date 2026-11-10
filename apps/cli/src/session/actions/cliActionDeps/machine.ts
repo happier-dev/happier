@@ -283,9 +283,6 @@ export function createCliMachineActionDeps(
       }));
     },
     machineSetupPlan: async ({ input, context, signal }) => {
-      if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== input.machineId) {
-        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
-      }
       return await callMachineAction({ machineId: input.machineId, serverId: context.serverId ?? params.serverId,
         method: RPC_METHODS.MACHINE_SETUP_PLAN, request: input, context, effectActionId: 'machines.setup.plan',
         authority: context.authority, exactMachine: true, timeoutMs: null, ...(signal ? { signal } : {}) });

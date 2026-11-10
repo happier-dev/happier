@@ -30,6 +30,7 @@ import {
   groupMachineSetupChanges,
 } from './machineSetupReviewChanges';
 import { MachineSetupChangeGroupRow } from './MachineSetupChangeGroupRow';
+import { describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
 
 export type MachineSetupPreparedReview = Extract<
   MachineSetupPreparedApply,
@@ -379,6 +380,17 @@ export function describeMachineSetupAllOffline(failure: ActionExecuteFailure, na
       return home ? `${nameOf(target.machineId)} (${home})` : nameOf(target.machineId);
     }).join(', '),
   });
+}
+
+/** Keep the target Plan owner's typed refusal visible on every setup review entry. */
+export function describeMachineSetupPlanFailure(failure: ActionExecuteFailure, nameOf: (machineId: string) => string): string {
+  const offline = describeMachineSetupAllOffline(failure, nameOf);
+  if (offline) return offline;
+  const diagnostic = describeManagedOperationDiagnostic({ errorCode: failure.errorCode, error: failure.error });
+  const details = failure.details;
+  const target = details && typeof details === 'object' && 'target' in details ? details.target : undefined;
+  return target && typeof target === 'object' && 'machineId' in target && typeof target.machineId === 'string'
+    ? `${nameOf(target.machineId)} · ${diagnostic}` : diagnostic;
 }
 
 /**

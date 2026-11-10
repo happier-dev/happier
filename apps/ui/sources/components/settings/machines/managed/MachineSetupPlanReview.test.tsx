@@ -17,6 +17,16 @@ afterEach(() => standardCleanup());
 
 const { MachineSetupPlanReview } = await import('./MachineSetupPlanReview');
 
+it('names the refused setup target and keeps its typed reason in the error presented to the person', async () => {
+  const { describeMachineSetupPlanFailure } = await import('./MachineSetupPlanReview');
+  const description = describeMachineSetupPlanFailure({ ok: false, errorCode: 'permission_denied',
+    error: 'Machine access was refused.', details: { target: { homeId: 'home', machineId: 'shop' } } },
+  id => id === 'shop' ? 'shop-prod' : id);
+  expect(description).toContain('shop-prod');
+  expect(description).toContain('permission_denied');
+  expect(description).toContain('Machine access was refused.');
+});
+
 const target = (machineId: string) => ({
   homeId: 'home',
   machineId,

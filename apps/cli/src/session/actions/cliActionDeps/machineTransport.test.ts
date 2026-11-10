@@ -5,6 +5,8 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { createCliMachineActionTransport } from './machineTransport';
+import { createCliMachineActionDeps } from './machine';
+import { createCombinedMachineSetupActionDeps } from '@/machines/setup/composeMachineSetup';
 import type { MachineActionDirectTargetTransport } from '../createCliActionDeps';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '@happier-dev/protocol/daemon/agentSignIn';
@@ -13,6 +15,24 @@ import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAda
 afterEach(() => vi.restoreAllMocks());
 
 describe('Machine capability observation during unsigned approval replay', () => {
+  it('preserves which combined target refused planning and its original typed cause', async () => {
+    const params = { credentials: { token: 'fixture', encryption: null, credentialProvenance: 'stored_session' as const },
+      serverId: 'home', serverIdentityId: 'home' };
+    const deps = createCliMachineActionDeps(params, createCliMachineActionTransport(params));
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(new RpcError('Machine access was refused.', 'permission_denied'));
+    const combined = createCombinedMachineSetupActionDeps({ readDeps: () => deps, targetPlan: deps.machineSetupPlan!,
+      readHostFacts: async () => ({ machines: [{ machineId: 'second', online: true }] }), orchestrationDirectory: '.',
+      startCombined: async () => { throw new Error('Plan cannot start a Run'); },
+      waitForRun: async () => { throw new Error('Plan cannot wait for a Run'); },
+      readInvocations: async () => { throw new Error('Plan cannot read a Run'); },
+    });
+    await expect(combined.machineSetupPlan!({ input: { homeId: 'home', machineId: 'controller',
+      targets: [{ homeId: 'home', machineId: 'second' }] },
+      context: { surface: 'cli', authority: 'present_user', serverId: 'home' } })).resolves.toMatchObject({
+        ok: false, errorCode: 'permission_denied', error: 'Machine access was refused.',
+        details: { target: { homeId: 'home', machineId: 'second' } },
+      });
+  });
   it.each([
     ['machines.agents.list', RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, true],
     ['machines.agents.list', RPC_METHODS.CAPABILITIES_DETECT, true],

@@ -13,6 +13,7 @@ import {
 } from '@happier-dev/protocol';
 import { selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { MachineSetupPlanResultV1, MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
@@ -20,6 +21,7 @@ import type { WorkflowActionLeafV1, WorkflowDefinitionV1 } from '@happier-dev/pr
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { isBackupReceiverSelection } from './backupReceiverResult';
 
 type Preparation = NonNullable<ActionExecutorDeps['prepareMachineSetupApply']>;
 type HostFacts = Exclude<Awaited<ReturnType<Preparation>>, ActionExecuteFailure>['host'];
@@ -116,6 +118,19 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
   readInvocations(request: WorkflowCombinedRunStartV1,
     input: WorkflowActionExecuteArgs<'workflow.run.invocations.list'>['input']): Promise<unknown>;
 }>): Pick<ActionExecutorDeps, 'machineSetupPlan' | 'prepareMachineSetupApply' | 'machineSetupApply'> {
+  const targetPlan: typeof host.targetPlan = async request => {
+    let result: unknown;
+    try { result = await host.targetPlan(request); }
+    catch (error) { result = { ok: false, ...normalizeActionExecutorThrownError(error, 'machines.setup.plan') }; }
+    const refused = ActionExecuteFailureSchema.safeParse(result);
+    if (!refused.success || 'targets' in request.input) return result;
+    const details = refused.data.details;
+    return { ...refused.data, details: {
+      ...(details === undefined ? {} : details && typeof details === 'object' && !Array.isArray(details)
+        ? details : { cause: details }),
+      target: { homeId: request.input.homeId, machineId: request.input.machineId },
+    } };
+  };
   const prepare: Preparation = async ({ input: raw, context }) => {
     const input = MachineSetupApplyInputV1Schema.parse(raw);
     if (input.targets.some(target => target.homeId !== input.homeId)) return failure('server_scope_mismatch');
@@ -129,7 +144,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       if (!nativeLeaf && (target.removeItemKeys !== undefined || target.exclusions === undefined
         || machineSetupTargetHasApps(target))) {
         const requestedExclusions = target.exclusions;
-        const result = await host.targetPlan({ input: { homeId: target.homeId, machineId: target.machineId,
+        const result = await targetPlan({ input: { homeId: target.homeId, machineId: target.machineId,
           sources: target.sources, ...(requestedExclusions === undefined ? {} : { exclusions: requestedExclusions }),
           ...(target.removeItemKeys === undefined ? {} : { removeItemKeys: target.removeItemKeys }),
           ...(target.appChildren === undefined ? {} : { appChildren: target.appChildren }), mode: 'effects' },
@@ -191,7 +206,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
     prepareMachineSetupApply: prepare,
     machineSetupPlan: async request => {
       if (!('targets' in request.input)) {
-        const result = await host.targetPlan(request);
+        const result = await targetPlan(request);
         if (!request.input.mode) return result;
         const plan = MachineSetupPlanResultV1Schema.safeParse(result);
         if (!plan.success || !plan.data.review) return result;
@@ -219,7 +234,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
             status: 'unavailable', reason: 'offline', errorCode: 'machine_offline' });
           continue;
         }
-        const result = await host.targetPlan({ ...request, input: target });
+        const result = await targetPlan({ ...request, input: target });
         if (request.signal?.aborted || request.context.signal?.aborted) return failure('cancelled');
         const refused = ActionExecuteFailureSchema.safeParse(result);
         if (refused.success) {
@@ -275,9 +290,21 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       context.operationOwnerUpdate?.update({ cancellation: 'unsupported' });
       const result = { operationId: acceptance.operationId, runId };
       acceptance.accept(result);
+      const hasReceivers = reviewed.targets.some(target => target.recipePlans.some(entry =>
+        entry.plan.basis.kind === 'setup' && entry.plan.basis.selection
+          && isBackupReceiverSelection(entry.plan.basis.selection)));
+      const withRecovery = (value: ActionExecuteFailure): ActionExecuteFailure => {
+        if (!hasReceivers) return value;
+        const details = value.details;
+        return { ...value, details: {
+          ...(details === undefined ? {} : details && typeof details === 'object' && !Array.isArray(details)
+            ? details : { childResult: details }),
+          setupOperation: result,
+        } };
+      };
       // Losing the observer does not settle the Run or release its native child.
       // The existing Run remains the recovery/cancellation owner.
-      const uncertain = (cause?: ActionExecuteFailure): ActionExecuteFailure => ({
+      const uncertain = (cause?: ActionExecuteFailure): ActionExecuteFailure => withRecovery({
         ok: false, errorCode: context.signal?.aborted ? 'stop_unconfirmed' : 'outcome_uncertain',
         error: 'Setup has no confirmed terminal outcome. Its child may still be changing the Machine. Open the Workflow Run to cancel or recover it before retrying.',
         details: { runId, ...(cause ? { observationFailure: cause } : {}) },
@@ -293,31 +320,43 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
         ...normalizeActionExecutorThrownError(settled.error, 'workflow.run.wait') });
       if (settled.data.observation !== 'terminal') return uncertain();
       if (settled.data.run.workflowCustodyState !== 'settled') return uncertain();
-      if (settled.data.run.state === 'succeeded') return result;
-      if (settled.data.run.state === 'cancelled') return failure('cancelled');
-      // Failed Runs have no final output. Their retained Action invocation owns
-      // the typed failure and native details; do not replace it with parent prose.
+      const succeeded = settled.data.run.state === 'succeeded';
+      if (succeeded && !hasReceivers) return result;
+      if (settled.data.run.state === 'cancelled') return withRecovery(failure('cancelled'));
+      // Retained Setup invocations own receiver evidence. Failed Runs retain
+      // their typed failure and native details at the same content boundary.
       let cursor: string | undefined;
+      const backupReceivers: NonNullable<ReturnType<typeof MachineSetupApplyResultV1Schema.parse>['backupReceivers']> = [];
+      const setupBlocks = new Set(reviewed.targets.map((_, index) => `setup-${index}`));
       do {
         let observed: unknown;
-        try { observed = await host.readInvocations(request, { runId, lifecycles: ['failed'], includeContent: true,
+        try { observed = await host.readInvocations(request, { runId, lifecycles: [succeeded ? 'completed' : 'failed'], includeContent: true,
           ...(cursor ? { cursor } : {}) }); }
-        catch (error) { return { ok: false, ...normalizeActionExecutorThrownError(error, 'workflow.run.invocations.list') }; }
+        catch (error) { return withRecovery({ ok: false, ...normalizeActionExecutorThrownError(error, 'workflow.run.invocations.list') }); }
         const refused = ActionExecuteFailureSchema.safeParse(observed);
-        if (refused.success) return refused.data;
+        if (refused.success) return withRecovery(refused.data);
         const page = WorkflowActionOutputSchemasV1['workflow.run.invocations.list'].safeParse(observed);
-        if (!page.success) return { ok: false,
-          ...normalizeActionExecutorThrownError(page.error, 'workflow.run.invocations.list') };
-        if (!page.data.invocationDetails) return failure('content_unavailable');
+        if (!page.success) return withRecovery({ ok: false,
+          ...normalizeActionExecutorThrownError(page.error, 'workflow.run.invocations.list') });
+        if (!page.data.invocationDetails) return withRecovery(failure('content_unavailable'));
         for (const { progress } of page.data.invocationDetails) {
-          if (progress.blockKind !== 'action' || !progress.reason) continue;
-          return { ok: false, errorCode: progress.reason.code, error: progress.reason.message ?? progress.reason.code,
+          if (progress.blockKind !== 'action') continue;
+          if (succeeded) {
+            if (!setupBlocks.has(progress.invocationPath.blockId) || progress.invocationPath.scope.length) continue;
+            const child = MachineSetupApplyResultV1Schema.safeParse(progress.result);
+            if (!child.success) return withRecovery(failure('invalid_action_output'));
+            backupReceivers.push(...(child.data.backupReceivers ?? []));
+            continue;
+          }
+          if (!progress.reason) continue;
+          return withRecovery({ ok: false, errorCode: progress.reason.code, error: progress.reason.message ?? progress.reason.code,
             ...(progress.reason.failureCause ? { failureCause: progress.reason.failureCause } : {}),
-            ...(progress.result === undefined ? {} : { details: progress.result }) };
+            ...(progress.result === undefined ? {} : { details: progress.result }) });
         }
         cursor = page.data.nextCursor;
       } while (cursor);
-      return failure('machine_setup_child_failed');
+      return succeeded ? { ...result, ...(backupReceivers.length ? { backupReceivers } : {}) }
+        : withRecovery(failure('machine_setup_child_failed'));
     },
   };
 }

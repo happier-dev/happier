@@ -6,7 +6,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { AgentsAcpBackendsDeleteOutputV1Schema, AgentsAcpBackendsUpsertOutputV1Schema, applyAcpBackendUpsertV1, suggestAcpBackendIdV1, type AcpBackendUpsertResultV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import type { AcpBackendDefinitionV1, AcpCatalogAuthSupportV1, AcpCatalogSupportHintV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
-import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import { createCustomAcpAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
 import { CapabilityMachineTruth, type CapabilityMachineTruthRow } from '@/components/capabilities/detail/CapabilityMachineTruth';
@@ -324,10 +325,16 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
         try {
             const execution = await executeAction('agents.acp.backends.delete', { backendId: existing.id, ...authority });
             if (!execution.ok && isActionApprovalDeclinedErrorCode(execution.errorCode)) return;
-            if (!execution.ok) throw new Error(execution.errorCode);
+            if (!execution.ok) throw createActionExecuteFailureError(execution);
             AgentsAcpBackendsDeleteOutputV1Schema.parse(execution.result);
         }
-        catch { if (isEditorCurrent()) Modal.alert(t('common.error'), t('common.unavailable')); return; }
+        catch (error) {
+            if (isEditorCurrent()) {
+                const failure = normalizeActionExecutorThrownError(error);
+                Modal.alert(t('common.error'), [...new Set([failure.errorCode, failure.error])].join(': '));
+            }
+            return;
+        }
         if (!isEditorCurrent()) return;
         deletedRef.current = true;
         setState((current) => ({ ...current, draft: current.baseline, errors: {} }));

@@ -391,14 +391,18 @@ describe('managed continuation through the ordinary public Action transport', ()
         // Distinct daemon custody makes a missing requester selection observable;
         // no transport/domain owner is replaced beneath these public dependencies.
         const daemonCredentials = { token: 'daemon-owner-token', encryption: null };
-        const deps = createCliActionDeps({ token: daemonCredentials.token, credentials: daemonCredentials, sessionId: '',
+        // Setup Plan can be hosted with only receiving requester custody. The
+        // transport owns selecting it; public daemon credentials are optional.
+        const deps = createCliActionDeps({ token: daemonCredentials.token,
+            ...(rootActionId === 'machines.setup.plan' ? {} : { credentials: daemonCredentials }), sessionId: '',
             serverId: 'home-profile', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.example',
             externalActionMachineInstallationId: sourceInstallationId, externalActionMachineRequestPrivateKey: keyPair.secretKey });
         const invoke = (input = child) => runWithServerHttpBaseUrl('https://home.example', () => deps.machineSetupPlan!({ input, context: {
             surface: 'rpc', authority: 'present_user', serverId: 'home-profile',
             externalActionExecutionAuthorization: admitted.authorization, externalActionTarget: target, originalActionEnvelope: envelope } }));
         await expect(invoke({ ...child, sources: [{ ...child.sources[0]!, setup: { scripts: [{ body: 'echo changed' }] } }] }))
-            .rejects.toMatchObject({ code: 'machine_target_not_current' });
+            .resolves.toMatchObject({ ok: false, errorCode: 'machine_target_not_current',
+                details: { target: { homeId: 'srv_home', machineId: 'guest' } } });
         expect(packets).toEqual([]);
         expect(await invoke()).toMatchObject({ desiredRevision: 3 });
         expect(packets).toEqual([expect.objectContaining({ originalActionEnvelope: envelope,
@@ -408,7 +412,8 @@ describe('managed continuation through the ordinary public Action transport', ()
         expect(transportTokens).toEqual([admitted.credentials.token]);
         expect(envelope).toEqual(originalEnvelope);
         role = 'use';
-        await expect(invoke()).rejects.toMatchObject({ code: 'machine_target_not_current' });
+        await expect(invoke()).resolves.toMatchObject({ ok: false, errorCode: 'machine_target_not_current',
+            details: { target: { homeId: 'srv_home', machineId: 'guest' } } });
         expect(packets).toHaveLength(1);
         expect(envelope).toEqual(originalEnvelope);
     });

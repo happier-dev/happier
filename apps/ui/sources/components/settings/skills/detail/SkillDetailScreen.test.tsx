@@ -216,6 +216,76 @@ async function seededHome(
 }
 
 describe('SkillDetailScreen instructions autosave', () => {
+  it('deletes a newly written Skill on the first attempt after changing its reach', async () => {
+    const home = await seededHome('https://skill-first-delete.test');
+    const author = await renderHook(() => useMountedActionExecution(home.home.id));
+    let detail: Awaited<ReturnType<typeof renderHook<ReturnType<typeof useSkillDetail>>>> | undefined;
+    try {
+      await vi.waitFor(() => expect(author.getCurrent().ready).toBe(true));
+      const result = await author.getCurrent().execute('skills.create', {
+        name: 'release-notes', files: [skillTextFile('SKILL.md', SKILL_MD)],
+      });
+      const created = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.create'].parse(result.ok ? result.result : null);
+      detail = await renderHook(() => useSkillDetail(created.skillId));
+      await vi.waitFor(() => expect(detail!.getCurrent().status).toBe('ready'));
+      const reach = await renderHook(() => useReachRules('skill', created.skillId));
+      try {
+        await vi.waitFor(() => expect(reach.getCurrent().status).toBe('ready'));
+        for (const rules of [
+          [{ target: { t: 'allMachines' as const }, enabled: true }],
+          [{ target: { t: 'allMachines' as const }, enabled: false }],
+          [{ target: { t: 'allMachines' as const }, enabled: false },
+            { target: { t: 'machine' as const, machineId: 'b71f24d9-1ae1-40c8-b61e-932184189daf' }, enabled: true }],
+        ]) {
+          await act(async () => {
+            expect(await reach.getCurrent().change({ kind: 'replace', rules })).toEqual({ ok: true });
+          });
+        }
+      } finally { await reach.unmount(); }
+      modalSpies.confirm.mockResolvedValue(true);
+      await act(async () => {
+        expect(await detail!.getCurrent().remove()).toBe(true);
+      });
+      expect(home.boundary.read(created.skillId)).toBeNull();
+    } finally {
+      modalSpies.confirm.mockReset().mockResolvedValue(false);
+      await detail?.unmount(); await author.unmount(); await home.dispose();
+    }
+  });
+  it('deletes with its acknowledged save revision before React commits the save', async () => {
+    const home = await seededHome('https://skill-save-delete.test');
+    const detail = await renderHook(() => useSkillDetail('release-notes'));
+    try {
+      await vi.waitFor(() => expect(detail.getCurrent().status).toBe('ready'));
+      modalSpies.confirm.mockResolvedValue(true);
+      await act(async () => {
+        expect(await detail.getCurrent().update({ files: [{ kind: 'upsert', file: skillTextFile('SKILL.md', `${SKILL_MD}Saved.\n`) }] })).toMatchObject({ ok: true });
+        expect(await detail.getCurrent().remove()).toBe(true);
+      });
+      expect(home.boundary.read('release-notes')).toBeNull();
+    } finally {
+      modalSpies.confirm.mockReset().mockResolvedValue(false);
+      await detail.unmount(); await home.dispose();
+    }
+  });
+  it('shows the typed delete refusal instead of an unknown error', async () => {
+    const home = await seededHome('https://skill-delete-refusal.test', async (path, init) =>
+      init?.method === 'DELETE' && path.startsWith('/v1/artifacts/release-notes/')
+        ? Response.json({ error: 'version_mismatch' }, { status: 409 }) : null);
+    const { SkillDetailScreen } = await import('./SkillDetailScreen');
+    const screen = await renderScreen(<SkillDetailScreen skillId="release-notes" />);
+    try {
+      await vi.waitFor(() => expect(screen.findByTestId('skill.detail.remove')).not.toBeNull());
+      modalSpies.alert.mockClear();
+      modalSpies.confirm.mockResolvedValue(true);
+      await screen.pressByTestIdAsync('skill.detail.remove');
+      await vi.waitFor(() => expect(modalSpies.alert).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('revision_conflict')));
+      expect(home.boundary.read('release-notes')).not.toBeNull();
+    } finally {
+      modalSpies.confirm.mockReset().mockResolvedValue(false);
+      await screen.unmount(); await home.dispose();
+    }
+  });
   it.each(['done', 'preview'] as const)('keeps the skill editor and draft when %s cannot confirm its snapshot', async target => {
     const home = await seededHome(`https://skill-unconfirmed-${target}.test`);
     function Instructions() {

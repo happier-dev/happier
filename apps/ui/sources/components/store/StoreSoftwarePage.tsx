@@ -58,7 +58,7 @@ import { showStoreSoftwareReview } from './StoreSoftwareReview';
 import { StoreAddToPresetButton, StorePresetEditorHandoff, type StorePresetChoice } from './presets/StoreAddToPreset';
 import { StorePresetsShelf } from './presets/StorePresetsShelf';
 import type { StorePresetDoorItem } from './presets/storePresetDoor';
-import { describeMachineSetupAllOffline } from '@/components/settings/machines/managed/MachineSetupPlanReview';
+import { describeMachineSetupPlanFailure } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import {
   SoftwareMachineMark,
   foldOfflineSoftwareTargets,
@@ -357,13 +357,7 @@ function SoftwareListingBody(
         const machine = props.machines.targets.find((entry) => entry.machine.machineId === machineId)?.machine;
         return machine ? softwareMachineName(machine) : t('storeInstalled.machineFallback');
       };
-      throw new Error(
-        describeMachineSetupAllOffline(prepared, nameOf) ?? (prepared.errorCode === 'machine_unavailable'
-          ? t('capabilities.store.softwarePage.machineUnavailable')
-          : prepared.errorCode === 'plan_changed'
-            ? t('capabilities.store.softwarePage.planChanged')
-            : t('capabilities.store.softwarePage.prepareFailed')),
-      );
+      throw new Error(describeMachineSetupPlanFailure(prepared, nameOf));
     }
     showStoreSoftwareReview({
       name: item.label,

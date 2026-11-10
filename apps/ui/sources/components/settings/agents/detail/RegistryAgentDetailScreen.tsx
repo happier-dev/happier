@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { View } from 'react-native';
 
 import { AgentsAcpBackendsDeleteOutputV1Schema } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
@@ -209,12 +210,14 @@ export function RegistryAgentDetailScreen(
         { backendId: definition.id, expectedRevision: catalog.revision },
       );
       if (!execution.ok && isActionApprovalDeclinedErrorCode(execution.errorCode)) return;
-      if (!execution.ok) throw new Error(execution.errorCode);
+      if (!execution.ok) throw createActionExecuteFailureError(execution);
       AgentsAcpBackendsDeleteOutputV1Schema.parse(execution.result);
       router.replace(AGENTS_ROUTE as never);
-    } catch {
-      if (action.isCurrent())
-        Modal.alert(t('common.error'), t('common.unavailable'));
+    } catch (error) {
+      if (action.isCurrent()) {
+        const failure = normalizeActionExecutorThrownError(error);
+        Modal.alert(t('common.error'), [...new Set([failure.errorCode, failure.error])].join(': '));
+      }
     } finally {
       setRemoving(false);
     }

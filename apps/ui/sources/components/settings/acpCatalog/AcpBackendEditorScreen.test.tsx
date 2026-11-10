@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import type { AcpBackendDefinitionV1, AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { AgentsAcpBackendsUpsertOutputV1Schema } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
@@ -750,6 +750,45 @@ describe('AcpBackendEditorScreen', () => {
         expect(shared.routerReplaceSpy).toHaveBeenCalledWith('/(app)/settings/agents');
         expect(Modal.confirm).not.toHaveBeenCalled();
     });
+    it.each(['editor', 'registry'] as const)('retains the delete refusal in the %s detail and permits an explicit retry', async (surface) => {
+        const definition: AcpBackendDefinitionV1 = surface === 'editor' ? existingKiro : {
+            ...existingKiro,
+            launch: { kind: 'npm', package: '@test/acp-agent', version: '1.2.3', args: ['--stdio'] },
+            origin: { kind: 'registry', provenance: {
+                sourceId: 'builtin:acp-registry', format: 'acp-registry',
+                sourceUrl: 'https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json',
+                itemId: 'kiro', ref: { kind: 'version', version: '1.2.3' }, importedAt: 1,
+            } },
+        };
+        shared.settingsState.value = { v: 2, backends: [definition] };
+        applyAcpCatalogSnapshot(scope, { status: 'ready', revision,
+            record: { v: 1, definitions: [definition] } }, true);
+        const screen = surface === 'editor' ? await renderEditor('kiro')
+            : await renderSettingsView(React.createElement(
+                (await import('@/components/settings/agents/detail/RegistryAgentDetailScreen')).RegistryAgentDetailScreen,
+                { definition }));
+        const remove = async () => {
+            if (surface === 'registry') {
+                await screen.pressByTestIdAsync('settings.agents.registryDetail.remove');
+                await flushHookEffects();
+            } else {
+                const menu = screen.findAll(node => node.props?.testID === `${EDITOR}.menu`
+                    && typeof node.props?.onSelect === 'function')[0];
+                await menu?.props.onSelect('delete');
+            }
+        };
+        shared.refuse = true;
+        await act(remove);
+        await waitForHomeGovernance(() => expect(shared.modalAlertSpy).toHaveBeenCalledWith(
+            'common.error', expect.stringMatching(/conflict/i)));
+        expect(shared.writes).toHaveLength(0);
+        expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
+        shared.refuse = false;
+        await act(remove);
+        await waitForHomeGovernance(() => expect(shared.routerReplaceSpy).toHaveBeenCalledWith('/(app)/settings/agents'));
+        expect(shared.writes.at(-1)?.backends).toEqual([]);
+    });
+
     it('keeps the agent and stays silent when the shared delete confirmation is declined', async () => {
         shared.settingsState.value = { v: 2, backends: [existingKiro] };
         shared.accountSettings = {};

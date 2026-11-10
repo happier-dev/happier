@@ -16,6 +16,8 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { saveFileBytes } from '@/sync/runtime/files/saveFileBytes';
 import { useSkillsLibrary } from '@/sync/domains/skills/useSkillsLibrary';
 import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
+import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
+import { HappyError } from '@/utils/errors/errors';
 
 import { readSkillText } from './skillFileContent';
 
@@ -167,9 +169,13 @@ export function useSkillDetail(skillId: string | null) {
         const { revision } = SKILL_ACTION_OUTPUT_SCHEMAS_V1[
           'skills.update'
         ].parse(result.ok ? result.result : null);
+        const updated = applyChange(read, change, revision);
+        // Done/blur can be followed by another action before React commits.
+        // The acknowledged revision belongs to this author immediately.
+        if (readRef.current?.skillId === skillId) readRef.current = updated;
         setState((prev) =>
           prev.skillId === skillId && prev.read
-            ? { ...prev, read: applyChange(prev.read, change, revision) }
+            ? { ...prev, read: updated }
             : prev,
         );
         return { ok: true, revision };
@@ -202,17 +208,17 @@ export function useSkillDetail(skillId: string | null) {
   }, []);
 
   /** The Action owns confirmation; `'cancelled'` when the person declines its policy prompt. */
-  const remove = React.useCallback(async (): Promise<boolean | 'cancelled'> => {
+  const remove = React.useCallback(async (): Promise<true | 'cancelled'> => {
     const read = readRef.current;
-    if (!skillId || !read) return false;
+    if (!skillId || !read) throw new HappyError('not_ready', false, { code: 'not_ready' });
     const result = await execute(
       'skills.delete',
       { skillId, expectedRevision: read.revision },
     );
     if (!result.ok && isActionApprovalDeclinedErrorCode(result.errorCode)) return 'cancelled';
-    if (readSkillActionRefusal(result)) return false;
+    requireActionSuccess(result);
     SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.delete'].parse(
-      result.ok ? result.result : null,
+      result.result,
     );
     return true;
   }, [execute, skillId]);

@@ -6,7 +6,7 @@ import { createActionApprovalContinuation } from '@/components/approvals/actionA
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import type { MachineSetupPreparedApply, MachineSetupPreparedRemove } from '@/components/settings/machines/managed/machineSetupReview';
-import { MachineSetupPlanReview, MachineSetupReviewFooter } from '@/components/settings/machines/managed/MachineSetupPlanReview';
+import { describeMachineSetupPlanFailure, MachineSetupPlanReview, MachineSetupReviewFooter } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -183,8 +183,8 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
     const next = await prepareOn(machineId);
     setReplanning(false);
     if (next.ok) setPrepared(next);
-    else setError(next.errorCode ?? 'managed_response_invalid');
-  }, [prepareOn, replanning]);
+    else setError(describeMachineSetupPlanFailure(next, nameOf));
+  }, [prepareOn, replanning, nameOf]);
   const reviewSelection = async (machineId: string, removeItemKeys: string[] = []) => {
     if ((!row && !preset) || !binding?.isCurrent() || binding.accountId !== props.scope.accountId) return;
     const homeId = getServerProfileById(props.scope.serverId)?.serverIdentityId;
@@ -203,7 +203,7 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
       if (controller.signal.aborted || !binding.isCurrent()) return;
       if (next === null) { setSelectedId(null); return; }
       if (next.ok) setPrepared(next);
-      else setError(next.errorCode);
+      else setError(describeMachineSetupPlanFailure(next, nameOf));
     } catch {
       if (!controller.signal.aborted && binding.isCurrent()) setError('managed_request_failed');
     } finally {
