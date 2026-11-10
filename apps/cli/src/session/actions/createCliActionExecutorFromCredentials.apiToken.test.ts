@@ -465,8 +465,11 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const raw = { status: 'awaitingManual', attemptId: 'attempt-connect' };
     // This callback is the terminal's human/--yes boundary. The daemon HTTP
     // boundary supplies the receipt; real CLI placement consumes its decision.
-    const onApprovalRequested = vi.fn(async () => ({ ok: true as const,
-      result: { ok: true, status: 'executed', liveExecution: { ok: true, result: raw } } }));
+    const onApprovalRequested = async (artifactId: string) => {
+      expect(artifactId).toBe('root-connect-approval');
+      return { ok: true as const,
+        result: { ok: true, status: 'executed', liveExecution: { ok: true, result: raw } } };
+    };
     await withPublishedAccountDaemon(async ({ credentials, serverId, serverApiUrl, daemonTarget }) => {
       const executor = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl,
         serverIdentityId: 'srv_home', machineId: daemonTarget.machineId, externalActionClient: true,
@@ -474,7 +477,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       await expect(executor.execute('connectedServices.authentication.beginConnect', {
         machineId: daemonTarget.machineId, service: { pluginId: 'example.accounts', localId: 'service' }, modeId: 'manual',
       }, { surface: 'cli', authority: 'present_user' })).resolves.toEqual({ ok: true, result: raw });
-      expect(onApprovalRequested).toHaveBeenCalledWith('root-connect-approval', expect.any(AbortSignal));
     });
   });
 
@@ -540,7 +542,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
           scope: { accountId: daemonTarget.accountId, machineId: daemonTarget.machineId }, execute: async () => {
             nativeStarts.push(input.creationKey!);
             return { ok: true, result: { type: 'success', disposition: 'created', sessionId: `session-${input.creationKey}`,
-              executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } } };
+              executionTarget: input.executionTarget, organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } } };
           } });
       });
       const reviewers = ['reviewer-a', 'reviewer-b'].map(participantSlotId => ({ participantSlotId,
