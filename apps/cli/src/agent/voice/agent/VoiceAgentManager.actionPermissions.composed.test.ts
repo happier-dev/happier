@@ -43,7 +43,7 @@ const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 const { createVoiceToolHandlers } = await import('../../../../../ui/sources/voice/tools/handlers');
 const { settingsDefaults } = await import('../../../../../ui/sources/sync/domains/settings/settings');
-const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests, getVoiceSessionSpokenActionConfirmation } = await import('../../../../../ui/sources/voice/session/voiceSessionStore');
+const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('../../../../../ui/sources/voice/session/voiceSessionStore');
 afterEach(async () => { resetVoiceSessionStoreForTests(); await home.reset(); });
 
 describe('Voice Manager output through canonical client Action approval', () => {
@@ -169,7 +169,15 @@ describe('Voice Manager output through canonical client Action approval', () => 
       functionTools: options.functionTools,
     });
     const manager = new VoiceAgentManager({ createRuntime });
-    const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId });
+    let readBacks = 0;
+    const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId,
+      playHostText: async ({ text }) => {
+        expect(text).toBeTruthy();
+        expect(version).toBe(1);
+        readBacks += 1;
+        return { status: 'completed' as const };
+      },
+    });
     setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'spoken-manager-call',
       status: 'connected', mode: 'listening', canStop: true });
     try {
@@ -205,16 +213,9 @@ describe('Voice Manager output through canonical client Action approval', () => 
       const admitted = actions[0];
       if (!admitted) throw new Error('Expected admitted Voice Action');
       expect(JSON.parse(await handlers.action_execute!({ actionId: 'settings.set', input: admitted.args },
-        { effectId: 'manager-voice-setting', serverId })))
-        .toMatchObject({ ok: true, result: { kind: 'read_back_and_confirm' } });
-      expect(version).toBe(1);
-      const carrier = getVoiceSessionSpokenActionConfirmation();
-      const readBack = carrier?.readPending();
-      if (!carrier || !readBack) throw new Error('Expected one spoken read-back');
-      expect(carrier.completeReadBack(readBack)).toBe(true);
-      expect(JSON.parse(await handlers.action_execute!({ actionId: 'settings.set', input: admitted.args,
-        confirmation: { actionRequestId: readBack.operation.actionRequestId, inputDigest: readBack.operation.inputDigest },
-      }, { effectId: 'spoken-yes', serverId }))).toMatchObject({ ok: true, result: { value: 1100 } });
+        { effectId: 'manager-voice-setting', serverId, turnOrigin: 'person' })))
+        .toMatchObject({ ok: true, result: { value: 1100 } });
+      expect(readBacks).toBe(1);
       expect(home.artifacts(serverId).list()).toEqual([]);
       expect(version).toBe(2);
     } finally { await manager.dispose(); }

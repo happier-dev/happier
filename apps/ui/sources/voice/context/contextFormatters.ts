@@ -357,16 +357,16 @@ function formatMessageWithPrefs(message: Message, prefs?: VoiceContextFormatterP
         const readable = prepareTranscriptMessageBody(message).text ?? '';
         const text = resolved.voiceShareFilePaths ? readable : redactVoicePathLikeString(readable);
         lines.push(message.peer
-            ? `${message.peer.handback ? 'Sub-agent report' : 'Agent message'} from ${message.peer.name ?? 'another agent'} to the coding assistant: \n<text>${text}</text>`
-            : `Coding assistant: \n<text>${text}</text>`);
+            ? `${message.peer.handback ? 'Sub-agent report' : 'Agent message'} from ${JSON.stringify(message.peer.name ?? 'another agent')} to the coding assistant: \n${JSON.stringify(text)}`
+            : `Coding assistant: \n${JSON.stringify(text)}`);
     } else if (message.kind === 'user-text') {
         const readable = prepareTranscriptMessageBody(message).text ?? '';
         const text = resolved.voiceShareFilePaths ? readable : redactVoicePathLikeString(readable);
         const author = message.accountActor
             ? resolveAccountActorPresentation(message.accountActor, storage.getState().settingsScope)
             : null;
-        const label = author && !author.isSelf ? `Message from ${author.name}:` : 'User sent message:';
-        lines.push(`${label} \n<text>${text}</text>`);
+        const label = author && !author.isSelf ? `Message from ${JSON.stringify(author.name)}:` : 'User sent message:';
+        lines.push(`${label} \n${JSON.stringify(text)}`);
     } else if (message.kind === 'tool-call' && resolved.voiceShareToolNames) {
         const toolDescription = message.tool.description ? ` - ${message.tool.description}` : '';
         lines.push(`Coding assistant is using ${message.tool.name}${toolDescription}`);

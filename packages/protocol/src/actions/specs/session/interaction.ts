@@ -216,6 +216,12 @@ function createSessionInteractionActionSpecs() {
     sideEffectClass: 'write',
     description: 'Approve or deny an active permission request in a session.',
     safety: 'safe',
+    safetyForInput: (input: unknown) => {
+      const answer = input as { decision?: unknown; nativeChoice?: unknown } | null;
+      // Opaque native choices are resolved by the Session, not by the caller.
+      if (answer?.nativeChoice) return 'danger';
+      return answer?.decision === 'deny' || answer?.decision === 'denied' || answer?.decision === 'abort' ? 'safe' : 'danger';
+    },
     placements: [],
     bindings: { voiceClientToolName: 'session_permission_respond', rpcMethod: 'session.permission.respond' },
     surfaces: {
@@ -497,6 +503,10 @@ function createSessionInteractionActionSpecs() {
     sideEffectClass: 'write',
     description: 'Approve, reject, request changes, or provide structured answers for an active user-action request. Target the Session that owns the request; a forwarded or passed-up question stays on its original asking Session, not the current handler Session.',
     safety: 'safe',
+    safetyForInput: (input: unknown) => {
+      const answer = input as { decision?: unknown } | null;
+      return answer?.decision === 'approve' ? 'danger' : 'safe';
+    },
     placements: ['voice_panel'],
     prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'answerUserActionRequest', mcpToolName: 'session_user_action_answer', rpcMethod: 'session.user_action.answer' },

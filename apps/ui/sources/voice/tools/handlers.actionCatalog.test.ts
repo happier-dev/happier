@@ -36,6 +36,7 @@ import { buildToolResultsFollowUpPrompt } from '@/voice/context/buildVoiceToolRe
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { createPlainV2SessionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { NotificationChannelCatalogRecordV1Schema, NotificationChannelCatalogMutationV1Schema,
   NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 
@@ -50,6 +51,40 @@ const { createDefaultActionExecutor } = await import('@/sync/ops/actions/default
 describe('Voice Action reference catalog', () => {
   beforeEach(async () => { await home.reset(); });
   afterEach(async () => { await home.reset(); });
+  it('reads back a model-produced permission grant before executing it', async () => {
+    const serverId = await home.addHome({ name: 'Permission readback', serverUrl: 'https://permission-readback.test', accountId: 'alice', currentAccount: true });
+    const features = createRootLayoutFeaturesResponse();
+    tryWriteServerEnabledBitInPlace(features, 'voice', true);
+    home.answer(serverId, '/v1/features', { body: features });
+    home.answer(serverId, 'GET /v2/account/settings', { body: { version: 1, content: {
+      t: 'plain', v: { voice: { ...settingsDefaults.voice, canApproveRequests: true } },
+    } } });
+    const session = createSessionFixture({ id: 'permission-target', serverId });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.getState().applySessions([session]);
+    home.answer(serverId, 'POST /v2/sessions/read-batch', { body: { results: [{ sessionId: session.id,
+      detail: { status: 200, body: { session: createPlainV2SessionRecordFixture({ id: session.id, metadata: session.metadata }) } },
+    }] } });
+    const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'permission-call', status: 'connected', mode: 'listening', canStop: true });
+    let readBack = false;
+    const handlers = createVoiceToolHandlers({ resolveSessionId: () => session.id, currentServerId: serverId,
+      playHostText: async ({ text }) => {
+        expect(text).toBeTruthy();
+        expect(home.artifacts(serverId).list()).toEqual([]);
+        readBack = true;
+        return { status: 'cancelled' as const };
+      },
+    });
+    try {
+      const outcome = JSON.parse(await handlers.action_execute!({ actionId: 'session.permission.respond',
+        input: { sessionId: session.id, requestId: 'request', decision: 'allow' } },
+      { serverId, effectId: 'model-permission-grant', turnOrigin: 'person' }));
+      expect(readBack).toBe(true);
+      expect(outcome).toMatchObject({ ok: false, errorCode: 'cancelled' });
+      expect(home.artifacts(serverId).list()).toEqual([]);
+    } finally { resetVoiceSessionStoreForTests(); }
+  });
   it.each(['completed', 'cancelled', 'end', 'unavailable', 'failed'] as const)(
     'settles native host-summary playback through the real Action owner (%s)', async playback => {
       const serverId = await home.addHome({ name: 'Native readback', serverUrl: 'https://native-readback.test', accountId: 'alice', currentAccount: true });
