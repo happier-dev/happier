@@ -1,23 +1,25 @@
 import { createHash } from 'node:crypto';
-import { access, realpath } from 'node:fs/promises';
+import { access, realpath, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { isIP } from 'node:net';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import type { DeploymentExecEnvAttachmentV1, ExecService } from '@happier-dev/plugin-sdk/exec';
+import type { DeploymentExecEnvAttachmentV1, DeploymentExecEnvPortV1, ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
 import type { DeploymentImageV1 } from '@happier-dev/deployment-protocol';
-import { RESTIC_RUNTIME_V1, type ResticRequestV1 } from '@happier-dev/deployments';
+import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storageV1';
+import { RESTIC_RUNTIME_V1, RESTIC_VOLUME_SOURCE_PATH_V1, RESTIC_VOLUME_STAGE_PATH_V1, type ResticRequestV1, type ResticAccessV1, type DeploymentBackupNativeResultV1 } from '@happier-dev/deployments';
 import { authorizePluginExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
-import { admitNativeServiceCommandForHost, type AdmittedServiceExecContextV1 } from './serviceCommand';
-import { machineNativeEffectAdmission, type MachineNativeEffectContext } from './machineNativeEffectAdmission';
-import { normalizeNativeComposePlatform } from './nativeComposeImageIdentity';
-import type { createNativeComposeImageIdentity } from './nativeComposeImageIdentity';
+import { admitNativeServiceCommandForHost, executeAdmittedServiceCommand, type AdmittedServiceExecContextV1 } from './serviceCommand';
+import { machineNativeEffectAdmission, type MachineNativeEffectContext, type MachineNativeEffectOperation } from './machineNativeEffectAdmission';
+import { createNativeComposeImageIdentity, normalizeNativeComposePlatform } from './nativeComposeImageIdentity';
+import { readNativeComposeEngine } from './nativeComposeEngine';
 import type { NativeComposeProjectRender } from './nativeComposeLifecycle';
 import { refuseNativeResticHostNetwork } from './nativeResticFailure';
+import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 export type NativeResticCommandInput = Readonly<{
-    render: NativeComposeProjectRender; context: MachineNativeEffectContext;
+    render: Pick<NativeComposeProjectRender, 'engine' | 'platform' | 'projectName'>; context: MachineNativeEffectContext;
     runtimeImage: DeploymentImageV1; request: ResticRequestV1;
     destinationAttachment: DeploymentExecEnvAttachmentV1;
     /** Absent for repository metadata/dump; volume names are native model keys. */
@@ -32,10 +34,12 @@ const csv = (value: string) => /[",\r\n]/u.test(value) ? `"${value.replaceAll('"
 
 /** Third operation arm of the existing native owner; no public Docker argv or runner. */
 export async function admitNativeResticCommand(input: NativeResticCommandInput, owner: Readonly<{
-    source: DeploymentSourceMaterializationV1; exec: ExecService; io: ProjectNativeToolchainIo;
+    source: Pick<DeploymentSourceMaterializationV1, 'rootPath' | 'environmentInstanceId'>; exec: ExecService; io: ProjectNativeToolchainIo;
     model: Record<string, unknown>; identity: ReturnType<typeof createNativeComposeImageIdentity>;
     assertCurrent(): Promise<void>;
     containerIds(): readonly string[];
+    /** P41 created and proved this fresh, unreferenced operation volume. */
+    targetVolume?: string;
     run(args: readonly string[]): Promise<Readonly<{ stdout: string }>>;
 }>): Promise<AdmittedServiceExecContextV1> {
     return machineNativeEffectAdmission.runStage(input.context, async () => {
@@ -50,11 +54,12 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
             || runtimeImage.indexDigest !== index && runtimeImage.manifestDigest !== index
             || normalizeNativeComposePlatform(runtimeImage.platform) !== platform
             || !runtimeImage.registryReference) return refuse();
-        // P45's request builder owns the fixed --repo pair. Only loopback S3
+        // P45's request builder owns the fixed --repo pair. Loopback remote
         // endpoints need the selected Engine host's network namespace.
         const repository = request.argv[1];
-        const hostname = repository && /^s3:https?:\/\//u.test(repository)
-            ? new URL(repository.slice(3)).hostname.replace(/^\[|\]$/gu, '') : undefined;
+        const endpoint = repository && /^s3:https?:\/\//u.test(repository) ? repository.slice(3)
+            : repository?.startsWith('sftp://') ? repository : undefined;
+        const hostname = endpoint ? new URL(endpoint).hostname.replace(/^\[|\]$/gu, '') : undefined;
         const hostNetwork = hostname === 'localhost' || hostname === 'localhost.' || hostname === '::1'
             || hostname !== undefined && isIP(hostname) === 4 && hostname.startsWith('127.');
         // Desktop host networking is opt-in and not represented by Engine facts.
@@ -63,6 +68,15 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
             return refuseNativeResticHostNetwork();
         }
         const mounts: string[] = [];
+        const repositoryPath = request.repositoryMount ? await realpath(request.repositoryMount.hostPath) : undefined;
+        if (repositoryPath) {
+            if (!(await stat(repositoryPath)).isDirectory()) return refuse();
+            await access(repositoryPath, constants.R_OK | constants.W_OK);
+            mounts.push('--mount', ['type=bind', `source=${repositoryPath}`,
+                `target=${request.repositoryMount!.containerPath}`].map(csv).join(','));
+        }
+        if (owner.targetVolume) mounts.push('--mount', ['type=volume', `source=${owner.targetVolume}`,
+            `target=${RESTIC_VOLUME_STAGE_PATH_V1}`, 'volume-nocopy'].map(csv).join(','));
         if (selector) {
             const definition = record(owner.model.services) ? owner.model.services[selector.service] : undefined;
             const mount = record(definition) && Array.isArray(definition.volumes) ? definition.volumes.find(
@@ -84,8 +98,17 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
             const mounted = witnessed.filter(row => row.mounts.some(
                 value => record(value) && value.Type === 'volume' && value.Name === volume.name));
             if (!mounted.some(row => row.service === selector.service)
-                || mounted.some(row => row.status !== 'exited' && row.status !== 'dead')) return refuse();
-            mounts.push('--mount', ['type=volume', `source=${volume.name}`, `target=${mount.target}`, 'readonly', 'volume-nocopy'].map(csv).join(','));
+                || mounted.some(row => row.status !== 'exited' && row.status !== 'dead' && row.mounts.some(
+                    value => record(value) && value.Type === 'volume' && value.Name === volume.name && value.RW !== false))) return refuse();
+            if (repositoryPath) {
+                for (const row of mounted) for (const value of row.mounts) {
+                    if (!record(value) || value.Type !== 'volume' || value.Name !== volume.name) continue;
+                    if (typeof value.Source !== 'string' || canonicalAbsolutePathsEqual(repositoryPath, value.Source)
+                        || isCanonicalAbsolutePathInsideRoot(value.Source, repositoryPath)
+                        || isCanonicalAbsolutePathInsideRoot(repositoryPath, value.Source)) return refuse();
+                }
+            }
+            mounts.push('--mount', ['type=volume', `source=${volume.name}`, `target=${RESTIC_VOLUME_SOURCE_PATH_V1}`, 'readonly', 'volume-nocopy'].map(csv).join(','));
         }
         for (const file of request.credentialFiles) {
             if (file.readOnly !== true) return refuse();
@@ -191,7 +214,7 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
                         args: ['start', '--attach', '--interactive', id], cwd: owner.source.rootPath }, { agentIsolation: null, signal });
                     const created = createLaunch!;
                     if (startLaunch.secretRedactionLease) created.secretRedactionLease?.add(startLaunch.secretRedactionLease.values());
-                    return { ...startLaunch, secretRedactionLease: created.secretRedactionLease,
+                    return { ...startLaunch, ...(request.stdin ? { stdin: request.stdin } : {}), secretRedactionLease: created.secretRedactionLease,
                         async recheckInputs() { await startLaunch!.recheckInputs?.(); await created.recheckInputs?.(); }, release };
                 } catch (error) {
                     if (nativeId) {
@@ -210,5 +233,78 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
                 }
             },
         });
+    });
+}
+
+export type NativeBackupRepositoryForHostInput = Readonly<{
+    cwd: string;
+    directory: string;
+    environmentInstanceId: string;
+    projectName: string;
+    operation: MachineNativeEffectOperation & Readonly<{ signal: AbortSignal }>;
+    runtime: Readonly<{ exec: ExecService; nativeIo: ProjectNativeToolchainIo; settleNative(): Promise<void> }>;
+    prepareDestination(signal: AbortSignal): Promise<Readonly<{
+        execEnv: DeploymentExecEnvPortV1;
+        readAccess(): ResticAccessV1;
+        release?(): void | Promise<void>;
+        capacity?: StoragePathCapacityV1;
+    }>>;
+}>;
+
+/** Repository setup needs its admitted Environment/Engine, not a deployed Compose
+ * generation. The pinned image, process supervision and P42 loans remain owned
+ * by the same native restic command used for deployed backups and restores. */
+export async function withNativeBackupRepositoryForHost<T>(input: NativeBackupRepositoryForHostInput,
+    effect: (native: Readonly<{ access: ResticAccessV1; signal: AbortSignal; capacity?: StoragePathCapacityV1;
+        execute(request: ResticRequestV1): Promise<DeploymentBackupNativeResultV1> }>) => Promise<T>): Promise<T> {
+    const { exec, nativeIo } = input.runtime;
+    const tool = await exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-native-compose',
+        cwd: input.cwd, signal: input.operation.signal });
+    const run = async (args: readonly string[], signal = input.operation.signal) => {
+        const launch = await authorizePluginExecLaunchForHost(exec,
+            { executable: tool.executable, args, cwd: input.cwd }, { agentIsolation: null, signal });
+        try {
+            return await nativeIo.run({ command: launch.command, args: launch.args, cwd: launch.cwd!,
+                env: launch.env, ...(launch.stdin ? { stdin: launch.stdin } : {}), signal });
+        } finally { await launch.release(); }
+    };
+    const engine = await readNativeComposeEngine({ io: { run: request => run(request.args, request.signal) },
+        command: 'docker', prefix: [], cwd: input.cwd, env: {}, signal: input.operation.signal });
+    const platform = normalizeNativeComposePlatform((await run(['version', '--format', '{{.Server.Os}}/{{.Server.Arch}}'])).stdout.trim());
+    const identity = createNativeComposeImageIdentity({ run, directory: async () => input.directory });
+    return machineNativeEffectAdmission.run({ operation: input.operation,
+        keys: [{ kind: 'composeProject', dockerEndpoint: engine.id, projectName: input.projectName }],
+        settleNative: input.runtime.settleNative }, async context => {
+        const signal = context.operation.signal!;
+        const runtimeImage = await machineNativeEffectAdmission.runStage(context, async () => {
+            const [image] = await identity.resolveVariants({ service: 'restic', reference: RESTIC_RUNTIME_V1.image,
+                platforms: [platform] }, { signal });
+            if (!image?.registryReference) return refuse();
+            await identity.acquire(image, { references: [image.registryReference], purpose: 'operationRuntime',
+                authority: { context }, pull: async (_registry, reference) => {
+                    const result = await run(['pull', '--platform', image.platform, reference], signal);
+                    if (result.exitCode !== 0) return refuse();
+                } });
+            return image;
+        });
+        const destination = await input.prepareDestination(signal);
+        let attachment: DeploymentExecEnvAttachmentV1 | undefined;
+        try {
+            attachment = await destination.execEnv.prepare({ backupDestination: { configKey: 'destination' } }, { signal });
+            const destinationAttachment = attachment;
+            return await effect({ access: destination.readAccess(), signal, ...(destination.capacity ? { capacity: destination.capacity } : {}),
+                execute: request => machineNativeEffectAdmission.runStage(context, async () =>
+                    executeAdmittedServiceCommand(await admitNativeResticCommand({
+                        render: { engine, platform, projectName: input.projectName }, context, runtimeImage,
+                        request, destinationAttachment, signal }, {
+                        source: { rootPath: input.cwd, environmentInstanceId: input.environmentInstanceId },
+                        exec, io: nativeIo, model: {}, identity, containerIds: () => [], run,
+                        async assertCurrent() { signal.throwIfAborted(); },
+                    }))),
+            });
+        } finally {
+            try { await input.runtime.settleNative(); }
+            finally { try { attachment?.dispose(); } finally { await destination.release?.(); } }
+        }
     });
 }

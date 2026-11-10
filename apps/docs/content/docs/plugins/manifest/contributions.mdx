@@ -615,28 +615,41 @@ defaults. The host's admitted binding/custody owner retains credential access.
 In 0.3 development source, each role entry may declare `optional: true`;
 omission or `false` means required. S3's session token is optional. This metadata
 travels with the same descriptor so setup can label optional credential inputs.
+Optional `fieldHints` use the canonical input hints shape (`{ fields: [...] }`)
+to supply field labels, descriptions and enum labels alongside the closed schema.
 Open uses a qualified contributed Action. Test accepts either a qualified
 contributed Action or `{ kind: 'hostAction', actionId: 'deployments.backups.test' }`
-for the host's read-only repository probe. The descriptor has no cleanup callback,
+for the host's write/read/delete repository probe. The descriptor has no cleanup callback,
 backup engine or scheduler.
 
 An authored test Action owns its probe and reports any cleanup failure within
 that invocation. In 0.3 development source, declare open as a
 read-only Action on the `plugin` surface. Its input is `{ config, credentialRoles }`;
 its result uses the SDK root's `BackupDestinationOpenV1ProtocolSchema`:
-`{ repository, credentialBindings, s3?: { region?, addressing? } }`.
+`{ repository, credentialBindings, s3?: { region?, addressing? },
+sftp?: { host, port?, username, hostKey }, local?: { path } }`.
 Binding identities have `purpose: 'backupDestination'`, `configKey: 'destination'`
 and a declared role; they contain no credential bytes or executable commands.
 The host opens the configured destination through this Action and retains the
-exact Environment credential custody. The first-party S3 descriptor selects the
+exact Environment credential custody. SFTP's `hostKey` is a full pinned OpenSSH
+known-host line for the endpoint, including `[host]:port` for a custom port;
+the private identity remains a saved `sshPrivateKey` credential. It must work
+without a passphrase or interactive authentication. Local `path` belongs to the
+executing Machine and may use its home-directory prefix. For local output, the
+native runner derives its repository locator from the directory mount; authors
+do not choose a container mount target. The first-party descriptors select the
 native `deployments.backups.test` Action. Invoke it through the ordinary Action
 executor with the exact saved Environment, target, deployment and configuration
-revision operands. It reads the repository configuration through the existing
-restic 0.19.1 runner and Environment credential bindings. The result reports
+revision operands. It reads the repository configuration, writes a nonsecret probe,
+verifies its payload checksum and length, then forgets the exact probe snapshot
+through the existing restic 0.19.1 runner and Environment credential bindings. The result reports
 `reachable` or `failed`, with a typed remedy and native exit code when available;
-credential values and native output are never returned. It takes no backup and
-does not establish write access, durability or restore integrity. Other native
-transport and backup configuration lifecycles are not supported yet.
+credential values and native output are never returned. Probe snapshots do not
+appear in Environment backup inventory. Test never runs Prune: unreferenced chunks
+remain for ordinary Prune. Failures retain the known probe identity and cleanup
+outcome. Successful Test establishes write/read/delete access, not durability or
+restore integrity. S3, SFTP and
+local storage share this runner and the existing credential custody.
 
 Use the read-only `deployments.backups.history` Action with the same exact target
 operands to read retained operation facts, including failed attempts, pruned

@@ -14,6 +14,18 @@ const access = { repository: 's3:https://s3.example.test/bucket/env', passwordFi
 const request = (command: ResticCommandV1) => buildResticRequestV1({ access, environmentId: 'env-one', command });
 
 describe('restic request contract', () => {
+    it('uses the protected SSH config and passes one writable local repository mount through the same request', () => {
+        const sftp = buildResticRequestV1({ access: { ...access, s3: undefined,
+            repository: 'sftp://archive@receiver/repository', sftp: { configFilePath: '/run/happier/backup/ssh-config' },
+            environmentVariableNames: [] }, environmentId: 'env-one', command: { kind: 'config' } });
+        expect(sftp.argv).toContain('sftp.command=ssh -F /run/happier/backup/ssh-config -s backup sftp');
+        const local = buildResticRequestV1({ access: { ...access, s3: undefined,
+            repository: '/authored-repository-locator', local: { path: '/srv/recovery' },
+            environmentVariableNames: [] }, environmentId: 'env-one', command: { kind: 'config' } });
+        expect(local.repositoryMount).toEqual({ hostPath: '/srv/recovery', containerPath: '/run/happier/backup/repository' });
+        expect(local.argv.slice(0, 2)).toEqual(['--repo', local.repositoryMount.containerPath]);
+        expect(local.argv).not.toContain('-o');
+    });
     it('uses one digest pin and stable host/source tags with protected-file credentials for a dump', () => {
         const dump = request({ kind: 'backupStdin', sourceId: 'postgres-main', filename: 'db.dump' });
         expect(dump.runtime).toBe(RESTIC_RUNTIME_V1);

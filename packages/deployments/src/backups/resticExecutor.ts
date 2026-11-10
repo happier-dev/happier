@@ -1,5 +1,9 @@
 import { buildResticRetentionArgsV1, type BackupRetentionV1 } from './retentionV1.js';
 
+/** Stable snapshot path, independent of a service's mount target or operation. */
+export const RESTIC_VOLUME_SOURCE_PATH_V1 = '/happier/source';
+export const RESTIC_VOLUME_STAGE_PATH_V1 = '/happier/staging';
+
 /** Published Docker Hub multi-platform index, checked 2026-10-28. */
 export const RESTIC_RUNTIME_V1 = Object.freeze({
     version: '0.19.1', repositoryVersion: 2,
@@ -13,22 +17,29 @@ export type ResticAccessV1 = Readonly<{
     credentialFiles: readonly Readonly<{ hostPath: string; containerPath: string; readOnly: true }>[];
     environmentVariableNames: readonly ('AWS_ACCESS_KEY_ID' | 'AWS_SECRET_ACCESS_KEY' | 'AWS_SESSION_TOKEN')[];
     s3?: Readonly<{ region?: string; addressing?: 'auto' | 'dns' | 'path' }>;
+    sftp?: Readonly<{ configFilePath: '/run/happier/backup/ssh-config' }>;
+    local?: Readonly<{ path: string }>;
 }>;
 export type ResticCommandV1 =
     | Readonly<{ kind: 'init' | 'config' | 'prune' | 'check' }>
+    | Readonly<{ kind: 'probe'; operationId: string; payload: Uint8Array }>
     | Readonly<{ kind: 'backupStdin'; sourceId: string; filename: string }>
     | Readonly<{ kind: 'backupPaths'; sourceId: string; paths: readonly [string, ...string[]] }>
     | Readonly<{ kind: 'snapshots'; latest?: number; snapshotId?: string }>
     | Readonly<{ kind: 'tree'; treeId: string }>
     | Readonly<{ kind: 'dump'; snapshotId: string; path: string }>
+    | Readonly<{ kind: 'restoreVolume'; snapshotId: string }>
     | Readonly<{ kind: 'forget'; retention: BackupRetentionV1; dryRun: true }>
     | Readonly<{ kind: 'forgetExact'; snapshotIds: readonly [string, ...string[]] }>;
 export type ResticRequestV1 = Readonly<{
     runtime: typeof RESTIC_RUNTIME_V1;
+    /** Finite nonsecret destination probe; database streams use their existing producer. */
+    stdin?: Uint8Array;
     argv: readonly string[];
     passwordFilePath: string;
     environmentVariableNames: ResticAccessV1['environmentVariableNames'];
     credentialFiles: ResticAccessV1['credentialFiles'];
+    repositoryMount?: Readonly<{ hostPath: string; containerPath: '/run/happier/backup/repository' }>;
 }>;
 
 function ownershipId(value: string): string {
@@ -50,13 +61,20 @@ export function buildResticRequestV1(input: Readonly<{
     const host = `happier-env-${environmentId}`;
     const environmentTag = `env:${environmentId}`;
     const selector = ['--host', host, '--tag', `happier,${environmentTag}`];
-    const argv = ['--repo', access.repository, ...(command.kind === 'dump' ? [] : ['--json'])];
+    const repositoryMount = access.local
+        ? { hostPath: access.local.path, containerPath: '/run/happier/backup/repository' as const } : undefined;
+    const argv = ['--repo', repositoryMount?.containerPath ?? access.repository, ...(command.kind === 'dump' ? [] : ['--json'])];
     if (access.s3?.region !== undefined) argv.push('-o', `s3.region=${access.s3.region}`);
     if (access.s3?.addressing !== undefined) argv.push('-o', `s3.bucket-lookup=${access.s3.addressing}`);
+    if (access.sftp) argv.push('-o', `sftp.command=ssh -F ${access.sftp.configFilePath} -s backup sftp`);
     switch (command.kind) {
         case 'init': argv.push('init', '--repository-version', String(RESTIC_RUNTIME_V1.repositoryVersion)); break;
         case 'config': argv.push('cat', 'config'); break;
         case 'prune': case 'check': argv.push(command.kind); break;
+        case 'probe':
+            argv.push('backup', '--host', `happier-probe-${ownershipId(command.operationId)}`,
+                '--tag', 'happier-probe', '--stdin', '--stdin-filename', 'destination-probe');
+            break;
         case 'backupStdin': case 'backupPaths': {
             const sourceId = ownershipId(command.sourceId);
             argv.push('backup', '--host', host, '--tag', 'happier', '--tag', environmentTag,
@@ -79,6 +97,8 @@ export function buildResticRequestV1(input: Readonly<{
         // cat tree takes a snapshot selector; cat blob loads this exact tree ID.
         case 'tree': argv.push('cat', 'blob', nativeId(command.treeId)); break;
         case 'dump': argv.push('dump', nativeId(command.snapshotId), command.path); break;
+        case 'restoreVolume': argv.push('restore', `${nativeId(command.snapshotId)}:${RESTIC_VOLUME_SOURCE_PATH_V1}`,
+            '--target', RESTIC_VOLUME_STAGE_PATH_V1, '--verify'); break;
         case 'forget': {
             const retention = buildResticRetentionArgsV1(command.retention);
             if (!retention.length) throw new RangeError('Keep everything has no forget request');
@@ -90,7 +110,7 @@ export function buildResticRequestV1(input: Readonly<{
             argv.push('forget', ...command.snapshotIds.map(nativeId));
             break;
     }
-    return { runtime: RESTIC_RUNTIME_V1, argv, passwordFilePath: access.passwordFilePath,
-        environmentVariableNames: [...access.environmentVariableNames], credentialFiles: access.credentialFiles.map(file => ({ ...file })) };
+    return { runtime: RESTIC_RUNTIME_V1, argv, ...(command.kind === 'probe' ? { stdin: command.payload } : {}), passwordFilePath: access.passwordFilePath,
+        environmentVariableNames: [...access.environmentVariableNames], credentialFiles: access.credentialFiles.map(file => ({ ...file })),
+        ...(repositoryMount ? { repositoryMount } : {}) };
 }
-

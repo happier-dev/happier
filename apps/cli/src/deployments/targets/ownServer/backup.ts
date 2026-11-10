@@ -1,4 +1,3 @@
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { inventoryDeploymentBackupsV1, runDeploymentBackupV1, verifyDeploymentBackupV1,
     pruneDeploymentBackupsV1, testDeploymentBackupDestinationV1 } from '@happier-dev/deployments';
 import type { DeploymentBackupActionResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
@@ -17,11 +16,10 @@ export async function executeOwnServerBackupForHost(request: OwnServerBackupRequ
         const common = { environmentId: request.input.environmentId, configuration: operands.configuration,
             access: native.access, signal: native.signal, execute: native.executeBackup };
         switch (request.actionId) {
-            case DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1: return testDeploymentBackupDestinationV1(common);
+            case DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1: return testDeploymentBackupDestinationV1({ ...common, operationId });
             case 'deployments.backups.run': {
-                if (!('data' in operands)) throw new PluginError({ code: 'unsupported_action', message: 'The backup source is unavailable' });
-                const result = await runDeploymentBackupV1({ ...common, data: operands.data,
-                    restoreTarget: operands.destination });
+                const result = await runDeploymentBackupV1({ ...common, ...('data' in operands
+                    ? { data: operands.data, restoreTarget: operands.destination } : {}) });
                 return { kind: 'verified', operationId, manifests: [...result.manifests],
                     ...(result.restoreCaptures ? { restoreCaptures: [...result.restoreCaptures] } : {}) };
             }

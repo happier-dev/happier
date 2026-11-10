@@ -49,7 +49,7 @@ function operation(name: string) {
     expect(result, `${name} must execute the actual native contract`).toBeTypeOf('function');
     return result;
 }
-const input = (native: ReturnType<typeof boundary>) => ({ environmentId, configuration, access,
+const input = (native: ReturnType<typeof boundary>) => ({ environmentId, operationId: 'probe-operation', configuration, access,
     signal: new AbortController().signal, execute: native.execute });
 const verification = { kind: 'verified' as const, level: 'manifestReadBack' as const, manifest };
 
@@ -99,13 +99,67 @@ describe('selected repository backup operations', () => {
             .toEqual({ kind: 'verified', level: 'manifestReadBack', manifest });
     });
 
-    it('tests the selected repository with one read and no capture or mutation', async () => {
-        const native = boundary();
-        expect(await operation('testDeploymentBackupDestinationV1')(input(native)))
+    it.each([
+        { repositoryMissing: false, initializeIfMissing: false },
+        { repositoryMissing: true, initializeIfMissing: true },
+        { repositoryMissing: false, initializeIfMissing: true },
+    ])('proves owned write/read/delete access, initializing only when explicitly chosen ($repositoryMissing, $initializeIfMissing)', async ({ repositoryMissing, initializeIfMissing }) => {
+        const requests: ResticRequestV1[] = [];
+        const execute: DeploymentBackupRunInputV1['execute'] = async request => {
+            requests.push(request);
+            if (request.argv.includes('config')) return repositoryMissing
+                ? { kind: 'completed', exitCode: 10, stdout: '', stdoutTruncated: false } : boundary().execute(request);
+            if (request.argv.includes('init')) return { kind: 'completed', exitCode: 0, stdoutTruncated: false,
+                stdout: JSON.stringify({ message_type: 'initialized', id: repositoryId }) };
+            if (request.argv.includes('backup')) return { kind: 'completed', exitCode: 0, stdoutTruncated: false,
+                stdout: JSON.stringify({ message_type: 'summary', snapshot_id: snapshotId, total_bytes_processed: 36, total_files_processed: 1 }) };
+            if (request.argv.includes('dump')) {
+                const written = requests.find(value => value.argv.includes('backup'));
+                const bytes = Reflect.get(written ?? {}, 'stdin');
+                expect(bytes).toBeInstanceOf(Uint8Array);
+                const digest = await crypto.subtle.digest('SHA-256', bytes);
+                return { kind: 'completed', exitCode: 0, stdout: '', stdoutTruncated: false,
+                    stdoutBytes: bytes.length, stdoutChecksumSha256: Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('') };
+            }
+            if (request.argv.includes('forget')) return { kind: 'completed', exitCode: 0, stdout: '', stdoutTruncated: false };
+            throw new Error('Unexpected native request');
+        };
+        expect(await operation('testDeploymentBackupDestinationV1')({ ...input(boundary()), operationId: 'probe-operation', initializeIfMissing, execute }))
             .toEqual({ kind: 'reachable', repositoryId });
-        expect(native.requests.map(request => request.argv)).toEqual([
-            ['--repo', access.repository, '--json', 'cat', 'config'],
-        ]);
+        expect(requests.some(request => request.argv.includes('backup'))).toBe(true);
+        expect(requests.some(request => request.argv.includes('init'))).toBe(repositoryMissing && initializeIfMissing);
+        expect(requests.filter(request => request.argv.includes('config'))).toHaveLength(1);
+        const deletion = requests.find(request => request.argv.includes('forget'));
+        expect(deletion?.argv.slice(-2)).toEqual(['forget', snapshotId]);
+        expect(requests.some(request => request.argv.includes('prune'))).toBe(false);
+        const probe = requests.find(request => request.argv.includes('backup'));
+        expect(probe?.argv).not.toContain('env:environment-a');
+    });
+
+    it.each(['read', 'cleanup', 'unknownWrite', 'cancelled'] as const)('retains exact owned probe cleanup evidence after %s failure', async mode => {
+        const requests: ResticRequestV1[] = [];
+        const controller = new AbortController();
+        const execute: DeploymentBackupRunInputV1['execute'] = async request => {
+            requests.push(request);
+            if (request.argv.includes('config')) return boundary().execute(request);
+            if (request.argv.includes('backup')) {
+                if (mode === 'unknownWrite') return { kind: 'outcome_unknown' };
+                if (mode === 'cancelled') controller.abort();
+                return { kind: 'completed', exitCode: 0, stdoutTruncated: false,
+                    stdout: JSON.stringify({ message_type: 'summary', snapshot_id: snapshotId, total_bytes_processed: 34, total_files_processed: 1 }) };
+            }
+            if (request.argv.includes('dump')) return { kind: 'completed', exitCode: 0, stdout: '', stdoutTruncated: false,
+                stdoutBytes: 0, stdoutChecksumSha256: '0'.repeat(64) };
+            if (request.argv.includes('forget')) return { kind: 'completed', exitCode: mode === 'cleanup' ? 1 : 0, stdout: '', stdoutTruncated: false };
+            throw new Error('Unexpected native request');
+        };
+        await expect(operation('testDeploymentBackupDestinationV1')({ ...input(boundary()), execute, signal: controller.signal }))
+            .rejects.toMatchObject({ details: { probe: {
+                key: mode === 'unknownWrite' ? 'happier-probe-probe-operation' : snapshotId,
+                cleanup: mode === 'read' ? 'deleted' : mode === 'cleanup' ? 'failed' : 'unknown',
+            } } });
+        const deletions = requests.filter(request => request.argv.includes('forget'));
+        expect(deletions.map(request => request.argv.at(-1))).toEqual(mode === 'unknownWrite' || mode === 'cancelled' ? [] : [snapshotId]);
     });
 
     it.each([

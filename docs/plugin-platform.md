@@ -212,6 +212,14 @@ are not extension points. Typed attach metadata retains its dedicated schema.
 
 ## Health check kind declarations (0.3 development source)
 
+External monitor inputs use the existing capability URL webhook handler delivery,
+then the saved health source observer. The handler reads its admitted source and
+maps only the configured monitor identity and endpoint to a check. Raw provider
+bags stay in webhook custody; a normalized retained result supplies the declared
+finite check Action. Its local observed Event wakes the same observer, whose
+failure threshold and transition cursor remain the sole health notice producer.
+Changing the source configuration withdraws results retained for its old basis.
+
 `healthCheckKinds` is a declarative family in the existing Protocol contribution
 catalog. A local kind id projects as the plugin-qualified identity; its local
 Action reference is resolved by ordinary same-plugin reference admission.
@@ -250,7 +258,15 @@ The development daemon service `services.healthChecks.read({ sourceInstanceId,
 checkIds }, { signal })` spends saved selectors against the existing adopted
 Automation source projection once per finite batch. It accepts no endpoint or
 observer override. The first-party Machine-services HTTP/certificate observer
-consumes this binding through the shared checkpointed Event runner; P30 admits
+consumes this binding through the shared checkpointed Event runner; generic
+Environment and Machine-service checks also share the finite HTTP, certificate,
+TCP, DNS and heartbeat owners. Qualified contributed kinds validate their saved
+configuration against the admitted declaration and invoke its finite Action
+through ordinary Action dispatch. `services.healthChecks.listKinds({ signal })`
+projects that same admitted catalog; `readSource({ sourceInstanceId }, { signal })`
+reads the current adopted source of the Machine-services observer. A contributed
+producer uses that source to resolve its exact saved `checkId`, rather than
+accepting replacement endpoint or monitor configuration from the caller. P30 admits
 the live service reference and the existing HTTP owner retains network/cancel
 policy. Its cursor retains effective status and pending first-observation
 evidence, not a tick history. Equal results emit and persist nothing. The current
@@ -354,7 +370,15 @@ claim of installed activation or completed security/loaded-runtime validation.
 Explicit saved-check setup enrolls each heartbeat through the existing webhook
 endpoint owner. The runtime binding uses its captured Account/Home credentials
 and installation publisher proof; source configuration retains the endpoint id,
-not its secret capability URL. The existing endpoint-read flow reveals the URL.
+not its secret capability URL. The saved-check setup surface reveals the URL
+only after the person chooses Reveal address, with Copy URL and GET/POST curl
+commands. The whole URL is a secret. The existing endpoint-read flow owns that
+disclosure; it remains unavailable to agent and MCP surfaces.
+`healthChecks.manageHeartbeat` admits the exact endpoint/source/check and current
+observation host, then delegates rotation or revocation to the endpoint owner.
+It returns only status, revision or a typed unavailable/conflict result. Rotation
+retires the old route and preserves the stable check's latest receipt; the person
+reveals the replacement address explicitly. No new token store is introduced.
 GET and POST to that URL record only the endpoint's monotonic `lastAcceptedAt`;
 they create no delivery, Action run, health result, content or Account change.
 Only the assigned Machine receives a compact receipt hint. Adoption/reconnect
@@ -605,6 +629,17 @@ as the existing Account/Team Preset record, without another record or CRUD owner
 The bundled Docker recipe declaration and deployment-host setup selection share
 Protocol's `DOCKER_ENGINE_RECIPE_REF_V1`, also exposed from the SDK root. Its
 plugin id, recipe id and revision are declared once and consumed by both paths.
+
+The bundled backup receiver accepts a reviewed `endpoint: { host, port }` for
+sender reachability, separately from its sender connection Match context. Its
+native SSH file probe opts into public host-key evidence from the same effective
+`sshd -T` policy check. Only the selected host key's `.pub` sibling is read.
+Setup Plan and settled Apply expose optional `backupReceivers` results bound to
+the receiving Machine, daemon installation and source item. Ready evidence
+contains the endpoint, login, chroot-relative SFTP path, known-host line and
+fingerprint; it does not establish repository readiness. The successful parent
+Setup Run retains its native child's settled evidence. Apply never substitutes
+an earlier Plan witness when the native child returns no evidence.
 
 Setup scripts are an ordered `scripts` list of exact `body` values with optional
 `affects` and `check` on each entry. The stored reader translates a retained
@@ -1183,24 +1218,32 @@ catalog/fleet union carry the supplying occurrence and execution origin through
 their existing retirement and enabled-supplier rules. There is no destination
 registration ABI, backup runner, credential store or scheduler in this family.
 Local storage remains local recovery; `offHost` requires admitted configuration
-proof and does not assert durability. The development S3 destination registers
-an ordinary read-only open Action. Its closed SDK `BackupDestinationOpenV1`
-result contains a repository locator, canonical credential-binding identities
-and optional nonsecret S3 region/addressing facts. The own-server host invokes
+proof and does not assert durability. The development destination plugin supplies
+S3, SFTP and local descriptors, each with an ordinary read-only open Action.
+Descriptor-owned `fieldHints` use the canonical input hints schema. The closed SDK
+`BackupDestinationOpenV1` result contains a repository locator, canonical
+credential-binding identities and optional transport facts: S3 region/addressing,
+SFTP endpoint/user/pinned OpenSSH host-key line, or an executing-Machine directory.
+The own-server host invokes
 the configured descriptor's Action from its retained registry, then P42 resolves
 the exact database binding and lends destination credentials through its existing
-attachment. The S3 descriptor binds `test` to the read-only
+attachment. The first-party descriptors bind `test` to the mutating
 `deployments.backups.test` Action through `{ kind: 'hostAction', actionId }`.
-It reads the selected repository configuration with the existing restic 0.19.1
-runner and P42 custody, without taking a backup or requiring capture history.
-Its closed result reports reachability or a repository-step failure with a typed
-remedy; native output and credential values remain private. This read does not
-prove write access, durability or restore integrity.
+It reads the selected repository configuration, writes a nonsecret probe, verifies
+the exact snapshot's payload checksum and length, then forgets that snapshot through
+the existing restic 0.19.1 runner and P42 custody. Probe snapshots omit Environment
+backup tags and require no capture history. Test never runs Prune; unreferenced
+chunks remain for ordinary Prune. Failures retain the known probe identity and
+cleanup outcome; native output and credential values remain private. Successful
+Test proves write/read/delete access, not durability or restore integrity.
 The read-only `deployments.backups.history` Action returns retained operation
 facts for the exact target, including failed attempts, pruned snapshot ids and
 the last verification. It does not open the repository and is not a permanent
 audit log; the existing operation store owns retention.
-SFTP/local destination writers and scheduled backups remain outside this slice. See the
+SFTP uses operation-private protected SSH identity/configuration/known-host files,
+strict host-key checking and no ambient agent or password fallback. Local access
+mounts the daemon's canonical directory writable into the same restic runtime;
+source data stays read-only. Scheduled backups remain outside this slice. See the
 [public contribution guide](../apps/docs/content/docs/plugins/manifest/contributions.mdx#backup-destination-declarations-03-development-source)
 and maintained SDK external-author descriptor fixture.
 
@@ -3293,6 +3336,20 @@ guest or refuse; it must not wake, resume or activate one to service that reques
 Omitting the operand retains ordinary installer exec semantics. Older closed role
 schemas may reject the read, which returns typed unavailable without a waking retry.
 
+In 0.3 development source, a provisioner may declare the optional `snapshot`
+role with its native disk coverage and billed-cost evidence. The existing
+database restore review offers that role for a managed destination containing
+data. Its controller invokes the retained provisioner through the admitted child
+transport; a missing role offers no snapshot. Hetzner and DigitalOcean snapshots
+cover the root disk and exclude attached volumes. Running snapshots report
+`running` consistency, without promising application consistency; an absent
+numeric storage price remains unknown in review. The native Action is observed
+to completion using the host's existing managed observation cadence and cancel
+signal. Its confirmed native snapshot id is retained in restore evidence. Failed,
+refused or unknown results hold restoration until the person explicitly reviews
+continuing without a snapshot. There is no snapshot engine, deletion policy or
+automatic resubmission.
+
 In unreleased 0.3 source, provider observations and reviewed retention capabilities
 share `ProviderDeletionNoticeV1`: a native `stopped-storage` rule with
 `consequence: 'disk-deleted'`. Its `after-stop.afterMs` is nonnegative: `0` means
@@ -3858,18 +3915,6 @@ an ordinary handler failure or lost create reply remains uncertain and needs
 the existing reconciliation path.
 
 Native facts retain labelled size, image, location and network identities through the public SDK's `MachineProvisionerNativeOptionFactsV1` and `MachineProvisionerOptionsResultV1`. A size can include observed CPU cores, memory bytes and disk bytes; omitted dimensions and measurements remain unknown. Images may include a localized `description` and a declarative `preview` naming an exact packaged PNG Resource (`resource: {pluginId, localId}`) with an optional localized `accessibilityLabel` for the existing public Image renderer. Locations may include the native ISO alpha-2 `countryCode`; no country is inferred from a label or region id. A `network` fact labels which public addresses a server gets and remains its own row beside size, image and location; the configurator keeps the provider's first declared variant selected until the person picks another. Hetzner projects its returned image description and location country code; DigitalOcean projects its returned image description and leaves country absent. Both omit previews because their native catalogs supply none.
-
-In unreleased 0.3 source, `ManagedLocalResourceFactsV1` also carries optional
-`totalCpuCores` (host cores) and `allocatedCpuCores` (cores assigned to running
-guests). These are allocation facts, never idle-CPU measurements. Lume fills
-allocation from running macOS VM rows in its native list and topology from the
-host; stopped guests and Linux guests do not contribute. Unknown inventory or
-missing CPU counts leave allocation omitted, while an observed empty running
-macOS set reports zero. The existing receipt CPU progress line shows allocated
-against total cores; memory and disk retain free amounts. Matching development
-Protocol, SDK, provider and UI readers reload together; no older-host support
-for the new optional fields is claimed. No sampler or polling is involved.
-
 
 In 0.3 development source, the shared managed configurator warns on cloud sizes below its evidence-based memory recommendation for Happier and an Agent. It reads native size facts for every provisioner and keeps those sizes selectable; this advice does not affect availability or acquisition. Missing memory facts and local sizes receive no cloud warning. The owner constant records the measured boundary and its evidence; the recommendation is not a guarantee for every workload.
 
@@ -6519,7 +6564,14 @@ fields and array entries survive composition, while later scalar values win.
 In 0.3 development source, Plugin UI `readResource` and `watchResource` also
 accept the closed host-read reference `{ hostRead: actionId, input }` for
 `usage.query`, `connectedServices.quota.get`, `connectedServices.pools.selection.get`,
-`discussion.get` and `action.operations.get`. The operation read is qualified by
+`discussion.get`, `action.operations.get` and `deployments.environments.list`. The deployment
+collection observes every matching page, including current receipt state, through the
+existing deployment controller and Account change subscription while presented. Its
+JSON projection includes canonical controller availability, observed through the
+existing keyed Machine presence owner; a controller pause or reconnect changes the
+Resource digest independently of receipt readiness. An exact repository and pull
+request query may include deleted children to retain cleanup and publication history.
+The operation read is qualified by
 Home, custodian Machine and operation id, and retains the existing operation
 owner's `available`, `reconnecting` or `unavailable` observation beside its
 snapshot (or null). It selects a host snapshot, not
@@ -7052,6 +7104,15 @@ not an effect retry or an additional writer; the Action owns the result.
 The portable item union is closed, including the development `work-board-widget` and `widget-area-instance` arms. Native WorkBoard sources build their qualified Board/instance reference from current membership; Project/plugin areas carry an exact `WidgetInstanceRefV1` whose surface matches the captured Home/Account. Widget-shaped JSON supplied as a plugin reference stays within the contributed `plugin` arm; it cannot manufacture a built-in reference or select its authority.
 
 A target's synchronous `resolve` returns an allowed Action request with release preview, or a typed refusal with a reason. The preview declares `verb`, `target`, optional `consequence` and optional `glyph` from the closed `EntityDropPreviewV1` vocabulary. Core and plugin targets declare their marks through that same field; the shared outcome presenter never derives a mark from Action ids or inputs. An omitted mark retains the generic `add` presentation. Pending and settled feedback retain the released effect's declared mark; refusal chrome uses the refusal mark. A mark grants no effect authority. Hover performs no mutation. Completed release resolves again before the ordinary Action front door applies current admission and approval policy; a dispatched unknown result stays with that effect owner. Core and plugin sources use the same release preview, Organize grip, staged keyboard and chooser primitives. OS Files retain boundary-local acquisition handles and never enter serialized plugin references. See [Actions](actions.md#entity-drop-effects-development) and the [authoring guide](../apps/docs/content/docs/plugins/ui/react-native.mdx#entity-drag-and-drop-development).
+
+When an Action's successful transport can carry a domain refusal or uncertain write,
+its target registers the pure `PluginDropTargetRuntime.settle(result)` projection.
+The domain parses its own declared result schema and returns `EntityDropOutcomeV1`;
+the mounted executor preserves host transport, approval and reorder failures first.
+This projection never writes, retries or confirms. Without it, successful execution
+means Applied and the result remains opaque plugin data. Triage uses this seam for
+task transitions and Session links, so a refused or uncertain domain result cannot
+be presented as an applied drop.
 
 The shared outcome presenter uses localized refusal vocabulary for action previews: a refused "Move to Project" becomes "Can’t move to Project", while allowed previews keep their action phrase. A domain-authored denial declares the existing `glyph: 'refused'` and retains its complete translated title, including group, Session relation and pane refusals. Hosts without a specific refusal formatter use their localized generic denial. Silent and unchanged outcomes retain their existing treatment. These are presentation decisions; admission, reasons and effects remain domain-owned.
 
@@ -10326,6 +10387,19 @@ the non-enumerable `Symbol.for('happier.pluginUi.hostApiCorrelationSequence.v1')
 slot, rather than a counter in each SDK copy: operations in the same clock tick
 must not collide on the shared transport. This private counter does not carry
 mount identity or admission authority.
+In 0.3 development source, UI `executeAction` and `openNewSession` accept an
+optional caller `requestId` for that existing envelope. The SDK otherwise mints
+it as before. This is correlation only: an admitted daemon operation can be
+looked up with the public `action.operations.list` `requestIdentity` filter
+(`actionId` plus `requestId`) through the existing V2 operation transport. A
+mounted plugin may omit both Home and Machine only for this exact-request
+lookup; the Action's plugin input binding supplies its captured runtime target.
+Fully qualified calls and the existing state, Session and cursor filters remain
+available. Bulk Triage Stop uses the returned operation id with the existing
+`action.operations.cancel`. An operation not published by the one lookup is a
+visible unavailable result; the person can retry Stop. There is no polling or
+broader operation matching. Prepared New Session requests correlate the selected
+source Action, rather than the semantic navigation method.
 V1's private cross-copy contract is `awaitReady({ signal? }?)`, returning the accepted
 `PluginUiHostApiClientBootstrap`. Its private
 `Symbol.for('happier.pluginUi.hostedWebGuestAccountData.v1')` bootstrap property
@@ -11493,6 +11567,11 @@ Vercel declares build logs only. Its Account Action uses the existing
 [deployment events v3](https://vercel.com/docs/rest-api/deployments/get-deployment-events)
 (`follow=0`, forward order, documented `limit=-1` for all available events).
 Both Production and Preview use the retained deployment id and linked team scope.
+Cloudflare Pages exposes a finite build-log snapshot through the same declared
+log role and receipt reader, using the provider's
+[deployment history logs](https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/subresources/history/subresources/logs/methods/get/).
+That API has no pagination parameters: the result has no continuation cursor,
+and reports truncation when the provider's total exceeds the returned lines.
 Health-check kinds, statuses and results likewise use the existing health owner,
 not a deployment-private or SDK-recreated schema.
 Private link content keeps the recorded Account/Team principal and
@@ -11502,6 +11581,17 @@ preview; a generic Git Preview is a different closed shape. Receipt-free
 preparation and source-free lifecycle reads do not invent a receipt or source.
 Platform receipts carry real source provenance without a fabricated native
 builder or member; own-server receipts retain their native proof requirements.
+
+In unreleased 0.3 source, Vercel promotion and rollback observe the acknowledged
+alias operation, including its selected deployment and operation kind. An old
+deployment's ready build does not establish that traffic moved. Workers traffic
+changes select a native version, retaining that version for the existing finite
+observer. Promotion and rollback succeed when that version serves all traffic;
+an ordinary upload succeeds when its version has a positive serving allocation.
+A Git Build must resolve to one version, and a native Preview is not a
+production rollback source. Pages rollback selects an existing Production
+deployment; Preview promotion is unsupported. These adapters add no separate
+observer lifecycle. Real-tenant traffic changes remain release checks.
 
 In unreleased 0.3 source, Connect and Check again invoke the same qualified
 inspection Action: `happier.deploy.vercel/actions/targets-inspect-v1` or
@@ -11638,6 +11728,19 @@ The documented Pages Git endpoint deploys branch HEAD; associated commit metadat
 does not establish immutable checkout. Exact-source Pages upload remains a
 separate explicitly selected controller operation, not a Git failure fallback.
 
+In unreleased 0.3 source, Workers Upload uses that same reviewed-source and
+foreground controller-build path. Pinned Wrangler emits executable modules;
+Static Assets use the helper version declared by that Wrangler installation,
+then the existing purpose-bound HTTP owner opens the asset upload session and
+publishes the compiled script. Provider credentials stay outside the build
+container. Native Preview uploads require an explicitly configured Preview and
+publish to its captured identity; they never publish the parent script. The
+accepted native version or Preview deployment id feeds the existing finite
+observer rather than a second status loop. Source, build-toolchain and output
+fingerprints remain receipt provenance. Container execution and real-tenant
+publication still require release validation; source tests alone do not prove
+either environment.
+
 Vercel Inspect accepts an absent Source repository at Action admission and
 returns the non-retryable `repository_required` prerequisite before provider
 HTTP. The platform link sheet presents that result with a remedy to connect a
@@ -11663,6 +11766,17 @@ if the branch advances.
 Upload mode and own-server Compose still require a registered local Workspace.
 These are unreleased 0.3 preparation semantics; the deployment Source intent
 continues to store an immutable SHA.
+
+The unreleased 0.3 hosting-provider descriptor also accepts
+`projectReadinessAction`, a safe, read-only Account Action accepting
+`{repository}` and returning that repository with independent `ci` and
+`security` facts (`status` and `reason`). These facts describe current source
+presence, rather than successful CI runs or an absence of security findings.
+The provider owns its private source configuration and credential access.
+GitHub reads workflow presence through its existing CI reader and security
+coverage through Triage's caller-scoped configured-source reader. Retired or
+other-repository sources do not establish coverage; an All-repositories source
+must be able to read this repository through its own configured credential.
 Its Inspect form submits `providerAccountId`, native `projectId`, and
 `providerEnvironment`; the plugin constructs the normalized comparison identity
 in its provider preparation. Complete `providerIdentity` inputs remain supported

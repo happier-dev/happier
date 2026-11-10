@@ -1,6 +1,20 @@
 # Deployment
 
+## Platform upload evidence (0.3 development)
+
+Platform deployment targets expose their declared Git integration and Upload methods through the shared target chooser. The selected method goes to inspection and the existing `deployments.deploy` intent; choosing Upload does not grant provider Git access or permit arbitrary local-folder publishing. Both methods retain the repository Source and reviewed immutable commit. Vercel uploads source for a remote provider build. Cloudflare Workers and Pages prepare output on the controller through their shared pinned container/toolchain owner, without attaching the platform's variable bindings to local Exec.
+
+The existing `DeploymentTargetRoleResultV1` carries optional `uploadProvenance`: the exact source manifest and a provider build location, or the controller container image, toolchain name/version and prepared-output manifest fingerprint. This evidence lives in the existing receipt's platform observation. The canonical observation writer preserves the original evidence when subsequent status reads return lifecycle state alone; it creates no upload store or additional receipt. Provider preparation's existing `reviewNotice` discloses the upload build location and Cloudflare pins before execution.
+
 This document records the server implementation behind deployment. Operator recipes and configuration are owned by the published [self-hosting guide](../apps/docs/content/docs/self-hosting/index.mdx), including [Docker and Kubernetes](../apps/docs/content/docs/self-hosting/docker.mdx#kubernetes).
+
+In 0.3 development, the GitHub PR Preview read carries the Environment owner's
+optional controller availability separately from receipt readiness. A paused or
+unknown controller does not remove a serving app's URL or change a teardown's
+receipt state. Both the PR surface and agent read consume this same projection,
+including a created child without a first receipt. Recovery opens the existing
+Environment settings. Machine presence changes invalidate the existing deployment
+Resource; reconnect does not start a Deploy or publish a PR status.
 
 In 0.3 development, `projectDeploymentDomainFactsV1` owns the recovery projection
 for the Domain's recorded controller operation. A typed `not_found` from that
@@ -79,16 +93,17 @@ clients retain the review on that failure and never retry as an implicit deletio
 A native deploy can restrict its operation to an explicit `services` set without
 changing the exact source definition. Preparation discovers images for that set;
 review rejects dependencies outside it, and migrations and service publications
-for excluded services do not run. Choosing a set requires the existing definition Manage role. A later
-deploy without that operand uses the source's ordinary selectors.
+for excluded services do not run. Choosing a set requires the existing definition
+Manage role. A later deploy without that operand uses the source's ordinary selectors.
 
 Preview PostgreSQL provision retains cleanup choices only when that set matches
 the child's generated PostgreSQL inventory. Canonical template volume metadata
 identifies the data targets; effective native storage review refuses a repository
-merge that replaces those targets with host binds, external volumes or names
-outside the child's Compose project. Other repository mounts keep their ordinary
-semantics. The native owner intersects actual activated container mounts with those reviewed named mount targets and
-Compose-labelled owned volumes. It records the exact Machine and volume names in
+merge that replaces those targets with host binds, external volumes, foreign
+drivers or driver-backed host paths, or names outside the child's Compose project.
+Other repository mounts keep their ordinary
+semantics. The native owner intersects actual activated container mounts with
+those reviewed named mount targets and Compose-labelled owned volumes. It records the exact Machine and volume names in
 the receipt and successful deploy result as `previewCleanup`. Application,
 external, anonymous and unrelated volumes supply no deletion choice. The existing
 teardown Action consumes the retained explicit choices after copying and app
@@ -168,6 +183,20 @@ lifetime. Known validity dates can advance the projected state when read, withou
 a new timer. Automatic certificates expose observed expiry without inventing a
 Caddy renewal window. The underlying observation time remains visible.
 
+Saved subject health checks keep their investigation choice in the existing
+source configuration. Omitting that choice leaves failures in Inbox. Explicit
+`auto_start` names an existing configured Triage Action, validated against the
+live configured-Action catalog when the source is saved. Only an admitted opening
+can start that investigation; repeated evidence, recovery and rejected observations
+do not start another Session. The subject remains the diagnosis target even when
+another Machine observes it.
+
+The same notice retains the investigation outcome, including a required placement
+choice, pending approval, refusal or an uncertain start. An uncertain response is
+shown as “may have started” and is not retried automatically. This source-local
+choice does not change Account investigation defaults or create a second Session
+launcher.
+
 Deploy review compares its already-resolved reference addresses with those recorded
 on the serving receipt it already reads. Reference addresses are captured privately
 when launch resolves them; a changed address is shown in the deploy review.
@@ -202,6 +231,66 @@ Artifact and its existing Team audience, then publishes the final reference unde
 the existing authored-input proof. Generic Artifact creation refuses this internal
 kind. The full input digest binds the template; the metadata digest preserves the
 remaining patch while the private operand is removed before Home storage.
+
+## Database SQL reads (0.3 development)
+
+The Database page and agent-facing `deployments.data.query` Action use the same
+own-server query owner. The request names one service in the admitted serving
+Deployment. Its database name comes from that Deployment's retained input basis,
+not a newer Environment draft or a neighbouring database. SQL and parameter
+values stay in the protected Action input; the public admission carries only the
+exact Environment, Deployment, target, Machine and installation references.
+
+Own-server execution uses the database container's native client through the
+existing service Exec owner. PostgreSQL uses `psql -X`, named `:'name'` parameters
+bound with `-v name=value`, and `BEGIN READ ONLY` in the same session. Query text
+travels on protected stdin because `psql -c` does not expand those parameters.
+The native boundary rejects client commands and additional statements before
+psql can interpret them. PostgreSQL's `COPY (query) TO STDOUT` CSV serialization
+preserves duplicate column names, NULL, empty text and literal marker strings.
+MySQL uses bound session variables (`@name`), a server-prepared statement and
+`START TRANSACTION READ ONLY`; its native XML result preserves NULL separately
+from text. Parameter values are JSON strings. Neither path substitutes values
+into SQL text or acquires an administrator login for a query.
+
+Results use the existing public Action response envelope limit from
+`actions/externalActionLimits.ts`, including UTF-8 JSON framing, column metadata
+and the incompleteness diagnostic. The native decoder retains the whole-row
+prefix that fits and reports `complete: false` with
+`action_result_size_limit`; it does not add a row count or alter SQL with LIMIT.
+If column metadata alone cannot fit, the result has empty columns and rows with
+the same explicit reason. The shared presenter also preserves native capture
+incompleteness and provider completeness uncertainty.
+
+The dedicated `happier_ro` login is a database security boundary. Its Saved
+Secret password is configured through the ordinary reviewed
+`deployments.bindings.set` data-role effect. Bootstrap validates role authority
+once, refuses privileged existing accounts before changing their password, and
+keeps a newly created MySQL account locked until its grants are validated.
+A refused new account remains locked for the database owner to reconcile.
+PostgreSQL 14 installations whose PUBLIC schema grants CREATE require an owner
+to configure schema privileges before setup; bootstrap does not change shared
+PUBLIC privileges. Ordinary queries consume the admitted sealed read-role
+credential and retain the read-only transaction on every fresh native session.
+
+A controller can dispatch that reviewed setup to the serving Machine through
+the existing signed deployment child. The exact admitted proof and executor's
+local cancellation govern continuation; a prior deploy receipt does not stand
+in for a bindings review. Query reads likewise retain their exact signed scope
+without repeating Source permissions during the admitted finite operation.
+
+Managed data targets declare their read-only query Action in the plugin's data
+role contribution. The shared UI preserves the recorded credential principal
+and renders the same result contract. Supabase uses its Management API's
+[dedicated read-only query endpoint](https://supabase.com/docs/reference/api/v1-read-only-query),
+with PostgreSQL positional parameters and JSON keys `"1"`, `"2"`, in order.
+Its public response lacks completeness and empty-result column metadata, so
+results explicitly report unknown completeness. Neon Management credentials
+alone do not provide a read-only database execution transport; that contribution
+returns `neon_read_only_database_credential_required`. MariaDB native queries
+return `mariadb_read_role_authority_unproven` while its implicit PUBLIC-role
+bootstrap authority remains unsupported. Neither limitation falls back to a
+writable credential.
 
 ## Runtime overview
 - **App server:** Fastify + Socket.IO. Published `relay-server` images run the packaged server binary and embed the web UI; source-based `server` images use the repository start script.
@@ -1417,8 +1506,13 @@ settings and ingress are not copied into the child.
 
 An own-server PostgreSQL selection records the original source backup capture
 and an explicit destination backup choice. Child creation prepares the selected
-template with fresh Saved Secrets and bindings. Its Compose augmentation travels
-with the exact PR checkout, preserving the repository build context. The Workflow
+template with fresh Saved Secrets and bindings. The reviewed Create continuation
+uses `deployments.backups.configure` with `initializeAndSave` to initialize and
+save the explicit destination configuration under a child-owned prefix. The
+repository's Compose must already declare the selected PostgreSQL service and
+its variable and persistent-volume sites. The exact PR checkout remains the
+sole Compose source; template preparation supplies fresh bindings and data
+metadata without changing repository content. The Workflow
 first deploys only the child database, then runs the existing cross-Environment
 restore prepare/confirm Actions. A provisioned database receives a safety backup
 under the child's configuration before import. Source backup credentials stay
@@ -1427,6 +1521,10 @@ The app deploy runs only after verified restoration. A later PR event also check
 the original Run's immutable copy outcome before starting the app. An incomplete
 copy requires review or closing and reopening the preview; synchronization does
 not silently bypass it. This first native path uses one runtime Machine.
+Repositories without that service require a companion data Environment. That
+path remains unfinished: the current preview relation admits only one live
+Environment for each template, repository, PR and runtime link, so a companion
+needs an approved extension of the existing Create and cleanup relationship.
 
 The child's private content records its creation Workflow Run. On close, the
 caller reads that Run's authenticated branch captures and invokes ordinary data
@@ -1488,6 +1586,14 @@ phase to canonical Exec; targets receive no secret-value map.
 An approved target basis retains source/configuration fingerprints, current
 Environment/link/installations, binding references/revisions, image pins and a
 stable physical Compose project. No secret-interpolated-model digest is retained.
+In 0.3 development, consuming approval binds the Account, Action and exact operands
+once, with single-use consumption. Native execution does not compare that approval
+with freshly rendered manifests, configuration fingerprints, tool versions or
+template health policy. Backup destination opening likewise accepts a changed
+trusted plugin occurrence. Environment/link revision CAS, captured input and
+receipt identity, credential custody and native-generation identity still prevent
+applying approved work to another target. Fingerprints retained in receipts serve
+source provenance and observations rather than a second approval decision.
 Its optional root/member `servicePlatforms` vector records each selected service's
 effective platform from that member's native runtime model. Older records without
 the vector retain their host-platform default; another member's override is never
@@ -1522,6 +1628,16 @@ variable-secret binding names travel with the native review; stored documents,
 binding references and secret values do not. The current Environment read model
 has no Domain hostname projection, so review does not invent one. Historical
 approvals may omit these optional display facts.
+In development source, a fleet Environment's Settings → Servers & build edits
+the existing ingress intent through `deployments.environments.update`: Cloudflare
+Tunnel or a named Caddy edge. Settings has no selected Domain hostname, checked
+Cloudflare zone or complete route observation, so it leaves an unset intent
+unselected and explains the explicit choice. Domain setup retains eligibility
+checks; review does not invoke its effectful discovery or gain a preparation-child
+port merely to choose a default. Tunnel connectors provide backup rather than
+load balancing; without a private network that covers host or connector loss
+only. A Caddy edge balances over the private network and remains a single point
+of failure.
 One native project activation produces one Environment witness per Compose
 service under Local Services purpose `deployment`, with ids
 `<environmentId>/<composeService>`. These witnesses have no requester or
@@ -1745,12 +1861,17 @@ template writer shares the existing Environment lock, revision CAS and
 publication; its stored-definition revision/digest must match `definition`.
 For encrypted content the authorized host must enforce the same leaf ownership
 before sealing; the server does not reinterpret ciphertext as plain content.
-The development `deployments.templates.instantiate` Action routes its original
-request to the persisted Environment controller, or the reviewed controller for
-a new Environment. Its runtime target may be another installed Machine. Preview reads the exact ready
-registry pin and any existing stored definition without generating secrets or writing
-Artifacts. Apply uses normal agent Ask policy, P42 generation and binding custody, the
-ordinary Compose writer and the metadata-only CAS route. A later failure returns
+The development `deployments.templates.instantiate` Action routes stored-content
+requests to the persisted Environment controller, or the reviewed controller for
+a new Environment. A repository proposal instead selects an admitted Project
+workspace and executes on that checkout's Machine. Its runtime target may be
+another installed Machine. Preview reads the exact ready registry pin and the
+current definition without generating secrets or writing Artifacts. Repository
+review includes the exact base commit, Compose path and before/after files; apply
+uses the shared SCM worktree/commit/PR composition and returns the exact PR.
+Merge and deployment are separate Actions. Stored apply uses the ordinary Compose
+writer. Both paths use normal agent Ask policy, P42 generation and binding custody
+and the metadata-only CAS route. A later failure returns
 an Action failure whose details retain acknowledged secret refs and Environment
 revisions; an unknown secret candidate is distinct from an acknowledged save and
 must not be blindly regenerated. The existing Action operation owner rejoins
@@ -1763,6 +1884,13 @@ Account or Team owner through the Artifact writer's `beforeWrite` admission.
 Admitted sharing uses local cancellation, and an unrelated Project Source
 revision change does not interrupt installation. Environment and content CAS
 remain with their existing writers.
+
+The Environment's catalog update notice opens the same selected-item read and
+template preview/apply flow. The review shows the proposed Compose and public-file
+diff, preserves hand edits and Saved Secret refs through the pinned three-way
+merge, and saves without deploying. Removed or unchecked sources offer the
+existing source editor and an explicit retry; observing an update never changes
+the running app.
 
 In development, an optional closed `deploy: { requestKey }` intent makes catalog
 installation one template Action leaf. Preview discloses that effect. After the
@@ -2142,8 +2270,12 @@ Shared creation defaults are a separate mode-aware leaf keyed by that Source id,
 not Source content or a viewer's Project organization row. The pure
 `resolveDeploymentCreationDefaultsV1` resolves explicit values, shared Project
 values, eligible owner-Account preferences, then built-ins; Team-owned Projects
-skip Account preferences. Its current public core covers build/controller
-placement and release retention. Creation/first-configuration writers must
+skip Account preferences. Its public core covers build/controller placement,
+release retention, preview placement and database mode, and backup destination,
+schedule and retention preferences. A backup destination stores its contributed
+identity, never its credentials or destination configuration. Omitted setup
+preferences leave the corresponding domain's defaults intact; an explicit null
+destination or schedule means off. Creation/first-configuration writers must
 consume the reviewed result once; defaults do not rewrite configured Environments.
 Producer-owned preview, backup and alert leaves and composed runtime validation
 remain integration work. These are development contracts, not released settings
@@ -2265,6 +2397,14 @@ opt-out and a pending check reporting no work do not acquire backup operands. Pu
 the native restore owner; an unavailable capture or restore is an explicit
 failure and never permission for code-only recovery.
 
+In development source, `deployments.backups.test` proves destination write/read/delete
+access through the same pinned native runner and credential custody. It writes a
+nonsecret probe, verifies the exact snapshot's payload checksum and length, then
+forgets only that snapshot. Probe snapshots omit Environment backup tags. Test
+never runs Prune; unreferenced chunks remain for ordinary Prune. Failure evidence
+retains the known probe identity and whether cleanup completed, failed or remains
+unknown. Test does not prove durability or restore integrity.
+
 Development-source backup metadata has one Protocol codec for source selection,
 retention and normalized native manifests; deployment-protocol consumes that codec
 for the Environment backup leaf. The manifest binds repository, snapshot/tree, source and configuration
@@ -2283,7 +2423,11 @@ Inventory admission follows Environment read access, including read-only Team vi
 it returns backup metadata without contents or credentials. The daemon compares
 the opened backup input's canonical digest and target projection with the signed
 admission before invoking the native owner.
-Run uses the existing PostgreSQL producer-success-gated stream. Verify reads the
+Run uses the existing PostgreSQL producer-success-gated stream or the named-volume
+adapter. Volume sources name the logical Compose volume and a declared writer;
+the native generation owner resolves the actual mount, stops its declared
+writers, mounts that volume read-only for restic, and resumes those writers after
+success, failure or cancellation. Verify reads the
 exact snapshot, tree and payload checksum, optionally running repository integrity
 checks; it never calls restore preparation, creates a safety backup, or stops writers.
 Prune requires a matching successful verification from the existing operation owner
@@ -2296,23 +2440,30 @@ fails visibly and the person prepares again. Deployment recovery references rema
 protected through their existing Environment receipt owner. No schedule, retention default or backup
 ledger is added. If capture or verification evidence expires with ordinary operation
 retention, a new run and verification are required before destructive maintenance.
-Development-source backup setup uses `deployments.environments.update` with
-`patch.backup`, carrying the existing `DeploymentBackupConfigurationV1` shape.
-The host resolves the selected installed destination and calls
+Development-source backup setup and retention editing use the controller Action
+`deployments.backups.configure`. Its four intents are `test`, `save`,
+`initializeAndSave` and `markNotNeeded`; each is admitted as a mutation. Setup can
+run before an Environment has a deployment target. Generic Environment updates
+cannot write backup configuration or retention.
+The host resolves the installed destination and calls
 `prepareDeploymentBackupConfigurationV1` to validate its nonsecret configuration,
 source selection, ownership and credential-role identities and capture the current
-occurrence. Credential values and references remain on `deployments.bindings.set`
-with purpose `backupDestination`. Setup can be saved before those bindings exist;
-that does not establish runtime readiness. The full reviewed input binds the
-private configuration, while Home receives only the prepared Artifact reference
-and public metadata for the existing Environment revision CAS.
-Development-source retention editing uses `deployments.environments.update` with
-`patch.backupRetention`, the selected `configRevision` and the person's retention
-counts. The existing private-content preparation and Environment revision CAS own
-the save. This changes only retention: destination, sources, bindings, ownership
-and capture `configRevision` stay unchanged, so existing snapshot verification
-remains valid. A missing configuration returns `backup_required`; a changed capture
-choice returns `stale_input` before publication.
+occurrence. First setup resolves creation defaults through the Project defaults
+owner; an unset retention policy means Keep everything, and no schedule is created
+implicitly. Destination field labels and choices come from its descriptor's
+`fieldHints`.
+Test acquires invocation-scoped credential material through the existing P42
+owner and checks the selected repository with a write/read/delete probe. It does
+not initialize a repository or persist configuration or bindings. Save requires
+an existing repository; only `initializeAndSave` initializes one. SavedSecret
+references remain on the canonical `deployments.bindings.set` writer with purpose
+`backupDestination`, composed as a reviewed child after a successful probe. Home
+receives prepared Artifact references and public metadata for the Environment
+revision CAS, never credential values. A partial save or binding failure reports
+the actual retained references and revisions without claiming readiness.
+`markNotNeeded` requires no configured destination or enabled backup Automation;
+it does not remove remote repository data. Retention changes preserve capture
+`configRevision`, so existing snapshot verification remains valid.
 Environment copies do not inherit
 the source's backup configuration or ownership. The private destination
 materializer keeps the password file on the host but declares the read-only
@@ -2331,17 +2482,17 @@ may omit steps. This unreleased 0.3 change needs matching Protocol, daemon and U
 readers to reload together; no polling, second progress store or native call is added.
 
 The same `deployments.backups.restore` prepare/confirm Action restores a selected
-scheduled snapshot with `backupOperationId` plus the exact `restoreBackupId`
-snapshot ID from inventory or history. The host selects that scoped successful
+scheduled snapshot with `source.kind: 'repository'`, `source.backupOperationId`
+and the exact `source.snapshotId` from inventory or history. The host selects that scoped successful
 run receipt; callers never provide a manifest or native capture. Omitting
-`backupOperationId` retains pre-migration receipt selection. Confirm must repeat
+`source.backupOperationId` retains pre-migration receipt selection. Confirm must repeat
 the preparation's exact operands. Retained run selection spans deployment
 generations within the same Account, Home, Machine installation, Environment
 and target link. Callers keep the active `deploymentId`; the receipt retains its
 original generation, and restore targets the active native deployment.
 
 New backup runs retain optional `restoreCaptures` with their original PostgreSQL
-database, source, configuration and repository, without credential values. Older
+database or named-volume identity, source, configuration and repository, without credential values. Older
 manifest-only runs remain readable. Their recovery deliberately targets the
 current configured native PostgreSQL database and keeps the original manifest's
 revision distinct from the current destination configuration. The canonical
@@ -2358,8 +2509,8 @@ partitioned by Home profile, installed custodian Account and Machine. Original
 requester scope, input, manifests and `restoreCaptures` survive restart; the
 target index is rebuilt from those authored records, never from current settings
 or imported history. Successful recovery evidence is exempt from ordinary
-operation-history age/count expiry. Read-only inventory/history/probe results are
-refreshable and retain ordinary history policy. Admission and terminal recovery
+operation-history age/count expiry. Read-only inventory/history results are
+refreshable; these reads and destination probes retain ordinary history policy. Admission and terminal recovery
 facts are written durably; log/progress revisions do not write receipt files.
 A lost active operation becomes typed `action_outcome_unknown`, without replay.
 Unreadable receipt storage refuses new recovery work before effects and reports
@@ -2372,6 +2523,15 @@ load the current daemon to read it, without deleting or resetting receipt files.
 
 The development-source `projects.readiness.read` Action composes selected Project
 and Environment facts on demand, without a stored score or background polling.
+The Project home Readiness widget binds the Project itself without a checkout.
+Its explicit Environment picker borrows the Project's existing paged deployment
+collection; selection and Refresh invoke one composite read while presented.
+Opening Fix navigates to the existing Environment setup section without writing
+configuration or creating a Session. Ask agent uses the configured Triage owner
+with the exact Project, Environment and fact. Its existing Environment subject
+retains this optional Readiness context in reference evidence and verifies the
+Environment's Project membership before choosing Agent placement. Different
+facts retain different handoff outcomes; opening the widget reads no handoff catalog.
 Its controller reads the exact Environment membership and revision, then delegates
 selected native health reads through the existing target-daemon Action. Backup health
 comes only from the backup owner's exact scoped operation records: the last successful
@@ -2490,7 +2650,27 @@ Ask offers restore-and-rollback, explicit code-only rollback, or Cancel, and a
 missing required snapshot never falls back to code-only. Database recovery stays
 available when the incumbent code is already active. The delta is ready for the next security batch; review
 does not gate development or QA. DEP-21 still needs its loaded public recovery
-journey. Other engines, uploaded dumps and volume restoration remain incomplete.
+journey. Automatic pre-migration rollback recovery remains PostgreSQL-only;
+SQLite and uploaded imports remain incomplete.
+
+Development-source named-volume restore uses a fresh staging volume and restic's
+verified restore. The native owner admits a volume that is unreferenced by both
+running and stopped services, then activates its logical-to-physical mapping
+through P41's existing rendered-generation and receipt owner. Docker volume
+renaming is not involved. Activation preserves the original running service set;
+a previously stopped service stays stopped. The original volume remains available
+for the ordinary restore failure and recovery path.
+
+The development-source `restore-drill` Workflow starter selects an existing
+isolated Environment and keeps its volumes and sealed grants between runs. It
+starts that Environment's current services, verifies the selected source
+snapshot, prepares and confirms restore, and invokes `deployments.data.query`
+with the person's read-only check. Existing Workflow cleanup reads current
+service generations again and stops them after a definite success or failure.
+The starter creates no Environment or agent Session. Query rows, `complete` and
+any diagnostic remain in the existing child result; incomplete output does not
+claim a complete data comparison. The composed native drill and query host
+integration remain under verification.
 
 The private `/v1/deployments/environments/:environmentId/backup` writer reuses
 Source manage admission and the existing Environment/Artifact compare-and-swap.
@@ -2502,8 +2682,16 @@ while the server enforces the existing mode, envelope, authority and exact
 Artifact-reference revision contract. There is no second credential or backup
 status record at this storage boundary.
 
-In current development source, cross-Environment copy extends
-`deployments.backups.restore` with an explicit `copy` operand. Home admits Manage
+In current development source, standalone `deployments.backups.restore` selects
+one `source`: a repository snapshot (`kind: 'repository'`, `snapshotId`, and
+optional `backupOperationId` and `origin`) or a completed finite upload
+(`kind: 'upload'`, `transferId`). Upload references are scoped to the requester
+and destination Environment; callers never supply a daemon-local file path.
+The optional `destination` selects a database or logical named volume. Native
+execution support is separate from this input contract: SQLite and uploaded
+imports remain incomplete.
+
+Cross-Environment copy uses the repository source's explicit `origin`. Home admits Manage
 on both Environments once and binds the source capture to the signed root's
 `deploymentId`. The read-only `copySourceRead` purpose consumes that admission
 for the exact source Environment, Link, receipt and installed executor. Complete
@@ -2516,9 +2704,9 @@ cross-Machine credential transfer is not implemented. Ordinary restore retains
 its same-Environment admission and generation rules.
 
 The public copy consumer keeps the root Environment and Link as the destination;
-`deploymentId`, `restoreBackupId` and optional `backupOperationId` select the
-source capture. `copy.source` names its Environment and Link, while
-`copy.destination` names the destination service and database. The installed
+`deploymentId`, `source.snapshotId` and optional `source.backupOperationId` select
+the source capture. `source.origin` names its Environment and Link, while
+`destination` names the destination service and database. The installed
 executor must also serve the destination's existing native generation. Copy
 uses the original capture receipt's operation for `copySourceRead`, including
 a failed historical capture, rather than substituting the latest source deploy.
@@ -3104,6 +3292,16 @@ image preparation Machine (`docker-buildx-plugin` with Docker Engine packages;
 the observed Ubuntu distribution package is `docker-buildx`) and verify
 `docker buildx version` works for the daemon user. Installing Engine and Compose
 alone does not establish that this plugin is available.
+
+In unreleased 0.3 source, the deployment review names required build platforms
+without claiming that emulation is in use. The native image builder observes
+support when Bake runs. An explicit BuildKit execution-platform refusal becomes
+`build_platform_unsupported`; a generic executable-format error remains
+`native_build_failed`, since application binaries can cause it too. The failure
+keeps a closed cause and exit code without exposing private Bake output.
+Recovery opens the recorded build Machine's Setup, where the existing Build
+emulation recipe can be reviewed, or directs the person to choose a capable
+build Machine in Environment Settings. Emulated builds are slower.
 
 The development Domain add/remove/verify/get/list contracts share that owner.
 Producer-signed observations update metadata only for semantic changes; equal
@@ -3825,6 +4023,32 @@ the invocation's private Domain candidate after Action admission, before native
 discovery opens it. Home permits only that signed candidate and binds the prepared reference
 back to the admitted routing metadata. Team content uses the Environment owner's
 existing Artifact grant path. Refused Action admission creates no private content.
+
+Platform addresses use these same Domain Actions, records and private Artifacts.
+Their desired target is `{ kind: 'provider' }`, with an explicitly selected zone
+for a Worker, rather than a native service, port or Caddy placement. The selected
+runtime target declares `actions.domains.read/add/verify/remove`; the installed
+host invokes those roles through its existing reviewed-child port. Provider DNS
+instructions stay in the private Domain Artifact. A controller-signed observation
+settles the public Domain state without putting the hostname or DNS values in
+server-readable metadata or an agent result.
+
+Cloudflare Pages custom domains apply to Production. An initializing or pending
+domain remains pending and retains the provider's CNAME and, when supplied, TXT
+instructions. Check again reads the provider's domain status without adding or
+retrying it. Workers custom domains require a Production script and an explicit
+zone from the linked Cloudflare Account. Zone selection reuses the existing
+Cloudflare selection owner with deployment custody and does not enumerate
+tunnels or choose a zone from list order. Pages Preview and Workers Preview
+custom domains return `unsupported_action`; neither request changes the
+Production target. These are unreleased 0.3 source contracts.
+
+Cloudflare's Pages add and Workers attach responses return the Domain object,
+and a successful delete acknowledges removal. The adapter consumes those
+responses directly. It does not re-read its own writes to demand a stronger
+absence or visibility guarantee. A separate Check again remains a read of the
+provider's current state. See the official [Pages domain API](https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/domains/)
+and [Workers domain API](https://developers.cloudflare.com/api/resources/workers/subresources/domains/).
 
 A Domain's reviewed Cloudflare Named selection also selects tunnel placement when
 the Environment has no ingress setting. The Domain route-selection owner supplies

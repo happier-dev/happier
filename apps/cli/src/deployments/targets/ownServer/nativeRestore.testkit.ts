@@ -68,8 +68,13 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
     const request = JSON.parse(fs.readFileSync(path.join(__dirname, 'restic-'+args.at(-1)+'.json'), 'utf8'));
     const offset = request.indexOf('--repo');
     const argv = request.slice(offset);
+    const repository = argv[1];
     let output;
     if (argv.includes('config')) output = JSON.stringify({version:2,id:'c'.repeat(64)});
+    else if (argv.includes('init')) {
+        state.initializedRepositories = [...(state.initializedRepositories || []), repository];
+        save(); output = JSON.stringify({message_type:'initialized',id:'c'.repeat(64)});
+    }
     else if (argv.includes('snapshots')) {
         const selected = argv.includes('d'.repeat(64)) ? [state.safetySnapshot]
             : argv.includes('a'.repeat(64)) ? [state.snapshot]
@@ -89,7 +94,12 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
         output = JSON.stringify({message_type:'summary',snapshot_id:'d'.repeat(64),
             total_bytes_processed:Buffer.from(state.archive,'base64').length,total_files_processed:1});
     }
-    else if (argv.includes('dump')) output = Buffer.from(state.archive,'base64');
+    else if (argv.includes('dump')) output = argv.includes('/destination-probe') ? Buffer.from(state.probePayload,'base64') : Buffer.from(state.archive,'base64');
+    else if (argv.includes('restore')) {
+        if (argv[argv.indexOf('--target') + 1] !== '/happier/staging' || !argv.includes('--verify')
+            || !argv.some(value => /^[a-f0-9]{64}:\/happier\/source$/.test(value))) throw new Error('unexpected_volume_restore');
+        output = JSON.stringify({ message_type: 'summary', files_restored: 1, total_files: 1 });
+    }
     else if (argv.includes('forget')) {
         if (argv.includes('--dry-run')) output = JSON.stringify([{remove:[state.snapshot]}]);
         else {
@@ -110,18 +120,32 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
         if (argv.includes('config') && state.repositoryConfigExitCode !== undefined) {
             docker.containers.find(row => row.Id === args.at(-1)).State.ExitCode = state.repositoryConfigExitCode;
         }
+        if (argv.includes('config') && state.missingRepositoryPrefix && repository.startsWith(state.missingRepositoryPrefix)
+            && !(state.initializedRepositories || []).includes(repository)) {
+            docker.containers.find(row => row.Id === args.at(-1)).State.ExitCode = 10;
+        }
         fs.writeFileSync(dockerPath,JSON.stringify(docker));
         require('./docker-original.cjs');
     };
-    if (argv.includes('backup')) {
+    if (argv.includes('backup') && !argv.includes('--stdin')) {
+        if (state.mode === 'volumeBackupFailure') {
+            const dockerPath = path.join(__dirname, 'docker-state.json');
+            const docker = JSON.parse(fs.readFileSync(dockerPath,'utf8'));
+            docker.containers.find(row => row.Id === args.at(-1)).State.ExitCode = 7;
+            fs.writeFileSync(dockerPath,JSON.stringify(docker));
+        }
+        finish();
+    } else if (argv.includes('backup')) {
         let bytes = 0;
-        process.stdin.on('data', data => { bytes += data.length; });
+        const probeChunks = [];
+        process.stdin.on('data', data => { bytes += data.length; if (argv.includes('destination-probe')) probeChunks.push(data); });
         process.stdin.on('end', () => {
             const filename = argv[argv.indexOf('--stdin-filename')+1];
             state.safetySnapshot = {...state.snapshot,id:'d'.repeat(64),tree:'e'.repeat(64),paths:['/'+filename],
                 hostname:argv[argv.indexOf('--host')+1],
                 tags:argv.flatMap((value,index)=>value === '--tag' ? [argv[index+1]] : [])};
-            save(); event({kind:'safetyBytes',bytes}); finish();
+            if (filename === 'destination-probe') state.probePayload = Buffer.concat(probeChunks).toString('base64');
+            save(); event({kind:filename === 'destination-probe' ? 'probeBytes' : 'safetyBytes',bytes}); finish();
         });
     } else finish();
 } else if (command >= 0 && args[command+1] === '-T') {
@@ -145,7 +169,10 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
         });
     } else if (argv[0] === 'psql') {
         const sql = argv.at(-1);
-        if (sql.startsWith('SELECT COALESCE')) process.stdout.write(JSON.stringify(state.names));
+        if (sql.startsWith('SELECT COALESCE')) {
+            if (state.nameObservations?.length) { state.names = state.nameObservations.shift(); save(); }
+            process.stdout.write(JSON.stringify(state.names));
+        }
         else {
             const matched = /^ALTER DATABASE "((?:[^"]|"")*)" RENAME TO "((?:[^"]|"")*)"$/.exec(sql);
             if (!matched) throw new Error('unexpected_sql');
@@ -171,6 +198,16 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
 `);
     await chmod(executable, 0o700);
     return { stateFile, eventsFile,
+        async setDatabaseNameObservations(observations: readonly (readonly string[])[]) {
+            const state = JSON.parse(await readFile(stateFile, 'utf8'));
+            state.nameObservations = observations;
+            await writeFile(stateFile, JSON.stringify(state));
+        },
+        async setRepositoryMissing(repositoryPrefix: string) {
+            const state = JSON.parse(await readFile(stateFile, 'utf8'));
+            state.missingRepositoryPrefix = repositoryPrefix;
+            await writeFile(stateFile, JSON.stringify(state));
+        },
         async setRepositoryConfigExitCode(exitCode: number) {
             const state = JSON.parse(await readFile(stateFile, 'utf8'));
             state.repositoryConfigExitCode = exitCode;
