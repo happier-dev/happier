@@ -76,6 +76,7 @@ function readPersistedPathForMachine(input: Readonly<{
 }
 
 export type NewSessionPlacementForPersistence = Readonly<{
+    placementExplicit?: boolean;
     executionTarget: SessionAuthoringExecutionTargetV2 | null | undefined;
     selectedMachineId: string | null;
     managedMachineSelection: ManagedMachineSelectionDraft | null;
@@ -142,6 +143,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     /** Reviewed intent from a fresh picker return, distinct from retained paid recovery. */
     requestedManagedMachineSelection?: ManagedMachineSelectionDraft | null;
     persistedExecutionTarget?: SessionAuthoringExecutionTargetV2 | null;
+    persistedPlacementExplicit?: boolean;
     /** Fresh one-shot handoff identity for an explicit rich picker target. */
     executionTargetRequestKey?: string | null;
     routeSelectionOrigin?: MachinePoolSelectionOriginV1;
@@ -328,7 +330,8 @@ export function useNewSessionMachinePathState(params: Readonly<{
         ? managedMachineSelectionState.selection : null;
     // Retained targets stay exact for hydration/recovery, but only choices made
     // in this draft (including route/picker handoffs) outrank managed defaults.
-    const hasExplicitPlacement = hasUserSelectedMachineRef.current || Boolean(normalizeMachineIdParam(params.machineIdParam));
+    const hasExplicitPlacement = params.persistedPlacementExplicit === true
+        || hasUserSelectedMachineRef.current || Boolean(normalizeMachineIdParam(params.machineIdParam));
     // Placement is independent of the Agent target; the shared resolver owns every layer's precedence.
     const placementDecision = React.useMemo(() => resolveManagedSessionDefaults({ ...params.managedDefaults, agentTargetKey: '',
         explicitChoices: hasExplicitPlacement && authoredExecutionTarget?.kind === 'machine'
@@ -932,6 +935,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const hasAuthoredDirectory = hasUserEditedPathRef.current || Boolean(normalizePathParam(params.pathParam));
     const hasRetainedPlacement = hasCommittedExactTargetRef.current || hasExplicitPlacement;
     const placementForPersistence = React.useMemo<NewSessionPlacementForPersistence>(() => ({
+        ...(hasExplicitPlacement ? { placementExplicit: true } : {}),
         executionTarget: hasRetainedPlacement ? authoredExecutionTarget : undefined,
         selectedMachineId: hasRetainedPlacement && authoredExecutionTarget?.kind === 'machine'
             ? authoredExecutionTarget.target.machineId : null,
@@ -940,7 +944,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
             : hasRetainedPlacement && authoredExecutionTarget?.kind === 'machine'
                 ? getPersistedPathForMachine(authoredExecutionTarget.target.machineId)
                 : hasRetainedPlacement && managedMachineSelectionState ? normalizePathParam(params.persistedPath) : '',
-    }), [authoredExecutionTarget, getPersistedPathForMachine, hasAuthoredDirectory, hasRetainedPlacement,
+    }), [authoredExecutionTarget, getPersistedPathForMachine, hasAuthoredDirectory, hasExplicitPlacement, hasRetainedPlacement,
         managedMachineSelectionState, params.persistedPath, selectedPath]);
 
     return {

@@ -193,6 +193,7 @@ export function applyNewSessionDraftSeedV1(input: Readonly<{
             : {
                 targetServerId: exactTarget.serverId,
                 selectedMachineId: exactTarget.machineId,
+                placementExplicit: true,
                 executionTarget: { kind: 'machine' as const, target: exactTarget },
             }),
         ...(directory === undefined ? {} : { selectedPath: directory }),

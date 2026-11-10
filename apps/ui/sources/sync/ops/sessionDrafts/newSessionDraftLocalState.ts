@@ -23,6 +23,7 @@ export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
     | 'sessionConfigOptionOverrides'
     | 'backendNewSessionOptionStateByTargetKey'
     | 'windowsRemoteSessionLaunchModeOverride'
+    | 'placementExplicit'
     | 'placementCandidates'
     | 'teamCredentialBindings'
     | 'composerAttachmentSeeds'
@@ -37,6 +38,7 @@ export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
 /** Device-local New Session choices that must not enter the synchronized document. */
 export function buildNewSessionDraftLocalState(draft: NewSessionDraft): NewSessionDraftLocalState {
     return {
+        ...(draft.placementExplicit === true ? { placementExplicit: true } : {}),
         ...(draft.instructionsDraft === undefined ? {} : { instructionsDraft: readSessionInstructionsAuthoringDraft(draft.instructionsDraft) }),
         entryIntent: draft.entryIntent ?? null,
         selectedSecretId: draft.selectedSecretId ?? null,

@@ -204,6 +204,8 @@ export interface NewSessionDraft {
     targetServerId?: string | null;
     /** Unresolved placement choices seeded by a host, owned by this draft. */
     placementCandidates?: readonly PluginUiSessionPlacementCandidateV1[];
+    /** A placement chosen in this draft, rather than carried over from authoring memory. */
+    placementExplicit?: boolean;
     executionTarget?: SessionAuthoringExecutionTargetV2 | null;
     temporaryComputerActivationRef?: TemporaryComputerActivationRefV1 | null;
     /** Device-local reviewed creation choice; resource admission remains with the managed owner. */
@@ -868,6 +870,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             ...(directoryKind ? { directoryKind } : {}),
             ...(targetServerId ? { targetServerId } : {}),
             executionTarget,
+            ...(parsed.placementExplicit === true ? { placementExplicit: true } : {}),
             ...(parsedActivationRef.success ? { temporaryComputerActivationRef: parsedActivationRef.data } : {}),
             ...(managedMachineSelection.success ? { managedMachineSelection: managedMachineSelection.data } : {}),
             ...(managedMachineAcquisition.success ? { managedMachineAcquisition: managedMachineAcquisition.data } : {}),

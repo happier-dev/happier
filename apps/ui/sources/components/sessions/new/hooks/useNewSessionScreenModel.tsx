@@ -1224,6 +1224,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         managedDefaults: managedSessionDefaults.read.context,
         isBot: Boolean((hydratedTempAuthoringDraft?.initialSessionFacts ?? hydratedPersistedAuthoringDraft?.initialSessionFacts)?.bot),
         serverId: targetServerId,
+        persistedPlacementExplicit: persistedDraft?.placementExplicit,
         persistedManagedMachineSelection: persistedTargetMatches ? persistedDraft?.managedMachineSelection : null,
         requestedManagedMachineSelection: tempSessionData?.managedMachineSelection,
         persistedExecutionTarget: hydratedTempAuthoringDraft?.executionTarget ?? hydratedPersistedAuthoringDraft?.executionTarget ?? undefined,
@@ -1250,10 +1251,14 @@ export function useNewSessionScreenModel(input?: Readonly<{
         () => !tempSessionData?.managedMachineSelection && persistedTargetMatches ? persistedDraft?.managedMachineAcquisition ?? null : null,
     );
     const managedDraftTouchedRef = React.useRef(Boolean(tempSessionData?.managedMachineSelection));
-    const [managedMachineSend, setManagedMachineSend] = React.useState<ManagedMachineSelectionDraft | null>(null);
+    const [managedMachineSubmission, setManagedMachineSubmission] = React.useState<Readonly<{
+        draft: ManagedMachineSelectionDraft; createOnly: boolean;
+    }> | null>(null);
     React.useEffect(() => {
         if (!tempSessionData?.managedMachineSelection) return;
-        setManagedMachineSend(tempSessionData.managedMachineUseOptions?.send === true ? tempSessionData.managedMachineSelection : null);
+        const options = tempSessionData.managedMachineUseOptions;
+        setManagedMachineSubmission(options?.send === true || options?.create === true
+            ? { draft: tempSessionData.managedMachineSelection, createOnly: options.create === true } : null);
         managedDraftTouchedRef.current = true;
         setManagedMachineAcquisition(null);
     }, [dataId, tempSessionData?.managedMachineSelection, tempSessionData?.managedMachineUseOptions]);
@@ -2651,7 +2656,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const selectManagedMachine = React.useCallback((draft: ManagedMachineSelectionDraft, serverId = targetServerId, options?: NewSessionData['managedMachineUseOptions']) => {
         // A stable Home identity is never a local server-profile routing id.
         if (!serverId || getServerProfileById(serverId)?.serverIdentityId !== draft.selection.homeId) return;
-        setManagedMachineSend(options?.send === true ? draft : null);
+        setManagedMachineSubmission(options?.send === true || options?.create === true
+            ? { draft, createOnly: options.create === true } : null);
         managedDraftTouchedRef.current = true;
         setManagedMachineAcquisition(null);
         setManagedMachineTarget(draft, serverId);
@@ -2683,8 +2689,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         router.push('/(app)/settings/machines');
     }, [router]);
     const onOpenAddMachine = React.useCallback(() => {
-        router.push('/(app)/settings/machines/add');
-    }, [router]);
+        router.push({ pathname: '/settings/machines/add', params: { draftId, ...(dataId ? { dataId } : {}) } });
+    }, [router, draftId, dataId]);
     const selectMachinePoolTarget = React.useCallback((target: Readonly<{
         serverId: string;
         poolId: string;
@@ -3884,9 +3890,10 @@ export function useNewSessionScreenModel(input?: Readonly<{
         reject: (error: Error) => void;
         dispose: () => void;
     }> | null>(null);
-    const onManagedMachineEnrolled = React.useCallback((machineId: string, signal: AbortSignal) => {
+    const onManagedMachineEnrolled = React.useCallback((machineId: string, signal: AbortSignal, options?: Readonly<{ waitForAgent?: boolean }>) => {
         if (signal.aborted) return Promise.reject(new Error('managed_creation_retired'));
         adoptManagedMachineTarget(machineId);
+        if (options?.waitForAgent === false) return Promise.resolve();
         return new Promise<void>((resolve, reject) => {
             const onAbort = () => {
                 const waiter = managedEnrollmentWaiterRef.current;
@@ -3919,7 +3926,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
 
     const retireManagedMachineCreationDraft = React.useCallback(() => {
         managedDraftTouchedRef.current = true;
-        setManagedMachineSend(null);
+        setManagedMachineSubmission(null);
         cancelManagedMachineTarget();
         setManagedMachineAcquisition(null);
     }, [cancelManagedMachineTarget]);
@@ -4126,12 +4133,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
     ]);
     const canCreate = createAdmission.canCreate;
     React.useEffect(() => {
-        // Selection must commit before Send reads the launch intent. Consume the
-        // press once; managed acquisition/enrollment stays with the Send owner.
-        if (!managedMachineSend || managedMachineSend !== managedMachineSelection) return;
-        setManagedMachineSend(null);
-        void handleCreateSession();
-    }, [managedMachineSend, managedMachineSelection, handleCreateSession]);
+        // Selection commits before the existing creation owner consumes this press once.
+        if (!managedMachineSubmission || managedMachineSubmission.draft !== managedMachineSelection) return;
+        setManagedMachineSubmission(null);
+        void handleCreateSession(managedMachineSubmission.createOnly ? { managedMachineOnly: true } : undefined);
+    }, [managedMachineSubmission, managedMachineSelection, handleCreateSession]);
     newSessionComposerCanSubmitRef.current = canCreate;
     React.useEffect(() => {
         notifyComposerPresentationTargetChanged(newSessionComposerDocument.ref);

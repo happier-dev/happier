@@ -146,6 +146,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
         ...(authoring.directoryKind === 'managed' ? { directoryKind: 'managed' as const } : {}),
         targetServerId: executionTarget?.kind === 'machine' ? executionTarget.target.serverId : executionTarget?.serverId ?? managedTargetServerId,
         executionTarget,
+        ...(localState?.placementExplicit === true ? { placementExplicit: true } : {}),
         ...(managedMachineSelection.success ? { managedMachineSelection: managedMachineSelection.data } : {}),
         ...(managedMachineAcquisition.success ? { managedMachineAcquisition: managedMachineAcquisition.data } : {}),
         ...(authoring.temporaryComputerActivationRef !== undefined

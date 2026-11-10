@@ -8,6 +8,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { t } from '@/text';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 
+import { useSessionAccessTeamNames } from './useSessionAccessTeamNames';
 import { projectSessionAccessChipSummary } from './projectSessionAccessChipSummary';
 import { projectSessionAccessPrincipal } from './projectSessionAccessEditorSnapshot';
 import { projectSessionAccessContextChange } from './projectSessionAccessContextChange';
@@ -85,9 +86,8 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     const [pendingContextDecision, setPendingContextDecision] = React.useState<Readonly<{ teamId: string; retry: number }> | null>(null);
     const [pendingContextTarget, setPendingContextTarget] = React.useState<SessionAccessDirectoryTeamContext | null>(null);
     const [contextDecisionError, setContextDecisionError] = React.useState(false);
-    // Display names come from the candidate row the person actually chose. A
-    // restored draft has only Home-local identifiers, so its rows stay labelled
-    // by kind rather than inventing a name for an identifier.
+    // Candidate names serve accounts and Groups; Team names remain live in the
+    // existing qualified Team owner, including after restoring a draft.
     const scopeKey = JSON.stringify([scope.serverId, scope.accountId]);
     const [resolvedNames, setResolvedNames] = React.useState<Readonly<{
         scopeKey: string;
@@ -100,6 +100,8 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         setContextDecisionError(false);
     }, [scopeKey]);
     const grants = React.useMemo(() => access?.grants ?? [], [access]);
+    const subjects = React.useMemo(() => grants.map(grant => grant.subject), [grants]);
+    const teamNames = useSessionAccessTeamNames(scope, subjects);
     const grantsRef = React.useRef(grants);
     grantsRef.current = grants;
 
@@ -113,7 +115,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
 
     const contextTeams = React.useMemo<readonly SessionAccessDirectoryTeamContext[]>(() => grants
         .filter((grant) => grant.subject.kind === 'team')
-        .map((grant) => ({ teamId: grant.subject.kind === 'team' ? grant.subject.teamId : '', name: names[sessionAccessSubjectKey(grant.subject)]?.displayName ?? t('session.access.team') })), [grants, names]);
+        .map((grant) => ({ teamId: grant.subject.kind === 'team' ? grant.subject.teamId : '', name: teamNames.get(grant.subject.kind === 'team' ? grant.subject.teamId : '') ?? names[sessionAccessSubjectKey(grant.subject)]?.displayName ?? t('session.access.team') })), [grants, names, teamNames]);
 
     // Candidate discovery is editor detail and waits for an open presentation.
     // The primary Team's creation decision comes from the server-owned create
@@ -214,7 +216,10 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         const requiredByTeamPolicy = grant.subject.kind === 'team'
             && grant.subject.teamId === primaryTeamId
             && primaryTeamPolicy?.sessionCreationPolicy === 'team_required';
-        const principal = names[key] ?? fallbackPrincipal(grant.subject);
+        const teamName = grant.subject.kind === 'team' ? teamNames.get(grant.subject.teamId) : null;
+        const principal = grant.subject.kind === 'team' && teamName
+            ? projectSessionAccessPrincipal({ kind: 'team', teamId: grant.subject.teamId, name: teamName })
+            : names[key] ?? fallbackPrincipal(grant.subject);
         return {
             grant: grant.subject,
             principal,
@@ -236,7 +241,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
             requiredByTeamPolicy,
             operation: { kind: 'idle' },
         };
-    }), [editable, grants, names, primaryTeamId, primaryTeamPolicy?.sessionCreationPolicy]);
+    }), [editable, grants, names, teamNames, primaryTeamId, primaryTeamPolicy?.sessionCreationPolicy]);
 
     const replace = React.useCallback((subject: PrincipalRefV1, next: SessionInitialAccessDraftV1['grants'][number] | null) => {
         if (!editable) return;

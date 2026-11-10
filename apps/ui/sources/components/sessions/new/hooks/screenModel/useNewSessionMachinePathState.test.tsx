@@ -155,12 +155,12 @@ describe('useNewSessionMachinePathState', () => {
             const authored = hook.getCurrent().placementForPersistence;
             expect(authored.executionTarget).toEqual({ kind: 'machine', target: { serverId: 'server-a', machineId: 'chosen' } });
             const explicitReopened = await renderMachinePathState({ ...props, managedDefaults: defaults('team-b'),
+                persistedPlacementExplicit: authored.placementExplicit,
                 persistedExecutionTarget: authored.executionTarget, persistedMachineId: authored.selectedMachineId,
                 persistedManagedMachineSelection: authored.managedMachineSelection, persistedPath: authored.selectedPath });
-            // Reopening carries remembered placement, not a choice in this draft (owner ruling 2026-11-07).
+            // A choice in this draft stays explicit after restore; legacy remembered targets remain below defaults.
             try {
-                expect(explicitReopened.getCurrent().selectedMachineId).toBe('team-b');
-                expect(explicitReopened.getCurrent().selectedPath).toBe('/team-b-project');
+                expect(explicitReopened.getCurrent().selectedMachineId).toBe('chosen');
             }
             finally { await explicitReopened.unmount(); }
         } finally { await hook.unmount(); }

@@ -381,9 +381,11 @@ reviewed creation draft before launch.
 
 Saved New Session drafts retain authored choices rather than resolved managed values, so reopening
 an untouched draft reads current defaults and a policy lock preserves the person's underlying choice.
-Restored placement is remembered state: Group, Team and Home defaults outrank it. A target picked
-in the current draft or supplied by a route or deep link is explicit; without a managed default,
-the remembered target remains selected.
+A target picked in a draft or supplied by a route, deep link or exact-target seed is explicit,
+and remains explicit when that draft is restored. The draft-local `placementExplicit` marker
+records that intent. Carried-over remembered placement, including older drafts without the
+marker, ranks below Group, Team and Home defaults; without a managed default, the remembered
+target remains selected.
 
 The existing `teams.policy.set` replaces the document under `manageSettings`, or applies a
 scoped `managedGroupDefaults` change under existing Team/Group management authority. Omission

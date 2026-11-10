@@ -317,7 +317,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
             : '';
         return {
             ...persistedDraft,
-            ...(params.placementForPersistence ? { executionTarget: params.placementForPersistence.executionTarget } : {}),
+            ...(params.placementForPersistence ? { executionTarget: params.placementForPersistence.executionTarget,
+                placementExplicit: params.placementForPersistence.placementExplicit } : {}),
             ...(params.spaceMembership === undefined ? {} : { spaceMembership: params.spaceMembership }),
             ...(params.authoringOrigin === undefined ? {} : { authoringOrigin: params.authoringOrigin }),
             ...(launchUserAttemptId ? { launchUserAttemptId } : {}),
