@@ -625,6 +625,77 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it('opens only the persisted preview parent Domain under an ordinary signed Deploy root', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        const template = await db.deploymentEnvironment.create({ data: {
+            projectSourceId: f.environment.projectSourceId, createdByAccountId: f.account.id,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: f.controller.id, buildMachineId: f.builder.id,
+            ...await f.content('deployment-environment.v1'),
+        } });
+        const runtime = await db.deploymentTargetLink.create({ data: { environmentId: template.id,
+            createdByAccountId: f.account.id, role: 'runtime', state: 'configured',
+            sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer',
+            ...await f.content('deployment-target-link.v1'),
+            machines: { create: [{ machineId: f.member.id, installationId: f.member.installationId,
+                position: 0, state: 'active' }] },
+        } });
+        await db.deploymentEnvironment.update({ where: { id: template.id }, data: { runtimeTargetLinkId: runtime.id } });
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: {
+            purpose: 'preview', previewTemplateEnvironmentId: template.id,
+            previewRepositoryId: f.environment.projectSourceId, previewPullRequestId: '17', previewTargetLinkId: runtime.id,
+        } });
+        const domain = await db.deploymentDomain.create({ data: { environmentId: template.id,
+            targetLinkId: runtime.id, createdByAccountId: f.account.id, state: 'pending',
+            ...await f.content('deployment-domain.v1'),
+        } });
+        const childDomain = await db.deploymentDomain.create({ data: { environmentId: f.environment.id,
+            targetLinkId: f.link.id, createdByAccountId: f.account.id, state: 'pending',
+            ...await f.content('deployment-domain.v1'),
+        } });
+        const foreign = await fixture();
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const read = (environmentId: string, domainId: string, root = f, key = root.controller.keys.secretKey) => {
+                const path = `/v1/deployments/environments/${environmentId}/domains/${domainId}?serverId=${serverId}`;
+                const effectActionId = 'deployments.domains.get';
+                return app.inject({ method: 'GET', url: path, headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.authorization.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: root.authorization.token, effectActionId, target: root.authorization.binding.target,
+                        installationId: root.controller.installationId, requestId: root.authorization.binding.requestId,
+                        method: 'GET', path, privateKey: key }),
+                } });
+            };
+            const selected = await read(template.id, domain.id);
+            expect(selected.statusCode, selected.body).toBe(200);
+            expect(selected.json()).toMatchObject({ ok: true, domain: { id: domain.id, environmentId: template.id } });
+            const own = await read(f.environment.id, childDomain.id);
+            expect(own.statusCode, own.body).toBe(200);
+            for (const request of [() => read(foreign.environment.id, domain.id),
+                () => read(template.id, domain.id, foreign),
+                () => read(template.id, domain.id, f, foreign.controller.keys.secretKey)]) {
+                const refused = await request();
+                expect(refused.statusCode, refused.body).toBe(401);
+            }
+            // A Domain locator cannot borrow the parent relation for a different row.
+            const wrongRow = await read(template.id, childDomain.id);
+            expect(wrongRow.statusCode, wrongRow.body).toBe(404);
+            for (const data of [
+                { purpose: 'standard', previewTemplateEnvironmentId: null, previewRepositoryId: null,
+                    previewPullRequestId: null, previewTargetLinkId: null },
+                { purpose: 'preview', previewTemplateEnvironmentId: foreign.environment.id,
+                    previewRepositoryId: f.environment.projectSourceId, previewPullRequestId: '17', previewTargetLinkId: runtime.id },
+            ] as const) {
+                await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data });
+                const staleParent = await read(template.id, domain.id);
+                expect(staleParent.statusCode, staleParent.body).toBe(401);
+                expect(staleParent.json()).toMatchObject({ authorizationRefusal: 'deployment_metadata_environment' });
+            }
+        }, { authentication: 'real' });
+    });
+
     it('reconciles joining membership under an accepted existing-Environment template Deploy root', async () => {
         const f = await fixture('account', 'account', { templateRoot: true });
         await db.deploymentTargetLinkMachine.updateMany({ where: { targetLinkId: f.link.id }, data: { state: 'joining' } });
@@ -2500,6 +2571,114 @@ describe('deployment children retain their controller Action authority', () => {
             } });
         await expect(dispatch({ actionId, envelope, principal: { accountId: f.account.id, authentication,
             authority: 'present_user' } })).resolves.toMatchObject({ kind: 'response' });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('previews Environment alert defaults from an admitted %s health setup Action', async contentMode => {
+        const f = await fixture('account', 'account', { readableEnvironment: true, contentMode });
+        const foreign = await fixture('account', 'account', { readableEnvironment: true, contentMode });
+        const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const credentials = { token, encryption: contentMode === 'plain' ? null : {
+            type: 'dataKey' as const, machineKey: f.accountKeys.secretKey, publicKey: f.accountKeys.publicKey,
+        } };
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const input = { action: { pluginId: 'happier.machine.services', localId: 'health/setup' },
+            input: { v: 1, mode: 'preview', subject: { kind: 'environment', environmentId: f.environment.id } } };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const root = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId: 'action.invoke', machineId: f.controller.id, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const exchanges: Array<{ method: string; path: string; status: number }> = [];
+        await withAuthenticatedTestApp(app => {
+            registerAccountProfileRoute(app);
+            registerAccountSettingsRoutes(app);
+            featuresRoutes(app);
+            registerAccountEncryptionRoutes(app);
+            artifactsRoutes(app);
+            projectSourceRoutes(app);
+            registerDeploymentRoutes(app);
+            app.addHook('onResponse', async (request, reply) => {
+                exchanges.push({ method: request.method, path: request.url.split('?')[0]!, status: reply.statusCode });
+            });
+        }, async app => {
+            const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+            const channel = await createRequesterCurrentnessSocketHarness();
+            let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
+            try {
+                requester = await admitRequesterAccountActionContext({ authorization: root, credentials,
+                    serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, isCurrent: async () => true });
+                if (!requester) throw new Error(`Expected admitted requester: ${JSON.stringify(exchanges)}`);
+                const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
+                    serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, target,
+                    installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey, rootAdmitted: true });
+                if (!authorization) throw new Error('Expected requester HTTP projection');
+                // The native host and actual Home routes reproduce the SDK health/setup
+                // reader's Environment get followed by its read-only update preview.
+                const native = createDaemonDeploymentActionDeps({ credentials, serverId, serverHttpBaseUrl: origin,
+                    machineId: f.controller.id,
+                    runtime: { async acquire() { throw new Error('Preview must not acquire native deployment'); } } });
+                const context = { surface: 'plugin' as const, authority: 'account_automation' as const,
+                    externalActionExecutionAuthorization: authorization, externalActionTarget: target };
+                const read = await native.deploymentAction!('deployments.environments.get',
+                    { serverId, environmentId: f.environment.id }, context);
+                expect(read, JSON.stringify(exchanges)).toMatchObject({ ok: true, environment: { id: f.environment.id } });
+                const preview = await native.deploymentAction!('deployments.environments.update',
+                    { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
+                        contentArtifactId: f.environment.contentArtifactId, contentHeaderVersion: f.environment.contentHeaderVersion,
+                        contentBodyVersion: f.environment.contentBodyVersion, mode: 'preview', defaultsFor: 'alerts' }, context);
+                expect(preview, JSON.stringify(exchanges)).toMatchObject({ ok: true, creationDefaults: { values: { alertChannels: [] } } });
+                expect(await native.deploymentAction!('deployments.environments.get',
+                    { serverId, environmentId: foreign.environment.id }, context)).toMatchObject({ ok: false });
+                expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } })).revision)
+                    .toBe(f.environmentRevision);
+            } finally { await requester?.dispose(); await channel.close(); }
+        }, { authentication: 'real' });
+    });
+
+    it('reads backup setup defaults under its exact signed Environment preview root', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        const foreign = await fixture('account', 'account', { readableEnvironment: true });
+        const unrelated = await f.content('deployment-environment.v1');
+        const actionId = 'deployments.environments.update';
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const input = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
+            contentArtifactId: f.environment.contentArtifactId, contentHeaderVersion: f.environment.contentHeaderVersion,
+            contentBodyVersion: f.environment.contentBodyVersion, mode: 'preview', defaultsFor: 'backups' };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId,
+            machineId: f.controller.id, target, requestId: envelope.requestId,
+            deploymentNativeAdmission: projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope }),
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const headers = (path: string, effectActionId: string) => createExternalActionAuthorizedRequestHeaders({
+            authorization, effectActionId, target, installationId: f.controller.installationId,
+            privateKey: f.controller.keys.secretKey, method: 'GET', path,
+        });
+        await withAuthenticatedTestApp(app => {
+            artifactsRoutes(app);
+            projectSourceRoutes(app);
+            registerDeploymentRoutes(app);
+        }, async app => {
+            // DeploymentBackupSetup prepares defaults before any destination
+            // mutation or native source review. These are its real Home reads.
+            for (const [path, effect] of [
+                [`/v1/projects/sources/${f.environment.projectSourceId}?serverId=${serverId}`, 'projects.sources.read'],
+                [`/v1/projects/${f.environment.projectSourceId}/deployment-defaults?serverId=${serverId}`, actionId],
+                [`/v1/artifacts/${f.environment.contentArtifactId}`, actionId],
+            ] as const) {
+                const read = await app.inject({ method: 'GET', url: path, headers: headers(path, effect) });
+                expect(read.statusCode, read.body).toBe(200);
+            }
+            const other = `/v1/projects/sources/${foreign.environment.projectSourceId}?serverId=${serverId}`;
+            expect((await app.inject({ method: 'GET', url: other, headers: headers(other, 'projects.sources.read') })).statusCode)
+                .toBe(401);
+            const otherContent = `/v1/artifacts/${foreign.environment.contentArtifactId}`;
+            expect((await app.inject({ method: 'GET', url: otherContent, headers: headers(otherContent, actionId) })).statusCode)
+                .toBe(401);
+            const unrelatedContent = `/v1/artifacts/${unrelated.contentArtifactId}`;
+            expect((await app.inject({ method: 'GET', url: unrelatedContent, headers: headers(unrelatedContent, actionId) })).statusCode)
+                .toBe(401);
+        }, { authentication: 'real' });
     });
 
     it.each(['plain', 'e2ee'] as const)('prepares a template addition to an existing %s Environment through signed Home HTTP', async contentMode => {

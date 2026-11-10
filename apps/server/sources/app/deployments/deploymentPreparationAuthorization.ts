@@ -159,11 +159,15 @@ export async function isDeploymentPreparationMachineReadHttpPurposeInTx(tx: Tx,
     if (binding.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 && admission?.operation === 'template'
         && effectActionId === binding.actionId) machineId = admission.machineId;
     else {
-        if (effectActionId !== DEPLOYMENT_DEPLOY_ACTION_ID_V1
+        const previewCreate = binding.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && effectActionId === binding.actionId
+            && admission?.operation === 'create' && admission.preview ? admission : undefined;
+        if (!previewCreate && (effectActionId !== DEPLOYMENT_DEPLOY_ACTION_ID_V1
             || binding.actionId !== DEPLOYMENT_DEPLOY_ACTION_ID_V1
                 && (binding.actionId !== DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || admission?.operation !== 'template'
-                    || deploymentOperationForRootActionV1(binding.actionId, admission) !== 'deploy')) return false;
-        const environmentId = await readDeploymentPreparationEnvironmentIdInTx(tx, binding);
+                    || deploymentOperationForRootActionV1(binding.actionId, admission) !== 'deploy'))) return false;
+        const environmentId = previewCreate
+            ? await readPreviewCreateEnvironmentIdInTx(tx, binding, previewCreate) ?? previewCreate.preview?.templateEnvironmentId
+            : await readDeploymentPreparationEnvironmentIdInTx(tx, binding);
         if (!environmentId) return false;
         // Mint admitted this Environment and Source. The Machine route retains
         // requester access and codec admission; this read only derives placement.
@@ -531,7 +535,7 @@ async function readConfigurationDefaultsEnvironmentInTx(tx: Tx, binding: Externa
     if (binding.actionId !== DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
         || !isDeploymentEnvironmentUpdateNativeAdmissionV1(admission) || admission.defaultsFor === undefined) return null;
     const environment = await tx.deploymentEnvironment.findUnique({ where: { id: admission.environmentId },
-        select: { id: true, projectSourceId: true, controllerMachineId: true, deletedAt: true } });
+        select: { id: true, projectSourceId: true, controllerMachineId: true, contentArtifactId: true, deletedAt: true } });
     return environment && !environment.deletedAt && environment.controllerMachineId === binding.machineId ? environment : null;
 }
 
@@ -569,6 +573,9 @@ export async function readDeploymentEnvironmentContentPreparationHttpPurpose(tx:
         if ((proof.path === '/v1/account/encryption' || proof.path === '/v1/account/encryption/currentness') && matches({})) return true;
         if (proof.path === `/v1/projects/${encodeURIComponent(environment.projectSourceId)}/deployment-defaults?serverId=${encodeURIComponent(binding.serverIdentityId)}`)
             return matches({ serverId: binding.serverIdentityId, id: environment.projectSourceId });
+        // Backup choices inspect the admitted Environment's stored definition.
+        if (native.defaultsFor === 'backups' && proof.path === `/v1/artifacts/${encodeURIComponent(environment.contentArtifactId)}`)
+            return matches({ id: environment.contentArtifactId });
         const defaults = await readProjectDeploymentDefaultsContentInTx(tx, binding.accountId, environment.projectSourceId);
         return defaults.ok && defaults.content !== null
             && proof.path === `/v1/artifacts/${encodeURIComponent(defaults.content.contentArtifactId)}`
@@ -757,6 +764,9 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     if (effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1) return await readDeploymentPreviewInventoryHttpPurposeInTx(
         tx, binding, proof, isNativeHttpPurpose?.(proof) === true)
         ? { rootActionId: 'deployments.environments.create', effectActionId } : null;
+    if (await isDeploymentPreparationMachineReadHttpPurposeInTx(tx, binding, effectActionId, proof)) {
+        return { rootActionId: 'deployments.environments.create', effectActionId };
+    }
     const domainEffect = effectActionId === 'deployments.domains.add';
     const deployEffect = effectActionId === 'deployments.deploy';
     const receiptRead = effectActionId === 'deployments.receipts.get' || effectActionId === 'deployments.receipts.list';
@@ -1171,6 +1181,23 @@ export async function isDeploymentPreparationAuthorizedInTx(tx: Tx, binding: Ext
     return true;
 }
 
+/** Preview Domain operands come from the admitted Create or the selected child's persisted relation. */
+async function readDeploymentPreparationPreviewTemplateIdInTx(tx: Tx,
+    binding: ExternalActionExecutionAuthorizationBindingV1): Promise<string | undefined> {
+    const admission = binding.deploymentPreparationAdmission;
+    if (binding.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && admission?.operation === 'create') {
+        return admission.preview?.templateEnvironmentId;
+    }
+    if (!isDeploymentMembershipActionIdV1(binding.actionId, admission)
+        || deploymentOperationForRootActionV1(binding.actionId, admission) === 'teardown') return undefined;
+    const environmentId = binding.environmentId ?? await readTemplateDeploymentEnvironmentIdInTx(tx, binding);
+    if (!environmentId) return undefined;
+    const environment = await tx.deploymentEnvironment.findFirst({ where: { id: environmentId,
+        deletedAt: null, purpose: 'preview' },
+        select: { previewTemplateEnvironmentId: true } });
+    return environment?.previewTemplateEnvironmentId ?? undefined;
+}
+
 /** Resolve the read transport and keep membership discovery inside its admitted Home and Environment. */
 export async function readDeploymentPreparationHttpReadPurpose(
     tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
@@ -1186,9 +1213,8 @@ export async function readDeploymentPreparationHttpReadPurpose(
         const read = domainActionId === 'deployments.domains.get' ? DeploymentDomainGetInputV1Schema.safeParse(proof.routeInput)
             : DeploymentDomainListInputV1Schema.safeParse(proof.routeInput);
         if (!read.success || read.data.serverId !== binding.serverIdentityId) return null;
-        const admission = binding.deploymentPreparationAdmission;
-        const previewTemplateId = domainActionId === 'deployments.domains.get' && admission?.operation === 'create'
-            ? admission.preview?.templateEnvironmentId : undefined;
+        const previewTemplateId = domainActionId === 'deployments.domains.get' && read.data.environmentId !== binding.environmentId
+            ? await readDeploymentPreparationPreviewTemplateIdInTx(tx, binding) : undefined;
         const environmentId = read.data.environmentId === previewTemplateId ? previewTemplateId
             : binding.environmentId ?? await readTemplateDeploymentEnvironmentIdInTx(tx, binding);
         return read.data.environmentId === environmentId ? { actionId: domainActionId, environmentId } : null;
