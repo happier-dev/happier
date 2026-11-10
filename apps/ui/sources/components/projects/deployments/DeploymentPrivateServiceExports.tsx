@@ -20,7 +20,8 @@ import type { DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettin
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
-import { buildPrivateServiceExportPatch, listPrivateServiceExportServices } from './privateServiceExport';
+import { buildPrivateServiceExportPatch, listPrivateServiceExportServices, privateServiceExportAuthoring,
+  type PrivateServiceExportAuthoring } from './privateServiceExport';
 
 const id = 'project-deployments.environment.privateSharing';
 const readPrivateNetworks = (machine: Machine | null): unknown => machine?.daemonState?.reachability?.privateNetworks;
@@ -29,50 +30,53 @@ const readPrivateNetworks = (machine: Machine | null): unknown => machine?.daemo
 export function DeploymentPrivateServiceExports(props: Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
   editing: DeploymentEnvironmentEditing | null;
-  machineName: (machineId: string) => string;
 }>) {
   const exports = props.detail.content.ownServer?.serviceExports ?? [];
-  const stored = props.detail.content.definition.kind === 'stored';
-  const supported = exports.every(entry => entry.exposure === 'privateNetwork');
   const editing = props.editing;
-  const machineIds = props.detail.runtimeTargetLink?.source.kind === 'host'
-    ? props.detail.runtimeTargetLink.machines : [];
+  const authoring = privateServiceExportAuthoring(props.detail, editing !== null);
   const open = () => {
-    if (!editing) return;
+    if (!editing || authoring.kind !== 'ready') return;
     showDeploymentSheet({ component: PrivateServiceExportSheet,
-      props: { detail: props.detail, editing, machineIds, machineName: props.machineName },
+      props: { detail: props.detail, editing, machineIds: authoring.machineIds },
       title: t('projects.deployments.settingsSections.privateSharingAdd'), testID: `${id}.modal` });
   };
   return <ItemGroup testID={id} title={t('projects.deployments.settingsSections.privateSharingTitle')}
     description={t('projects.deployments.settingsSections.privateSharingBody')}
-    action={editing && stored && supported && machineIds.length > 0 ? <SectionActionButton testID={`${id}.add`}
+    action={authoring.kind === 'ready' ? <SectionActionButton testID={`${id}.add`}
       title={t('projects.deployments.settingsSections.privateSharingAdd')} onPress={open} /> : undefined}>
     {exports.map(entry => <Item key={entry.key} testID={`${id}.export:${entry.key}`} title={entry.key}
       subtitle={`${entry.service}:${entry.containerPort}`} detail={entry.privateNetwork ?? t(entry.exposure === 'public'
         ? 'projects.deployments.databasePublic' : 'projects.deployments.databaseInternal')} mode="info" />)}
-    {!stored ? <Item testID={`${id}.repository`} title={t('projects.deployments.settingsSections.privateSharingRepository')} mode="info" />
-      : !supported ? <Item testID={`${id}.unsupported`} title={t('projects.deployments.settingsSections.privateSharingUnsupported')} mode="info" />
-        : machineIds.length === 0 ? <Item title={t('projects.deployments.settingsSections.privateSharingNetworkMissing')} mode="info" /> : null}
+    {authoring.kind === 'unavailable' && privateServiceExportUnavailableReason(authoring.reason)
+      ? <Item testID={`${id}.${authoring.reason}`} title={privateServiceExportUnavailableReason(authoring.reason)!} mode="info" /> : null}
   </ItemGroup>;
+}
+
+/**
+ * Why this Environment cannot share a service from Settings, and what to do instead, said once for every surface that
+ * consumes `privateServiceExportAuthoring` (Settings › Private sharing, the Database page). A viewer who cannot edit
+ * gets no reason: there is nothing for them to do.
+ */
+export function privateServiceExportUnavailableReason(
+  reason: Extract<PrivateServiceExportAuthoring, { kind: 'unavailable' }>['reason'],
+): string | null {
+  switch (reason) {
+    case 'repository': return t('projects.deployments.settingsSections.privateSharingRepository');
+    case 'unsupported': return t('projects.deployments.settingsSections.privateSharingUnsupported');
+    case 'machineMissing': return t('projects.deployments.settingsSections.privateSharingNetworkMissing');
+    case 'multipleMachines': return t('projects.deployments.settingsSections.privateSharingMultipleMachines');
+    case 'readOnly': return null;
+  }
 }
 
 type SheetInput = Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
   editing: DeploymentEnvironmentEditing;
   machineIds: readonly string[];
-  machineName: (machineId: string) => string;
 }>;
 
 function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps) {
-  const [machineId, setMachineId] = React.useState(props.machineIds[0] ?? null);
-  return <PrivateServiceExportForm {...props} machineId={machineId} onMachineChange={setMachineId} />;
-}
-
-function PrivateServiceExportForm(props: SheetInput & CustomModalInjectedProps & Readonly<{
-  machineId: string | null;
-  onMachineChange: (machineId: string) => void;
-}>) {
-  const rawNetworks = useServerScopedMachine(props.editing.serverId, props.machineId, readPrivateNetworks);
+  const rawNetworks = useServerScopedMachine(props.editing.serverId, props.machineIds[0] ?? null, readPrivateNetworks);
   const networks = React.useMemo(() => !Array.isArray(rawNetworks) ? [] : rawNetworks.flatMap(value => {
     const parsed = MachinePrivateNetworkObservationV1Schema.safeParse(value);
     return parsed.success && parsed.data.state === 'ready' && parsed.data.networkIdentity && parsed.data.addresses.length > 0
@@ -143,9 +147,6 @@ function PrivateServiceExportForm(props: SheetInput & CustomModalInjectedProps &
       <Item testID={`${id}.reviewHostPort`} title={t('projects.deployments.settingsSections.privateSharingHostPort')}
         detail={hostPort} mode="info" />
     </ItemGroup> : <>
-      {props.machineIds.length > 1 ? <FieldItem label={t('projects.deployments.machine')}><ValueFieldSelect testID={`${id}.machine`}
-        label={t('projects.deployments.machine')} items={props.machineIds.map(value => ({ id: value, title: props.machineName(value) }))}
-        selectedId={props.machineId} onSelect={value => { props.onMachineChange(value); setNetworkIdentity(null); setAddress(null); }} fill /></FieldItem> : null}
       {networks.length === 0 ? <SurfaceStateCard testID={`${id}.networkMissing`} size="line" kind="unavailable"
         title={t('projects.deployments.settingsSections.privateSharingNetworkMissing')} />
         : services.length === 0 ? <SurfaceStateCard size="line" kind="unavailable"

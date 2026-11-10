@@ -1,4 +1,5 @@
 import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { isMap, isSeq, parseDocument } from 'yaml';
 import { DeploymentEnvironmentContentPatchV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentContentPatchV1';
 import { DeploymentServiceExportV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
@@ -7,6 +8,28 @@ export type PrivateServiceExportSelection = Readonly<{
   key: string; service: string; containerPort: number; scheme: string;
   privateNetwork: string; hostAddress: string; hostPort: number;
 }>;
+
+export type PrivateServiceExportAuthoring =
+  | Readonly<{ kind: 'ready'; machineIds: readonly string[] }>
+  | Readonly<{ kind: 'unavailable'; reason: 'readOnly' | 'repository' | 'unsupported' | 'machineMissing' | 'multipleMachines' }>;
+
+/** Authoring consumes the caller's edit decision; network observations belong to the editor. */
+export function privateServiceExportAuthoring(
+  detail: DeploymentEnvironmentReadDetailV1,
+  canEdit: boolean,
+): PrivateServiceExportAuthoring {
+  if (!canEdit) return { kind: 'unavailable', reason: 'readOnly' };
+  if (detail.content.definition.kind !== 'stored') return { kind: 'unavailable', reason: 'repository' };
+  if (detail.content.ownServer?.serviceExports?.some(entry => entry.exposure !== 'privateNetwork')) {
+    return { kind: 'unavailable', reason: 'unsupported' };
+  }
+  const runtime = detail.runtimeTargetLink;
+  if (runtime?.source.kind !== 'host' || runtime.machines.length === 0) {
+    return { kind: 'unavailable', reason: 'machineMissing' };
+  }
+  if (runtime.machines.length > 1) return { kind: 'unavailable', reason: 'multipleMachines' };
+  return { kind: 'ready', machineIds: runtime.machines };
+}
 
 const invalid = (): never => { throw Object.assign(new Error('invalid_parameters'), { code: 'invalid_parameters' }); };
 

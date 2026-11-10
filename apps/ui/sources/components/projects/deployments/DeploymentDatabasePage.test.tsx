@@ -122,6 +122,8 @@ async function renderDatabase(
     database?: string;
     retainedBackup?: boolean;
     noBackup?: boolean;
+    /** The Environment's Compose file is stored in Happier (shareable from Settings), not in its repository. */
+    storedDefinition?: boolean;
     restore?: React.ComponentProps<typeof DeploymentDatabasePage>['restore'];
     setBindings?: React.ComponentProps<typeof DeploymentDatabasePage>['setBindings'];
     /** The Environment shares the database on a private network (its saved export). */
@@ -166,6 +168,8 @@ async function renderDatabase(
     content: {
       ...base.content,
       ...(input.noBackup ? { backup: undefined } : { backup }),
+      ...(input.storedDefinition ? { definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
+        document: 'services:\n  postgres:\n    image: postgres:17\n', profiles: [], services: ['postgres'], primaryService: 'postgres' } } : {}),
       ...(input.shared ? { ownServer: { rollout: 'recreate' as const, autoRestorePreviousRelease: true, serviceExports: [
         { key: 'database', service: 'postgres', containerPort: 5432, scheme: 'postgres', exposure: 'privateNetwork' as const,
           privateNetwork: 'shop-net' },
@@ -856,7 +860,7 @@ describe('Environment → Data → Database page (P9)', () => {
   });
 
   it('says what Connect needs when the database is not shared with other Environments', async () => {
-    const view = await renderDatabase({ setBindings: async input => DeploymentActionOutputSchemasV1['deployments.bindings.set'].parse({
+    const view = await renderDatabase({ storedDefinition: true, setBindings: async input => DeploymentActionOutputSchemasV1['deployments.bindings.set'].parse({
       ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1,
     }) });
     try {
@@ -882,11 +886,25 @@ describe('Environment → Data → Database page (P9)', () => {
   });
 
   it('leads a database nothing shares to Private sharing from its Private network row', async () => {
-    const view = await renderDatabase({});
+    const view = await renderDatabase({ storedDefinition: true });
     try {
       expect(await view.settle(`${page}.connection.private.share`)).not.toBeNull();
       await view.screen.pressByTestIdAsync(`${page}.connection.private.share`);
       expect(view.navigate).toHaveBeenCalledWith({ tab: 'settings', section: 'servers-build' });
+    } finally { await view.dispose(); }
+  });
+
+  it('says why a database defined in its repository cannot be shared here, with no Share that leads nowhere', async () => {
+    const view = await renderDatabase({ setBindings: async input => DeploymentActionOutputSchemasV1['deployments.bindings.set'].parse({
+      ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1,
+    }) });
+    try {
+      expect(await view.settle(`${page}.connection.private`)).not.toBeNull();
+      expect(view.screen.findByTestId(`${page}.connection.private.share`)).toBeNull();
+      expect(view.screen.getTextContent()).toContain('repository’s Compose file');
+      await view.screen.pressByTestIdAsync(`${page}.connect`);
+      expect(await view.settle('project-deployments.connect.needsShare')).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.connect.openSettings')).toBeNull();
     } finally { await view.dispose(); }
   });
 

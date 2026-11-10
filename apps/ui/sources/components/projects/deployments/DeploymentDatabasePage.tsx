@@ -56,6 +56,8 @@ import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/plugi
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
+import { privateServiceExportAuthoring } from './privateServiceExport';
+import { privateServiceExportUnavailableReason } from './DeploymentPrivateServiceExports';
 import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { deploymentPartialRecoveryTab, readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
@@ -332,13 +334,17 @@ export function DeploymentDatabasePage(
       && (entry.exposure === 'privateNetwork' || entry.exposure === 'public'))
     : [];
   const setBindings = props.setBindings;
+  // Sharing is authored in Settings › Private sharing; its owner decides whether this viewer can do it here.
+  const sharing = privateServiceExportAuthoring(detail, detail.environment.capabilities.role === 'manager');
+  const openSharing = sharing.kind === 'ready'
+    ? () => props.onNavigate({ tab: 'settings', section: 'servers-build' }) : null;
+  const sharingBlocked = sharing.kind === 'unavailable' ? privateServiceExportUnavailableReason(sharing.reason) : null;
   const openConnect = database.kind === 'selfHosted' && setBindings && controller ? () => showDeploymentSheet({
     component: DeploymentConnectSheet,
     props: { controller, sourceEnvironmentId: detail.environment.id, exports: connectExports,
       setBindings, review: props.review,
-      ...(detail.environment.capabilities.manage ? {
-        onOpenSettings: () => props.onNavigate({ tab: 'settings', section: 'servers-build' }),
-      } : {}) },
+      ...(openSharing ? { onOpenSettings: openSharing } : {}),
+      ...(sharingBlocked ? { sharingBlocked } : {}) },
     title: t('projects.deployments.databaseConnectTitle'),
     testID: 'project-deployments.connect.modal',
   }) : null;
@@ -411,8 +417,8 @@ export function DeploymentDatabasePage(
               data={database.data}
               catalog={catalog}
               scope={lifetime?.scope ?? null}
-              {...(detail.environment.capabilities.manage
-                ? { onShare: () => props.onNavigate({ tab: 'settings', section: 'servers-build' }) } : {})}
+              {...(openSharing ? { onShare: openSharing } : {})}
+              {...(sharingBlocked ? { sharingBlocked } : {})}
             />
           ) : null}
 
@@ -830,6 +836,8 @@ function DeploymentConnectSheet(props: Readonly<{
   setBindings: DeploymentSetBindings;
   review: DeploymentReviewHandle;
   onOpenSettings?: () => void;
+  /** Why this Environment cannot share it from Settings, and what to do instead. */
+  sharingBlocked?: string;
 }> & CustomModalInjectedProps) {
   const [destination, setDestination] = React.useState<Readonly<{ id: string; revision: number; title: string }> | null>(null);
   const selectDestination = React.useCallback((row: DeploymentEnvironmentCollectionV1['items'][number]) => {
@@ -871,6 +879,7 @@ function DeploymentConnectSheet(props: Readonly<{
         ) : props.exports.length === 0 ? (
           <SurfaceStateCard testID="project-deployments.connect.needsShare" size="line" kind="empty"
             title={t('projects.deployments.databaseConnectNeedsShare')}
+            {...(props.sharingBlocked ? { reason: props.sharingBlocked } : {})}
             {...(props.onOpenSettings ? { action: {
               label: t('projects.deployments.databaseShare'), testID: 'project-deployments.connect.openSettings',
               onPress: () => { onClose(); props.onOpenSettings?.(); },
@@ -922,6 +931,8 @@ function ConnectionSection(
     scope: ServerAccountScopeLifetime['scope'] | null;
     /** Opens Private sharing, where this Environment shares a service; absent where this viewer cannot manage it. */
     onShare?: () => void;
+    /** Why this Environment cannot share it from Settings, and what to do instead. */
+    sharingBlocked?: string | null;
   }>,
 ) {
   const { data, detail } = props;
@@ -964,7 +975,7 @@ function ConnectionSection(
         title={t('projects.deployments.databasePrivate')}
         mode="info"
         subtitle={
-          shared ? undefined : t('projects.deployments.databaseNotSharedDetail')
+          shared ? undefined : props.sharingBlocked ?? t('projects.deployments.databaseNotSharedDetail')
         }
         {...(!shared && props.onShare ? {
           rightElement: <SectionActionButton testID={`${props.testID}.private.share`}

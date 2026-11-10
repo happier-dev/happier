@@ -607,6 +607,20 @@ function DeploymentBackupSetupSheet(props: Readonly<{
             />
           ))}
         </ItemGroup>
+        {/* The storage's own credential roles, chosen as Saved Secrets once the destination is saved. */}
+        <ItemGroup header="none">
+          {destination.definition.credentialRoles.map(({ role, optional }) => (
+            <Item
+              key={role}
+              testID={`${id}.role.${role}`}
+              title={t(`projects.deployments.settingsSections.${CREDENTIAL_LABEL[role] ?? 'credentialRepositoryPassword'}`)}
+              subtitle={optional
+                ? t('projects.deployments.settingsSections.setupRoleOptional')
+                : t('projects.deployments.settingsSections.setupRoleRequired')}
+              mode="info"
+            />
+          ))}
+        </ItemGroup>
         {refused ? <SurfaceStateCard testID={`${id}.refused`} size="line" kind="error" title={t('projects.deployments.addRefused')}
           reason={deploymentActionRefusalRemedy(refused.code)} diagnosticCode={refused.code} /> : (
             <Text style={deploymentSheetStyles.lead}>
