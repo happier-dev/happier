@@ -60,8 +60,69 @@ describe('iOS material without blur', () => {
         <GlassSurface><></></GlassSurface>
       </GlassMaterialSettingsProvider>,
     );
-    // UIKit chooses its own tint when omitted, independently of the app's floating surface paint.
-    expect(screen.findByType('GlassView').props.tintColor).toBe(darkTheme.colors.edge.floatingFill);
+    // UIKit chooses its own tint when omitted, independently of the app's floating surface paint. The tint
+    // carries the paint's hue at the material's own coat: an opaque tint turns the glass into a flat disc
+    // (owner, 2026-11-10: tab bar and View popover showed nothing behind them).
+    const tint = Color(String(screen.findByType('GlassView').props.tintColor));
+    expect(tint.rgb().round().array().slice(0, 3)).toEqual(Color(darkTheme.colors.edge.floatingFill).rgb().round().array().slice(0, 3));
+    expect(tint.alpha()).toBeLessThan(0.5);
+  });
+
+  // Owner 2026-11-10: the tab bar's and the View popover's edges looked cut and doubled. Liquid Glass draws its own
+  // rim along its own shape, so the glass takes the surface's corners and fills its border box: one edge.
+  it('draws Liquid Glass in the surface shape, under its border, so the glass edge and the border are one', async () => {
+    liquid.available = true;
+    const screen = await renderScreen(
+      <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
+        <GlassSurface style={{ borderRadius: 24, borderWidth: 1.5 }}><></></GlassSurface>
+      </GlassMaterialSettingsProvider>,
+    );
+    const glass = screen.findByType('GlassView');
+    expect(flattenTestStyle(glass.props.style).borderRadius).toBe(24);
+    // The material layer is the outermost touch-transparent view; the glass lies inside it.
+    const layer = flattenTestStyle(screen.findAll((node) => node.props.pointerEvents === 'none')[0]?.props.style);
+    expect([layer.top, layer.left, layer.right, layer.bottom]).toEqual([-1.5, -1.5, -1.5, -1.5]);
+    expect(layer.borderRadius).toBe(24);
+  });
+
+  // Owner 2026-11-10 18:35: the dark tab bar and menus wore a light grey sheet over the blur. The web's fixed-point
+  // coat stands on a backdrop tone native glass doesn't have: a dark menu's glass stays clear, as in 0.2.
+  it('lays no coat over a dark native menu or bar: the glass stays clear', async () => {
+    liquid.available = true;
+    const screen = await renderScreen(
+      <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
+        <GlassSurface surfaceGroup="floating"><></></GlassSurface>
+      </GlassMaterialSettingsProvider>,
+    );
+    expect(screen.findAllByType('GlassView')).toHaveLength(1);
+    const fills = screen.findAll((node) => node.props.pointerEvents === 'none')
+      .map((node) => flattenTestStyle(node.props.style).backgroundColor)
+      .filter((fill) => typeof fill === 'string' && fill !== 'transparent');
+    expect(fills).toEqual([]);
+  });
+
+  // NATIVE-STABILITY-1110 M1 (16:43): a dark sheet's coat came out rgba(239,239,239,.586), the ink hair, so white
+  // text stood on near-white. A panel's coat is its role's own surface; only its alpha comes from the tint.
+  it('coats a dark native panel with its own surface at the panel coat, never with the ink', async () => {
+    liquid.available = true;
+    const { darkTheme } = await import('@/theme');
+    const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
+    const { resolveGlassTintValues } = await import('@happier-dev/protocol/actions/settings/glassPreferenceMutations');
+    const screen = await renderScreen(
+      <GlassRuntimeEnvironmentProvider value={{ nativeRenderer: true }}>
+        <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
+          <GlassSurface surfaceGroup="floating" floatingRole="panel"><></></GlassSurface>
+        </GlassMaterialSettingsProvider>
+      </GlassRuntimeEnvironmentProvider>,
+    );
+    expect(screen.findAllByType('GlassView')).toHaveLength(1);
+    const coats = screen.findAll((node) => node.props.pointerEvents === 'none')
+      .map((node) => flattenTestStyle(node.props.style).backgroundColor)
+      .filter((fill): fill is string => typeof fill === 'string' && fill !== 'transparent')
+      .map((fill) => Color(fill));
+    expect(coats).toHaveLength(1);
+    expect(coats[0]!.rgb().round().array().slice(0, 3)).toEqual(Color(darkTheme.colors.edge.floatingFill).rgb().round().array().slice(0, 3));
+    expect(coats[0]!.alpha()).toBeCloseTo(resolveGlassTintValues(undefined).panelCoat, 2);
   });
 
   it('keeps an authored translucent coat with Blur Off as a tint, while accessibility, an inactive window and Solid stay opaque', async () => {

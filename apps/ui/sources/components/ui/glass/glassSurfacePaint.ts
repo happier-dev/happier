@@ -39,8 +39,9 @@ export function glassSurfacePlaneBackdropStyle(settings: GlassMaterialSettings, 
 /**
  * The coat colour of a glass surface. On web, named-preset Elements and floating surfaces take the
  * fixed-point coat of `resolveGlassBackdropMap`, so over the plain `page` the glass equals its solid
- * paint. Native renderers have no backdrop tone: named dark floating coats use low-alpha ink there.
- * Custom and solid retain their authored color.
+ * paint. Native renderers have no backdrop tone: a named dark menu's hair of coat uses low-alpha ink
+ * there. A panel's heavy coat carries its own surface (an ink coat turned a dark dialog near-white,
+ * NATIVE-STABILITY M1). Custom and solid retain their authored color.
  */
 export function glassSurfaceTintColor(input: Readonly<{ color: string; ink: string; controlFill?: string; dark: boolean; settings: GlassMaterialSettings; group: GlassSurfaceGroup; environment?: GlassMaterialEnvironment; page?: string; panel?: GlassFloatingCoat }>): string {
     if (Platform.OS === 'web' && input.page !== undefined) {
@@ -53,7 +54,7 @@ export function glassSurfaceTintColor(input: Readonly<{ color: string; ink: stri
         // Keep the authored spelling when the coat is the paint itself.
         if (coat) return coat === color.rgb().round().string() ? input.color : coat;
     }
-    return input.dark && input.group === 'floating' && readGlassPreset(input.settings) !== 'custom'
+    return input.dark && input.group === 'floating' && !input.panel && readGlassPreset(input.settings) !== 'custom'
         && resolveGlassSurfaceMaterial(input.settings, input.group, input.environment).material.opacity < 1
         ? input.ink : input.color;
 }

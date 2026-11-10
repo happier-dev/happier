@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, type LayoutChangeEvent } from 'react-native';
 import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { useUnistyles } from 'react-native-unistyles';
 import { happierSvgGradientStop } from '@happier-dev/plugin-ui/presentation';
@@ -45,14 +45,22 @@ export const SurfaceRim = React.memo(function SurfaceRim(props: Readonly<{
     const { theme: activeTheme } = useUnistyles();
     const theme = props.theme ?? activeTheme;
     const id = React.useId().replace(/[^a-zA-Z0-9_-]/g, '');
+    // Native SVG resolves "100%" against the view's first layout and keeps it when the surface resizes (a phone
+    // popover lays out at 370 then 378 pt), which drew a second, smaller border inside it. The rim draws at the
+    // laid-out size instead.
+    const [size, setSize] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
+    const handleLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const { width, height } = event.nativeEvent.layout;
+        setSize(current => current?.width === width && current.height === height ? current : { width, height });
+    }, []);
     if (!surfaceUsesRim(props.role, theme.dark)) return null;
     const edge = theme.colors.edge;
     const stroke = HAIRLINE * 2; // centred on the edge: the outer half falls outside and only the inner hairline shows
-    const rect = { x: 0, y: 0, width: '100%', height: '100%', rx: props.radius, ry: props.radius } as const;
+    const rect = { x: 0, y: 0, width: size?.width ?? '100%', height: size?.height ?? '100%', rx: props.radius, ry: props.radius } as const;
     const cy = props.anchor === 'bottom-left' ? 1 : 0;
     const anchored = (ellipse: string) => cy === 0 ? ellipse : `translate(0 ${cy}) ${ellipse} translate(0 ${-cy})`;
     return (
-        <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width="100%" height="100%">
+        <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width={size?.width ?? '100%'} height={size?.height ?? '100%'} onLayout={handleLayout}>
             <Defs>
                 <RadialGradient id={`${id}l`} cx={0} cy={cy} r={1} gradientUnits="objectBoundingBox" gradientTransform={anchored(RIM_LIGHT_ELLIPSE)}>
                     <Stop offset={0} {...happierSvgGradientStop(edge.rimHi)} />

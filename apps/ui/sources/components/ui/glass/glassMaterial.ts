@@ -107,6 +107,19 @@ function isDefaultGlassAppearance(settings: GlassMaterialSettings): boolean {
         && readGlassTintIntensity(settings.glassTintIntensity) === DEFAULT_GLASS_TINT_INTENSITY;
 }
 
+/**
+ * The heavy coat a named-preset floating surface carries over its glass, or undefined for the tint's hair.
+ * Panels take the tint's panel coat; over a live picture, and in light under the default glass, every floating
+ * surface takes Strong's. Native glass paints exactly this coat (it has no backdrop tone to solve against).
+ */
+export function resolveGlassPanelCoatOpacity(settings: GlassMaterialSettings, dark: boolean, panel: GlassFloatingCoat = false): number | undefined {
+    const readable = isDefaultGlassAppearance(settings) && (panel === 'livePicture' || !dark);
+    const coat: GlassFloatingCoat = readable ? 'livePicture' : panel === 'livePicture' ? false : panel;
+    if (!coat || readGlassPreset(settings) === 'custom') return undefined;
+    const tint = resolveGlassTintValues(settings.glassTintIntensity);
+    return coat === 'livePicture' ? Math.max(tint.panelCoat, GLASS_LIVE_PICTURE_PANEL_COAT) : tint.panelCoat;
+}
+
 const toneNumber = (value: number) => String(Math.round(value * 1000) / 1000);
 const parseRgb = (value: string): readonly [number, number, number] | null => {
     const color = parseThemeColor(value);
@@ -252,14 +265,13 @@ export function resolveGlassBackdropMap(settings: GlassMaterialSettings, group: 
         const picture = environment.atmosphereBehind === 'band' || environment.atmosphereBehind === 'wallpaper';
         const tint = resolveGlassTintValues(settings.glassTintIntensity);
         // Under the default glass, Strong's panel coat carries a floating surface over a live picture and,
-        // in light on web, over everything: what lies under a light menu or Share card is ink (a black button, text,
-        // field edges), and through the tint's hair its blur reads as a grey ghost on the white glass.
+        // in light, over everything: what lies under a light menu or Share card is ink (a black button, text,
+        // field edges), and through the tint's hair its blur reads as a grey ghost on the white glass. Native
+        // light glass is as thin (iOS QA, NATIVE-SWEEP M3: rows read through popovers), so it takes the coat too.
         // A customized appearance is the plain floating surface it would be anywhere else.
-        const readable = isDefaultGlassAppearance(settings) && (panel === 'livePicture' || (group === 'floating' && !dark && environment.nativeRenderer !== true));
-        const coat: GlassFloatingCoat = readable ? 'livePicture' : panel === 'livePicture' ? false : panel;
-        if (group === 'floating' && coat) {
+        const alpha = group === 'floating' ? resolveGlassPanelCoatOpacity(settings, dark, panel) : undefined;
+        if (alpha !== undefined) {
             // The heavy coat carries the panel: the backdrop passes at most at 1 − α, never brightened.
-            const alpha = coat === 'livePicture' ? Math.max(tint.panelCoat, GLASS_LIVE_PICTURE_PANEL_COAT) : tint.panelCoat;
             const compression = legibleCompression(Math.min(1 - alpha, dark ? 1 : tint.lightCompression), dark, picture ? environment.atmosphereTone : undefined, ground);
             return { opacity: alpha, ...solveGlassFixedPoint(compression, alpha, ground) };
         }

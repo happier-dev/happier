@@ -44,6 +44,21 @@ describe('SurfaceRim', () => {
         }
     });
 
+    // Owner 2026-11-10: a phone popover showed a second, smaller border inside its glass. Native SVG resolved the
+    // rim's "100%" against the popover's first layout (370 pt) and kept it after the popover settled at 378 pt
+    // (device A/B: hiding the glass left the 370-wide rim alone). The rim draws at its surface's laid-out size.
+    it('draws its hairline at the surface\'s laid-out size, following a resize', async () => {
+        const { act } = await import('react');
+        const screen = await renderScreen(<SurfaceRim role="floating" radius={10} border="modal" theme={darkTheme} />);
+        const svg = () => screen.findAll((node) => String(node.type) === 'Svg')[0]!;
+        const layout = (width: number, height: number) => act(() => { svg().props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width, height } } }); });
+        await layout(370, 631);
+        await layout(378, 634);
+        const rects = screen.findAll((node) => String(node.type) === 'Rect');
+        expect(rects.length).toBeGreaterThan(0);
+        for (const rect of rects) expect([rect.props.width, rect.props.height]).toEqual([378, 634]);
+    });
+
     it('anchors its corner light where the surface asks, top-left unless told otherwise', async () => {
         const anchors = async (anchor?: 'bottom-left') => {
             const screen = await renderScreen(<SurfaceRim role="floating" radius={12} border="default" theme={darkTheme} anchor={anchor} />);

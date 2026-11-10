@@ -11,7 +11,7 @@ import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
 import { getBlurViewComponent, isNativeBlurAvailable } from './blurMaterial';
 import { getGlassViewComponent, useLiquidGlassAvailable } from './liquidGlass';
 import { resolveGlassCapability } from './resolveGlassCapability';
-import { GLASS_BLUR_INTENSITY, GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassBackdropMap, resolveGlassSurfaceMaterial, type FloatingSurfaceRole, type GlassFloatingCoat, type GlassSurfaceGroup } from './glassMaterial';
+import { GLASS_BLUR_INTENSITY, GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassBackdropMap, resolveGlassPanelCoatOpacity, resolveGlassSurfaceMaterial, type FloatingSurfaceRole, type GlassFloatingCoat, type GlassSurfaceGroup } from './glassMaterial';
 import { useGlassMaterialSettings } from './useGlassMaterialSettings';
 import { useGlassRuntimeEnvironment } from './glassRuntimeEnvironment';
 import { glassElementsCoatColor, glassSurfaceBackgroundColor, glassSurfaceTintColor, resolveGlassSurfacePlaneMaterial, glassSurfacePlaneBackdropStyle, type AtmosphereContentCoat } from './glassSurfacePaint';
@@ -213,8 +213,10 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
                 <GlassView
                     glassEffectStyle={props.glassEffectStyle ?? (material.blur === 'light' ? 'clear' : 'regular')}
                     colorScheme={theme.dark ? 'dark' : 'light'}
-                    tintColor={solidColor}
-                    style={StyleSheet.absoluteFillObject}
+                    // The surface's paint at its own coat: an opaque tint would turn the glass into a flat disc.
+                    tintColor={withMaterialOpacity(solidColor, material.opacity)}
+                    // Liquid Glass draws its own rim along its own shape: it takes the surface's corners.
+                    style={[StyleSheet.absoluteFillObject, { borderRadius }]}
                 />
             );
         }
@@ -272,17 +274,26 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     };
 
     if (Platform.OS !== 'web') {
+        const borderWidth = readSurfaceStyleProperty(props.style, 'borderWidth');
+        const materialInset = typeof borderWidth === 'number' ? -borderWidth : 0;
+        // The coat a native material carries over its glass: a reading ground's own, or a floating surface's heavy
+        // panel coat (light popovers read through without it, NATIVE-SWEEP M3). Native glass has no backdrop tone,
+        // so the web's fixed-point hair is not painted: a dark menu or bar stays clear glass (owner, 2026-11-10).
+        const nativeCoatOpacity = !nativeBackdrop ? undefined
+            : props.atmosphereCoat === 'reading' ? material.opacity
+            : group === 'floating' ? resolveGlassPanelCoatOpacity(settings, theme.dark, panel) : undefined;
         const backgroundColor = transparentPlane && enabled ? 'transparent' : nativeBackdrop || inheritsTranslucentMaterial ? 'transparent'
             : (capability === 'tint' || Platform.OS === 'android') && enabled
                 ? withMaterialOpacity(tintColor, material.opacity) : solidColor;
         // Only the SDK background changes tier. Input/scroll/selection state
         // must stay under the same native parent when a preset or OS choice changes.
         return <View {...viewProps} style={[props.style, backed ? props.backedStyle : null, props.noCoat ? null : { backgroundColor }, finishLift]}>
+            {/* The material fills the border box, so the glass's own edge lies under the surface's border: one edge. */}
             <View pointerEvents="none" style={[
                 StyleSheet.absoluteFillObject,
-                { borderRadius, overflow: 'hidden' },
-            ]}>{nativeBackdrop}{props.atmosphereCoat === 'reading' && nativeBackdrop ? <View pointerEvents="none"
-                style={[StyleSheet.absoluteFillObject, { backgroundColor: withMaterialOpacity(tintColor, material.opacity) }]} /> : null}
+                { top: materialInset, left: materialInset, right: materialInset, bottom: materialInset, borderRadius, overflow: 'hidden' },
+            ]}>{nativeBackdrop}{nativeCoatOpacity !== undefined ? <View pointerEvents="none"
+                style={[StyleSheet.absoluteFillObject, { backgroundColor: withMaterialOpacity(tintColor, nativeCoatOpacity) }]} /> : null}
                 <HappierSurfaceGradientLayer gradient={gradient} borderRadius={typeof borderRadius === 'number' ? borderRadius : undefined} /></View>
             <GlassSurfaceGroupContext.Provider value={plane}>
                 <HappierMaterialRoleProvider {...materialPlane}>

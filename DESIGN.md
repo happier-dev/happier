@@ -396,10 +396,13 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   session role panel). **Menus**, tooltips and small popovers keep the hair (owner, 2026-10-16),
   except over a live picture (a shared screen or browser page): there every floating surface carries
   Strong's panel coat (85%) at any tint, because arbitrary pixels are content, not atmosphere
-  (recommended exception; owner ruling pending). In light on web, the default glass gives every
-  floating surface that coat everywhere: what lies under a light menu or Share card is ink (a black
+  (recommended exception; owner ruling pending). In light, the default glass gives every
+  floating surface that coat everywhere, on web and native: what lies under a light menu or Share card is ink (a black
   button, text, field edges), and through the hair its blur reads as a grey ghost on white glass
-  (2026-10-31, intake #44). Dark and native floating glass keep their coats.
+  (2026-10-31, intake #44; native, NATIVE-SWEEP M3 2026-11-10). Dark floating glass keeps its coats.
+  A native panel coat is the role's own surface paint, never the ink; native Liquid Glass takes that
+  paint as a translucent tint, never an opaque one, so what lies behind still shows. Native glass has no
+  backdrop tone, so a dark menu or bar paints no hair coat over it: clear glass with its rim (owner, 2026-11-10).
   Custom glass values, Solid and Reduce Transparency apply to both roles unchanged. On glass with a picture or the live desktop behind it, faint (secondary) ink takes a
   stronger step, primary ink at 70%, so it holds about 3:1 over a bright sky; ordinary pages and
   unbacked glass keep the theme's secondary ink.
