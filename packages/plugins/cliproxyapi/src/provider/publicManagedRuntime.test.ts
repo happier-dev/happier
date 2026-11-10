@@ -759,14 +759,16 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
             expect(await responseStatus(result.service, route, 'POST', testCase.unboundModelId)).toBeGreaterThanOrEqual(400);
           }
           expect(requestAuthEffects.count).toBe(0);
-          // SDK v8.0.61 starts the Grok version and model-catalog updaters even
-          // when a sparse consumer cannot select an upstream model. The proxy
-          // refuses their CONNECTs too; credential/profile/inference origins
-          // must remain absent instead of treating metadata fetches as those effects.
+          // SDK v8.0.61 starts catalog updaters and Antigravity's sentinel-only
+          // probe even for sparse consumers. Keep those probes enabled; the
+          // proxy refuses their CONNECTs and the broker remains untouched.
           expect(outboundTargets.filter((target) => ![
             'registry.npmjs.org:443',
             'raw.githubusercontent.com:443',
             'models.router-for.me:443',
+            ...CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES
+              .filter((family) => family.authEntry.provider === 'antigravity')
+              .flatMap((family) => family.origins.map((origin) => `${new URL(origin).host}:443`)),
           ].includes(target))).toEqual([]);
         } finally {
           await wrapper?.handle.dispose();
