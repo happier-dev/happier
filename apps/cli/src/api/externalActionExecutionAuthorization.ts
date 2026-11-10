@@ -17,7 +17,7 @@ import { ExternalActionMachineNpmProfileAdmissionResponseV1Schema } from '@happi
 import type { MachineNpmProfileAdmissionResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { observeManagedChildApprovalExecution } from './managedChildApproval';
 import { readDeploymentTargetRetentionMachineIds } from '@/deployments/targetEnablementRetention';
-import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 export { mintExternalActionExecutionAuthorization, type ExternalActionAuthorizationHttpResult } from './externalActionAuthorizationHttp';
@@ -693,7 +693,8 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
     || isDeploymentReceiptObservationActionIdV1(actionId)
     || isDeploymentReadActionIdV1(actionId)
     || isDeploymentBackupActionIdV1(actionId) || isProjectReadinessActionIdV1(actionId)
-    || actionId === 'deployments.templates.instantiate'
+    || actionId === 'deployments.templates.instantiate' || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
+    || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
     || actionId === 'deployments.environments.create' && projectDeploymentPreparationAdmissionV1(actionId, input) !== undefined
     || actionId.startsWith('scm.diffSummary.result.') || isScmDiffSummaryRunAction(actionId)
     || actionId === 'projects.open' || actionId === 'projects.service.relocate'

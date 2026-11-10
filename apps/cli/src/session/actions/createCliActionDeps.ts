@@ -107,7 +107,7 @@ import { createPrepareEnvironmentContentForHost } from '@/deployments/prepareEnv
 import { createPrepareDeploymentBindingsForHost } from '@/deployments/secrets/prepareDeploymentBindingsForHost';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
 import { isDeploymentReadActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home/homeHubArtifactV1';
 import { createCliConnectedServiceAction } from './connectedServiceActionDeps';
@@ -252,11 +252,12 @@ function readConfigOptionsRecord(value: unknown): Record<string, SpawnConfigOpti
 }
 
 export type ControllerDeploymentMutationActionId =
-  'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown';
+  'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | typeof DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1;
 
 export function isControllerDeploymentMutationAction(actionId: string): actionId is ControllerDeploymentMutationActionId {
   return actionId === 'deployments.deploy' || actionId === 'deployments.rollback'
-    || actionId === 'deployments.promote' || actionId === 'deployments.teardown';
+    || actionId === 'deployments.promote' || actionId === 'deployments.teardown'
+    || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1;
 }
 
 export type CliActionDeps = ActionExecutorDeps & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew' | 'sessionSendMessage' | 'sessionList' | 'daemonMemorySearch' | 'daemonMemoryEnsureUpToDate' | 'executionRunStart' | 'agentsModelsList' | 'sessionActivityGet' | 'executionRunList' | 'detachedExecutionRunSend' | 'executionRunWait' | 'executionRunGet' | 'sessionFork' | 'daemonMemoryGetWindow' | 'sessionOpen' | 'sessionRollback'>>;
