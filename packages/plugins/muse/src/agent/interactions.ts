@@ -1,6 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import { createMcpCatalogPermissionChoiceV1 } from '@happier-dev/plugin-sdk/interactions';
 import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/plugin-sdk/sessions';
 import type { NativePermissionChoicesV1, SessionPermissionDecision, SessionPermissionDecisionResult, SessionPermissionsService } from '@happier-dev/plugin-sdk/sessions';
 import { readMuseNativeJson, readMuseRecord } from './events.js';
@@ -122,17 +123,30 @@ export function createMuseInteractions(options: Readonly<{
         const occurrence = { params: merged, signature, controller: previous?.controller ?? new AbortController() };
         map.set(id, occurrence);
         const signal = AbortSignal.any([options.context.signal, occurrence.controller.signal]);
+        let catalogGrant: { choiceId: string; nativeChoiceId: string } | undefined;
         void permissions!.requestDecision({ requestId: id,
             toolName: kind === 'approval' && typeof merged.toolName === 'string' ? merged.toolName : kind === 'question' ? 'AskUserQuestion' : 'native_tool',
             source: kind === 'approval' ? NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE : QUESTION_SOURCE,
             input: kind === 'approval' ? toolInput(merged) : questionInput(merged),
             ...(nativeChoices ? { nativeChoices } : {}),
-        }, { signal, async acknowledgeDecisionApplication(decision) {
+        }, { signal,
+            buildNativeChoices: ({ mcpTool }) => {
+                if (!nativeChoices) return undefined;
+                const grant = nativeChoices.choices.find(choice => choice.decision === 'approved' && choice.scope === 'once')
+                    ?? nativeChoices.choices.find(choice => choice.decision === 'approved_for_session' && choice.scope === 'session');
+                if (!grant) return nativeChoices;
+                const catalogChoice = createMcpCatalogPermissionChoiceV1({ mcpTool, grant, existingChoices: nativeChoices.choices });
+                // Catalog persistence belongs to the host follow-up; Muse only receives its offered grant.
+                catalogGrant = catalogChoice ? { choiceId: catalogChoice.id, nativeChoiceId: grant.id } : undefined;
+                return catalogChoice ? { ...nativeChoices, choices: [...nativeChoices.choices, catalogChoice] } : nativeChoices;
+            },
+            async acknowledgeDecisionApplication(decision) {
             if (kind === 'approval') {
                 const answer = decision.nativeChoice;
                 if (!answer) throw protocolError('The host returned no offered native approval choice');
                 await options.command('approval/decide', { sessionId: merged.sessionId!, approvalId: id,
-                    requirementId: merged.currentRequirementId!, choiceId: answer.choiceId,
+                    requirementId: merged.currentRequirementId!,
+                    choiceId: catalogGrant?.choiceId === answer.choiceId ? catalogGrant.nativeChoiceId : answer.choiceId,
                     ...(answer.feedback !== undefined ? { feedback: answer.feedback } : {}) }, { signal });
             } else {
                 await options.command('userInput/answer', { sessionId: merged.sessionId!, userInputId: id,

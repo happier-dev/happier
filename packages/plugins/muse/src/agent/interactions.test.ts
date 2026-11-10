@@ -3,9 +3,12 @@ import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testing';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
+import { McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { readMuseRecord } from './events.js';
 
 // The shared fixture owns native-process and Home network boundaries.
 
@@ -73,6 +76,66 @@ it('receipts a native approval without applying it, then applies the exact offer
         expect(audit.methods.filter(method => method === 'approval/decide')).toHaveLength(1);
         expect(audit.methods.filter(method => method === 'turn/start')).toHaveLength(1);
     } finally { events.dispose(); await fixture.dispose(); }
+});
+
+it('offers host MCP catalog consent and applies its captured native grant exactly once', async () => {
+    // Advanced create handshake plus the captured lifecycle allow-once turn.
+    // Only the MCP tool identity is schema-derived on that native occurrence.
+    // The native process still rejects every choice ID outside its own offer.
+    const scratch = await mkdtemp(join(tmpdir(), 'muse-mcp-catalog-choice-'));
+    const recordingPath = join(scratch, 'recording.json');
+    const recording = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/lifecycle.json', import.meta.url), 'utf8')));
+    if (!Array.isArray(recording.rows)) throw new Error('Missing captured native rows');
+    const advanced = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/advanced.json', import.meta.url), 'utf8')));
+    const advancedRows = advanced.rows;
+    if (!Array.isArray(advancedRows)) throw new Error('Missing captured create handshake');
+    const sessionIdentity = (value: JsonValue | undefined) => readMuseRecord(readMuseRecord(readMuseRecord(readMuseRecord(value).message).result).session).sessionId;
+    const sourceId = sessionIdentity(recording.rows[5]);
+    const targetId = sessionIdentity(advancedRows[8]);
+    if (typeof sourceId !== 'string' || typeof targetId !== 'string') throw new Error('Missing captured Session identity');
+    const turnRows: JsonValue[] = JSON.parse(JSON.stringify(recording.rows.slice(12, 49)).replaceAll(sourceId, targetId));
+    await writeFile(recordingPath, JSON.stringify({ rows: [0, 1, 2, 6, 7, 8].map(index => advancedRows[index]).concat(turnRows).map(value => {
+        const row = readMuseRecord(value);
+        const message = readMuseRecord(row.message);
+        return typeof message.method === 'string' && message.method.startsWith('approval/')
+            ? { ...row, message: { ...message, params: { ...readMuseRecord(message.params), toolName: 'mcp__probe__pebble', rawArgs: '{}' } } }
+            : row;
+    }) }));
+    const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'approval-local-persistent', recordingPath,
+            nativePolicyPath: join(scratch, 'unused-native-policy.json') },
+        mcpToolContext: { mcpServerIdentities: { probe: { serverId: 'catalog-probe', serverTitle: 'Probe' } },
+            catalog: { status: 'ready', authority: 'active', revision: 1, diagnostics: [],
+                catalog: McpServerCatalogV1Schema.parse({ v: 1, servers: [{ id: 'catalog-probe', name: 'probe', title: 'Probe',
+                    transport: 'stdio', stdio: { command: 'fixture', args: [] }, env: {}, createdAt: 1, updatedAt: 1,
+                    tools: { default: 'ask', overrides: {} }, toolsSnapshot: { checkedAt: 1, machineId: 'machine',
+                        tools: [{ name: 'pebble', title: 'Pebble', tokens: 1 }] } }], bindings: [] }) } },
+    });
+    const events = createAgentSessionRuntimeHarness();
+    try {
+        const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
+        session.watch(events.recordRuntimeEvent);
+        await session.send({ inputIds: ['catalog-choice-input'], input: { text: 'Apply the retained native grant.' },
+            delivery: { kind: 'newTurn', turnId: 'catalog-choice-turn' } });
+        await fixture.waitForAudit(audit => audit.receiptCount === 1);
+        await vi.waitFor(() => {
+            const pending = Object.values(fixture.host.getAgentStateSnapshot()?.requests ?? {}).find(request => request.tool === 'mcp__probe__pebble');
+            expect(pending?.nativeChoices?.choices.find(choice => choice.id === 'mcp_always_allow')).toMatchObject({
+                scope: 'localPersistent', followUp: { actionId: 'mcp.servers.tools.set',
+                    input: { serverId: 'catalog-probe', tools: { pebble: 'allow' } } },
+            });
+        });
+        const entry = Object.entries(fixture.host.getAgentStateSnapshot()?.requests ?? {}).find(([, request]) => request.tool === 'mcp__probe__pebble');
+        if (!entry?.[1].nativeChoices) throw new Error('Expected native MCP catalog offer');
+        const [id, pending] = entry;
+        await expectNativeApprovalApplied(fixture, { id, nativeChoice: {
+            requirementId: pending.nativeChoices.requirementId, choiceId: 'mcp_always_allow',
+        } });
+        await events.until('turn-complete');
+        expect(fixture.host.getAgentStateSnapshot()?.completedRequests?.[id]).toMatchObject({
+            nativeChoice: { choiceId: 'mcp_always_allow' },
+        });
+        expect((await fixture.readAudit()).methods.filter(method => method === 'approval/decide')).toHaveLength(1);
+    } finally { events.dispose(); await fixture.dispose(); await rm(scratch, { recursive: true, force: true }); }
 });
 
 it('uses the canonical user-action answer for a native question and keeps the late requested notification settled', async () => {

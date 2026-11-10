@@ -23,7 +23,7 @@ export const MUSE_AGENT = Object.freeze({
     },
     handoff: { vendorStateTransfer: 'unsupported' },
     runtimeInput: { inFlightSteerSupported: true, terminalPromptInjectionSupported: false },
-    tools: { delivery: 'unsupported', support: 'unsupported' },
+    tools: { delivery: 'native_mcp', support: 'supported' },
   },
   sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
   sessionModesKind: 'none',

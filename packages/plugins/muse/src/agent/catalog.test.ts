@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import { createNativeAgentSessionPublications } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionPublications';
 import { projectAgentPreflightSessionControlsCatalogEntry } from '@/plugins/projection/registry/agentCatalogEntryHooks';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -94,9 +95,20 @@ describe('Muse native model catalog', () => {
       await msp.command('session/start', {
         workspaceRoot: '/selected/worktree', providerId: selection.providerId, modelId: selection.modelId,
       });
+      const hostPublications = createNativeAgentSessionPublications({ agentId: 'muse', session: null,
+        signal: new AbortController().signal, isCurrent: () => true, supportsInFlightSteer: false });
+      const binding = hostPublications.services.models.bind(catalog);
+      try {
+        catalog.applyCurrentModel(selection);
+        const effective = hostPublications.modelsSource.read();
+        expect(effective.models?.[0].modelOptions?.[0].currentValue).toBeNull();
+        await catalog.refresh({ sessionId: '01a1bf87-da7f-7ce0-a4ff-bab34925049f' });
+        expect(hostPublications.modelsSource.read()).toBe(effective);
+        expect(first.models?.[0].modelOptions?.[0].currentValue).toBe('max');
+      } finally { binding.dispose(); hostPublications.dispose(); }
       expect(await msp.client.request('fixture/inspect')).toMatchObject({
         modelSelections: [{ providerId: 'meta', modelId: 'muse-wonder-1.0' }],
-        requests: ['initialize', 'initialized', 'model/list', 'model/list', 'session/start', 'fixture/inspect'],
+        requests: ['initialize', 'initialized', 'model/list', 'model/list', 'session/start', 'model/list', 'fixture/inspect'],
       });
     } finally { await msp.dispose(); }
   });

@@ -34,6 +34,11 @@ import { createAccountEncryptionCurrentnessFixture, createPlainSessionFixture, c
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readPluginSessionsSubagentObservation } from '@/session/services/pluginSessionsInventory';
+import type { McpToolPolicyContext } from '@/mcp/runtime/resolveMcpToolIdentity';
+import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
+import { createManifestAgentCatalogEntry } from '@/plugins/projection/registry/agentCliMetadata';
+import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
+import { MUSE_PLUGIN } from '../../manifest.js';
 
 export const MUSE_SESSION_FIXTURE_MACHINE_ID = 'muse-fixture-machine';
 
@@ -50,6 +55,8 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
   environment?: Readonly<Record<string, string>>;
   /** Optional physical native executable; only OS resolution is substituted. */
   nativeExecutable?: string;
+  /** Admitted MCP catalog snapshot; resolution and permission policy remain real. */
+  mcpToolContext?: McpToolPolicyContext;
 }> = {}) {
   const cwd = options.cwd ?? process.cwd();
   const pluginId = 'happier.agent.muse';
@@ -241,7 +248,8 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
       readAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }),
     });
     const permissionHandler = new ProviderEnforcedPermissionHandler(host, { logPrefix: 'Muse fixture',
-      getWorkspaceWrites: sessionRoleContext.readWorkspaceWrites });
+      getWorkspaceWrites: sessionRoleContext.readWorkspaceWrites,
+      getMcpToolContext: () => options.mcpToolContext ?? null });
     const sourceCustody = registry.readPluginSourceCustody(pluginId);
     if (!sourceCustody) throw new Error('Expected admitted Muse source custody');
     const nativeSessionParams = { permissionHandler, pluginId, contributionId: agentId, runtimeId: agentId,
@@ -292,6 +300,17 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
       admission: { untouchedHasMuse, untouchedLaunchCount, selectedFactoryLaunchCount },
       get launchCount() { return launched; },
       run<T>(operation: () => T): T { return runWithServerHttpBaseUrl(serverUrl, operation); },
+      async resolveMcp() {
+        const definition = MUSE_PLUGIN.manifest.contributes.agents?.find(agent => agent.id === agentId);
+        if (!definition) throw new Error('Expected authored Muse declaration');
+        const entry = createManifestAgentCatalogEntry({ agentId, pluginId, definition, cli: null, provenance: 'first_party' });
+        if (!entry) throw new Error('Expected projected Muse catalog entry');
+        return await runWithServerHttpBaseUrl(serverUrl, () => resolveRunnerMcpServers({ session: host!, credentials,
+          accountCredentials: null, accountSettings: null, machineId: MUSE_SESSION_FIXTURE_MACHINE_ID, directory: cwd,
+          pluginRuntimeRegistryLease: selectedRegistry.lease,
+          includeHappierMcpServer: resolveAgentToolsDelivery(agentId, { catalogEntriesById: { [agentId]: entry } }) === 'native_mcp',
+        }));
+      },
       async open(request: AgentSessionOpenRequest) {
         session = await runWithServerHttpBaseUrl(serverUrl, () => runtime.sessions!.open(request, context));
         return session;

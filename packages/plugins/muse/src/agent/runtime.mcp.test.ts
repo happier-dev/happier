@@ -1,9 +1,49 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { readMuseRecord } from './events.js';
 import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testing';
 import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
+
+it('delivers the authored Happier MCP capability through the host resolver into native Muse', async () => {
+  vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
+  const expectedMcpServers: Record<string, JsonValue> = {};
+  const fixture = await createAdmittedMuseSessionFixture({ native: {
+    recordingPath: fileURLToPath(new URL('./testkit/fixtures/mcp.json', import.meta.url)), expectedMcpServers,
+  } });
+  const events = createAgentSessionRuntimeHarness();
+  const client = new Client({ name: 'muse-selected-happier-contract', version: '1' });
+  let prepared: Awaited<ReturnType<typeof fixture.resolveMcp>> | undefined;
+  try {
+    prepared = await fixture.resolveMcp();
+    expect(Object.keys(prepared.mcpServers)).toContain('happier');
+    const selected = prepared.mcpServers.happier;
+    if (!selected) throw new Error('The authored Muse declaration omitted Happier MCP');
+    Object.assign(expectedMcpServers, { happier: { transport: 'stdio', command: selected.command,
+      ...(selected.args ? { args: [...selected.args] } : {}), ...(selected.env ? { env: { ...selected.env } } : {}), mode: 'required' } });
+    // Exercise the real selected stdio bridge; only the native model process is
+    // captured playback, which checks the same launch config before replaying MCP events.
+    await client.connect(new StdioClientTransport({ command: selected.command, args: selected.args, env: selected.env }));
+    expect((await client.listTools()).tools.map(tool => tool.name)).toContain('action_spec_get');
+    const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd(),
+      mcpServers: prepared.mcpServers });
+    session.watch(events.recordRuntimeEvent);
+    await session.send({ inputIds: ['host-mcp-input'], input: { text: 'Call the retained native MCP tool.' },
+      delivery: { kind: 'newTurn', turnId: 'host-mcp-turn' } });
+    await events.until('turn-complete');
+    expect(JSON.stringify(events.canonicalEvents().filter(event => event.kind === 'tool-result'))).toContain('PEBBLE');
+    expect((await fixture.readAudit()).methods.filter(method => method === 'session/start')).toHaveLength(1);
+  } finally {
+    await client.close();
+    events.dispose();
+    await prepared?.happierMcpServer.stop();
+    await fixture.dispose();
+    vi.unstubAllEnvs();
+  }
+});
 
 async function assertSelectedMcp(strictMode: boolean) {
   // Exact captured sessionMcp grant and PEBBLE tool events; the harmless selected
