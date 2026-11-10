@@ -1475,12 +1475,13 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
     if ((manifest.bundledDependencies ?? []).some(name => workspacePackages.get(name)?.manifest.happier?.publicSdkRelease)) {
       const author = await emitSourceAuthorPackages({repoDir,sourceRepoDir,projectDir,runtimeDir,workspacePackages,
         build,sourceInputDigests,readSourceInput,retainedRuntime,env,signal});
-      retainedCodeFiles.push(...author.codeFiles);
+      // Author closures can exceed the engine's function-argument limit.
+      for (const path of author.codeFiles) retainedCodeFiles.push(path);
       authorPackageInputIdentities = author.inputIdentities;
     }
     phase('author-packages', 'runtime-resources');
     const sidecars = await bundleCliSourceSidecars({repoDir,outputDir:join(runtimeDir,'scripts'),build,workspacePackages,requireFromProject});
-    retainedCodeFiles.push(...sidecars.codeFiles);
+    for (const path of sidecars.codeFiles) retainedCodeFiles.push(path);
     Object.assign(result.metafile.inputs,sidecars.metafile.inputs);
     Object.assign(result.metafile.outputs,sidecars.metafile.outputs);
     if (existsSync(join(projectDir, 'assets'))) await cp(join(projectDir, 'assets'), join(runtimeDir, 'assets'), { recursive: true });
@@ -1556,7 +1557,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
   } else {
     if (existsSync(join(projectDir, 'sources/app/account/profile/render/publicProfileFonts.ts'))) {
       const { stagePublicProfileAssets } = await import('../../../server/scripts/buildPublicProfileRenderer.mjs');
-      retainedCodeFiles.push(...await stagePublicProfileAssets({ projectDir, outDir: runtimeDir }));
+      for (const path of await stagePublicProfileAssets({ projectDir, outDir: runtimeDir })) retainedCodeFiles.push(path);
     } else await linkInstalledDirectory(join(installedProjectDir, 'assets'), join(runtimeDir, 'assets'));
     const copyPrismaInputs = async (source, destination) => {
       await mkdir(destination, { recursive: true });
