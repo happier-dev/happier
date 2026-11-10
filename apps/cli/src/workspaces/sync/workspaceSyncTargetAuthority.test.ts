@@ -9,7 +9,8 @@ import { once } from 'node:events';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionMachineRpcExecutionV1Schema, ExternalActionRequestEnvelopeSchema,
-  projectExternalActionManagedAdmissionV1, deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/actions/externalActionApi';
+  projectExternalActionManagedAdmissionV1, deriveWorkspaceSyncRelationshipId,
+  type ExternalActionRequesterAccountProjectionV1, type ExternalActionRequesterHttpProjectionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { readProjectAccountRows, getActiveProjectAccountRowsSnapshot, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -38,6 +39,7 @@ import { verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/a
 import { SOCKET_RPC_EVENTS, WorkspaceSyncTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import { assertActionOutputContract } from '@/testkit/actionOutputContract';
 import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
+import { resolvePublishedMachineEncryptionContext } from '@/api/machine/machineDataEncryptionKey';
 
 const socketIo = vi.hoisted(() => vi.fn());
 // Genuine transport boundary; the exact-Machine codec and managed observation reader remain real.
@@ -89,6 +91,44 @@ const handoffOperationId = 'handoff-op-1';
 const relationshipId = deriveWorkspaceSyncRelationshipId(handoffOperationId);
 
 describe('endpoint Machine read costs', () => {
+  it('reads foreign SOURCE facts through admitted worker Status without physical Sync admission', async () => {
+    const credentials = { token: 'worker-status-owner', encryption: null };
+    // Home admission is the boundary: the read root holds requester custody,
+    // not the physical source facts required by a mutating Sync root.
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'status-proof', binding: {
+      accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home',
+      machineId: 'target', custodianAccountId: 'owner', installationId: 'target-installation', actionId: 'projects.worker.status',
+      requestId: 'worker-status', requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'target' }, accountEncryptionMode: 'plain',
+    } });
+    Object.defineProperty(authorization, 'requesterAccountProjection', { value: {
+      accountId: 'owner', serverId: 'home', accountEncryptionMode: 'plain', isCurrent: async () => true,
+      projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) }),
+      readArtifact: async () => null,
+      resolveMachineContentEncryptionContext: row => resolvePublishedMachineEncryptionContext({
+        credentials, machineId: row.id, expectedAccountMode: 'plain', publishedDataEncryptionKey: row.dataEncryptionKey }),
+    } satisfies ExternalActionRequesterAccountProjectionV1 });
+    Object.defineProperty(authorization, 'requesterHttpProjection', { value: {
+      accountId: 'owner', serverId: 'home', serverIdentityId: 'home', accountEncryptionMode: 'plain',
+      serverHttpBaseUrl: 'https://worker-home.test', isCurrent: async () => true,
+      createRequestHeaders: async () => ({ 'x-requester-proof': 'owner' }),
+    } satisfies ExternalActionRequesterHttpProjectionV1 });
+    let sourceAvailable = true;
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      expect(config?.headers).not.toHaveProperty('Authorization');
+      const id = url.slice(url.lastIndexOf('/') + 1);
+      return { status: 200, data: { machine: { id, active: true, installationId: `${id}-installation`,
+        ...(id === 'source' && !sourceAvailable ? { revokedAt: 1 } : {}),
+        dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
+        metadata: encodePlainMachineStoredContent({ host: id, platform: 'linux', homeDir: '/home/coder', username: 'coder',
+          happyCliVersion: 'test', happyHomeDir: '/home/coder/.happier' }) } } };
+    });
+    onTestFinished(() => get.mockRestore());
+    const read = () => readWorkspaceSyncChildMachineFacts({ serverId: 'home', serverHttpBaseUrl: 'https://worker-home.test',
+      credentials, authorization, machineIds: ['source', 'target'] });
+    expect(await read()).toEqual([]);
+    sourceAvailable = false;
+    await expect(read()).rejects.toMatchObject({ code: 'workspace_sync_child_unavailable' });
+  });
   it('starts distinct endpoint reads before either response, preserving input-order refusal', async () => {
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });

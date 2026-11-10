@@ -355,6 +355,10 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
       ? api.getMachine(machineId, { signal: input.signal })
       : ApiClient.getRequesterMachine(machineId, { authorization: input.authorization!,
         effectActionId: input.effectActionId, signal: input.signal });
+    // Observations use the requester's Machine read port. Physical effects
+    // still consume the signed Sync SOURCE facts below.
+    const readOnly = input.authorization && input.purpose !== 'physical_sync'
+      && getActionSpec(input.effectActionId ?? input.authorization.binding.actionId).sideEffectClass === 'read';
     const facts: WorkspaceSyncChildMachineFacts[] = [];
     const owned = input.controllerOwnedChild;
     const ownerAccountId = input.credentials ? readAccountIdFromToken(input.credentials.token) : null;
@@ -376,9 +380,9 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
         const sourceMachineId = input.authorization?.binding.workspaceSyncAdmission?.source.machineId;
         // A SOURCE-bound Move also reads its selected WORKER through the
         // requester's existing Machine read port. Only SOURCE facts come from
-        // the signed Sync admission; WORKER-bound roots still require it for
-        // every foreign endpoint, including when the admission is missing.
-        if (input.authorization && (machineId === sourceMachineId
+        // the signed Sync admission; mutating WORKER-bound roots still require
+        // it for every foreign endpoint, including when the admission is missing.
+        if (input.authorization && !readOnly && (machineId === sourceMachineId
           || machineId !== input.authorization.binding.machineId
             && input.authorization.binding.machineId !== sourceMachineId)) {
           const binding = input.authorization.binding;
