@@ -174,6 +174,7 @@ const bootstrapDir = join(repoRoot, 'apps', 'bootstrap');
 export async function prepareTauriSidecar({
   env = process.env,
   platform = process.platform,
+  borrowedUi = false,
   ensureUiWorkspacePackagesBuilt = ensureUiWorkspacePackagesBuiltDefault,
   ensureWorkspacePackagesBuiltForComponent = ensureWorkspacePackagesBuiltForComponentDefault,
   ensureTauriSidecarBinaryFileImpl = ensureTauriSidecarBinaryFile,
@@ -182,7 +183,10 @@ export async function prepareTauriSidecar({
   spawnSyncImpl = spawnSync,
 } = {}) {
   await prepareTauriEntitlements();
-  await ensureUiWorkspacePackagesBuilt({ uiPackageDir: uiDir, env, publicationMode: 'artifact' });
+  // A borrowed Expo owns its UI graph; this host only prepares the native helper.
+  if (!borrowedUi) {
+    await ensureUiWorkspacePackagesBuilt({ uiPackageDir: uiDir, env, publicationMode: 'artifact' });
+  }
   await ensureWorkspacePackagesBuiltForComponent(bootstrapDir, { quiet: false, env });
   await ensureTauriWatcherIgnoreFile();
 
@@ -228,7 +232,7 @@ export async function prepareTauriSidecar({
 }
 
 async function run() {
-  process.exit(await prepareTauriSidecar());
+  process.exit(await prepareTauriSidecar({ borrowedUi: process.argv.includes('--borrowed-ui') }));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
