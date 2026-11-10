@@ -249,7 +249,7 @@ export function projectUnexpectedActionFailureV1(admissionCommitted: boolean | n
   const errorCode = admissionCommitted === false ? 'action_not_admitted' : 'action_outcome_unknown';
   return { ok: false, errorCode,
     error: errorCode === 'action_not_admitted'
-      ? 'Creation could not be confirmed; nothing was created.'
+      ? 'The Action was not admitted; nothing was changed.'
       : 'The Action outcome is unknown. Check its state before trying again.',
     ...(requestId ? { details: { requestId } } : {}),
   };

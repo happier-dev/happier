@@ -5,8 +5,17 @@ import { SessionActionRpcOriginV1Schema } from '../rpc/socket.js';
 import tweetnacl from 'tweetnacl';
 import { signMachineInstallationProof } from '../machines/identity/installationIdentity.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
-import { projectActionExecuteFailure } from './actionExecutionResult.js';
+import { projectActionExecuteFailure, projectUnexpectedActionFailureV1 } from './actionExecutionResult.js';
 import { DeploymentTeardownInputV1Schema } from '../deployments/deploymentActionsV1.js';
+
+it('presents an unadmitted Action without claiming a creation and preserves unknown outcomes', () => {
+  const refused = projectUnexpectedActionFailureV1(false, 'managed-delete');
+  expect(refused).toMatchObject({ ok: false, errorCode: 'action_not_admitted', details: { requestId: 'managed-delete' } });
+  expect(refused.error).toBe('The Action was not admitted; nothing was changed.');
+  const unknown = projectUnexpectedActionFailureV1(null, 'managed-delete');
+  expect(unknown).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown', details: { requestId: 'managed-delete' } });
+  expect(unknown.error).not.toMatch(/nothing was (?:changed|created)/i);
+});
 
 it('requires an explicit closed acknowledgement for private Machine npm acquisition', () => {
   const nativePurpose = 'machine_npm_profile_acquisition';
