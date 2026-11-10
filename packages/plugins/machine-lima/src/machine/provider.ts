@@ -7,8 +7,8 @@ import {
   validateLimaStore,
 } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
 import type { LimaCommandResult, LimaExecutor, LimaInstance } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
-import type { MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { observeMachineProvisionerNativeRead } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { MachineProvisionerOptionsResultV1, MachineProvisionerSizeV1, MachineProvisionerResizeResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { observeMachineProvisionerNativeRead, MachineProvisionerSizeV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { LimaLaunchSchema, LimaOptionsInputSchema, LimaResourceSchema } from './schemas.js';
 import type { LimaLaunch, LimaResource } from './schemas.js';
 import { machinePresentationLabel } from '../ui/translations.js';
@@ -58,6 +58,11 @@ function refusalCode(error: unknown) {
 
 function nativeFailure(error: unknown) {
   return error instanceof LimaNativeCommandError ? { nativeCause: error.nativeCause } : {};
+}
+
+function nativeSize(instance: LimaInstance) {
+  return MachineProvisionerSizeV1Schema.parse({ cpuCores: limaInstanceField(instance, 'cpus', 'CPUs'),
+    memoryBytes: limaInstanceField(instance, 'memory'), diskBytes: limaInstanceField(instance, 'disk') });
 }
 
 function readResource(instance: LimaInstance, store: string): LimaResource {
@@ -291,10 +296,28 @@ export function createLimaProvider<TResult extends LimaCommandResult>(executor: 
         return observeMachineProvisionerNativeRead(observedAt, {
           kind: native ? 'present' : 'absent',
           ...(native ? { power: status === 'running' ? 'running' as const : status === 'stopped' ? 'stopped' as const : 'unknown' as const,
-            storage: 'retained' as const } : {}),
+            storage: 'retained' as const, size: nativeSize(native) } : {}),
           billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const },
         });
       } catch (error) { return observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: refusalCode(error) }); }
+    },
+    async resize(rawResource: LimaResource, size: MachineProvisionerSizeV1): Promise<MachineProvisionerResizeResultV1> {
+      let issued = false;
+      try {
+        const { resource, native } = await inspectExact(rawResource);
+        if (!native) return { kind: 'refused', code: 'native_resource_unavailable' };
+        if (size.diskBytes !== undefined && size.diskBytes < nativeSize(native).diskBytes!) {
+          return { kind: 'unsupported', dimension: 'diskBytes', code: 'lima_disk_shrink_unsupported' };
+        }
+        // Lima 2.1 edit.go edits only stopped guests. instance/start.go grows
+        // the disk on the subsequent start. A stopped guest stays stopped.
+        issued = true;
+        const result = await runLimaCommand({ executor, store: resource.store, interactive: true,
+          args: ['edit', '--tty=false', ...(size.cpuCores === undefined ? [] : ['--cpus', String(size.cpuCores)]),
+            ...(size.memoryBytes === undefined ? [] : ['--memory', String(size.memoryBytes / gib)]),
+            ...(size.diskBytes === undefined ? [] : ['--disk', String(size.diskBytes / gib)]), resource.instance] });
+        return result.exitCode === 0 ? { kind: 'confirmed' } : { kind: 'unknown', code: 'lima_resize_failed' };
+      } catch (error) { return { kind: issued ? 'unknown' : 'refused', code: refusalCode(error), ...nativeFailure(error) }; }
     },
     async power(rawResource: LimaResource, intent: 'start' | 'stop') {
       try {

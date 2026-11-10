@@ -9,6 +9,7 @@ export * from './acquire.js';
 export * from './nativeObservationWait.js';
 export * from './wakeThenRun.js';
 export * from './power.js';
+export * from './resize.js';
 export * from './destroy.js';
 export * from './setupApply.js';
 export * from './enrollmentIsolation.js';

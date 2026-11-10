@@ -9,6 +9,7 @@ export default defineConfig({
   plugins: [createWorkspacePackageSourcesPlugin([
     { packageName: '@happier-dev/plugin-sdk', packageSourceRoot: resolve(root, '../../plugin-sdk/src') },
     { packageName: '@happier-dev/protocol', packageSourceRoot: resolve(root, '../../protocol/src') },
+    { packageName: '@happier-dev/cli-common', packageSourceRoot: resolve(root, '../../cli-common/src') },
   ], 'happier-machine-lima-source')],
   test: { ...resolveVitestWorkers(), environment: 'node' },
 });

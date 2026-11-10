@@ -8,6 +8,7 @@ import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier
 import type { ActionExecutorDeps, HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { isManagedResizeActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 
 export type ManagedProvisionerDiscoveryAction = 'machines.provisioners.list' | 'machines.provisioners.check' | 'machines.provisioners.options';
 export type ManagedProvisionerDiscoveryEntry = MachineProvisionersListResultV1['provisioners'][number];
@@ -68,16 +69,21 @@ async function matchesSelectedProvisioner(provider: ManagedProvisionerDiscoveryE
 export async function prepareManagedPowerProvisionerAdmissionV1(machine: ManagedMachineV1 | ActionExecuteFailure,
     readSelected: ManagedProvisionerSelectionRead,
     actionId: 'machines.managed.power.set' | 'machines.managed.inspect' | 'machines.managed.bootstrap.retry'
-        | 'machines.managed.delete' | 'machines.managed.cancel' = 'machines.managed.power.set',
+        | 'machines.managed.delete' | 'machines.managed.cancel' | 'machines.managed.resize' = 'machines.managed.power.set',
     options?: Readonly<{ includeGuestDiagnostics?: true }>,
 ): Promise<HostReviewedChildrenPlanV1 | ActionExecuteFailure | null> {
     if ('ok' in machine) return machine.errorCode === 'permission_denied' ? { children: [] } : machine;
     if (machine.controller) return null;
-    const provisioner = machine.reviewedFacts?.provisioner;
-    if (!provisioner || !await matchesSelectedProvisioner(machine.launch.provider, provisioner, readSelected))
+    const resize = isManagedResizeActionIdV1(actionId);
+    const selected = resize ? (await readSelected(machine.launch.provider.pluginId))?.find(entry => sameStrictJsonValue(entry.contribution, machine.launch.provider)) : undefined;
+    const provisioner = resize ? selected?.descriptor : machine.reviewedFacts?.provisioner;
+    if (!provisioner || !resize && !await matchesSelectedProvisioner(machine.launch.provider, provisioner, readSelected))
         return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     return { children: readMachineProvisionerActionRolesV1(provisioner)
-        .filter(({ role }) => actionId === 'machines.managed.power.set' ? role === 'power' || role === 'inspect'
+        .filter(({ role }) => resize ? role === 'resize' || role === 'power' || role === 'inspect'
+                || Boolean(machine.enrolledMachineId) && machine.enrollmentIdentity?.kind !== 'dedicatedDaemonUser'
+                    && provisioner.bootstrapTransport?.kind === 'native' && (role === 'bootstrap' || role === 'exec')
+            : actionId === 'machines.managed.power.set' ? role === 'power' || role === 'inspect'
                 || Boolean(machine.enrolledMachineId) && machine.enrollmentIdentity?.kind !== 'dedicatedDaemonUser'
                     && provisioner.bootstrapTransport?.kind === 'native' && (role === 'bootstrap' || role === 'exec')
             : actionId === 'machines.managed.delete' || actionId === 'machines.managed.cancel' ? role === 'destroy' || role === 'inspect' || role === 'cleanup' || role === 'reconcile'

@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentTimestampV1Schema as timestamp } from './deploymentIdentifiersV1.js';
 import { MachineDeploymentServiceIdentityV1Schema } from '../local/services/serviceIdentityV1.js';
@@ -116,3 +117,43 @@ export const DeploymentLogsReadSuccessV1Schema = lazyZodSchema(() => z.discrimin
   z.strictObject({ ok: z.literal(true), ...target, ...service, kind: z.literal('runtime'), logs: ManagedServiceNativeLogResultV1Schema })
     .check(z.refine(matchesService, serviceIdentityCheck)),
 ]));
+
+/** Clients bind strings using their own parameter syntax, including managed positional keys. */
+export const DeploymentDataQueryStatementV1Schema = lazyZodSchema(() => z.strictObject({
+  sql: z.string().check(z.minLength(1)), params: z.record(z.string(), z.string()),
+}));
+export type DeploymentDataQueryStatementV1 = z.infer<typeof DeploymentDataQueryStatementV1Schema>;
+
+/** Native client variables use lowercase ASCII identifiers. Uppercase psql
+ * controls and the host-owned happier_ namespace cannot be caller parameters. */
+export const DeploymentNativeDataQueryParameterNameV1Schema = lazyZodSchema(() => z.string()
+  .check(z.regex(/^(?!happier_)[a-z][a-z0-9_]*$/, { message: 'invalid_query_parameter' })));
+export const DeploymentNativeDataQueryParamsV1Schema = lazyZodSchema(() =>
+  z.record(DeploymentNativeDataQueryParameterNameV1Schema, z.string()));
+
+/** An own-server database is a service in the exact admitted deployment, never a managed data link. */
+export const DeploymentDataQueryInputV1Schema = lazyZodSchema(() => z.extend(DeploymentDataQueryStatementV1Schema, {
+  params: DeploymentNativeDataQueryParamsV1Schema,
+  serverId: id, environmentId: id, expectedRevision: revision, deploymentId: id,
+  targetLinkId: id, machineId: id, installationId: id, service: id,
+}));
+export type DeploymentDataQueryInputV1 = z.infer<typeof DeploymentDataQueryInputV1Schema>;
+
+/** One result set, shared by the native and qualified managed query Actions. */
+export const DeploymentDataQuerySuccessV1Schema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(true), columns: z.array(z.strictObject({ name: z.string() })),
+  rows: z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
+  complete: z.boolean(), diagnostic: z.optional(z.strictObject({ code: id })),
+}).check(z.refine(value => value.rows.every(row => row.length === value.columns.length), {
+  message: 'Each query row retains every declared column, in order.',
+})));
+export type DeploymentDataQuerySuccessV1 = z.infer<typeof DeploymentDataQuerySuccessV1Schema>;
+/** Setup and client support failures retain their first, secret-free cause. */
+export const DeploymentDataQueryUnavailableV1Schema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(false), error: z.enum(['deployment_unavailable', 'deployment_access_denied', 'unsupported_action']),
+  diagnostic: z.strictObject({ code: id }),
+}));
+export type DeploymentDataQueryUnavailableV1 = z.infer<typeof DeploymentDataQueryUnavailableV1Schema>;
+export const DeploymentDataQueryStatementV1ProtocolSchema = projectZodProtocolSchema(DeploymentDataQueryStatementV1Schema);
+export const DeploymentDataQuerySuccessV1ProtocolSchema = projectZodProtocolSchema(DeploymentDataQuerySuccessV1Schema);
+export const DeploymentDataQueryUnavailableV1ProtocolSchema = projectZodProtocolSchema(DeploymentDataQueryUnavailableV1Schema);

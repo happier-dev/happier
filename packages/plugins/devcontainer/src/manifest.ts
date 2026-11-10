@@ -7,6 +7,7 @@ import {
   defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
   MachineProvisionerOptionsResultV1Schema,
+  MachineProvisionerResizeResultV1Schema,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAuthorDefinitionV1, MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDevcontainerProvider, DEVCONTAINER_PLUGIN_ID, DEVCONTAINER_PROVISIONER_ID } from './machine/provider.js';
@@ -64,7 +65,10 @@ export const DEVCONTAINER_MACHINE_PROVISIONER = {
   prerequisites: [],
   billing: { location: 'local', stoppedBilling: 'not-billed' },
   retention: { supportedIntents: ['start', 'stop', 'delete', 'rebuild'] },
-  actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', rebuild: 'rebuild' },
+  resize: { cpuCores: { kind: 'supported', requiresRestart: false, changes: 'any' },
+    memoryBytes: { kind: 'supported', requiresRestart: false, changes: 'any' },
+    diskBytes: { kind: 'unsupported', code: 'container_disk_resize_unsupported' } },
+  actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', rebuild: 'rebuild', resize: 'resize' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
   reconciliation: { nativeOperationSchema: DevcontainerNativeOperationSchema.jsonSchema, action: 'reconcile' },
 } satisfies MachineProvisionerAuthorDefinitionV1;
@@ -155,6 +159,12 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
       resultSchema: MachineProvisionerObservationV1Schema,
       async run(input, context) { try { return await (await provider(context, input.resource)).inspect(input.resource); }
         catch (error) { return { observedAt: context.invokedAtMs, availability: 'unavailable' as const, reason: code(error) }; } } },
+    resize: { ...defaults, title: 'Resize container', dangerLevel: 'writesLocal', inputSchema: DEVCONTAINER_ROLE_SCHEMAS.resizeInput,
+      confirmation: { title: 'Resize this container?' }, resultSchema: MachineProvisionerResizeResultV1Schema,
+      async run(input, context) {
+        try { return await (await provider(context, { runtime: input.resource.runtime })).resize(input.resource, input.size); }
+        catch (error) { return { kind: 'refused' as const, code: code(error) }; }
+      } },
     power: { ...defaults, title: 'Change Devcontainer power', dangerLevel: 'writesLocal', inputSchema: DEVCONTAINER_ROLE_SCHEMAS.powerInput,
       confirmation: { title: 'Change Devcontainer power' },
       resultSchema: MachineProvisionerPowerResultV1Schema,

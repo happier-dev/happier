@@ -181,7 +181,12 @@ export function useManagedProvisionerPresentation(input: Readonly<{
         ? projection.inputs?.pluginProjectionV2?.familiesById.machineProvisioners?.entriesById[qualifiedProviderKey]
         : undefined;
     const bundled = qualifiedProviderKey ? BUNDLED_MACHINE_PROVISIONER_DECLARATIONS[qualifiedProviderKey] : undefined;
-    const provisioner = input.provisioner ?? (projected && projected.definition.schemaVersion === input.schemaVersion
+    const accountDescriptor = accountSelection?.kind === 'available' && input.provider
+        ? accountSelection.manifest.contributes.machineProvisioners.find(descriptor => descriptor.id === input.provider?.localId
+            && descriptor.schemaVersion === input.schemaVersion) : undefined;
+    const provisioner = input.provisioner ?? (accountDescriptor && input.provider
+        ? { contribution: input.provider, descriptor: accountDescriptor }
+        : projected && projected.definition.schemaVersion === input.schemaVersion
         ? { contribution: { pluginId: projected.pluginId, localId: projected.definition.id }, descriptor: projected.definition }
         : bundled?.descriptor.schemaVersion === input.schemaVersion ? bundled : undefined);
     const localized = usePluginLocalizedTextResolver({
@@ -225,6 +230,7 @@ export function useManagedProvisionerPresentation(input: Readonly<{
             installedPackage={row ? installedPackages?.[row.contribution.pluginId] : null} machineId={input.controller?.machineId} serverId={input.serverId} />
     );
     return { localized, title: provisioner ? localized(provisioner.contribution.pluginId, provisioner.descriptor.title) : null,
+        descriptor: provisioner?.descriptor,
         billing: provisioner?.descriptor.billing,
         kindTitle: provisioner?.descriptor.kindTitle ? localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) : null,
         description: provisioner?.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : null,

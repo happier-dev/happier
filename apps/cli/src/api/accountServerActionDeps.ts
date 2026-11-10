@@ -32,6 +32,8 @@ import { MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, mach
 import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
+import { executeCliManagedAccountResize } from '@/machines/managed/accountResize';
+import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readCliManagedAccountGuestDiagnostics } from '@/machines/managed/accountDiagnostics';
 import { executeCliManagedProvisionerList } from '@/machines/managed/provisionerDiscovery';
 import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
@@ -916,9 +918,9 @@ export function createAccountServerActionDeps(input: Readonly<{
           return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
         return result;
       }
-      if (actionId === 'machines.managed.power.set' && 'when' in body && body.when === 'now') {
+      if (actionId === MANAGED_RESIZE_ACTION_ID_V1 || actionId === 'machines.managed.power.set' && 'when' in body && body.when === 'now') {
         try {
-          return await executeCliManagedAccountPower({ body: ManagedMachineActionInputSchemasV1['machines.managed.power.set'].parse(body),
+          const execution: Omit<Parameters<typeof executeCliManagedAccountPower>[0], 'body'> = {
             context: actionContext, credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
             serverUrl: serverHttpBaseUrl, signal,
             post: async (suffix, request, schema, requestSignal = signal) => {
@@ -933,7 +935,10 @@ export function createAccountServerActionDeps(input: Readonly<{
                 throw new ManagedMachineControllerError(refusal.success ? refusal.data.code : 'managed_request_failed');
               }
               return schema.parse(dispatch.response.data);
-            } });
+            } };
+          return actionId === MANAGED_RESIZE_ACTION_ID_V1
+            ? await executeCliManagedAccountResize({ ...execution, body: ManagedMachineActionInputSchemasV1[MANAGED_RESIZE_ACTION_ID_V1].parse(body) })
+            : await executeCliManagedAccountPower({ ...execution, body: ManagedMachineActionInputSchemasV1['machines.managed.power.set'].parse(body) });
         } catch (error) {
           if (error instanceof ManagedMachineControllerError) return { ok: false, errorCode: error.code, error: error.code };
           throw error;

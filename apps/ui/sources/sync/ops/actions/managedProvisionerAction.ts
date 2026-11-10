@@ -1,3 +1,4 @@
+import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { prepareManagedAcquireProvisionerAdmissionV1, prepareManagedPowerProvisionerAdmissionV1, executeManagedProvisionerDiscovery, projectAccountManagedProvisioners,
     type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { ManagedMachineActionInputSchemasV1, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -121,7 +122,7 @@ export async function prepareUiManagedProvisionerAdmission(
         const entries = await readUiManagedProvisioners(account, pluginId);
         return 'ok' in entries ? null : entries;
     };
-    if (request.actionId === 'machines.managed.power.set' || request.actionId === 'machines.managed.inspect'
+    if (request.actionId === 'machines.managed.power.set' || request.actionId === MANAGED_RESIZE_ACTION_ID_V1 || request.actionId === 'machines.managed.inspect'
         || request.actionId === 'machines.managed.bootstrap.retry' || request.actionId === 'machines.managed.delete'
         || request.actionId === 'machines.managed.cancel') {
         const input = ManagedMachineActionInputSchemasV1[request.actionId].parse(request.input);

@@ -11,6 +11,14 @@ export const DeploymentArtifactContentReferenceV1Schema = lazyZodSchema(() => z.
 }));
 export type DeploymentArtifactContentReferenceV1 = z.infer<typeof DeploymentArtifactContentReferenceV1Schema>;
 
+/** Exact Environment content CAS, shared without initializing the Action catalog. */
+export const DeploymentEnvironmentContentCasV1Schema = lazyZodSchema(() => z.strictObject({
+  serverId: DeploymentIdentifierV1Schema,
+  environmentId: DeploymentIdentifierV1Schema,
+  expectedRevision: DeploymentRevisionV1Schema,
+  ...DeploymentArtifactContentReferenceV1Schema.shape,
+}));
+
 /** Already opened by the incumbent Artifact owner; no credentials or decryption here. */
 export type OpenedDeploymentArtifactV1 = Readonly<{
   artifactId: string;
@@ -50,3 +58,10 @@ export function readDeploymentArtifactJsonBodyV1(
   try { return { ...header, body: JSON.parse(artifact.body) as unknown }; }
   catch { return { ok: false, error: 'deployment_content_unavailable' }; }
 }
+
+/** Exact runtime content CAS shared by prepared deployment operation inputs. */
+export const DeploymentRuntimeContentCasV1Schema = lazyZodSchema(() => z.extend(DeploymentEnvironmentContentCasV1Schema, {
+  requestKey: DeploymentIdentifierV1Schema,
+  targetLinkId: DeploymentIdentifierV1Schema,
+  expectedTargetLinkRevision: DeploymentRevisionV1Schema,
+}));

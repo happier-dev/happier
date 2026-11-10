@@ -331,6 +331,36 @@ describe('managed Machine detail', () => {
             expect(screen.findByTestId('managed-machine.controller-unavailable')).toBeNull();
         } finally { await screen.unmount(); }
     });
+    it('offers Resize from the managed receipt without changing the machine before review', async () => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://managed-resize-detail.test', scope: 'tab' });
+        const homeId = 'srv_managed_resize_detail';
+        await setServerProfileIdentityForUrl(target.serverUrl, homeId);
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id },
+            { token: createAccountTokenForTests('owner') });
+        const machine = ManagedMachineV1Schema.parse({ id: 'resize-reviewed', homeId, custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build guest', choices: {} },
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
+            resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'native' } },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
+        storage.setState({ machineListByServerId: { [serverId]: [] } });
+        const resizeRequests: unknown[] = [];
+        setRuntimeFetch(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/machines/managed/actions/get') return Response.json(machine);
+            if (path === '/v1/machines/managed/actions/list') return Response.json({ machines: [machine] });
+            if (path === '/v1/actions/machines.managed.resize') resizeRequests.push(JSON.parse(String(init?.body)));
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const screen = await renderScreen(<ManagedMachineDetail serverId={target.id} managedId={machine.id} />);
+        await flushHookEffects({ cycles: 30 });
+        expect(screen.findByTestId('managed-machine.resize')).not.toBeNull();
+        await screen.pressByTestIdAsync('managed-machine.resize');
+        expect(screen.findByTestId('managed-machine.resize-review')).not.toBeNull();
+        expect(resizeRequests).toEqual([]);
+    });
     it.each(['rail', 'settings'] as const)('keeps a removed enrolled resource visible in its saved %s destination without reloading', async door => {
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-removed-${door}.test`, scope: 'tab' });
         const homeId = `srv_managed_removed_${door}`;
@@ -2621,8 +2651,8 @@ describe('managed Machine detail', () => {
         }
     });
     it.each(['enrolled-failure', 'enrolled-activation-failure', 'enrolled-retention-failure', 'controller-restart', 'enrolled-observation-unavailable',
-        'enrolled-incomplete-retention', 'enrolled-incomplete-no-history'] as const)('keeps one native Check now and same-resource recovery through Ask with %s operation history', async basis => {
-        const incomplete = basis.startsWith('enrolled-incomplete');
+        'enrolled-incomplete-retention', 'enrolled-incomplete-no-history', 'enrolled-review-required-no-history'] as const)('keeps one native Check now and same-resource recovery through Ask with %s operation history', async basis => {
+        const incomplete = basis.startsWith('enrolled-incomplete') || basis === 'enrolled-review-required-no-history';
         const homeId = `srv_bootstrap_${basis}`;
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-bootstrap-${basis}.test`, scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
@@ -2641,7 +2671,8 @@ describe('managed Machine detail', () => {
         const machine: ManagedMachineV1 = { id: 'boot-managed', homeId, custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Enrolled guest', choices: {} }, controller,
             ...(incomplete ? { bootstrapInstalled: true } : {}),
-            observation: incomplete ? { availability: 'unavailable', reason: 'bootstrap.incomplete', observedAt: 4 }
+            observation: incomplete ? { availability: 'unavailable', reason: basis === 'enrolled-review-required-no-history'
+                ? 'bootstrap.action_interactive_review_required' : 'bootstrap.incomplete', observedAt: 4 }
                 : basis === 'enrolled-observation-unavailable'
                 ? { availability: 'unavailable', observedAt: 1 }
                 : { availability: 'present', power: 'running', observedAt: 1 },

@@ -1,7 +1,8 @@
+import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedMachineControllerError, createManagedNativeObservationWait, executeManagedMachineDeleteIntent,
-    executeManagedMachinePowerIntent } from '@happier-dev/cli-common/machines/managed';
+    executeManagedMachinePowerIntent, executeManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControlAdmissionInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerSubmitOutputV1Schema,
-    type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+    ManagedControllerResizeReportV1Schema, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -10,7 +11,8 @@ import { createUiManagedAccountNative, readUiManagedAccountAdmission } from './m
 import { createUiManagedAccountCredential } from './managedMachineAccountCredential';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
 
-type Control = Readonly<{ action: 'machines.managed.power.set'; input: ManagedMachineActionInputV1<'machines.managed.power.set'> }>
+type Control = Readonly<{ action: 'machines.managed.resize'; input: ManagedMachineActionInputV1<'machines.managed.resize'> }>
+    | Readonly<{ action: 'machines.managed.power.set'; input: ManagedMachineActionInputV1<'machines.managed.power.set'> }>
     | Readonly<{ action: 'machines.managed.delete'; input: ManagedMachineActionInputV1<'machines.managed.delete'> }>;
 
 /** Home admits the intent once; the foreground Account continues its retained native effects. */
@@ -21,8 +23,25 @@ export async function executeUiManagedAccountControl(params: Readonly<{
     const post = createUiManagedAccountHomeRequest(params);
     const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
     try {
-        let machine = (await post('admit-control', ManagedControlAdmissionInputV1Schema.parse({ ...control, requestId }),
-            ManagedAdmissionOutputV1Schema)).machine;
+        const admission = await post('admit-control', ManagedControlAdmissionInputV1Schema.parse({ ...control, requestId }),
+            ManagedAdmissionOutputV1Schema);
+        let machine = admission.machine;
+        if (control.action === MANAGED_RESIZE_ACTION_ID_V1) {
+            const provisioner = admission.resizeProvisioner;
+            if (!provisioner) return failure('admission_unavailable');
+            const admitted = { provisioner, providerPluginId: machine.launch.provider.pluginId };
+            const client = createUiManagedAccountHome({ ...params, requestId, provisioner });
+            const credential = createUiManagedAccountCredential({ account: params.account, home: client.home, signal: params.signal });
+            const native = createUiManagedAccountNative({ ...params, requestId }, admitted, () => machine, () => undefined, credential);
+            const output = await executeManagedMachineResize({ machine, size: control.input.size, provisioner, invoke: native.invoke,
+                io: { signal: params.signal },
+                guestStartup: { channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), transport: provisioner.bootstrapTransport },
+                waitForObservation: createManagedNativeObservationWait(params.signal) });
+            await client.home.row('report-resize', ManagedControllerResizeReportV1Schema.parse({
+                homeId: machine.homeId, managedId: machine.id, requestId, ...output,
+            }), null);
+            return { ok: true, result: output };
+        }
         const accepted = (): ActionExecuteResult => ({ ok: true, result: { kind: 'accepted', managedId: machine.id,
             intentRevision: machine.intentRevision,
             ...(params.context.operationAcceptance ? { operation: { operationId: params.context.operationAcceptance.operationId } } : {}) } });

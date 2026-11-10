@@ -10,6 +10,7 @@ import {
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema,
   MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema, MachineProvisionerPutFileResultV1Schema,
+  MachineProvisionerResizeResultV1Schema,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createLimaSdkExecutor } from './machine/nativeExecutor.js';
@@ -51,7 +52,10 @@ export const LIMA_MACHINE_PROVISIONER = {
   prerequisites: [{ kind: 'managedDependency', id: LIMA_DEPENDENCY_ID }],
   billing: { location: 'local', stoppedBilling: 'not-billed' },
   retention: { supportedIntents: ['start', 'stop', 'delete'] },
-  actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
+  resize: { cpuCores: { kind: 'supported', requiresRestart: true, changes: 'any' },
+    memoryBytes: { kind: 'supported', requiresRestart: true, changes: 'any' },
+    diskBytes: { kind: 'supported', requiresRestart: true, changes: 'grow-only' } },
+  actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', resize: 'resize' },
   reconciliation: { action: 'reconcile', nativeOperationSchema: LimaResourceSchema.jsonSchema },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
 } satisfies MachineProvisionerAuthorDefinitionV1;
@@ -175,6 +179,15 @@ export const LIMA_PLUGIN = definePlugin({
       async run(input, context) {
         try { return await (await provider(context)).inspect(input.resource); }
         catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) }); }
+      },
+    },
+    resize: {
+      ...actionDefaults, title: 'Resize Lima guest', dangerLevel: 'writesLocal',
+      confirmation: { title: 'Resize this Lima guest?', body: 'This changes the exact managed VM configuration. A restart applies the new size.' },
+      inputSchema: LIMA_ROLE_SCHEMAS.resizeInput, resultSchema: MachineProvisionerResizeResultV1Schema,
+      async run(input, context) {
+        try { return await (await provider(context)).resize(input.resource, input.size); }
+        catch (error) { return { kind: 'refused' as const, code: errorCode(error) }; }
       },
     },
     power: {

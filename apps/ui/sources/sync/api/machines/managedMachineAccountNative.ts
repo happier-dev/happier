@@ -46,13 +46,14 @@ export function createUiManagedAccountNative(params: Readonly<{
 readCredentialRevision: () => number | undefined, credential: ReturnType<typeof createUiManagedAccountCredential>): ManagedReconciliationNative {
     const port = params.context.hostReviewedChild!;
     const roles = readMachineProvisionerActionRolesV1(admitted.provisioner);
+    // The admitted finite operation keeps one host-runtime selection for every reviewed role.
+    const selected = readPluginAccountAvailability(params.account.accountLifetime.scope)
+        .readCurrentAccountExecution(admitted.providerPluginId);
     const invoke: ManagedNativeInvocation = async (role, body, io) => {
         const signal = io?.signal ?? params.signal;
         signal?.throwIfAborted();
         const localId = roles.find(candidate => candidate.role === role)?.action;
         if (!localId) throw new ManagedMachineControllerError('provider_unavailable');
-        const selected = readPluginAccountAvailability(params.account.accountLifetime.scope)
-            .readCurrentAccountExecution(admitted.providerPluginId);
         if (selected.kind !== 'available') throw new ManagedMachineControllerError('provider_unavailable');
         const action = selected.manifest.contributes.actions?.find(candidate => candidate.id === localId);
         if (!action) throw new ManagedMachineControllerError('provider_unavailable');

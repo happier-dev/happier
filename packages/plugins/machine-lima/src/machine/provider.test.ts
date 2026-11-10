@@ -34,6 +34,36 @@ function processBoundary(handler: (args: readonly string[], options?: Parameters
 }
 
 describe('public Lima native leaf', () => {
+  it('resizes a stopped guest through native edit and observes its actual size', async () => {
+    let resized = false;
+    const size = { cpuCores: 4, memoryBytes: 8 * 1024 ** 3, diskBytes: 30 * 1024 ** 3 };
+    const { executor, effects } = processBoundary(args => {
+      if (args[0] === 'edit') resized = true;
+      return { exitCode: 0, out: JSON.stringify({ ...native, status: 'Stopped', ...(resized ? {
+        cpus: size.cpuCores, memory: size.memoryBytes, disk: size.diskBytes,
+      } : {}) }), err: '' };
+    });
+    const provider = createLimaProvider(executor);
+    expect(await provider.resize(resource, size)).toEqual({ kind: 'confirmed' });
+    expect(effects).toEqual([['edit', '--tty=false', '--cpus', '4', '--memory', '8', '--disk', '30', resource.instance]]);
+    expect(await provider.inspect(resource)).toMatchObject({ size });
+  });
+
+  it('refuses disk shrink with its dimension and does not edit the guest', async () => {
+    const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: JSON.stringify(native), err: '' }));
+    expect(await createLimaProvider(executor).resize(resource, { diskBytes: 10 * 1024 ** 3 }))
+      .toEqual({ kind: 'unsupported', dimension: 'diskBytes', code: 'lima_disk_shrink_unsupported' });
+    expect(effects).toEqual([]);
+  });
+
+  it('preserves native edit failure instead of confirming a resize', async () => {
+    const { executor } = processBoundary(args => args[0] === 'edit'
+      ? { exitCode: 1, out: '', err: 'cannot edit' }
+      : { exitCode: 0, out: JSON.stringify({ ...native, status: 'Stopped' }), err: '' });
+    expect(await createLimaProvider(executor).resize(resource, { cpuCores: 4 }))
+      .toMatchObject({ kind: 'unknown', code: 'lima_resize_failed' });
+  });
+
   it('keeps launch choices available after the installed check without probing the version again', async () => {
     let versionReads = 0;
     const { executor } = processBoundary(args => {

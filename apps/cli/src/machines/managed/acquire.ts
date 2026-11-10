@@ -1,4 +1,5 @@
 import axios from '@/api/client/credentialAxios';
+import { MachineProvisionerSnapshotResultV1Schema, type MachineProvisionerSnapshotResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { redactManagedMachineCredentialReferences } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { isDeepStrictEqual } from 'node:util';
@@ -10,6 +11,9 @@ import { ManagedMachineV1Schema, type ManagedControllerV1, type ManagedMachineV1
 import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerMachineOutputV1Schema, ManagedControllerSubmitOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, type ManagedAcceptedV1, type ManagedControllerCurrentnessV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedAdmissionInputV1Schema, ManagedControlAdmissionInputV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { ManagedResizeOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { executeManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControllerRequestFailureDetailsV1Schema, type ManagedControllerRequestFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MANAGED_POLICY_PROOF_HEADER, createManagedPolicyProofV1, encodeManagedPolicyProofV1,
@@ -165,8 +169,9 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             const effectActionId = action === 'machines.managed.get' && path === '/v1/machines/managed/actions/get'
                 ? options.context?.externalActionExecutionAuthorization?.binding.actionId ?? action : action;
             const projection = originProjection();
-            if (projection && !(options.context?.externalActionExecutionAuthorization?.binding.workflowActionOrigin
-                && path === '/v1/machines/managed/controller/report-intent')) {
+            if (projection && !(action === MANAGED_RESIZE_ACTION_ID_V1 && path === '/v1/machines/managed/controller/report-resize'
+                || options.context?.externalActionExecutionAuthorization?.binding.workflowActionOrigin
+                    && path === '/v1/machines/managed/controller/report-intent')) {
                 const headers = await projection.createRequestHeaders({ effectActionId, method: 'POST', path, body, signal: signal ?? undefined });
                 if (!headers) throw new ManagedMachineControllerError('admission_unavailable');
                 return await request(path, body, headers, schema, signal);
@@ -318,6 +323,13 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
 }
 export type ManagedMachineControllerClient = ReturnType<typeof createManagedMachineControllerClient>;
 
+export type ManagedNativeSnapshotRequest = Readonly<{
+    machine: ManagedMachineV1;
+    label: string;
+    reason: string;
+    options: ManagedMachineExecutionOptions;
+}>;
+
 export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcquisitionDriverInput) {
     const inFlight = new Map<string, Promise<JsonValue | null>>();
     async function reconcileOnce(params: Parameters<typeof reconcileManagedMachine>[0]): Promise<void> {
@@ -331,6 +343,28 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId
         && candidate.definition.schemaVersion === machine.launch.schemaVersion)?.definition.actions.renew;
     return {
+        async snapshotAdmitted({ machine, label, reason, options }: ManagedNativeSnapshotRequest): Promise<MachineProvisionerSnapshotResultV1> {
+            options.signal?.throwIfAborted();
+            const contribution = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
+                candidate.identity.pluginId === machine.launch.provider.pluginId
+                && candidate.identity.localId === machine.launch.provider.localId
+                && candidate.definition.schemaVersion === machine.launch.schemaVersion);
+            if (!contribution?.definition.actions.snapshot || !contribution.definition.snapshot) {
+                return { kind: 'unsupported', code: 'native_snapshot_unsupported' };
+            }
+            if (!machine.resource || options.context?.operationAcceptance?.actionId !== 'deployments.backups.restore') {
+                return { kind: 'refused', code: 'admission_unavailable' };
+            }
+            try {
+                const native = createManagedNativeInvocation({ input, options, machine, action: 'deployments.backups.restore' }, () => machine);
+                return MachineProvisionerSnapshotResultV1Schema.parse(await native.invoke('snapshot', {
+                    resource: machine.resource.value, expectedMachineRevision: machine.intentRevision, label, reason,
+                }));
+            } catch (error) {
+                options.signal?.throwIfAborted();
+                return { kind: 'unknown', code: error instanceof ManagedMachineControllerError ? error.code : 'native_snapshot_outcome_unknown' };
+            }
+        },
         supportsNativeLifetimeRenewal(machine: ManagedMachineV1): boolean {
             return Boolean(nativeLifetimeRenewal(machine) && machine.observation?.availability === 'present'
                 && machine.observation.power === 'running' && machine.observation.nativeExpiry !== undefined);
@@ -527,6 +561,27 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 }
                 // Move's destination is in the input; the current executor is
                 // validated by the admitted row/server, not that destination.
+                if (action === MANAGED_RESIZE_ACTION_ID_V1) {
+                    const machine = admission.machine;
+                    client.assertConnection(machine);
+                    const provisioner = admission.resizeProvisioner;
+                    if (!provisioner) throw new ManagedMachineControllerError('provider_unavailable');
+                    options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: machine.id } });
+                    let native: ReturnType<typeof createManagedNativeInvocation> | undefined;
+                    const resize = await executeManagedMachineResize({ machine, provisioner,
+                        size: ManagedMachineActionInputSchemasV1[MANAGED_RESIZE_ACTION_ID_V1].parse(parsed).size,
+                        invoke: (role, body, io) => {
+                            native ??= createManagedNativeInvocation({ input, options, client, machine, action,
+                                admittedProvisioner: provisioner }, () => machine);
+                            return native.invoke(role, body, io);
+                        }, io: { signal: options.signal },
+                        guestStartup: { transport: provisioner.bootstrapTransport,
+                            channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label },
+                        waitForObservation: createManagedNativeObservationWait(options.signal) });
+                    await client.post('/v1/machines/managed/controller/report-resize', { homeId: machine.homeId,
+                        managedId: machine.id, requestId: options.requestId, ...resize }, ManagedControllerMachineOutputV1Schema, null);
+                    return ManagedResizeOutputV1Schema.parse(resize);
+                }
                 if (!executesIntent) return admission.machine;
                 client.assertConnection(admission.machine);
                 if (!operationId) throw new ManagedMachineControllerError('admission_unavailable');

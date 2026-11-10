@@ -1,4 +1,5 @@
 import { resolveManagedNativeCredentialActionMachineAdmissionInTx, isExternalActionManagedResourceAction, readExternalActionManagedRecoveryAdmission, type ExternalActionManagedAdmissionContext } from './externalActionManagedNativeAdmission';
+import { isManagedControlAdmissionActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 export { isExternalActionManagedResourceAction, readExternalActionManagedRecoveryAdmission, type ExternalActionManagedAdmissionContext } from './externalActionManagedNativeAdmission';
 import type { ExternalActionExecutionAuthorizationBindingV1, ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { ExternalActionManagedRecoveryAdmissionV1Schema, ExternalActionManagedControlAdmissionV1Schema, projectExternalActionManagedAdmissionV1,
@@ -15,7 +16,7 @@ import { resolveSignedManagedAccountExecutorInTx } from '@/app/machines/managed/
 
 /** Home reads the same closed control projection for plain and encrypted roots. */
 export function readExternalActionManagedControlAdmission(actionId: string, envelope: ExternalActionRequestEnvelope) {
-    if (actionId !== 'machines.managed.power.set' && actionId !== 'machines.managed.delete') return undefined;
+    if (!isManagedControlAdmissionActionIdV1(actionId)) return undefined;
     const projection = envelope.v === 1 ? projectExternalActionManagedAdmissionV1(actionId, envelope.input) : envelope.managedAdmission;
     const parsed = ExternalActionManagedControlAdmissionV1Schema.safeParse(projection);
     if (!parsed.success || parsed.data.actionId !== actionId || envelope.managedAdmission !== undefined

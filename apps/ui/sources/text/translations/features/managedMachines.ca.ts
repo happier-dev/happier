@@ -98,6 +98,20 @@ export const managedMachines: ManagedMachinesTranslations = {
         scopeControllerFallback: "El seu controlador",
     },
     managedMachines: {
+        resize: {
+            title: "Canvia la mida",
+            current: "Mida actual",
+            reviewed: "Mida en crear-la",
+            memory: "Memòria (GiB)",
+            disk: "Disc (GiB)",
+            restart: "Aquest canvi reinicia la màquina i interromp la feina en curs.",
+            live: "Aquest canvi es pot aplicar sense reiniciar.",
+            growOnly: "Aquest valor només pot augmentar.",
+            unsupported: "Aquest proveïdor no pot canviar aquest valor.",
+            confirm: "Canvia la mida de la màquina",
+            confirmed: "S’ha confirmat la nova mida.",
+            unknown: "No s’ha pogut confirmar la nova mida. Comprova la màquina abans de tornar-ho a provar.",
+        },
         add: {
             createPath: "Crear-ne una",
             connect: "Connectar",
@@ -291,6 +305,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             asCreated: "Tal com es va crear",
             cores: ({ count }: { count: number }) => (count === 1 ? `1 nucli` : `${count} nuclis`),
             coresOfFree: ({ count, free }: { count: number; free: string }) => `${count} de ${free} nuclis lliures`,
+            coresAllocated: ({ allocated, total }: { allocated: string; total: string }) => `${allocated} de ${total} nuclis totals assignats a màquines virtuals en execució`,
             amountOfFree: ({ amount, free }: { amount: string; free: string }) => `${amount} de ${free} lliures`,
             headroomUnknown: ({ computer }: { computer: string }) => `No s’ha pogut comprovar quanta CPU i memòria té lliures ${computer}.`,
             exceedsFree: ({ computer }: { computer: string }) => `Necessita més del que ${computer} té lliure ara.`,

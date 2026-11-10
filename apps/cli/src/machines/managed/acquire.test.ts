@@ -20,7 +20,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { createManagedMachineAcquisitionDriver, createManagedMachineControllerClient } from './acquire';
 import { readManagedMachine } from './readManagedMachine';
 import { createManagedNativeInvocation } from './reconcile';
-import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { managedMachineActionEndpointPathV1, ManagedControllerMachineOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -983,6 +983,36 @@ it('reads a managed Machine using portable Home authority rather than the HTTP p
     current = false;
     await expect(readManagedMachine(request)).rejects.toMatchObject({ code: 'workspace_sync_child_unavailable' });
     expect(reads).toEqual([{ homeId, managedId: retained.id }]);
+});
+it('reports an admitted resize with its signed root after requester source custody changes', async () => {
+    const homeId = 'srv_resize_source';
+    const original = originAuthorization(homeId);
+    const wire = ExternalActionExecutionAuthorizationV1Schema.parse({ ...original,
+        binding: { ...original.binding, actionId: 'machines.managed.resize' } });
+    const keys = tweetnacl.sign.keyPair();
+    const retained = ManagedMachineV1Schema.parse({ ...machine, homeId });
+    let current = true;
+    let currentReads = 0;
+    const http = vi.spyOn(axios, 'post').mockImplementation(async (_url, _body, options) => {
+        expect(options?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]).toBeTruthy();
+        return { status: 200, data: { machine: retained } };
+    });
+    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: wire,
+        serverId: 'daemon-local-profile', serverIdentityId: homeId, serverHttpBaseUrl: 'https://home.example',
+        target: wire.binding.target, installationId: controller.installationId, privateKey: keys.secretKey, rootAdmitted: true,
+        isCurrent: async () => { currentReads++; return current; } });
+    if (!authorization) throw new Error('Requester HTTP projection was not established');
+    const admittedReads = currentReads;
+    current = false;
+    const client = createManagedMachineControllerClient({ token: 'token', serverUrl: 'https://home.example', homeId,
+        controller, runtimeRegistry: { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry,
+        ...accountInputs, externalActionMachineRequestPrivateKey: keys.secretKey }, {
+        requestId: original.binding.requestId, context: { externalActionExecutionAuthorization: authorization, externalActionTarget: wire.binding.target },
+    }, 'machines.managed.resize');
+    await expect(client.post('/v1/machines/managed/controller/report-resize', { homeId, managedId: retained.id,
+        requestId: original.binding.requestId, result: { kind: 'confirmed' } }, ManagedControllerMachineOutputV1Schema)).resolves.toEqual({ machine: retained });
+    expect(http).toHaveBeenCalledOnce();
+    expect(currentReads).toBe(admittedReads);
 });
 afterEach(async () => {
     vi.restoreAllMocks();

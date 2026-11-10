@@ -2,6 +2,7 @@ import { describe, expect, it, onTestFinished } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
@@ -24,6 +25,45 @@ const { executeManagedMachineNativeAction } = await import('./managedMachineOrig
 const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN_MANIFEST);
 
 describe('Account managed creation through the app Action executor', () => {
+    it('preserves the typed unsupported dimension from an admitted Account resize', async () => {
+        const serverUrl = 'https://account-managed-resize.test';
+        const homeId = 'srv_account_managed_resize';
+        const profile = await upsertAndActivateServer({ serverUrl });
+        await setServerProfileIdentityForUrl(serverUrl, homeId);
+        await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: homeId }, {
+            token: createAccountTokenForTests('creator', { currentAccount: true }),
+        });
+        const provisioner = manifest.contributes.machineProvisioners[0]!;
+        const machine = ManagedMachineV1Schema.parse({ id: 'retained', homeId, custodianAccountId: 'creator',
+            launch: { provider: { pluginId: manifest.id, localId: provisioner.id }, schemaVersion: 1, name: 'Retained', choices: {} },
+            resource: { contributionRef: { pluginId: manifest.id, localId: provisioner.id }, schemaVersion: 1, value: { id: 'same-native' } },
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const reports: unknown[] = [];
+        setRuntimeFetch(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path.endsWith('/actions/get')) return Response.json(machine);
+            if (path.endsWith('/admit-control')) return Response.json({ machine, replayed: false, resizeProvisioner: provisioner });
+            if (path.endsWith('/report-resize')) {
+                reports.push(JSON.parse(String(init?.body)));
+                return Response.json({ machine });
+            }
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path.includes('/plugins/')) return Response.json({ intents: [], releases: [] });
+            throw new Error(`Unexpected HTTP effect: ${path}`);
+        });
+        onTestFinished(resetRuntimeFetch);
+        const account = await captureLazyActionAccountContext(profile.id);
+        onTestFinished(() => account.dispose());
+        const result = await executeManagedMachineNativeAction({ account, actionId: 'machines.managed.resize',
+            input: { homeId, managedId: machine.id, size: { diskBytes: 21 * 1024 ** 3 } },
+            context: { surface: 'ui', authority: 'present_user', actionRequestId: 'resize-reviewed' } });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
+            result: { kind: 'unsupported', dimension: 'diskBytes', code: 'resize_unsupported' },
+        } });
+        expect(reports).toEqual([{ homeId, managedId: machine.id, requestId: 'resize-reviewed',
+            result: { kind: 'unsupported', dimension: 'diskBytes', code: 'resize_unsupported' } }]);
+    });
     it('refuses browser-ineligible compute before Home admission or provider allocation', async () => {
         const serverUrl = 'https://browser-managed-account.test';
         const homeId = 'srv_browser_managed_account';

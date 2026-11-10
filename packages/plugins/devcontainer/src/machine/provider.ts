@@ -1,5 +1,6 @@
 import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
 import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1, type MachineProvisionerGuestHomeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { MachineProvisionerSizeV1Schema, type MachineProvisionerSizeV1, type MachineProvisionerResizeResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isDeepStrictEqual } from 'node:util';
 import { posix, win32 } from 'node:path';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
@@ -143,7 +144,7 @@ export function createDevcontainerProvider(input: Readonly<{
       if (!state.Running || state.Paused) fail('child_unavailable');
       await assertNamespaceCurrent(resource);
     }
-    return { resource, running: state.Running && !state.Paused, paused: state.Paused };
+    return { resource, native, running: state.Running && !state.Paused, paused: state.Paused };
   }
   async function observe(launch: DevcontainerLaunch, containerId: string, managedMachineId: string) {
     const native = await inspectContainer(containerId, launch, managedMachineId);
@@ -300,11 +301,33 @@ export function createDevcontainerProvider(input: Readonly<{
     },
     async inspect(raw: DevcontainerResource) {
       try {
-        const { running, paused } = await exact(raw);
+        const { native, running, paused } = await exact(raw);
+        const host = record(native.HostConfig);
+        // Docker reports --cpus as NanoCpus; Podman can report its equivalent
+        // CFS quota/period instead. Zero means unlimited, not a physical size.
+        const cpuCores = typeof host.NanoCpus === 'number' && host.NanoCpus > 0 ? host.NanoCpus / 1e9
+          : typeof host.CpuQuota === 'number' && host.CpuQuota > 0 && typeof host.CpuPeriod === 'number' && host.CpuPeriod > 0
+            ? host.CpuQuota / host.CpuPeriod : undefined;
+        const size = MachineProvisionerSizeV1Schema.safeParse({ ...(cpuCores === undefined ? {} : { cpuCores }),
+          ...(typeof host.Memory === 'number' && host.Memory > 0 ? { memoryBytes: host.Memory } : {}) });
         return { observedAt: input.observedAt, availability: 'present' as const, power: paused ? 'suspended' as const : running ? 'running' as const : 'stopped' as const,
+          ...(size.success ? { size: size.data } : {}),
           billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const } };
       } catch (error) { return { observedAt: input.observedAt, availability: code(error) === 'native_resource_absent' ? 'absent' as const : 'unavailable' as const,
         reason: code(error) }; }
+    },
+    async resize(raw: DevcontainerResource, size: MachineProvisionerSizeV1): Promise<MachineProvisionerResizeResultV1> {
+      if (size.diskBytes !== undefined) return { kind: 'unsupported', dimension: 'diskBytes', code: 'container_disk_resize_unsupported' };
+      let issued = false;
+      try {
+        const { resource } = await exact(raw);
+        issued = true;
+        const result = await run(input.docker, ['update',
+          ...(size.cpuCores === undefined ? [] : ['--cpus', String(size.cpuCores)]),
+          ...(size.memoryBytes === undefined ? [] : ['--memory', String(size.memoryBytes)]), resource.containerId],
+        undefined, false, resource.managedMachineId, resource.workspaceFolder);
+        return completed(result) ? { kind: 'confirmed' } : { kind: 'unknown', code: 'container_resize_failed', nativeCause: commandFailure(result, 'update') };
+      } catch (error) { return { kind: issued ? 'unknown' : 'refused', code: code(error) }; }
     },
     async power(raw: DevcontainerResource, intent: 'start' | 'stop') {
       let issued = false;

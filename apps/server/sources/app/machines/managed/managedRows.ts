@@ -1,5 +1,6 @@
 import { resolvePluginLocalizedStringV2Text } from "@happier-dev/protocol/plugins/contributions/publicTypes";
 import { readManagedController, readManagedAdmissionState, projectManagedMachine } from './managedMachineProjection';
+import { isManagedResizeActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 export { readManagedController, readManagedAdmissionState, projectManagedMachine } from './managedMachineProjection';
 import type { Prisma } from "@prisma/client";
 import * as z from "zod/mini";
@@ -11,7 +12,7 @@ import { ManagedPolicyAdmissionInputV1Schema, type ManagedMachinePolicyChangeHin
 import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1, type DevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { resolvePluginActionConnectedAccountUseRequestsV2, type PluginActionConnectedAccountUseRequestV2 } from "@happier-dev/protocol/plugins/manifest/v2";
-import type { MachineProvisionerContributionV1 } from "@happier-dev/protocol/plugins/contributions/machineProvisioners";
+import { MachineProvisionerContributionV1Schema, type MachineProvisionerContributionV1 } from "@happier-dev/protocol/plugins/contributions/machineProvisioners";
 import type { PluginJsonSchemaV2 } from "@happier-dev/protocol/plugins/contributions/jsonSchema";
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
 import { pluginJsonValuesEqual } from "@happier-dev/protocol/plugins/actions/protocol-composable-schema";
@@ -122,7 +123,7 @@ const StoredManagedAdmissionSchema = z.strictObject({
     machineSetup: z.optional(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)) })),
     currentAdmission: z.optional(z.discriminatedUnion("kind", [
         z.strictObject({ kind: z.literal("control"), request: ManagedControlAdmissionInputV1Schema,
-            rebuildSettled: z.optional(z.literal(true)) }),
+            rebuildSettled: z.optional(z.literal(true)), resizeProvisioner: z.optional(MachineProvisionerContributionV1Schema) }),
         z.strictObject({ kind: z.literal("policy"), request: ManagedPolicyAdmissionInputV1Schema }),
     ])),
     submittedEffect: z.optional(z.strictObject({ ...ManagedControllerCurrentnessV1Schema.shape, intent: SupportedNativeIntentSchema,
@@ -146,6 +147,15 @@ export function readManagedEnrollmentAccountId(row: Pick<StoredManagedMachine, '
 }
 export function readManagedCurrentRequestId(row: Pick<StoredManagedMachine, "admittedInput" | "admittedActionRequestId">): string {
     return readManagedAdmissionState(row.admittedInput).currentAdmission?.request.requestId ?? row.admittedActionRequestId;
+}
+
+/** Finite resize follow-ups consume this admitted request, not current intent or policy. */
+export async function requireActiveManagedResizeInTx(tx: Tx, input: Readonly<{ homeId: string; managedId: string; requestId: string }>) {
+    const row = await readManagedMachineInTx(tx, input);
+    const admission = readManagedAdmissionState(row.admittedInput).currentAdmission;
+    if (admission?.kind !== 'control' || !isManagedResizeActionIdV1(admission.request.action)
+        || admission.request.requestId !== input.requestId) throw new ManagedMachineError('request_conflict');
+    return row;
 }
 
 /** Home identity and controller lifecycle are rechecked inside each row mutation. */

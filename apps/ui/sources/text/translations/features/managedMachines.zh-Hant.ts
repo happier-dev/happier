@@ -98,6 +98,20 @@ export const managedMachines: ManagedMachinesTranslations = {
         scopeControllerFallback: "其控制器",
     },
     managedMachines: {
+        resize: {
+            title: "調整大小",
+            current: "目前大小",
+            reviewed: "建立時的大小",
+            memory: "記憶體（GiB）",
+            disk: "磁碟（GiB）",
+            restart: "此變更將重新啟動機器並中斷進行中的工作。",
+            live: "此變更無需重新啟動即可套用。",
+            growOnly: "此值只能增加。",
+            unsupported: "此供應商無法變更此值。",
+            confirm: "調整機器大小",
+            confirmed: "已確認新的大小。",
+            unknown: "無法確認新的大小。請先檢查機器再重試。",
+        },
         add: {
             createPath: "建立一台",
             connect: "連接",
@@ -291,6 +305,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             asCreated: "建立時的設定",
             cores: ({ count }: { count: number }) => (count === 1 ? `1 核心` : `${count} 核心`),
             coresOfFree: ({ count, free }: { count: number; free: string }) => `可用 ${free} 核心中的 ${count}`,
+            coresAllocated: ({ allocated, total }: { allocated: string; total: string }) => `共 ${total} 核心，已向執行中的虛擬機分配 ${allocated} 核心`,
             amountOfFree: ({ amount, free }: { amount: string; free: string }) => `可用 ${free} 中的 ${amount}`,
             headroomUnknown: ({ computer }: { computer: string }) => `無法檢查 ${computer} 的可用 CPU 與記憶體。`,
             exceedsFree: ({ computer }: { computer: string }) => `超出 ${computer} 目前的可用資源。`,

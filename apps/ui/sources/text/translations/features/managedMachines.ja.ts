@@ -98,6 +98,20 @@ export const managedMachines: ManagedMachinesTranslations = {
         scopeControllerFallback: "コントローラー",
     },
     managedMachines: {
+        resize: {
+            title: "サイズを変更",
+            current: "現在のサイズ",
+            reviewed: "作成時のサイズ",
+            memory: "メモリ（GiB）",
+            disk: "ディスク（GiB）",
+            restart: "この変更でマシンが再起動し、実行中の作業が中断されます。",
+            live: "この変更は再起動せずに適用できます。",
+            growOnly: "この値は増やすことのみ可能です。",
+            unsupported: "このプロバイダーではこの値を変更できません。",
+            confirm: "マシンのサイズを変更",
+            confirmed: "新しいサイズを確認しました。",
+            unknown: "新しいサイズを確認できませんでした。再試行する前にマシンを確認してください。",
+        },
         add: {
             createPath: "作成する",
             connect: "接続",
@@ -291,6 +305,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             asCreated: "作成時の内容",
             cores: ({ count }: { count: number }) => (count === 1 ? `1 コア` : `${count} コア`),
             coresOfFree: ({ count, free }: { count: number; free: string }) => `空き ${free} コア中 ${count}`,
+            coresAllocated: ({ allocated, total }: { allocated: string; total: string }) => `全 ${total} コアのうち ${allocated} コアを実行中の VM に割り当て済み`,
             amountOfFree: ({ amount, free }: { amount: string; free: string }) => `空き ${free} 中 ${amount}`,
             headroomUnknown: ({ computer }: { computer: string }) => `${computer} の空き CPU とメモリを確認できませんでした。`,
             exceedsFree: ({ computer }: { computer: string }) => `${computer} の現在の空きを超えています。`,

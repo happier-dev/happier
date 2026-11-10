@@ -93,7 +93,7 @@ describe('managed power admission across the signed Home route and controller', 
             }), requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
             createRedactionLease: () => ({ add() {}, close() {} }),
         });
-        let observation = ProviderObservationV1Schema.parse({ observedAt: 10, availability: 'present', power: 'unknown' });
+        let observation = ProviderObservationV1Schema.parse({ observedAt: 10, availability: 'present', power: 'stopped' });
         const effects: string[] = [];
         const results = { power: { kind: 'unknown' }, inspect: observation };
         const native = fixture({ privateNative: true, fixtureManifest: normalizePluginManifestV2(manifest),
@@ -104,6 +104,7 @@ describe('managed power admission across the signed Home route and controller', 
                 if (role !== 'power' || !input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Unexpected native effect');
                 effects.push(String(input.intent));
                 results.power = { kind: input.intent === 'stop' ? 'confirmed' : 'unknown' };
+                if (input.intent === 'start') results.inspect = { ...observation, power: 'unknown' };
             } });
         const driver = createManagedMachineAcquisitionDriver({ token, credentials: { token, encryption: null },
             serverUrl: 'https://power-admission.test', homeId, controller, externalActionMachineRequestPrivateKey: keys.secretKey,

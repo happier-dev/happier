@@ -1,4 +1,6 @@
 import { readManagedCreationBirthInTx } from './managedCreationBirth';
+import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedControllerCurrentnessV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, type ManagedControllerSubmitInputV1, ManagedEnrollmentCorrelationV1Schema, ManagedBootstrapCredentialCreateV1Schema, type ManagedControllerCurrentnessV1, type ManagedControllerReportV1, type ManagedEnrollmentCorrelationV1, type ManagedBootstrapCredentialCreateV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, type ManagedControlAdmissionInputV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
@@ -24,7 +26,8 @@ import { applyMachineReplacement } from "@/app/machines/applyMachineReplacement"
 import { assertManagedWakeOriginCurrentInTx } from './managedWake';
 import { doesManagedNativeObservationSettleIntent } from './managedNativeObservation';
 import {
-    ManagedMachineError, requireCurrentManagedMachineInTx, resolveManagedRowDeclarationInTx,
+    ManagedMachineError, requireCurrentManagedMachineInTx, resolveManagedRowDeclarationInTx, resolveManagedDeclarationInTx,
+    requireActiveManagedResizeInTx,
     projectManagedMachine, invalidateManagedMachineInTx, sameManagedInput,
     createManagedMachineRetainedSchema,
     readManagedLaunchSnapshot,
@@ -185,7 +188,8 @@ export async function admitManagedControl(params: Readonly<{
         }
         // U1 has no saved-policy power/Move/retirement reconciliation. Retain
         // the sole installed/uncertain binding proof until exact release.
-        if (await tx.sessionTeamCredentialBinding.findFirst({ where: { nativeManagedId: row.id }, select: { sessionId: true } })) {
+        if (request.action !== MANAGED_RESIZE_ACTION_ID_V1
+            && await tx.sessionTeamCredentialBinding.findFirst({ where: { nativeManagedId: row.id }, select: { sessionId: true } })) {
             throw new ManagedMachineError('credential_unavailable');
         }
         await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId, controller });
@@ -194,9 +198,13 @@ export async function admitManagedControl(params: Readonly<{
         if (readManagedCurrentRequestId(row) === request.requestId) {
             if (admitted.currentAdmission?.kind !== 'control'
                 || !sameManagedInput(admitted.currentAdmission.request, request)) throw new ManagedMachineError("request_conflict");
-            return { machine: await projectManagedMachineInTx(tx, row), replayed: true };
+            return { machine: await projectManagedMachineInTx(tx, row), replayed: true,
+                ...(admitted.currentAdmission.resizeProvisioner ? { resizeProvisioner: admitted.currentAdmission.resizeProvisioner } : {}) };
         }
-        const expected = 'when' in input ? input.when === 'now' ? input.expectedRevision : row.intentRevision
+        // Resize executes the approved size even when another intent advanced
+        // during review. This revision is only the atomic row-write operand.
+        const expected = request.action === MANAGED_RESIZE_ACTION_ID_V1 ? row.intentRevision
+            : 'when' in input ? input.when === 'now' ? input.expectedRevision : row.intentRevision
             : 'expectedRevision' in input ? input.expectedRevision : input.expectedIntentRevision;
         if (row.intentRevision !== expected) throw new ManagedMachineError("intent_changed");
         const data: Prisma.ManagedMachineUpdateManyMutationInput = {
@@ -214,8 +222,13 @@ export async function admitManagedControl(params: Readonly<{
             if ((row.creationState !== "active" && !canceledCleanup)
                 || (!(row.allocation === "bound" && row.resource) && !pendingCleanup)) throw new ManagedMachineError("resource_mismatch");
             const launch = readManagedLaunchSnapshot(row.launch);
-            const declaration = await resolveManagedRowDeclarationInTx(tx, row);
-            if (!declaration || declaration.schemaVersion !== launch.schemaVersion) throw new ManagedMachineError("provider_unavailable");
+            const declaration = request.action === MANAGED_RESIZE_ACTION_ID_V1
+                ? await resolveManagedDeclarationInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
+                    controller, provider: launch.provider, reviewedFacts: row.reviewedFacts })
+                : await resolveManagedRowDeclarationInTx(tx, row);
+            if (!declaration || (request.action !== MANAGED_RESIZE_ACTION_ID_V1 && declaration.schemaVersion !== launch.schemaVersion)) {
+                throw new ManagedMachineError("provider_unavailable");
+            }
             if (request.action === "machines.managed.controller.update") {
                 if (declaration.billing.location !== "cloud") throw new ManagedMachineError("controller_unavailable");
                 if (request.input.controller) {
@@ -261,6 +274,8 @@ export async function admitManagedControl(params: Readonly<{
                     data.retention = policy.retention;
                     data.wakeOnAcceptedMessage = policy.wakeOnAcceptedMessage;
                 }
+            } else if (request.action === MANAGED_RESIZE_ACTION_ID_V1) {
+                data.admittedInput = { ...admitted, currentAdmission: { ...currentAdmission, resizeProvisioner: declaration.provisioner } };
             } else if (request.action === "machines.managed.rebuild") {
                 if (declaration.resourceKind !== 'devcontainer' || !declaration.retention.supportedIntents.includes('rebuild')
                     || !declaration.actions.rebuild) throw new ManagedMachineError("provider_unavailable");
@@ -281,7 +296,22 @@ export async function admitManagedControl(params: Readonly<{
         const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
         await invalidateManagedMachineInTx(tx, row);
         if (row.controllerMachineId !== current.controllerMachineId) await invalidateManagedMachineInTx(tx, current);
-        return { machine: await projectManagedMachineInTx(tx, current), replayed: false };
+        const retainedControl = readManagedAdmissionState(current.admittedInput).currentAdmission;
+        return { machine: await projectManagedMachineInTx(tx, current), replayed: false,
+            ...(retainedControl?.kind === 'control' && retainedControl.resizeProvisioner
+                ? { resizeProvisioner: retainedControl.resizeProvisioner } : {}) };
+    });
+}
+
+/** Store native resize observation under the active admitted job, without re-admitting approved work. */
+export async function reportManagedResize(input: ManagedControllerResizeReportV1) {
+    const canonical = ManagedControllerResizeReportV1Schema.parse(input);
+    return inManagedMachinePublicationTx(canonical, async tx => {
+        const row = await requireActiveManagedResizeInTx(tx, canonical);
+        if (!canonical.observation) return { machine: await projectManagedMachineInTx(tx, row) };
+        const current = await tx.managedMachine.update({ where: { id: row.id }, data: { observation: canonical.observation } });
+        await invalidateManagedMachineInTx(tx, current);
+        return { machine: await projectManagedMachineInTx(tx, current) };
     });
 }
 
@@ -406,15 +436,21 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
             && (row.controllerMachineId === null || sameManagedInput(readManagedController(row), pending.controller));
         const observedSettlement = doesManagedNativeObservationSettleIntent(pending.intent, currentObservation,
             previousObservation.success ? previousObservation.data : undefined, retryDelete);
+        // Only destruction or replacement owns cleanup. Power uncertainty
+        // remains in submittedEffect and its independent native observation.
+        const ownsCleanup = pending.intent === 'delete' || pending.intent === 'rebuild';
+        const preservesNewerCleanup = !ownsCleanup && (row.desired === 'delete' || row.desired === 'rebuild');
         if (canonical.result.kind !== "refused" && !observedSettlement) {
             // Retire transfers cleanup to the user; an unresolved native
             // effect retains its fact without reclaiming that responsibility.
-            if (row.archivedAt === null) data.cleanup = { disposition: "pending", reason: ('code' in canonical.result ? canonical.result.code : undefined) ?? "native_effect_unknown" };
+            if (row.archivedAt === null && !preservesNewerCleanup) data.cleanup = ownsCleanup
+                ? { disposition: "pending", reason: ('code' in canonical.result ? canonical.result.code : undefined) ?? "native_effect_unknown" }
+                : getActivePrismaRuntime().DbNull;
         } else {
             const { submittedEffect: _settled, ...currentAdmission } = admitted;
             data.admittedInput = currentAdmission;
             if (currentObservation?.availability === "absent") data.cleanup = getActivePrismaRuntime().DbNull;
-            else if (row.archivedAt === null) data.cleanup = canonical.result.kind === "refused"
+            else if (row.archivedAt === null && !preservesNewerCleanup) data.cleanup = canonical.result.kind === "refused" && ownsCleanup
                 ? { disposition: "unavailable", reason: canonical.result.code }
                 : retryDelete ? { disposition: 'pending', reason: 'delete_requested' } : getActivePrismaRuntime().DbNull;
         }

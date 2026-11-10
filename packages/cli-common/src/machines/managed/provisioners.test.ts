@@ -17,6 +17,15 @@ const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', cu
 
 describe('Account managed power role preparation', () => {
     const selected = [{ contribution: launch.provider, occurrenceId: 'selected', descriptor: provisioner, acquireExecutionTarget: 'account' as const }];
+    it('reviews resize from the current declaration even when creation facts predate resize', async () => {
+        const descriptor = { ...provisioner, actions: { ...provisioner.actions, resize: 'resize' } };
+        expect(await prepareManagedPowerProvisionerAdmissionV1(machine,
+            async () => [{ ...selected[0]!, descriptor }], 'machines.managed.resize')).toEqual({ children: [
+                { action: { pluginId: 'acme.compute', localId: 'observe' }, role: 'inspect' },
+                { action: { pluginId: 'acme.compute', localId: 'change-power' }, role: 'power' },
+                { action: { pluginId: 'acme.compute', localId: 'resize' }, role: 'resize' },
+            ] });
+    });
     it('reviews native diagnostics roles only for an explicit inspection read', async () => {
         const nativeProvisioner = { ...provisioner, bootstrapTransport: { kind: 'native' as const, exec: 'exec', putFile: 'put-file' } };
         const nativeMachine = { ...machine, reviewedFacts: { ...machine.reviewedFacts!, provisioner: nativeProvisioner } };

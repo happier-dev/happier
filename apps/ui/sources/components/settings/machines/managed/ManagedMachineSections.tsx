@@ -4,6 +4,7 @@ import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointe
 import { useRevealSelectedRow } from '@/components/ui/lists/collection/useRevealSelectedRow';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import type { DevcontainerEffectReviewV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { ManagedMachineActionOutputSchemasV1, type ManagedMachineActionIdV1, type ManagedGuestDiagnosticsV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -53,6 +54,8 @@ import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOp
 import { t } from '@/text';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
 import { ManagedReceiptColumns } from './ManagedReceiptPageLayout';
+import { ManagedMachineResize } from './ManagedMachineResize';
+import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { ManagedCreationScopeRuleSection } from './ManagedCreationScopeRuleSection';
 import { ManagedMachineKeepControl, type ManagedMachineKeepControlProps } from './ManagedMachineKeepControl';
@@ -149,13 +152,15 @@ export function ManagedMachineSections(props: SectionProps) {
     const controllerPresence = controller ? describeMachinePresenceLine(controller, presenceNowMs, undefined, reachabilityScope) : null;
     const requiredController = machine.controller && controller?.installationId === machine.controller.installationId ? controller : null;
     const provisionerPresentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: machine.controller,
-        provider: machine.launch.provider, schemaVersion: machine.launch.schemaVersion });
+        accountScope: reachabilityScope, provider: machine.launch.provider, schemaVersion: machine.launch.schemaVersion });
     // The controller is a machine of yours: it keeps the device glyph, never the provider's mark.
     const machineMark = <Icon name="desktop" />;
     const [pending, setPending] = React.useState<ManagedSectionActionId | null>(null);
     const pendingRef = React.useRef(false);
     const submittedDeleteApprovalIdRef = React.useRef<string | null>(null);
     const [error, setError] = React.useState<string | null>(null);
+    const [resizeReview, setResizeReview] = React.useState<ManagedMachineV1 | null>(null);
+    const [resizeResult, setResizeResult] = React.useState<ManagedMachineActionOutputV1<'machines.managed.resize'> | null>(null);
     const [guestDiagnostics, setGuestDiagnostics] = React.useState<ManagedGuestDiagnosticsV1 | null>(null);
     const [proposedPolicy, setProposedPolicy] = React.useState<MachineRetentionPolicyV1 | null>(null);
     // The exact submitted review remains cancelable while its durable native Ask is pending.
@@ -192,6 +197,8 @@ export function ManagedMachineSections(props: SectionProps) {
         setProposedPolicy(null);
         submittedPolicyRef.current = null;
         setDeleteReview(null);
+        setResizeReview(null);
+        setResizeResult(null);
         setRebuildReview(null);
         setMoveReview(null);
         setRemoveReviewKey(null);
@@ -503,7 +510,19 @@ export function ManagedMachineSections(props: SectionProps) {
             controller, reviewedPendingEffects: true }), { tag: 'ManagedMachineSections.move' });
     };
     // One Action serves Check now and Read log; the purpose says which button shows the work.
-    const inspect = () => { setInspectPurpose('check'); fireAndForget(run('machines.managed.inspect', target), { tag: 'ManagedMachineSections.inspect' }); };
+    const inspect = (onInspected?: (machine: ManagedMachineV1) => void) => {
+        setInspectPurpose('check');
+        fireAndForget(run('machines.managed.inspect', target, onInspected ? result => {
+            onInspected(ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse(result).machine);
+        } : undefined), { tag: 'ManagedMachineSections.inspect' });
+    };
+    const reviewResize = () => {
+        if (!canMutate) return;
+        setResizeResult(null);
+        // Check now refreshes pre-resize observations too; an old launch is never labelled as current size.
+        setResizeReview({ ...machine, observation: undefined });
+        inspect(inspected => setResizeReview(review => review ? { ...review, observation: inspected.observation } : null));
+    };
     const readGuestLogs = () => { setInspectPurpose('logs'); fireAndForget(run('machines.managed.inspect', { ...target, includeGuestDiagnostics: true }, result => {
         const inspected = ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse(result);
         setGuestDiagnostics(inspected.guestDiagnostics ?? { status: 'unavailable', code: 'provider_unavailable' });
@@ -605,6 +624,9 @@ export function ManagedMachineSections(props: SectionProps) {
                 onPress: () => fireAndForget(run('machines.managed.power.set', { ...target, when: 'now', expectedRevision: machine.intentRevision,
                     intent }), { tag: 'ManagedMachineSections.power' }) };
         }),
+        ...(machine.creationState === 'active' && !resourceGone ? [{ label: t('managedMachines.resize.title'),
+            testID: 'managed-machine.resize', tone: 'bordered' as const, disabled: !canMutate,
+            loading: pending === MANAGED_RESIZE_ACTION_ID_V1, onPress: reviewResize }] : []),
         ...(machine.creationState === 'active' && supportedIntents.includes('rebuild') ? [{ label: t('managedMachines.actions.rebuild'), testID: 'managed-machine.rebuild',
             tone: 'bordered' as const, disabled: !canRebuild,
             loading: pending === 'machines.provisioners.options' || pending === 'machines.managed.rebuild', onPress: reviewRebuild }] : []),
@@ -750,7 +772,26 @@ export function ManagedMachineSections(props: SectionProps) {
                     fireAndForget(runConfirmed('machines.managed.delete', input, undefined, undefined, currentDeleteReview),
                         { tag: 'ManagedMachineSections.delete' });
                 } }} /></View> : null;
-    return <ManagedReceiptColumns receipt={pageReceipt} compact={compact} testID="managed-machine.detail" receiptFollowUp={deleteReviewView}>
+    const resizeReviewView = resizeReview ? <ManagedMachineResize key={`${resizeReview.id}:${resizeReview.observation?.observedAt ?? 0}`}
+        machine={resizeReview} descriptor={provisionerPresentation.descriptor} disabled={!canMutate}
+        pending={pending === MANAGED_RESIZE_ACTION_ID_V1} onCancel={() => setResizeReview(null)}
+        onConfirm={size => fireAndForget(runConfirmed(MANAGED_RESIZE_ACTION_ID_V1, {
+            homeId: resizeReview.homeId, managedId: resizeReview.id,
+            size,
+        }, value => {
+            const output = ManagedMachineActionOutputSchemasV1['machines.managed.resize'].parse(value);
+            setResizeResult(output);
+            if (output.result.kind === 'confirmed') setResizeReview(null);
+        }), { tag: 'ManagedMachineSections.resize' })} /> : null;
+    const resizeResultView = resizeResult ? <SurfaceStateCard size="line" testID="managed-machine.resize-result"
+        kind={resizeResult.result.kind === 'confirmed' ? 'success' : 'warning'}
+        title={resizeResult.result.kind === 'confirmed' ? t('managedMachines.resize.confirmed')
+            : resizeResult.result.kind === 'unsupported' ? t('managedMachines.resize.unsupported')
+                : resizeResult.result.kind === 'unknown' ? t('managedMachines.resize.unknown')
+                    : describeManagedActionFailureDiagnostic(resizeResult.result.code)}
+        diagnosticCode={resizeResult.result.kind === 'confirmed' ? undefined : resizeResult.result.code} /> : null;
+    return <ManagedReceiptColumns receipt={pageReceipt} compact={compact} testID="managed-machine.detail"
+        receiptFollowUp={<>{resizeReviewView}{resizeResultView}{deleteReviewView}</>}>
         {pendingDeleteApprovalId
             ? <AttentionBanner testID="managed-machine.approval" tone="neutral"
                 title={resolveActionTitle('machines.managed.delete', null)} description={t('approvals.waitingForYou')}
@@ -768,7 +809,7 @@ export function ManagedMachineSections(props: SectionProps) {
             checking={pending === 'machines.managed.inspect' && inspectPurpose === 'check'}
             starting={pending === 'machines.managed.power.set'}
             providerAvailable={creationContext.providerAvailable}
-            mark={provisionerPresentation.markAt(MANAGED_PROVISIONER_MARK_SIZE.row)} controller={creationContext.controller} handlers={{ ...(props.current && !resourceConfirmedAbsent ? { checkNow: inspect } : {}),
+            mark={provisionerPresentation.markAt(MANAGED_PROVISIONER_MARK_SIZE.row)} controller={creationContext.controller} handlers={{ ...(props.current && !resourceConfirmedAbsent ? { checkNow: () => inspect() } : {}),
             ...(offerStartOnRow ? { start: startAction.onPress } : {}),
             ...(canCancelCreation && canRecoverCreation ? { cancel: cancelCreation } : {}),
             ...(recoveryConsoleUrl ? { openProvider: () => {

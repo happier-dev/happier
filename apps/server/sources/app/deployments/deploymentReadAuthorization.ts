@@ -5,6 +5,8 @@ import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
+import { loadDeploymentTargetRowsInTx } from './deploymentTargetLinkService';
+import { resolveProjectSourceAccessInTx } from '@/app/projects/sources/projectSourceService';
 import type { DeploymentAuthentication } from './deploymentAdmission';
 import type { DeploymentContentReference } from './deploymentStoredContent';
 import { admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
@@ -41,13 +43,42 @@ export async function readAdmittedRegistryAppUpdateScopeInTx(tx: Tx,
     return { environmentIds, artifactContents };
 }
 
+/** A finite Query spends its signed scope; these reads select content custody, not fresh permission. */
+export async function readAdmittedDeploymentDataQueryScopeInTx(tx: Tx,
+    admission: Extract<DeploymentReadAdmissionV1, { actionId: 'deployments.data.query' }>,
+): Promise<Readonly<{ artifactContents: readonly DeploymentContentReference[] }> | null> {
+    const select = { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } as const;
+    const [environment, link, receipt] = await Promise.all([
+        tx.deploymentEnvironment.findUnique({ where: { id: admission.environmentId }, select }),
+        tx.deploymentTargetLink.findFirst({ where: { id: admission.targetLinkId, environmentId: admission.environmentId }, select }),
+        tx.deployment.findFirst({ where: { id: admission.deploymentId, environmentId: admission.environmentId,
+            targetLinkId: admission.targetLinkId }, select }),
+    ]);
+    return environment && link && receipt ? { artifactContents: [environment, link, receipt] } : null;
+}
+
 /** Resource reads remain Source-authorized. Native occurrence and private builder custody stay with the installed owner. */
 export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     admission: DeploymentReadAdmissionV1, authentication: DeploymentAuthentication = {},
 ): Promise<Readonly<{ artifactIds: readonly string[] }> | null> {
     if (admission.actionId !== binding.actionId || binding.target.kind !== 'machine'
         || binding.target.machineId !== binding.machineId || admission.machineId !== binding.machineId
-        || admission.actionId !== 'deployments.health.current' && admission.installationId !== binding.installationId) return null;
+        || 'installationId' in admission && admission.installationId !== binding.installationId) return null;
+    if (admission.actionId === 'projects.readiness.read') {
+        const source = await resolveProjectSourceAccessInTx(tx, binding.accountId, admission.projectId, authentication);
+        if (!source.ok) return null;
+        const contents = await Promise.all(admission.environments.map(async demand => {
+            const environment = await tx.deploymentEnvironment.findUnique({ where: { id: demand.environmentId } });
+            if (!environment || environment.deletedAt || environment.projectSourceId !== admission.projectId
+                || environment.controllerMachineId !== admission.machineId || environment.revision !== demand.expectedRevision) return null;
+            const links = await loadDeploymentTargetRowsInTx(tx, environment.id);
+            const reads = [{ reference: environment, expectedStoredKind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, access: 'read' as const },
+                ...links.map(reference => ({ reference, expectedStoredKind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, access: 'read' as const }))];
+            const failures = await admitDeploymentStoredContentsInTx(tx, binding.accountId, source.owner, reads);
+            return failures.some(failure => failure !== null) ? null : reads.map(read => read.reference.contentArtifactId);
+        }));
+        return contents.some(content => content === null) ? null : { artifactIds: contents.flatMap(content => content ?? []) };
+    }
     const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
         admission.environmentId, authentication);
     if (!loaded.ok) return null;
@@ -59,7 +90,8 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
     environment: Readonly<{ id: string; deletedAt: Date | null; runtimeTargetLinkId: string | null;
         controllerMachineId: string | null; revision: number; contentArtifactId: string;
         contentHeaderVersion: number; contentBodyVersion: number }>,
-    admission: DeploymentReadAdmissionV1 | DeploymentRestartNativeAdmissionV1 | DeploymentRestoreNativeAdmissionV1 | DeploymentBackupNativeAdmissionV1,
+    admission: Exclude<DeploymentReadAdmissionV1, { actionId: 'projects.readiness.read' }> | DeploymentRestartNativeAdmissionV1
+        | DeploymentRestoreNativeAdmissionV1 | Omit<DeploymentRestoreNativeAdmissionV1, 'expectedRevision'> | DeploymentBackupNativeAdmissionV1,
     contentAdmission?: Readonly<{ actorAccountId: string; owner: ProjectSourceOwnerV1 }>,
 ): Promise<Readonly<{ artifactIds: readonly string[] }> | null> {
     if (admission.actionId === 'deployments.health.current') {
@@ -77,7 +109,8 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
             include: { machines: true } }),
         tx.deployment.findUnique({ where: { id: admission.deploymentId } }),
     ]);
-    const copy = admission.actionId === 'deployments.backups.restore' && admission.copy;
+    const copy = admission.actionId === 'deployments.backups.restore'
+        && admission.source.kind === 'repository' && admission.source.origin;
     if (!link || !receipt || !copy && (receipt.environmentId !== environment.id || receipt.targetLinkId !== link.id)) return null;
     if (admission.actionId !== 'deployments.logs.read') {
         if (environment.deletedAt || environment.runtimeTargetLinkId !== link.id || link.deletedAt || link.detachedAt
@@ -86,6 +119,7 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
             || !copy && !link.machines.some(member => member.machineId === admission.machineId
                 && member.installationId === admission.installationId && member.state === 'active')
             || ('expectedRevision' in admission && (admission.actionId === 'deployments.drift.read'
+                || admission.actionId === 'deployments.data.query'
                 || admission.actionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(admission.actionId)))
                 && admission.expectedRevision !== environment.revision) return null;
     }
@@ -108,4 +142,21 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
     // Historical logs deliberately do not infer captured build placement from
     // today's builder or active head. Their native owner proves that private fact.
     return { artifactIds: [environment.contentArtifactId, link.contentArtifactId, receipt.contentArtifactId] };
+}
+
+/** An admitted Project read selects current content membership without repeating Source authority. */
+export async function readAdmittedProjectReadinessScopeInTx(tx: Tx,
+    admission: Extract<DeploymentReadAdmissionV1, { actionId: 'projects.readiness.read' }>,
+): Promise<Readonly<{ artifactContents: readonly DeploymentContentReference[] }>> {
+    const artifactContents: DeploymentContentReference[] = [];
+    for (const ids of portableQueryChunks({ values: admission.environments.map(item => item.environmentId), bindingsPerValue: 1,
+        fixedBindings: 1 })) {
+        const environments = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...ids] }, projectSourceId: admission.projectId },
+            select: { id: true, contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } });
+        artifactContents.push(...environments);
+        const links = await tx.deploymentTargetLink.findMany({ where: { environmentId: { in: environments.map(environment => environment.id) } },
+            select: { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } });
+        artifactContents.push(...links);
+    }
+    return { artifactContents };
 }

@@ -5,6 +5,7 @@ import { MACHINE_PRESET_ACTION_IDS_V1, MachinePresetActionInputSchemasV1, Machin
 import { EPHEMERAL_RUNNER_ACTION_IDS_V1, EPHEMERAL_RUNNER_ACTION_TRANSPORTS_V1, EphemeralRunnerActionInputSchemasV1, EphemeralRunnerActionOutputSchemasV1, type EphemeralRunnerActionIdV1 } from '../../ephemeralRunner/actionsV1.js';
 import {
   MANAGED_MACHINE_ACTION_IDS_V1,
+  MANAGED_CONTROL_ACTION_IDS_V1,
   ManagedMachineActionInputSchemasV1,
   ManagedMachineActionOutputSchemasV1,
   managedMachineActionEndpointPathV1,
@@ -16,6 +17,7 @@ import { readMachineProvisionerActionRolesV1 } from '../../plugins/contributions
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { MANAGED_MACHINE_INPUT_FIELDS } from './machineInputHints.js';
 import { managedAcquireApprovalPresentation } from './managedAcquireApproval.js';
+import { isManagedResizeActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 
 const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.provisioners.list': 'List machine provisioners',
@@ -37,6 +39,7 @@ const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.managed.cancel': 'Cancel managed machine creation',
   'machines.managed.power.set': 'Change machine power',
   'machines.managed.rebuild': 'Rebuild Dev Container',
+  'machines.managed.resize': 'Resize managed machine',
   'machines.managed.retention.update': 'Change when a machine stops',
   'machines.managed.delete': 'Delete managed machine',
   'machines.managed.controller.update': 'Move machine management',
@@ -49,12 +52,12 @@ function createManagedMachineActionSpecs() {
     || actionId === 'machines.managed.credentials.install'
     || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || actionId === 'machines.managed.setup.skip'
     || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.cancel'
-    || ['machines.managed.power.set', 'machines.managed.rebuild', 'machines.managed.retention.update', 'machines.managed.delete', 'machines.managed.controller.update', 'machines.managed.retire'].includes(actionId);
+    || MANAGED_CONTROL_ACTION_IDS_V1.some(control => control === actionId);
   const account = actionId === 'machines.provisioners.list'
     || actionId === 'machines.provisioners.check' || actionId === 'machines.provisioners.options' || actionId === 'machines.managed.acquire'
     || actionId === 'machines.managed.list' || actionId === 'machines.managed.get' || actionId === 'machines.managed.birth.get'
     || actionId === 'machines.managed.cancel' || actionId === 'machines.managed.references.get' || actionId === 'machines.managed.setup.skip'
-    || actionId === 'machines.managed.power.set' || actionId === 'machines.managed.inspect'
+    || actionId === 'machines.managed.power.set' || isManagedResizeActionIdV1(actionId) || actionId === 'machines.managed.inspect'
     || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.delete';
   return {
     id: actionId, approval: { result: 'required' }, originalExecution: { terminalRoot: 'allowed' },
@@ -122,7 +125,7 @@ function createManagedMachineActionSpecs() {
     safety: effect ? 'danger' : 'safe',
     sideEffectClass: effect ? 'danger' : 'read',
     executionPlacement: account ? 'account' : 'machine',
-    ...(actionId === 'machines.managed.power.set' || actionId === 'machines.managed.inspect'
+    ...(actionId === 'machines.managed.power.set' || isManagedResizeActionIdV1(actionId) || actionId === 'machines.managed.inspect'
       || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.delete'
       ? { executionPlacements: ['account', 'machine'] as const } : {}),
     ...(actionId === 'machines.provisioners.list' || actionId === 'machines.provisioners.check'

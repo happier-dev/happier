@@ -48,6 +48,24 @@ async function activatedAction(id: string, exec: Pick<ExecService, 'run'>, ready
 }
 
 describe('activated public Lima actions', () => {
+  it('resizes through the declared native role and publishes inspected physical dimensions', async () => {
+    let cpus = resource.cpus;
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      if (request.args?.[0] === 'edit') cpus = Number(request.args[request.args.indexOf('--cpus') + 1]);
+      return processResult(new TextEncoder().encode(request.args?.[0] === 'list'
+        ? JSON.stringify({ ...native, status: 'Stopped', cpus }) : ''));
+    } };
+    const services = { exec, managedServices: { dependencies: { status: async (id: string) => ({ state: 'ready',
+      executable: { kind: 'managedDependency', id: { pluginId: LIMA_PLUGIN.manifest.id, localId: id } } }) } } } as unknown as PluginTestServicesFixture;
+    const kit = await createPluginTestkit({ manifest: LIMA_PLUGIN.manifest, module: LIMA_PLUGIN, services });
+    try {
+      expect(await kit.invokeAction('resize', { resource, size: { cpuCores: 4 } }, { surface: 'plugin' })).toEqual({ kind: 'confirmed' });
+      expect(await kit.invokeAction('inspect', { resource }, { surface: 'plugin' })).toMatchObject({ size: {
+        cpuCores: 4, memoryBytes: resource.memoryBytes, diskBytes: resource.diskBytes,
+      } });
+    } finally { await kit.dispose(); }
+  });
+
   it.each([
     { image: 'template:ubuntu', title: 'ubuntu.img' },
     { image: 'file:///srv/images/ubuntu.img', title: 'ubuntu.img' },

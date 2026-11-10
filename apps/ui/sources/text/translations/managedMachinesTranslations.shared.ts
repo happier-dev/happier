@@ -104,6 +104,20 @@ export const managedMachinesEn = {
         scopeControllerFallback: "Its controller",
     },
     managedMachines: {
+        resize: {
+            title: "Resize",
+            current: "Current size",
+            reviewed: "Size at creation",
+            memory: "Memory (GiB)",
+            disk: "Disk (GiB)",
+            restart: "This change restarts the machine. Running work will be interrupted.",
+            live: "This change can be applied without restarting the machine.",
+            growOnly: "This value can only increase.",
+            unsupported: "This provider cannot change this value.",
+            confirm: "Resize machine",
+            confirmed: "The new size was confirmed.",
+            unknown: "The new size could not be confirmed. Check the machine before trying again.",
+        },
         add: {
             createPath: "Create one",
             connect: "Connect",
@@ -297,6 +311,7 @@ export const managedMachinesEn = {
             asCreated: "As it was created",
             cores: ({ count }: { count: number }) => (count === 1 ? `1 core` : `${count} cores`),
             coresOfFree: ({ count, free }: { count: number; free: string }) => `${count} of ${free} free cores`,
+            coresAllocated: ({ allocated, total }: { allocated: string; total: string }) => `${allocated} of ${total} total cores allocated to running VMs`,
             amountOfFree: ({ amount, free }: { amount: string; free: string }) => `${amount} of ${free} free`,
             headroomUnknown: ({ computer }: { computer: string }) => `How much CPU and memory ${computer} has free couldn’t be checked.`,
             exceedsFree: ({ computer }: { computer: string }) => `Needs more than ${computer} has free right now.`,

@@ -98,6 +98,20 @@ export const managedMachines: ManagedMachinesTranslations = {
         scopeControllerFallback: "Её контроллер",
     },
     managedMachines: {
+        resize: {
+            title: "Изменить размер",
+            current: "Текущий размер",
+            reviewed: "Размер при создании",
+            memory: "Память (GiB)",
+            disk: "Диск (GiB)",
+            restart: "Это изменение перезапустит машину и прервёт текущую работу.",
+            live: "Это изменение можно применить без перезапуска.",
+            growOnly: "Это значение можно только увеличить.",
+            unsupported: "Этот провайдер не может изменить это значение.",
+            confirm: "Изменить размер машины",
+            confirmed: "Новый размер подтверждён.",
+            unknown: "Не удалось подтвердить новый размер. Проверьте машину перед повторной попыткой.",
+        },
         add: {
             createPath: "Создать",
             connect: "Подключить",
@@ -291,6 +305,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             asCreated: "Как была создана",
             cores: ({ count }: { count: number }) => (count === 1 ? `1 ядро` : `Ядер: ${count}`),
             coresOfFree: ({ count, free }: { count: number; free: string }) => `${count} из ${free} свободных ядер`,
+            coresAllocated: ({ allocated, total }: { allocated: string; total: string }) => `${allocated} из ${total} ядер выделено работающим виртуальным машинам`,
             amountOfFree: ({ amount, free }: { amount: string; free: string }) => `${amount} из ${free} свободно`,
             headroomUnknown: ({ computer }: { computer: string }) => `Не удалось проверить свободные процессор и память на ${computer}.`,
             exceedsFree: ({ computer }: { computer: string }) => `Нужно больше, чем сейчас свободно на ${computer}.`,

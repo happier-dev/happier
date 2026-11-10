@@ -88,16 +88,21 @@ describe('public Lima process transport', () => {
       .rejects.toMatchObject({ code: 'LIMA_INSPECT_UNAVAILABLE' });
   });
 
-  it.each([false, true])('retains bounded projected stderr for failed or cancelled start (cancelled=%s)', async cancelled => {
+  it.each([
+    { command: 'restart', code: 'lima_start_failed', cancelled: false },
+    { command: 'restart', code: 'lima_start_failed', cancelled: true },
+    { command: 'edit', code: 'lima_resize_failed', cancelled: false },
+    { command: 'edit', code: 'lima_resize_failed', cancelled: true },
+  ])('retains projected stderr for failed or cancelled $command (cancelled=$cancelled)', async ({ command, code, cancelled }) => {
     const stderr = `token=private-token ${'x'.repeat(10_100)} failed to open "/private/secret/image": no such file or directory`;
     const exec: Pick<ExecService, 'run'> = { run: async () => ({ ...success(),
       termination: { observed: { kind: 'exit', exitCode: cancelled ? 0 : 1 }, requestedBy: cancelled ? { kind: 'abort' } : { kind: 'none' } },
       stderr: new TextEncoder().encode(stderr),
     }) };
     const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
-    const error = await executor.capture('limactl', ['restart', identity.instance]).catch(error => error);
-    expect(error).toMatchObject({ code: 'lima_start_failed', nativeCause: { localCause: 'native_command_failed',
-      command: 'restart', exitCode: cancelled ? null : 1, stderrTruncated: true } });
+    const error = await executor.capture('limactl', [command, identity.instance]).catch(error => error);
+    expect(error).toMatchObject({ code, nativeCause: { localCause: 'native_command_failed',
+      command, exitCode: cancelled ? null : 1, stderrTruncated: true } });
     expect(error.nativeCause.stderr.length).toBeLessThanOrEqual(10_000);
     expect(error.nativeCause.stderr).toContain('no such file or directory');
     expect(error.nativeCause.stderr).not.toContain('/private/secret');

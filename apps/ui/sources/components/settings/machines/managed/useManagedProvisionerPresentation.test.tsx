@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Text } from 'react-native';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createMachineFixture, createValidPluginBrandPngFixture, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -9,6 +9,10 @@ import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHo
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useManagedProvisionerPresentation } from './useManagedProvisionerPresentation';
+import { PluginAccountAvailabilityIntentReadResponseV1Schema, PluginPortableReleaseManifestV1Schema,
+    readDeclaredPackageAssetsV1 } from '@happier-dev/protocol/plugins/availability';
+import { clearPluginAccountAvailabilityProjection, readPluginAccountAvailability, replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
+import { PLUGIN_MANIFEST } from '../../../../../../../packages/plugins/machine-vercel/src/manifest';
 
 const bundledMarks = vi.hoisted(() => [] as { pluginId: string; resourceId: string; releaseVersion: string; displayName: string; digest: string; bytes: Uint8Array }[]);
 // App-published artwork is an asset boundary; keep the brand admission and rendering real.
@@ -35,6 +39,38 @@ function Presentation(props: Readonly<{ icon: string; pluginId?: string }>) {
 }
 
 describe('managed provisioner presentation', () => {
+    it('presents resize reasons from the already-selected custom Account provisioner', async () => {
+        const original = PLUGIN_MANIFEST.contributes.machineProvisioners![0]!;
+        const manifest = PluginPortableReleaseManifestV1Schema.parse({ ...PLUGIN_MANIFEST, id: 'custom.compute.resize',
+            contributes: { ...PLUGIN_MANIFEST.contributes, machineProvisioners: [{ ...original, resize: {
+                cpuCores: { kind: 'unsupported', code: 'account_cpu_unsupported' },
+                memoryBytes: { kind: 'unsupported', code: 'account_memory_unsupported' },
+                diskBytes: { kind: 'unsupported', code: 'account_disk_unsupported' },
+            } }] } });
+        const scope = { serverId: 'account-resize-presentation', accountId: 'owner' };
+        // Account Availability HTTP is the declaration boundary. Its real scoped
+        // projection and selected-manifest resolver remain beneath the hook.
+        const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1,
+            hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+            intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true,
+                offlineUiHosting: 'enabled', writableCollections: [], revision: 'intent-1' },
+            release: { ref: { pluginId: manifest.id, version: manifest.version },
+                archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest,
+                collectionContracts: [], uiSlots: [], packageAssetArchive: {
+                    archiveDigestSha256: `sha256:${'b'.repeat(64)}`,
+                    resources: readDeclaredPackageAssetsV1(manifest)!.map(resource => ({ ...resource,
+                        byteSize: 1, digestSha256: `sha256:${'c'.repeat(64)}` })),
+                } }, packageAssets: [], uiArtifacts: [],
+        });
+        onTestFinished(clearPluginAccountAvailabilityProjection);
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
+            intentReads: [{ pluginId: manifest.id, response }], materializations: [], snapshots: [] } });
+        expect(readPluginAccountAvailability(scope).readCurrentAccountExecution(manifest.id).kind).toBe('available');
+        const hook = await renderHook(() => useManagedProvisionerPresentation({ serverId: scope.serverId, accountScope: scope,
+            provider: { pluginId: manifest.id, localId: original.id }, schemaVersion: original.schemaVersion }));
+        expect(hook.getCurrent().descriptor?.resize?.diskBytes).toEqual({ kind: 'unsupported', code: 'account_disk_unsupported' });
+        await hook.unmount();
+    });
     it('does not render Preset presenters for resource-only publications, but observes installation replacement', async () => {
         await selectActiveTestHomeForTests();
         const serverId = getActiveServerSnapshot().serverId;

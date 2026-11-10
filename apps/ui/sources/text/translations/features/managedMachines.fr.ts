@@ -98,6 +98,20 @@ export const managedMachines: ManagedMachinesTranslations = {
         scopeControllerFallback: "Son contrôleur",
     },
     managedMachines: {
+        resize: {
+            title: "Redimensionner",
+            current: "Taille actuelle",
+            reviewed: "Taille à la création",
+            memory: "Mémoire (GiB)",
+            disk: "Disque (GiB)",
+            restart: "Cette modification redémarre la machine et interrompt le travail en cours.",
+            live: "Cette modification ne nécessite pas de redémarrage.",
+            growOnly: "Cette valeur peut seulement augmenter.",
+            unsupported: "Ce fournisseur ne peut pas modifier cette valeur.",
+            confirm: "Redimensionner la machine",
+            confirmed: "La nouvelle taille a été confirmée.",
+            unknown: "La nouvelle taille n’a pas pu être confirmée. Vérifiez la machine avant de réessayer.",
+        },
         add: {
             createPath: "En créer une",
             connect: "Connecter",
@@ -291,6 +305,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             asCreated: "Telle qu’elle a été créée",
             cores: ({ count }: { count: number }) => (count === 1 ? `1 cœur` : `${count} cœurs`),
             coresOfFree: ({ count, free }: { count: number; free: string }) => `${count} sur ${free} cœurs libres`,
+            coresAllocated: ({ allocated, total }: { allocated: string; total: string }) => `${allocated} cœurs sur ${total} au total alloués aux VM en cours d’exécution`,
             amountOfFree: ({ amount, free }: { amount: string; free: string }) => `${amount} sur ${free} libres`,
             headroomUnknown: ({ computer }: { computer: string }) => `Le processeur et la mémoire libres sur ${computer} n’ont pas pu être vérifiés.`,
             exceedsFree: ({ computer }: { computer: string }) => `Demande plus que ce que ${computer} a de libre en ce moment.`,

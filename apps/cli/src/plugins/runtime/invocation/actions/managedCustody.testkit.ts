@@ -6,9 +6,9 @@ import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-
 import {
     defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, MachineProvisionerCheckResultProtocolV1Schema,
     MachineProvisionerOptionsResultProtocolV1Schema, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCleanupObservationV1Schema,
-    MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
+    MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerResizeResultV1Schema,
     MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema,
-    MachineProvisionerNativeCredentialApplyResultV1Schema,
+    MachineProvisionerNativeCredentialApplyResultV1Schema, MachineProvisionerSnapshotResultV1Schema,
     type MachineProvisionerContributionV1,
 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
@@ -31,8 +31,9 @@ import type { PluginInvocationServicesFactoryParams } from '../services/unavaila
 
 export const pluginId = 'acme.compute';
 const occurrenceId = createPluginRuntimeOccurrenceId(pluginId);
-export const roles = ['acquire', 'bootstrap', 'exec', 'putFile', 'power', 'destroy', 'rebuild'] as const;
-export function roleActionId(role: typeof roles[number] | 'reconcile') { return role === 'putFile' ? 'put-file' : role; }
+export const roles = ['acquire', 'bootstrap', 'exec', 'putFile', 'power', 'destroy', 'rebuild', 'resize'] as const;
+type NativeFixtureRole = typeof roles[number] | 'reconcile' | 'snapshot';
+export function roleActionId(role: NativeFixtureRole) { return role === 'putFile' ? 'put-file' : role; }
 const native = defineProtocolObject({}, { policy: 'closed' });
 const nativeOperation = defineProtocolObject({ requestId: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
 export const nativeOperationValue = { requestId: 'request-1' } as const;
@@ -46,6 +47,8 @@ const roleSchemas = {
     power: { input: nativeSchemas.powerInput, result: MachineProvisionerPowerResultV1Schema },
     destroy: { input: nativeSchemas.resourceInput, result: MachineProvisionerPowerResultV1Schema },
     rebuild: { input: nativeSchemas.rebuildInput, result: nativeSchemas.rebuildResult },
+    resize: { input: nativeSchemas.resizeInput, result: MachineProvisionerResizeResultV1Schema },
+    snapshot: { input: nativeSchemas.snapshotInput, result: MachineProvisionerSnapshotResultV1Schema },
     exec: { input: nativeSchemas.execInput, result: MachineProvisionerNativeExecResultV1Schema },
     'put-file': { input: nativeSchemas.putFileInput, result: MachineProvisionerPutFileResultV1Schema },
     'native-credential-apply': { input: nativeSchemas.nativeCredentialApplyInput, result: MachineProvisionerNativeCredentialApplyResultV1Schema },
@@ -58,6 +61,7 @@ export function roleInput(localId: string): JsonValue {
     if (localId === 'put-file') return { resource: {}, guestPath: '/fixture', bytesBase64: '' };
     if (localId === 'power') return { resource: {}, intent: 'delete' };
     if (localId === 'rebuild') return { resource: {}, reviewedEffectDigest: 'reviewed' };
+    if (localId === 'resize') return { resource: {}, size: { cpuCores: 2 } };
     return ['bootstrap', 'inspect', 'destroy'].includes(localId) ? { resource: {} } : {};
 }
 export function roleResult(localId: string): JsonValue {
@@ -66,7 +70,10 @@ export function roleResult(localId: string): JsonValue {
     if (localId === 'acquire' || localId === 'reconcile' || localId === 'rebuild') return { kind: 'bound', resource: { contributionRef: { pluginId, localId: 'vm' }, schemaVersion: 1, value: {} } };
     if (localId === 'bootstrap') return { kind: 'native', transport: { contributionRef: { pluginId, localId: 'vm' }, schemaVersion: 1 } };
     if (localId === 'inspect') return { observedAt: 0, availability: 'present' };
-    if (['power', 'destroy', 'put-file'].includes(localId)) return { kind: 'confirmed' };
+    if (localId === 'snapshot') return { kind: 'confirmed', snapshotId: 'snapshot-1',
+        coverage: { rootDisk: true, attachedVolumes: false }, consistency: 'running',
+        cost: { kind: 'billed', source: 'https://example.test/snapshot-pricing' } };
+    if (['power', 'destroy', 'put-file', 'resize'].includes(localId)) return { kind: 'confirmed' };
     if (localId === 'exec') return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } }, stdoutBase64: '', stderrBase64: '', stdoutTruncated: false, stderrTruncated: false };
     return { completed: localId };
 }
@@ -80,6 +87,7 @@ export function fixture(options: Readonly<{
     bootstrapCredential?: 'ssh' | 'native-token';
     nativeCredentialService?: boolean;
     nativeCredentialDelivery?: boolean;
+    snapshot?: boolean;
     onNativeCredentialApply?: (context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
     createHostServiceBinding?: CreatePluginInvocationServiceBinding;
     hostServiceAdapters?: Pick<PluginInvocationServicesFactoryParams, 'exec' | 'http' | 'connectedAccounts'>;
@@ -93,11 +101,11 @@ export function fixture(options: Readonly<{
     continueAcquire?: boolean;
     cleanupObservation?: { kind: 'confirmed' | 'retryable' } | { kind: 'unknown'; code?: string };
     repairAction?: boolean;
-    nativeRoleResults?: Partial<Record<typeof roles[number] | 'check' | 'inspect' | 'reconcile', JsonValue>>;
+    nativeRoleResults?: Partial<Record<NativeFixtureRole | 'check' | 'inspect', JsonValue>>;
     supportedIntents?: MachineProvisionerContributionV1['retention']['supportedIntents'];
     platforms?: MachineProvisionerContributionV1['platforms'];
     onInspect?: (input: JsonValue | undefined, context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
-    onNativeRole?: (role: typeof roles[number] | 'reconcile', input: JsonValue | undefined,
+    onNativeRole?: (role: NativeFixtureRole, input: JsonValue | undefined,
         context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
     onOrdinary?: (context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
     fixtureManifest?: CanonicalPluginManifest;
@@ -130,7 +138,7 @@ export function fixture(options: Readonly<{
         : localId === 'ordinary' && repairSchemas ? repairSchemas
         : schemasFor(localId);
     const localIds = options.fixtureManifest?.contributes.actions.map(action => action.id)
-        ?? [...roles.map(roleActionId), 'check', 'options', 'inspect', 'ordinary', ...(options.nativeCredentialDelivery ? ['native-credential-apply'] : []), ...(options.reconciliation ? ['reconcile'] : []), ...(options.cleanupObservation ? ['cleanup'] : [])];
+        ?? [...roles.map(roleActionId), 'check', 'options', 'inspect', 'ordinary', ...(options.snapshot ? ['snapshot'] : []), ...(options.nativeCredentialDelivery ? ['native-credential-apply'] : []), ...(options.reconciliation ? ['reconcile'] : []), ...(options.cleanupObservation ? ['cleanup'] : [])];
     const dangerLevel = (localId: string) => options.dangerous && !['check', 'options', 'inspect', 'reconcile', 'cleanup'].includes(localId) ? 'writesRemote' as const : 'safe' as const;
     const registrations = localIds.map((localId): TargetActionInvocationRegistration => ({
         pluginId, pluginVersion: '1.0.0', occurrenceId,
@@ -164,7 +172,7 @@ export function fixture(options: Readonly<{
                 await options.onInspect?.(_input, context);
                 if (options.nativeRoleResults?.inspect) return options.nativeRoleResults.inspect;
             }
-            const role = [...roles, ...(options.reconciliation ? ['reconcile' as const] : [])].find((candidate) => roleActionId(candidate) === localId);
+            const role = [...roles, ...(options.snapshot ? ['snapshot' as const] : []), ...(options.reconciliation ? ['reconcile' as const] : [])].find((candidate) => roleActionId(candidate) === localId);
             if (role) {
                 await options.onNativeRole?.(role, _input, context);
                 if (options.nativeRoleResults && role in options.nativeRoleResults) return options.nativeRoleResults[role]!;
@@ -201,7 +209,14 @@ export function fixture(options: Readonly<{
                 schemaVersion: 1, platforms: options.platforms ?? ['darwin', 'linux', 'win32'], prerequisites: [],
                 launchSchema: native.jsonSchema, resourceSchema: native.jsonSchema,
                 billing: { location: 'cloud', stoppedBilling: 'unknown' }, retention: { supportedIntents: options.supportedIntents ?? ['delete'] },
-                actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', rebuild: 'rebuild' },
+                actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', rebuild: 'rebuild', resize: 'resize', ...(options.snapshot ? { snapshot: 'snapshot' } : {}) },
+                ...(options.snapshot ? { snapshot: { coverage: { rootDisk: true, attachedVolumes: false },
+                    cost: { kind: 'billed', source: 'https://example.test/snapshot-pricing' } } } : {}),
+                resize: {
+                    cpuCores: { kind: 'supported', requiresRestart: false, changes: 'any' },
+                    memoryBytes: { kind: 'supported', requiresRestart: false, changes: 'any' },
+                    diskBytes: { kind: 'supported', requiresRestart: false, changes: 'grow-only' },
+                },
                 ...(options.nativeTransport === false ? {} : { bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' } }),
                 ...(options.bootstrapCredential ? { bootstrapCredential: { kind: options.bootstrapCredential } } : {}),
                 ...(options.nativeCredentialDelivery ? { nativeCredentialDelivery: { apply: 'native-credential-apply',

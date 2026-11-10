@@ -1,3 +1,4 @@
+import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedMachineActionInputSchemasV1, resolveManagedAcquireReviewV1,
     type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -193,6 +194,10 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
             if (error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError) return failure(error.code);
             throw error;
         }
+    }
+    if (!controller && actionId === MANAGED_RESIZE_ACTION_ID_V1) {
+        return validateExecution(await executeUiManagedAccountControl(params, { action: actionId,
+            input: ManagedMachineActionInputSchemasV1[actionId].parse(input) }));
     }
     if (!controller && actionId === 'machines.managed.power.set') {
         const power = ManagedMachineActionInputSchemasV1[actionId].parse(input);

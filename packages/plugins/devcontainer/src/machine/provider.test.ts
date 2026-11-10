@@ -31,12 +31,14 @@ function result(value: unknown, exitCode = 0): PluginProcessResult {
     stdout: new TextEncoder().encode(typeof value === 'string' ? value : JSON.stringify(value)), stderr: new Uint8Array(),
     stdoutTruncated: false, stderrTruncated: false };
 }
-function native(overrides: Readonly<{ up?: PluginProcessResult; running?: boolean; paused?: boolean; absent?: boolean; inventory?: PluginProcessResult; mounts?: unknown; id?: string; namespace?: string; canceledWrite?: boolean; replacementId?: string; rowScoped?: boolean }> = {}) {
+function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; up?: PluginProcessResult; update?: PluginProcessResult; running?: boolean; paused?: boolean; absent?: boolean; inventory?: PluginProcessResult; mounts?: unknown; id?: string; namespace?: string; canceledWrite?: boolean; replacementId?: string; rowScoped?: boolean }> = {}) {
   const requests: Parameters<ExecService['run']>[0][] = [];
   let running = overrides.running ?? true;
   let observedId = overrides.id ?? containerId;
   let removed = false;
   let managedMachineId = 'managed-a';
+  let cpuCores = 2;
+  let memoryBytes = 2 * 1024 ** 3;
   const exec: Pick<ExecService, 'run'> = { run: async request => {
     requests.push(request);
     if (request.args?.[0] === 'read-configuration') return result({ configuration: JSON.parse(await readFile(request.args[request.args.indexOf('--config') + 1]!, 'utf8')),
@@ -55,10 +57,19 @@ function native(overrides: Readonly<{ up?: PluginProcessResult; running?: boolea
       ? { ...result(''), termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'abort' } } }
       : result(overrides.namespace ?? 'coder\n/work/custom\n');
     if (request.args?.[0] === 'stop') running = false;
+    if (request.args?.[0] === 'update') {
+      if (overrides.update) return overrides.update;
+      const cpu = request.args.indexOf('--cpus');
+      const memory = request.args.indexOf('--memory');
+      if (cpu >= 0) cpuCores = Number(request.args[cpu + 1]);
+      if (memory >= 0) memoryBytes = Number(request.args[memory + 1]);
+      return result('');
+    }
     if (request.args?.[0] === 'rm') removed = true;
     if (request.args?.[0] === 'ps') return overrides.inventory ?? result(request.args.some(arg => arg.startsWith('label=')) ? `${observedId}\n` : '');
     if (request.args?.[0] === 'inspect' && overrides.absent) return result('', 1);
-    if (request.args?.[0] === 'inspect') return result([{ Id: observedId, State: { Running: running, Paused: overrides.paused ?? false },
+    if (request.args?.[0] === 'inspect') return result([{ Id: observedId, HostConfig: { ...(overrides.runtime === 'podman'
+      ? { CpuQuota: cpuCores * 100000, CpuPeriod: 100000 } : { NanoCpus: cpuCores * 1e9 }), Memory: memoryBytes }, State: { Running: running, Paused: overrides.paused ?? false },
       Config: { Labels: { 'devcontainer.local_folder': launch.workspaceFolder, 'devcontainer.config_file': launch.configPath,
         'happier.managed-machine': managedMachineId } },
       Mounts: overrides.mounts ?? [{ Type: 'bind', Source: '/host/project', Destination: '/work/custom' },
@@ -66,7 +77,7 @@ function native(overrides: Readonly<{ up?: PluginProcessResult; running?: boolea
     return result('');
   } };
   const tools = { exec,
-    docker: { kind: 'managedDependency', id: { pluginId: 'happier.devcontainer', localId: 'docker' } },
+    docker: { kind: 'managedDependency', id: { pluginId: 'happier.devcontainer', localId: overrides.runtime ?? 'docker' } },
     devcontainer: { kind: 'managedDependency', id: { pluginId: 'happier.devcontainer', localId: 'devcontainer' } },
     signal: new AbortController().signal, observedAt: 42 } satisfies Parameters<typeof createDevcontainerProvider>[0];
   return { requests, tools, provider: createDevcontainerProvider(tools) };
@@ -119,6 +130,37 @@ function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId
 }
 
 describe('Devcontainer native roles', () => {
+  it.each(['docker', 'podman'] as const)('updates CPU and memory live through %s and observes native limits', async runtime => {
+    const { provider, requests, tools } = native({ runtime });
+    const size = { cpuCores: 4, memoryBytes: 4 * 1024 ** 3 };
+    const services = { exec: tools.exec, managedServices: { dependencies: { status: async (id: string) =>
+      id === runtime ? { state: 'ready', executable: { kind: 'managedDependency', id: { pluginId: 'happier.devcontainer', localId: id } } }
+        : { state: 'missing', supported: true } } } } as unknown as PluginTestServicesFixture;
+    const kit = await createPluginTestkit({ manifest: DEVCONTAINER_PLUGIN.manifest, module: DEVCONTAINER_PLUGIN, services });
+    try {
+      expect(await kit.invokeAction('resize', { resource: { ...resource, runtime }, size }, { surface: 'plugin' })).toEqual({ kind: 'confirmed' });
+    } finally { await kit.dispose(); }
+    expect(requests.filter(request => request.args?.[0] === 'update').map(request => request.args))
+      .toEqual([['update', '--cpus', '4', '--memory', String(size.memoryBytes), containerId]]);
+    expect(requests.some(request => request.args?.[0] === 'stop' || request.args?.[0] === 'start')).toBe(false);
+    expect(await provider.inspect(resource)).toMatchObject({ power: 'running', size });
+  });
+
+  it('reports disk as unsupported without updating the container', async () => {
+    const { provider, requests } = native();
+    expect(await provider.resize(resource, { diskBytes: 30 * 1024 ** 3 }))
+      .toEqual({ kind: 'unsupported', dimension: 'diskBytes', code: 'container_disk_resize_unsupported' });
+    expect(requests.some(request => request.args?.[0] === 'update')).toBe(false);
+  });
+
+  it('retains a failed native update cause without confirming the requested size', async () => {
+    const reason = 'Memory limit should be smaller than already set memoryswap limit, update the memoryswap at the same time';
+    const { provider } = native({ update: { ...result('', 1), stderr: new TextEncoder().encode(reason) } });
+    expect(await provider.resize(resource, { memoryBytes: 8 * 1024 ** 3 })).toMatchObject({ kind: 'unknown', code: 'container_resize_failed',
+      nativeCause: { localCause: 'native_command_failed', command: 'update', exitCode: 1, stderr: reason } });
+    expect(await provider.inspect(resource)).toMatchObject({ size: { cpuCores: 2 } });
+  });
+
   it.each([
     { kind: 'inline', config: '{ // Saved JSONC configuration\n "image": "example:latest", "mounts": ["type=bind,source=/host/data,target=/data"], }' },
   ])('materializes a preset $kind configuration and creates a separate container per Machine', async configuration => {

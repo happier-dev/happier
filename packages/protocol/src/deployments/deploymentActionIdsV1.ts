@@ -1,4 +1,5 @@
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
+import { isProjectReadinessActionIdV1, type ProjectReadinessActionIdV1 } from '../actions/projectReadinessActionIdsV1.js';
 
 /** Persisted approval history only; never part of the live Action catalog. */
 export const RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 = 'deployments.publish' as const;
@@ -200,6 +201,13 @@ export function isDeploymentChildRootActionIdV1(value: string, admission?: Deplo
 export function isDeploymentReadActionIdV1(value: string): value is
   'deployments.health.current' | 'deployments.health.read' | 'deployments.drift.read' | 'deployments.logs.read' | typeof DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 {
   return value === 'deployments.health.current' || isDeploymentNativeReadActionIdV1(value) || isDeploymentDataQueryActionIdV1(value);
+}
+
+/** Finite signed read scope includes the Project composite without changing native read placement. */
+export function isDeploymentReadAdmissionActionIdV1(value: string): value is
+  'deployments.health.current' | 'deployments.health.read' | 'deployments.drift.read' | 'deployments.logs.read'
+  | typeof DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 | ProjectReadinessActionIdV1 {
+  return isDeploymentReadActionIdV1(value) || isProjectReadinessActionIdV1(value);
 }
 
 /** Account-placed deployment roots dispatched through their installed controller, in addition to spec-native Machine Actions. */
