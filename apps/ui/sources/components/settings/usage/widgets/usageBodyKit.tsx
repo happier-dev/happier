@@ -17,7 +17,9 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { HAPPIER_FRESHNESS_LINE_METRICS, HappierListOverflowFooter, HappierSkeletonBlock, USAGE_METER_METRICS, USAGE_SUMMARY_STAT_BASIS_PX, leadHappierListRows } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
+import { WidgetFrameBodyRowsContext, useWidgetBodyRowHeight } from '@/components/widgets/frame/widgetFrameBody';
 import {
   buildUsageAnalyticsViewModel,
   resolveResponseDayStreaks,
@@ -520,6 +522,31 @@ export function resolveUsageChartPlotPx(
 ): number {
   const chrome = resolveUsageChartChromePx(geometry?.width, options);
   return Math.max(minPx, Math.min(USAGE_CHART_FRAME_PX.plot, (geometry?.height ?? USAGE_CHART_FRAME_PX.plot + chrome) - chrome));
+}
+
+/**
+ * The room a Usage chart's frame declares for its body (its footprint's rows × the body row height), known in the
+ * first frame. A phone stacks bodies at their content's height and declares no room; outside a frame there is none.
+ */
+export function useUsageChartRoomPx(): number | undefined {
+  const rows = React.useContext(WidgetFrameBodyRowsContext);
+  const rowHeight = useWidgetBodyRowHeight();
+  const phone = useDeviceType() === 'phone';
+  return phone || !rows ? undefined : rows * rowHeight;
+}
+
+/**
+ * Every Usage chart's plot height, decided once before its first paint (sweep 1110 #8–#10): the declared room less
+ * the chart's chrome, or `minPx` on a phone, where no room is declared. Never the body's own measured box: a box
+ * that holds the chart feeds the chart's height back into itself, and the plot then relays out after it draws.
+ */
+export function useUsageChartPlotPx(minPx: number, options?: Readonly<{ peak?: boolean }>): number {
+  const width = useWidgetPresentation()?.geometry?.width;
+  const room = useUsageChartRoomPx();
+  const phone = useDeviceType() === 'phone';
+  if (phone) return minPx;
+  return resolveUsageChartPlotPx(room === undefined ? undefined
+    : { width: width ?? USAGE_CHART_FRAME_PX.narrowFrame, height: room }, minPx, options);
 }
 
 export function resolveUsageChartChromePx(frameWidth: number | undefined, options?: Readonly<{ peak?: boolean }>): number {
