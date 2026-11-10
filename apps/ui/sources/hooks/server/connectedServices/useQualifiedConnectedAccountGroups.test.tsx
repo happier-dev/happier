@@ -32,6 +32,9 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
     splitStreamingRevealTextParts: () => { throw new Error('Unexpected Markdown in pool hook'); },
 }));
 
+// Collect the real executor graph before case lifetimes; each Home still installs its own require bridge.
+await import('@/sync/ops/actions/defaultActionExecutor');
+
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
 const policy = ConnectedServiceAuthGroupPolicyV2Schema.parse({});
 function listPathFor(identity: typeof service) {
