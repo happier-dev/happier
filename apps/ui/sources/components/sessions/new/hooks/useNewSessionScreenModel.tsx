@@ -2533,6 +2533,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
     });
     const {
         permissionMode,
+        permissionModeForPersistence,
+        permissionModeExplicit,
         permissionModeLock,
         hasUserSelectedPermissionModeRef,
         permissionModeRef,
@@ -2540,6 +2542,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         handlePermissionModeChange,
         resolveDefaultPermissionMode,
     } = useNewSessionPermissionModeState({
+        persistedPermissionModeExplicit: persistedDraft?.permissionModeExplicit,
         agentType: agentPolicyType,
         sessionModeDescriptor: selectedBackendEntry?.agentCatalogEntry.sessionModeDescriptor,
         backendTarget,
@@ -2889,6 +2892,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         permissionMode,
         modelSelection,
         modelSelectionForPersistence: { value: modelSelectionForPersistence },
+        permissionModeForPersistence,
+        permissionModeExplicit,
         capabilitySelection,
         agentNewSessionOptions,
         settings: terminalSettings,

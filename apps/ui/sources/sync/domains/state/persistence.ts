@@ -206,6 +206,8 @@ export interface NewSessionDraft {
     placementCandidates?: readonly PluginUiSessionPlacementCandidateV1[];
     /** A placement chosen in this draft, rather than carried over from authoring memory. */
     placementExplicit?: boolean;
+    /** Explicit permission intent, including a deliberate Default selection. */
+    permissionModeExplicit?: boolean;
     executionTarget?: SessionAuthoringExecutionTargetV2 | null;
     temporaryComputerActivationRef?: TemporaryComputerActivationRefV1 | null;
     /** Device-local reviewed creation choice; resource admission remains with the managed owner. */
@@ -871,6 +873,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             ...(targetServerId ? { targetServerId } : {}),
             executionTarget,
             ...(parsed.placementExplicit === true ? { placementExplicit: true } : {}),
+            ...(parsed.permissionModeExplicit === true ? { permissionModeExplicit: true } : {}),
             ...(parsedActivationRef.success ? { temporaryComputerActivationRef: parsedActivationRef.data } : {}),
             ...(managedMachineSelection.success ? { managedMachineSelection: managedMachineSelection.data } : {}),
             ...(managedMachineAcquisition.success ? { managedMachineAcquisition: managedMachineAcquisition.data } : {}),

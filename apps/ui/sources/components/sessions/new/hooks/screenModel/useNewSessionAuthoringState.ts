@@ -81,6 +81,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
     selectedProfileId: string | null;
     resumeSessionId: string;
     permissionMode: PermissionMode;
+    permissionModeForPersistence?: PermissionMode;
+    permissionModeExplicit?: boolean;
     modelSelection: SessionModelSelectionV1 | null;
     modelSelectionForPersistence?: Readonly<{ value: SessionModelSelectionV1 | SessionModelSelectionV2 | null | undefined }>;
     placementForPersistence?: NewSessionPlacementForPersistence;
@@ -317,6 +319,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
             : '';
         return {
             ...persistedDraft,
+            permissionMode: params.permissionModeForPersistence ?? params.permissionMode,
+            ...(params.permissionModeExplicit === true ? { permissionModeExplicit: true } : {}),
             ...(params.placementForPersistence ? { executionTarget: params.placementForPersistence.executionTarget,
                 placementExplicit: params.placementForPersistence.placementExplicit } : {}),
             ...(params.spaceMembership === undefined ? {} : { spaceMembership: params.spaceMembership }),
@@ -338,6 +342,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.managedMachineSelection,
         params.managedMachineAcquisition,
         params.modelSelectionForPersistence,
+        params.permissionModeForPersistence,
+        params.permissionModeExplicit,
         params.placementForPersistence,
         params.automationRequestedByRoute,
         draftAgentId,

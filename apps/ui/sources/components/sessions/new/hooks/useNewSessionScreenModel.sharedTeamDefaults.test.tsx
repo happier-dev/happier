@@ -7,6 +7,7 @@ import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionO
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
 import type { SessionAccessEditorProps } from '@/components/sessions/access/sessionAccessEditorTypes';
 import type { NewSessionMachineSelectionContentProps } from '../components/NewSessionMachineSelectionContent';
 
@@ -37,7 +38,12 @@ describe('shared Team defaults through New Session', () => {
         { late: false, override: false }, { late: true, override: false }])('restores explicit placement=$override and Team label with late snapshot=$late', async ({ late, override }) => {
         const home = await network.addHome('https://shared-team-defaults.test', 'admin-a');
         const placement = { kind: 'preset', homeId: home.id, presetId: '0459116f-1a83-483a-b734-fdcfe8c7f2bf' } as const;
-        const policy = teamPolicyFixture({ managedDefaults: { team: { placement }, groups: {} }, managedDefaultsStatus: 'available' });
+        const agentTargetKey = 'agent:happier.agent.claude/claude';
+        const policy = teamPolicyFixture({ managedDefaults: { team: { placement,
+            permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' },
+            modelByAgentTargetKey: { [agentTargetKey]: SessionModelSelectionV1Schema.parse({ v: 1, updatedAt: 1,
+                ref: { agentTargetKey, providerConnectionId: null, modelId: 'sonnet' } }) },
+        }, groups: {} }, managedDefaultsStatus: 'available' });
         // A's projection cannot satisfy B's qualified read, even on the same Home.
         applyTeamProjection({ scope: { serverId: home.id, accountId: 'admin-a' }, address: { serverId: home.id, teamId: 'team-1' }, observedAt: 1,
             team: teamSummaryFixture({ policy, capabilities: teamCapabilitiesFixture({ manageSettings: true }) }) });
@@ -87,10 +93,21 @@ describe('shared Team defaults through New Session', () => {
         // Pick through the real New Session Machine picker, leave, then restore
         // the same draft through its repository reader (not a hand-built seed).
         if (override) await act(async () => picker.props.onSelectMachine(createMachineFixture({ id: 'machine-1', active: true, storageMode: 'plain' })));
+        expect(simple().permissionMode).toBe('read-only');
+        expect(simple().modelMode).toBe('sonnet');
+        if (override) await act(async () => {
+            simple().handlePermissionModeChange('default');
+            simple().setModelMode('default');
+        });
+        expect(simple().permissionMode).toBe(override ? 'default' : 'read-only');
+        expect(simple().modelMode).toBe(override ? 'default' : 'sonnet');
         if (override) expect(simple().selectedMachineId).toBe('machine-1');
         await model.unmount();
         const saved = readNewSessionDraftFromRepository({ scope, draftId: `shared-team-${late}-${override}` });
         expect(saved?.input).toBe('Continue the Team task');
+        expect(saved?.permissionModeExplicit).toBe(override ? true : undefined);
+        expect(saved?.permissionMode).toBe('default');
+        expect(saved?.modelSelection).toBe(override ? null : undefined);
         expect(saved?.access?.grants[0]?.subject).toEqual({ kind: 'team', teamId: 'team-1' });
         if (late) { teamArrival = createDeferred<void>(); resetTeamsSnapshotsForTests(); }
         // Returning from another page opens the draft without the old picker route handoff.
@@ -104,6 +121,8 @@ describe('shared Team defaults through New Session', () => {
             expect(current.kind === 'bound' ? current.state.kind : null).toBe('ready');
         }); });
         await binding.unmount();
+        expect(simple().permissionMode).toBe(override ? 'default' : 'read-only');
+        expect(simple().modelMode).toBe(override ? 'default' : 'sonnet');
         if (override) expect(simple().selectedMachineId).toBe('machine-1');
         const restoredChip = simple().agentInputExtraActionChips?.find(chip => chip.key === 'session-access');
         expect(restoredChip?.collapsedContentPopover?.label).toBe(team.name);

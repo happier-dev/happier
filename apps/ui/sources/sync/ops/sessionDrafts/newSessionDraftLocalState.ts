@@ -24,6 +24,7 @@ export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
     | 'backendNewSessionOptionStateByTargetKey'
     | 'windowsRemoteSessionLaunchModeOverride'
     | 'placementExplicit'
+    | 'permissionModeExplicit'
     | 'placementCandidates'
     | 'teamCredentialBindings'
     | 'composerAttachmentSeeds'
@@ -39,6 +40,7 @@ export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
 export function buildNewSessionDraftLocalState(draft: NewSessionDraft): NewSessionDraftLocalState {
     return {
         ...(draft.placementExplicit === true ? { placementExplicit: true } : {}),
+        ...(draft.permissionModeExplicit === true ? { permissionModeExplicit: true } : {}),
         ...(draft.instructionsDraft === undefined ? {} : { instructionsDraft: readSessionInstructionsAuthoringDraft(draft.instructionsDraft) }),
         entryIntent: draft.entryIntent ?? null,
         selectedSecretId: draft.selectedSecretId ?? null,

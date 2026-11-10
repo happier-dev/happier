@@ -147,6 +147,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
         targetServerId: executionTarget?.kind === 'machine' ? executionTarget.target.serverId : executionTarget?.serverId ?? managedTargetServerId,
         executionTarget,
         ...(localState?.placementExplicit === true ? { placementExplicit: true } : {}),
+        ...(localState?.permissionModeExplicit === true ? { permissionModeExplicit: true } : {}),
         ...(managedMachineSelection.success ? { managedMachineSelection: managedMachineSelection.data } : {}),
         ...(managedMachineAcquisition.success ? { managedMachineAcquisition: managedMachineAcquisition.data } : {}),
         ...(authoring.temporaryComputerActivationRef !== undefined

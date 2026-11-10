@@ -29,6 +29,7 @@ export function useNewSessionPermissionModeState(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
+    persistedPermissionModeExplicit?: boolean;
     selectedProfileId: string | null;
     profileMap: ReadonlyMap<string, AIBackendProfile>;
     enabledAgentIds: ReadonlyArray<AgentId>;
@@ -36,6 +37,8 @@ export function useNewSessionPermissionModeState(params: Readonly<{
     managedDefaults?: ManagedSessionDefaultsContext;
 }>): Readonly<{
     permissionMode: PermissionMode;
+    permissionModeForPersistence: PermissionMode;
+    permissionModeExplicit: boolean;
     permissionModeLock: OrganizationPolicyLock | null;
     hasUserSelectedPermissionModeRef: React.MutableRefObject<boolean>;
     permissionModeRef: React.MutableRefObject<PermissionMode>;
@@ -69,7 +72,8 @@ export function useNewSessionPermissionModeState(params: Readonly<{
     const persistedPermissionMode = params.hydratedPersistedAuthoringDraft?.permissionMode;
     const draftPermissionMode = isPermissionMode(tempPermissionMode)
         ? tempPermissionMode
-        : isPermissionMode(persistedPermissionMode) && persistedPermissionMode !== 'default'
+        : isPermissionMode(persistedPermissionMode) && (persistedPermissionMode !== 'default'
+            || params.persistedPermissionModeExplicit === true)
             ? persistedPermissionMode : undefined;
     const explicitPermissionMode = authoredPermissionMode ?? draftPermissionMode;
     const hasUserSelectedPermissionModeRef = React.useRef(explicitPermissionMode !== undefined);
@@ -113,6 +117,8 @@ export function useNewSessionPermissionModeState(params: Readonly<{
 
     return {
         permissionMode,
+        permissionModeForPersistence: explicitPermissionMode ?? 'default',
+        permissionModeExplicit: explicitPermissionMode !== undefined,
         permissionModeLock: decision.lock,
         hasUserSelectedPermissionModeRef,
         permissionModeRef,
