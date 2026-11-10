@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ownChromeHeaderLeft } from '@/components/navigation/ownChromeHeaderItems';
 import type { NativeStackNavigationOptions } from '@react-navigation/native-stack';
 import { useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
@@ -285,11 +286,8 @@ export function getSettingsStackScreenDefinitions(
                 hideOnTopLevel: false,
                 parentLabel: t,
             });
-            options.headerLeft = ({ tintColor }) => renderBack(tintColor);
-            // iOS 26 gives a bar's custom items a shared glass backing; the app's Back paints none (lab p5).
-            options.unstable_headerLeftItems = ({ tintColor }) => [
-                { type: 'custom', element: renderBack(tintColor), hidesSharedBackground: true },
-            ];
+            // The app's Back paints no iOS shared item glass (lab p5).
+            Object.assign(options, ownChromeHeaderLeft(({ tintColor }) => renderBack(tintColor)));
         }
         return {
             name: definition.name,

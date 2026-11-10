@@ -14,6 +14,7 @@ import { Typography } from '@/constants/Typography';
 import { HEADER_ACTIONS_GAP_PX, PageHeaderMenu, PageHeaderStateSwitch, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { readHappierPageOperation } from '@happier-dev/plugin-ui/presentation';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { CLEARED_HEADER_RIGHT, ownChromeHeaderRight } from '@/components/navigation/ownChromeHeaderItems';
 
 // Context controls can contain an entity's existing overflow (directly, in a View, or
 // in a setting anchor). Lift its operations into the navigation overflow instead of
@@ -214,7 +215,8 @@ export function useNavigationHeaderActions(input: Readonly<{
         if ((!primary && !cancel && !actions && !trailing) || !screen || typeof screen.setOptions !== 'function') return undefined;
         const options: Record<string, unknown> = {};
         if (primary || actions || trailing) {
-            options.headerRight = () => (
+            // The bar's controls carry their own chrome, so iOS's shared item glass stays off (one chrome).
+            Object.assign(options, ownChromeHeaderRight(() => (
                 <RoundButtonSizeScope size="normal"><View style={stylesheet.actions}>
                     {routeContextActions?.actions}
                     {foldedActions.barControls}
@@ -233,7 +235,7 @@ export function useNavigationHeaderActions(input: Readonly<{
                     ) : null}
                     {trailing}
                 </View></RoundButtonSizeScope>
-            );
+            )));
         }
         if (cancel) {
             options.headerLeft = () => (
@@ -256,7 +258,7 @@ export function useNavigationHeaderActions(input: Readonly<{
             const cleared: Record<string, unknown> = {};
             if (primary || actions || trailing) {
                 const retainedActions = routeContextActions?.readCurrentActions();
-                cleared.headerRight = retainedActions ? () => retainedActions : undefined;
+                Object.assign(cleared, retainedActions ? ownChromeHeaderRight(() => retainedActions) : CLEARED_HEADER_RIGHT);
             }
             if (cancel) cleared.headerLeft = undefined;
             for (const target of targets) target.setOptions(cleared);

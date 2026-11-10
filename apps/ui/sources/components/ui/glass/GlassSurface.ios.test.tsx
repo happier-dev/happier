@@ -52,20 +52,17 @@ describe('iOS material without blur', () => {
     expect(screen.findByType('GlassView').props.colorScheme).toBe('dark');
   });
 
-  it('grounds native floating glass in the app palette rather than the SDK default tint', async () => {
+  // Owner 2026-11-10: an opaque tint (dafbb56ffd) turned the tab bar and popovers into flat discs; even a hair of tint
+  // switches Liquid Glass to its tinted mode, darker than 0.2's clear glass (owner ~20:00). The glass is untinted, as
+  // in 0.2; the app appearance still decides its scheme, and panels carry their coat over it.
+  it('draws Liquid Glass untinted, as 0.2 did', async () => {
     liquid.available = true;
-    const { darkTheme } = await import('@/theme');
     const screen = await renderScreen(
       <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
         <GlassSurface><></></GlassSurface>
       </GlassMaterialSettingsProvider>,
     );
-    // UIKit chooses its own tint when omitted, independently of the app's floating surface paint. The tint
-    // carries the paint's hue at the material's own coat: an opaque tint turns the glass into a flat disc
-    // (owner, 2026-11-10: tab bar and View popover showed nothing behind them).
-    const tint = Color(String(screen.findByType('GlassView').props.tintColor));
-    expect(tint.rgb().round().array().slice(0, 3)).toEqual(Color(darkTheme.colors.edge.floatingFill).rgb().round().array().slice(0, 3));
-    expect(tint.alpha()).toBeLessThan(0.5);
+    expect(screen.findByType('GlassView').props.tintColor).toBeUndefined();
   });
 
   // Owner 2026-11-10: the tab bar's and the View popover's edges looked cut and doubled. Liquid Glass draws its own

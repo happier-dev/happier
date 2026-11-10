@@ -69,6 +69,20 @@ async function openContextActions(screen: Awaited<ReturnType<typeof renderScreen
 }
 
 describe('PageHeader primary action placement', () => {
+    // Owner 2026-11-10 (Artifacts Save): iOS 26 backs a bar's custom items with shared glass, so a Happier button
+    // there wore two chromes. The page's actions carry their own chrome and hide that backing.
+    it('publishes the phone actions as an iOS bar item without the shared glass backing', async () => {
+        await renderScreen(header(true, () => {}));
+        type Items = (props: { tintColor?: string; canGoBack: boolean }) => readonly Readonly<{ type: string; element?: React.ReactElement; hidesSharedBackground?: boolean }>[];
+        const published = setOptions.mock.calls.map((call) => call[0] as { unstable_headerRightItems?: Items }).filter((o) => o.unstable_headerRightItems);
+        const items = published.at(-1)?.unstable_headerRightItems?.({ canGoBack: true });
+        expect(items).toHaveLength(1);
+        expect(items![0]!.type).toBe('custom');
+        expect(items![0]!.hidesSharedBackground).toBe(true);
+        const screen = await renderScreen(items![0]!.element!);
+        expect(screen.findHostByTestId('pool-create')).not.toBeNull();
+    });
+
     it('folds entity operations and sibling controls into one working phone menu', async () => {
         const share = vi.fn();
         const render = (phone: boolean) => <DestinationInstanceHost tabId="role" ref={{ kind: 'settings', params: {} }}

@@ -1,9 +1,11 @@
 import * as React from 'react';
+import { ownChromeHeaderRight } from '@/components/navigation/ownChromeHeaderItems';
 import { NavigationContext } from '@react-navigation/native';
 import { PluginUiSetUnsavedChangesRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { useDestinationPageTitle } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { Platform, View } from 'react-native';
-import { Stack } from '@/components/appShell/workspace/destinationRoute';
+import { Stack, usePathname } from '@/components/appShell/workspace/destinationRoute';
+import { useIsAppDestinationRootPath } from '@/components/appShell/destinations/useCompactAppDestinations';
 import { useDestinationFocus, useDestinationRouter, useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
 
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
@@ -390,7 +392,11 @@ export function PluginPageContent(props: Readonly<{
         props.projectContext?.target,
         phoneTitleChrome,
     ]);
-    const headerOptions = React.useMemo(() => ({ headerTitle, headerRight: () => routeActions }), [headerTitle, routeActions]);
+    // A rail page's own route is a main screen: the tab bar is its way around, so its bar carries no Back (owner 11-10).
+    const mainScreen = useIsAppDestinationRootPath(usePathname());
+    // The page's controls (a Machine picker, its actions) carry their own chrome: no iOS shared item glass under them.
+    const headerOptions = React.useMemo(() => ({ headerTitle, ...(mainScreen ? { headerBackVisible: false } : {}),
+        ...ownChromeHeaderRight(() => routeActions) }), [headerTitle, mainScreen, routeActions]);
     // A phone's top-level collection page (an app page whose header is its Collection toolbar) leads with its name as
     // its large title under the navigation row, as the Inbox tab does (lab `merged-list` 390, `phone-P4`); the bar then
     // carries Back and the page's controls only. Wide layouts keep the name in the toolbar row.

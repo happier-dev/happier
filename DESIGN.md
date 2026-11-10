@@ -325,7 +325,9 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   the design, not a touch-target number.
 - **Shell grid.** On the desktop, every column's title (a sidebar, a list column) and the page title sit
   on one title row: the centre of the pane band, level with the rail's first icon. A column title's
-  top margin equals its left margin. Each column's text edge (title, row glyphs) continues up to
+  top margin equals its left margin. A column's own rows (pinned views, its destinations) stand under
+  its title, never above it. A pane band's title (a Session's) keeps the row, and its facts line
+  hangs beneath it. Each column's text edge (title, row glyphs) continues up to
   the title strip, where the first control's glyph stands on it. Owners: `resolveHappierTitleRowInsetPx`
   and the rail and strip metrics; no screen adds its own offset (owner, 2026-11-10).
 - Align icons optically, not only mathematically; asymmetric symbols often need correction.
@@ -400,9 +402,9 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   floating surface that coat everywhere, on web and native: what lies under a light menu or Share card is ink (a black
   button, text, field edges), and through the hair its blur reads as a grey ghost on white glass
   (2026-10-31, intake #44; native, NATIVE-SWEEP M3 2026-11-10). Dark floating glass keeps its coats.
-  A native panel coat is the role's own surface paint, never the ink; native Liquid Glass takes that
-  paint as a translucent tint, never an opaque one, so what lies behind still shows. Native glass has no
-  backdrop tone, so a dark menu or bar paints no hair coat over it: clear glass with its rim (owner, 2026-11-10).
+  A native panel coat is the role's own surface paint, never the ink. Native Liquid Glass stays untinted,
+  as in 0.2 (a tint darkens it, an opaque one makes it a flat disc), and native glass has no backdrop tone,
+  so a dark menu or bar paints no hair coat over it: clear glass with its rim (owner, 2026-11-10).
   Custom glass values, Solid and Reduce Transparency apply to both roles unchanged. On glass with a picture or the live desktop behind it, faint (secondary) ink takes a
   stronger step, primary ink at 70%, so it holds about 3:1 over a bright sky; ordinary pages and
   unbacked glass keep the theme's secondary ink.
@@ -750,8 +752,10 @@ live in the page-presentation owners in code.
   not shown there.
 - **A phone has one way around.** The tab bar holds the four tabs and More, and it does not move between
   tabs. Every tab opens on one head: the Home line, Activity and the avatar, with the page's large title
-  under them on the page edge. A destination More opens keeps the tab bar, with no tab shown as selected, and its
-  head always has a Back. A page with its own bottom bar folds the tab bar while that page is on screen.
+  under them on the page edge. A destination More opens keeps the tab bar and, while it is open, shows as a tab
+  just before More; More itself is never replaced, on the main bar and every page bar. More lists what is behind it
+  first, then what is on the bar under "Pinned", to open or take off. That destination's head always has a Back.
+  A page with its own bottom bar folds the tab bar while that page is on screen.
 - **Everything is findable.** Every setting a page renders is declared for search. A result names
   the setting and its location, and opening it brings the row into view.
 - **Status speaks only when it matters.** Healthy items stay quiet. A tinted banner appears only when

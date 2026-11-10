@@ -51,9 +51,16 @@ describe('SurfaceRim', () => {
         const { act } = await import('react');
         const screen = await renderScreen(<SurfaceRim role="floating" radius={10} border="modal" theme={darkTheme} />);
         const svg = () => screen.findAll((node) => String(node.type) === 'Svg')[0]!;
-        const layout = (width: number, height: number) => act(() => { svg().props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width, height } } }); });
+        // A plain view measures the surface: react-native-svg's view reported only its first layout (device probe).
+        const isSvg = (node: { type: unknown }) => String(node.type) === 'Svg' || (node.type as { displayName?: string })?.displayName === 'Svg';
+        expect(screen.findAll((node) => isSvg(node) && node.props.onLayout !== undefined).length).toBe(0);
+        const frame = () => screen.findAll((node) => String(node.type) === 'View' && typeof node.props.onLayout === 'function')[0]!;
+        const layout = (width: number, height: number) => act(() => { frame().props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height } } }); });
         await layout(370, 631);
         await layout(378, 634);
+        // react-native-svg sizes its view from width/height props: pinned to the first layout, the rim could never
+        // measure the settled size (device probe: Svg 370 inside a 378 surface). Its frame follows the surface.
+        expect([svg().props.width, svg().props.height]).toEqual([undefined, undefined]);
         const rects = screen.findAll((node) => String(node.type) === 'Rect');
         expect(rects.length).toBeGreaterThan(0);
         for (const rect of rects) expect([rect.props.width, rect.props.height]).toEqual([378, 634]);

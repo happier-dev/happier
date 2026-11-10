@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { StyleSheet, type LayoutChangeEvent } from 'react-native';
+import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { useUnistyles } from 'react-native-unistyles';
 import { happierSvgGradientStop } from '@happier-dev/plugin-ui/presentation';
@@ -60,7 +60,10 @@ export const SurfaceRim = React.memo(function SurfaceRim(props: Readonly<{
     const cy = props.anchor === 'bottom-left' ? 1 : 0;
     const anchored = (ellipse: string) => cy === 0 ? ellipse : `translate(0 ${cy}) ${ellipse} translate(0 ${-cy})`;
     return (
-        <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width={size?.width ?? '100%'} height={size?.height ?? '100%'} onLayout={handleLayout}>
+        // A plain view measures the surface (react-native-svg's view reports only its first layout on Fabric, and
+        // its width/height props would pin the view's own size); the drawing takes that measured size.
+        <View pointerEvents="none" style={StyleSheet.absoluteFill} onLayout={handleLayout}>
+        <Svg pointerEvents="none" style={StyleSheet.absoluteFill}>
             <Defs>
                 <RadialGradient id={`${id}l`} cx={0} cy={cy} r={1} gradientUnits="objectBoundingBox" gradientTransform={anchored(RIM_LIGHT_ELLIPSE)}>
                     <Stop offset={0} {...happierSvgGradientStop(edge.rimHi)} />
@@ -76,5 +79,6 @@ export const SurfaceRim = React.memo(function SurfaceRim(props: Readonly<{
             <Rect {...rect} fill="none" stroke={theme.colors.border[props.border]} strokeWidth={stroke} />
             <Rect {...rect} fill="none" stroke={`url(#${id}l)`} strokeWidth={stroke} />
         </Svg>
+        </View>
     );
 });

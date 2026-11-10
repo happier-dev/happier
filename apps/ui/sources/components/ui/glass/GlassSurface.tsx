@@ -213,8 +213,8 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
                 <GlassView
                     glassEffectStyle={props.glassEffectStyle ?? (material.blur === 'light' ? 'clear' : 'regular')}
                     colorScheme={theme.dark ? 'dark' : 'light'}
-                    // The surface's paint at its own coat: an opaque tint would turn the glass into a flat disc.
-                    tintColor={withMaterialOpacity(solidColor, material.opacity)}
+                    // Untinted, as in 0.2: any tint switches Liquid Glass to its darker tinted mode, and an opaque one
+                    // turns it into a flat disc (owner, 2026-11-10). Panels carry their coat over the glass instead.
                     // Liquid Glass draws its own rim along its own shape: it takes the surface's corners.
                     style={[StyleSheet.absoluteFillObject, { borderRadius }]}
                 />
