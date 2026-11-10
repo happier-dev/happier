@@ -79,7 +79,8 @@ it.each([
     let frameCount = 0;
     const profiles = createBrowserProfileStore({ storageRootDirectory: root,
         partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
-    const factory = createProductBrowserSidecarControlAdapterFactory({ profileStore: profiles,
+    const readSessionAccountId = (id: string) => id === sessionId ? account : null;
+    const factory = createProductBrowserSidecarControlAdapterFactory({ profileStore: profiles, readSessionAccountId,
         resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/fixture/chrome',
             discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
                 pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
@@ -132,7 +133,7 @@ it.each([
         daemonSessionMutationCustody: ownerCustody,
         onBrowserControlRoutesReady: value => { control = value; },
         onBrowserRecordingRuntimeReady: value => { recording = value; },
-    }, runtimeActionRouteProviderTarget: {}, setGuardBrowserResourceOwner: () => {},
+    }, readSessionAccountId, runtimeActionRouteProviderTarget: {}, setGuardBrowserResourceOwner: () => {},
         shutdownSignal: new AbortController().signal, resolveServerFeaturesSnapshot: () => ({ status: 'ready', features }) });
     let retained = 0;
     // Admitted host-private ingress fixture, never caller-authored Action input or mocked domain logic.

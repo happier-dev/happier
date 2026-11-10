@@ -12,7 +12,11 @@ export type BrowserCommandScope = Readonly<{
   signal?: AbortSignal;
   /** Containing operation's absolute deadline, in Date.now() milliseconds. */
   deadlineMs?: number;
-  requester?: Readonly<{ role?: NonNullable<RpcActionExecutorContext['machineAdmission']>['role'] }>;
+  requester?: Readonly<{
+    actorAccountId?: string;
+    custodianAccountId?: string;
+    role?: NonNullable<RpcActionExecutorContext['machineAdmission']>['role'];
+  }>;
 }>;
 
 /** Carry admitted custody to profile selection without forwarding credentials to CDP. */
@@ -23,7 +27,11 @@ export function browserCommandScope(context?: Pick<RpcActionExecutorContext,
     ?? context?.requesterSessionBootstrap?.savedSecretOperationContext.machineAdmission
     ?? requester?.savedSecretOperationContext.machineAdmission;
   return { signal: context?.signal,
-    ...(admission || context?.requesterSessionBootstrap || requester ? { requester: { role: admission?.role } } : {}) };
+    ...(admission || context?.requesterSessionBootstrap || requester ? { requester: {
+      actorAccountId: admission?.actorAccountId ?? context?.requesterSessionBootstrap?.attribution.accountId,
+      custodianAccountId: admission?.custodianAccountId,
+      role: admission?.role,
+    } } : {}) };
 }
 
 export type BrowserDaemonControlAdapterKind = Extract<

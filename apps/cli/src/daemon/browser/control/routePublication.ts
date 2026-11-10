@@ -60,8 +60,9 @@ export type DaemonBrowserStoragePurgeOwner = Readonly<{
 
 export function createBrowserRoutePublication({
   params, runtimeActionRouteProviderTarget, resolveServerFeaturesSnapshot,
-  setGuardBrowserResourceOwner, shutdownSignal,
+  setGuardBrowserResourceOwner, shutdownSignal, readSessionAccountId,
 }: Readonly<{
+  readSessionAccountId: (sessionId: string) => string | null;
   params: Readonly<{
 readMachineResourcesPolicy?: import('@/processes/toolIdleTimeouts').MachineResourcesPolicyReader;
 machineId: string;
@@ -326,6 +327,7 @@ setBrowserRecordingRoutesProvider?: (
           params.browserSidecarControlAdapterFactory ??
           createProductBrowserSidecarControlAdapterFactory({
             profileStore: browserProfileStore,
+            readSessionAccountId,
             readMachineResourcesPolicy: params.readMachineResourcesPolicy,
           });
         const browserSidecarControlAdapterResult =

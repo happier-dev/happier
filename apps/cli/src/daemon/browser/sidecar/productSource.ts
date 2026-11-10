@@ -59,6 +59,8 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
     resolveManagedCandidate?: typeof resolveManagedBrowserSidecarCandidate;
     createLaunchOwnerFactory?: CreateLaunchOwnerFactory;
     profileStore?: BrowserProfileStore;
+    /** Existing admitted Session attribution; absent ownership never grants guest access. */
+    readSessionAccountId?: (sessionId: string) => string | null;
     readMachineResourcesPolicy?: MachineResourcesPolicyReader;
     localWindowHost?: LocalBrowserWindowHost;
 }>): BrowserSidecarControlAdapterFactory {
@@ -139,9 +141,12 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             },
         };
         function canAccessSessionProfile(sessionId: string, scope?: BrowserSidecarCdpCommandScope, requestedProfileId?: string, existingProfile?: BrowserExistingProfile): boolean {
-            if (!scope?.requester || scope.requester.role === 'manage') return true;
+            const requester = scope?.requester;
+            if (!requester || requester.role === 'manage'
+                || requester.actorAccountId && requester.actorAccountId === requester.custodianAccountId) return true;
             // Mounted UI records belong to their adapter, outside the native profile store.
             if (existingProfile && !isBrowserDaemonControlAdapterKind(existingProfile.adapterKind)) return true;
+            if (!requester.actorAccountId || params.readSessionAccountId?.(sessionId) !== requester.actorAccountId) return false;
             if (existingProfile && !existingProfile.profileId) return false;
             const existing = sessions.get(sessionId);
             const profileId = existingProfile?.profileId ?? existing?.profileId;

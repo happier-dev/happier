@@ -66,6 +66,8 @@ it.each([
     const cdpCommands: string[] = [];
     let holdNextHistory: (() => Promise<void>) | undefined;
     const runtime = await createProductBrowserSidecarControlAdapterFactory({ profileStore: profiles,
+        readSessionAccountId: (sessionId: string) => sessionId === 'guest-session' || sessionId === 'raw-guest-session'
+            ? 'guest' : sessionId === 'owner-session' || sessionId === 'machine-session' ? 'owner' : null,
         resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',
             discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
                 pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
@@ -580,6 +582,6 @@ it.each([
         }
         const forgedSession = await open('guest-session', 'owner-session');
         expect(forgedSession.statusCode).toBe(200);
-        expect(forgedSession.json().result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+        expect(forgedSession.json().result).toMatchObject({ ok: false, errorCode: 'permission_denied' });
     } finally { for (const client of machineClients) client.shutdown(); await app.close(); await recording.stop(); await diagnosticsInteraction.dispose(); automation.dispose(); await runtime.dispose?.(); await rm(root, { recursive: true, force: true }); }
 });

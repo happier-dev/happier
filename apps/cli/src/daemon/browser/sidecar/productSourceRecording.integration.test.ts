@@ -281,6 +281,7 @@ describe.skipIf(!process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME)('managed browser
             onBrowserRecordingRuntimeReady: (runtime: BrowserRecordingDaemonRuntime | null) => { owners.recordingRuntime = runtime; },
         };
         const publication = createBrowserRoutePublication({ params, runtimeActionRouteProviderTarget: {},
+            readSessionAccountId: () => null,
             setGuardBrowserResourceOwner: () => {},
             shutdownSignal: new AbortController().signal,
             resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {

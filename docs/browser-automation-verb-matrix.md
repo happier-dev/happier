@@ -33,9 +33,11 @@ diagnostics and retention cleanup project only allowed targets.
 Saved context IDs use their captured source and native profile for attachment,
 clear and replacement, including after close or reopen. Selecting another view
 does not change the saved context's custody or prevent valid attachment by ID.
-The same predicate hides persistent-profile views from list and watch discovery.
-Their ephemeral Session browser remains usable, and owners and Manage requesters
-retain full profile control.
+The same predicate governs native streamed-source admission and list and watch
+discovery. A Use guest can access an ephemeral Browser only when the Session's
+existing requester attribution belongs to that Account; missing attribution denies
+access. Persistent-profile views remain unavailable to Use guests. The Machine
+custodian and Manage requesters retain their existing access.
 
 Browser address and navigation shortcuts use the existing keyboard command owner, including
 user rebindings. Native desktop guests, same-origin iframes and cooperative preview frames

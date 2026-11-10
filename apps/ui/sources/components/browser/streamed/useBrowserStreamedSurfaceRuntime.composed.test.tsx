@@ -246,11 +246,11 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         await network.addHome(home.serverUrl, home.accountId);
         network.setHttpResponder(async (input, init) => {
             const path = new URL(String(input)).pathname;
-            if (boundary.actionDispatch && path === '/v1/account/profile') {
+            if (path === '/v1/account/profile') {
                 const { AccountProfileSchema } = await import('@happier-dev/protocol/account/profile');
                 return Response.json(AccountProfileSchema.parse({ id: home.accountId }));
             }
-            if (boundary.actionDispatch && path === '/v1/machines/read-batch') {
+            if (path === '/v1/machines/read-batch') {
                 const { MachineReadBatchResponseV1Schema } = await import('@happier-dev/protocol/machines/machineReadBatchV1');
                 const { MACHINE_PLAIN_DATA_KEY_MARKER } = await import('@happier-dev/protocol/machines/machineStoredContent');
                 return Response.json(MachineReadBatchResponseV1Schema.parse({ results: [{ machineId: 'machine_1', status: 'found',
@@ -480,13 +480,22 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         await failed.unmount();
     });
 
-    it.each(['owner', 'use', 'manage'] as const)('streams the Action-opened managed Session profile for %s and keeps recording available', async role => {
+    it.each([
+        { role: 'owner', browserOwner: 'self' },
+        { role: 'use', browserOwner: 'self' },
+        { role: 'manage', browserOwner: 'foreign' },
+        { role: 'use', browserOwner: 'foreign' },
+        { role: 'use', browserOwner: 'other-guest' },
+    ] as const)('streams only the admitted $role viewer’s accessible $browserOwner Session profile', async ({ role, browserOwner }) => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-recording-profile-'));
         const profiles = createBrowserProfileStore({ storageRootDirectory: directory,
             partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: directory }) });
         const cdpListeners = new Set<BrowserSidecarCdpEventSubscriber>();
         let captureStarted = false;
         const factory = createProductBrowserSidecarControlAdapterFactory({ platform: 'linux', profileStore: profiles,
+            readSessionAccountId: (sessionId: string) => sessionId === view.browserSessionId
+                ? browserOwner === 'self' ? home.accountId : browserOwner === 'foreign' ? 'machine-owner' : 'other-guest'
+                : null,
             resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',
                 discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
                     pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
@@ -504,7 +513,9 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                     dispatchBrowserCommand: async () => ({ success: true }),
                     subscribeCdpEvents: listener => { cdpListeners.add(listener); return () => { cdpListeners.delete(listener); }; } } }),
             }) });
-        const runtime = await factory({ machineId: 'machine_1' });
+        const runtime = await factory({ machineId: 'machine_1', readMachineMemory: () => ({ reported: true,
+            totalBytes: 8 * 1024 ** 3, availableBytes: 8 * 1024 ** 3, usedBytes: 0,
+            pressure: { level: 'calm', source: 'none' } }) });
         if (!runtime.ok || !runtime.contextCapture) throw new Error('Managed runtime unavailable');
         const registry = createMachineLiveStreamCaptureRegistry();
         const producer = createBrowserCdpScreencastProducer({ contextCapture: runtime.contextCapture });
@@ -586,6 +597,21 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             });
             unmount = () => hook.unmount();
             await flushHookEffects({ cycles: 6, turns: 6 });
+            if (role === 'use' && browserOwner !== 'self') {
+                // A guest can present a known/stale source id directly. The mounted viewer must
+                // fail admission even when discovery previously supplied that exact source.
+                await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().picture?.unavailableReason)
+                    .toBe('capture_source_denied')); });
+                expect(captureStarted).toBe(false);
+                expect(boundary.requests).not.toContainEqual(expect.objectContaining({
+                    method: RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START,
+                }));
+                expect(routes.listViews(view.browserSessionId, { machineAdmission: admission })).toEqual([]);
+                expect(await routes.dispatchCommand({ kind: 'navigate', commandId: 'foreign-drive',
+                    browserSessionId: view.browserSessionId, viewId: view.viewId, url: 'https://attacker.test/' },
+                    { machineAdmission: admission })).toMatchObject({ status: 'failed', error: { code: 'profile_policy_denied' } });
+                return;
+            }
             await act(async () => { await vi.waitFor(() => expect(boundary.requests).toContainEqual(expect.objectContaining({
                 method: role === 'owner' ? RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START : RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START,
             }))); });
@@ -978,6 +1004,10 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         { retainedDuplicate: true, refused: false },
         { retainedDuplicate: false, refused: true },
     ])('saves binary downloads or surfaces their typed refusal through files.save (duplicate: $retainedDuplicate, refused: $refused)', async ({ retainedDuplicate, refused }) => {
+        const actionHome = await network.addHome(home.serverUrl, home.accountId, { serverIdentityId: 'srv_browser_stream' });
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        await restoreServerAccountForTest({ serverUrl: home.serverUrl, serverIdentityId: 'srv_browser_stream',
+            credentials: { token: actionHome.token }, request: network.request });
         boundary.maxFrameBytes = 8000;
         boundary.views = [daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
             supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } })];
@@ -1055,7 +1085,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                     policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }} />);
                 await flushHookEffects();
             }
-            await act(async () => { await interactions.props.onSaveDownload(interactions.props.interaction.downloads[0]); });
+            await screen.pressByTestIdAsync(`${interactions.props.testID}-downloads-binary-save`);
             if (refused) {
                 expect(requested).toEqual([8000]);
                 expect(click).not.toHaveBeenCalled();

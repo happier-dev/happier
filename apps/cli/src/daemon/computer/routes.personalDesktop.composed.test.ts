@@ -13,6 +13,7 @@ import './desktopX11Boundary.testkit';
 import { runMemberComputerRuntimeInternal } from './memberRuntimeInternal';
 import { createComputerRoutes, type ComputerActionContext } from './routes';
 import { createMachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
+import { projectPath } from '@/projectPath';
 
 const boundary = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock('node:child_process', async importOriginal => {
@@ -57,7 +58,9 @@ describe('personal desktop composed route and private process', () => {
     for (const key of ['TMPDIR', 'TMP', 'TEMP']) vi.stubEnv(key, process.env[key]);
     // Process inherits EventEmitter methods; spreading it removes listeners and
     // prevents the real worker from reporting an assertion or uncaught error.
-    vi.stubGlobal('process', Object.create(process, { execPath: { value: '/fixture/happier' } }));
+    // Keep the binary shape at the real asset root so the unmocked process
+    // terminator can load its shipped process-tree owner during cleanup.
+    vi.stubGlobal('process', Object.create(process, { execPath: { value: join(projectPath(), 'happier') } }));
     const launchedEnvironments: NodeJS.ProcessEnv[] = [];
     let nextDisplay = 80;
     let workerCount = 0;
