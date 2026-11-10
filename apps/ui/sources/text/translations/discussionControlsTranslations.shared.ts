@@ -4,6 +4,7 @@ type More = Readonly<{ first: string; count: number }>;
 /** The Discussion menu's check-in row and the composer's Send to chip (C3 DISC-17, DISC-18). */
 export const discussionControlsCopy = {
   en: {
+    incomingMessage: 'Incoming message',
     dontPause: 'Don’t pause this Discussion',
     inheritsTurns: ({ count }: Count) =>
       count === 1
@@ -19,6 +20,7 @@ export const discussionControlsCopy = {
     recipientsMore: ({ first, count }: More) => `${first} +${count}`,
   },
   ca: {
+    incomingMessage: 'Missatge entrant',
     dontPause: 'No posis en pausa aquesta discussió',
     inheritsTurns: ({ count }: Count) =>
       count === 1
@@ -34,6 +36,7 @@ export const discussionControlsCopy = {
     recipientsMore: ({ first, count }: More) => `${first} +${count}`,
   },
   de: {
+    incomingMessage: 'Eingehende Nachricht',
     dontPause: 'Diese Diskussion nicht pausieren',
     inheritsTurns: ({ count }: Count) =>
       count === 1
@@ -49,6 +52,7 @@ export const discussionControlsCopy = {
     recipientsMore: ({ first, count }: More) => `${first} +${count}`,
   },
   es: {
+    incomingMessage: 'Mensaje entrante',
     dontPause: 'No pausar esta discusión',
     inheritsTurns: ({ count }: Count) =>
       count === 1
@@ -64,6 +68,7 @@ export const discussionControlsCopy = {
     recipientsMore: ({ first, count }: More) => `${first} +${count}`,
   },
   fr: {
+    incomingMessage: 'Message entrant',
     dontPause: 'Ne pas mettre cette discussion en pause',
     inheritsTurns: ({ count }: Count) =>
       count === 1
@@ -77,6 +82,7 @@ export const discussionControlsCopy = {
     recipientsMore: ({ first, count }: More) => `${first} +${count}`,
   },
   it: {
+    incomingMessage: 'Messaggio in arrivo',
     dontPause: 'Non mettere in pausa questa discussione',
     inheritsTurns: ({ count }: Count) =>
       count === 1
@@ -92,6 +98,7 @@ export const discussionControlsCopy = {
     recipientsMore: ({ first, count }: More) => `${first} +${count}`,
   },
   ja: {
+    incomingMessage: '受信メッセージ',
     dontPause: 'このディスカッションを一時停止しない',
     inheritsTurns: ({ count }: Count) =>
       `設定に従う：${count} ターン後に一時停止`,
@@ -102,6 +109,7 @@ export const discussionControlsCopy = {
     recipientsMore: ({ first, count }: More) => `${first} +${count}`,
   },
   pl: {
+    incomingMessage: 'Wiadomość przychodząca',
     dontPause: 'Nie wstrzymuj tej dyskusji',
     inheritsTurns: ({ count }: Count) =>
       count === 1
@@ -115,6 +123,7 @@ export const discussionControlsCopy = {
     recipientsMore: ({ first, count }: More) => `${first} +${count}`,
   },
   pt: {
+    incomingMessage: 'Mensagem recebida',
     dontPause: 'Não pausar esta discussão',
     inheritsTurns: ({ count }: Count) =>
       count === 1
@@ -130,6 +139,7 @@ export const discussionControlsCopy = {
     recipientsMore: ({ first, count }: More) => `${first} +${count}`,
   },
   ru: {
+    incomingMessage: 'Входящее сообщение',
     dontPause: 'Не ставить это обсуждение на паузу',
     inheritsTurns: ({ count }: Count) =>
       `По вашей настройке: пауза после ходов: ${count}`,
@@ -140,6 +150,7 @@ export const discussionControlsCopy = {
     recipientsMore: ({ first, count }: More) => `${first} +${count}`,
   },
   'zh-Hans': {
+    incomingMessage: '收到的消息',
     dontPause: '不要暂停此讨论',
     inheritsTurns: ({ count }: Count) => `沿用你的设置：${count} 轮后暂停`,
     inheritsNever: '沿用你的设置：从不暂停',
@@ -149,6 +160,7 @@ export const discussionControlsCopy = {
     recipientsMore: ({ first, count }: More) => `${first} +${count}`,
   },
   'zh-Hant': {
+    incomingMessage: '收到的訊息',
     dontPause: '不要暫停此討論',
     inheritsTurns: ({ count }: Count) => `沿用你的設定：${count} 輪後暫停`,
     inheritsNever: '沿用你的設定：永不暫停',

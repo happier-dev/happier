@@ -15,3 +15,7 @@ export function isDiscussionActionIdV1(value: string): value is DiscussionAction
 export function isDiscussionReplyActionIdV1(value: string): value is 'discussion.reply' {
   return value === 'discussion.reply';
 }
+
+export function isDiscussionPostActionIdV1(value: string): value is 'discussion.post' {
+  return value === 'discussion.post';
+}

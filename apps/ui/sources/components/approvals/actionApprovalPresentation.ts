@@ -10,7 +10,9 @@ import type { RoleCatalogEntry } from '@/sync/domains/roles/roleCatalog';
 import { RoleActionInputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
 import { WidgetLayoutFragmentActionIdV1Schema, readWidgetApprovalPresentationV1 } from '@happier-dev/protocol/widgets';
 import { presentLocalServiceControlApproval, readLocalServiceControlSubject } from './localServiceControlApprovalPresentation';
-import type { ApprovalRequest, ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { ApprovalRequest, StoredApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { DiscussionPostInputV1Schema } from '@happier-dev/protocol/discussions/actions';
+import { isDiscussionPostActionIdV1, type DiscussionExternalSourceV1 } from '@happier-dev/protocol/discussions';
 import { SettingsDeclarationActionInputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
 export type ActionApprovalPresentationInput = Readonly<{
@@ -23,14 +25,29 @@ export type ActionApprovalPresentationInput = Readonly<{
     authoredTitle?: string | null;
     authoredSummary?: string | null;
     subject?: string | null;
-    executionOriginV1?: ApprovalRequestV2['executionOriginV1'];
+    executionOriginV1?: StoredApprovalRequestV2['executionOriginV1'];
+    incomingDiscussionNames?: IncomingDiscussionApprovalNames;
     role?: RoleCatalogEntry | null;
     /** The target Machine's readable path form (home-relative), when the presenting app knows its home. */
     formatPath?: ((path: string) => string) | null;
 }>;
 
+/** Public presentation facts for the integration named by this incoming message. */
+export type IncomingDiscussionApprovalNames = Readonly<{
+    providerPluginId: string;
+    providerName: string | null;
+    ownerName: string | null;
+}>;
+
+/** Readable imported provenance exists before publication; private routing is never a label. */
+export function readIncomingDiscussionApprovalSource(input: Readonly<{ actionId?: string | null; actionArgs?: unknown }>): DiscussionExternalSourceV1 | null {
+    if (!isDiscussionPostActionIdV1(input.actionId ?? '')) return null;
+    const parsed = DiscussionPostInputV1Schema.safeParse(input.actionArgs);
+    return parsed.success && 'externalSource' in parsed.data.content ? parsed.data.content.externalSource ?? null : null;
+}
+
 export type ApprovalSummaryInput = Readonly<{ actionId: string; actionArgs: unknown;
-    executionOriginV1?: ApprovalRequestV2['executionOriginV1'] }>;
+    executionOriginV1?: StoredApprovalRequestV2['executionOriginV1'] }>;
 
 /** A supplied request summary reads through its domain owner; absent previews remain absent. */
 export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalSummaryInput, subject?: string | null): string | null {
@@ -119,6 +136,13 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     const subject = createdMachineName?.kind === 'value' ? createdMachineName.value : input.subject;
     const confirmLabel = readActionApprovalConfirmLabel(spec.id)
         ?? (input.kind === 'confirmation' ? resolveActionTitle(spec.id, spec) : resolveActionConfirmVerb(undefined));
+    const incoming = readIncomingDiscussionApprovalSource(input);
+    if (incoming) {
+        const names = input.incomingDiscussionNames?.providerPluginId === incoming.providerPluginId ? input.incomingDiscussionNames : null;
+        return { title: [t('session.collaboration.discussion.controls.incomingMessage'), names?.providerName,
+            incoming.conversationDisplayName, names?.ownerName].filter(Boolean).join(' · '),
+            summary: null, confirmLabel };
+    }
     if (spec.id === REGISTRY_SOURCE_DELETE_ACTION_ID_V1) {
         return {
             title: t('actionPresentation.title', { actionId: spec.id,

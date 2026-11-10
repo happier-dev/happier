@@ -1,14 +1,14 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMachineFixture, createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import type { ArtifactHeader, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { installApprovalCommonModuleMocks } from '../../approvals/approvalsTestHelpers';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
-import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text/i18n';
-import { readOpenApprovalInboxEntry } from '@/sync/domains/artifacts/approvalArtifactAdmission';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -25,11 +25,15 @@ function createApprovalArtifact(): Extract<DecryptedArtifact, { isDecrypted: tru
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual('@/text') });
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+const incomingHomes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(incomingHomes);
 
 // Install the real translation boundary before the store and approval runtime capture it.
+const { preloadTranslations, setPreferredLanguageFromSettings, t } = await import('@/text/i18n');
+const { readOpenApprovalInboxEntry } = await import('@/sync/domains/artifacts/approvalArtifactAdmission');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
-const { removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+const { removeServerProfile, resolveServerProfileScopeIdForIdentifier, setServerProfileIdentityForUrl, upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
 const { buildDiscussionRequesterApprovalArtifact } = await import('@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit');
 const { readApprovalQuickActions } = await import('@/components/approvals/approvalQuickActions');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
@@ -63,6 +67,107 @@ afterEach(async () => {
 });
 
 describe('ApprovalInboxCard', () => {
+  it('identifies an incoming Channel message in its first row and accessible name using public names', async () => {
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } =
+      await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const harness = incomingHomes;
+    const previousApplied = getAppliedActiveServerSnapshot();
+    const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+    const ownerAccountId = 'opaque-channel-owner-account';
+    const providerPluginId = 'example.opaque-email-provider';
+    const inputLocalId = 'channel-input-opaque-binding';
+    const messageBody = 'Private incoming message body';
+    const home = await harness.addHome({ name: 'Channel Home', serverUrl: 'https://incoming-channel.test',
+      accountId: ownerAccountId, serverIdentityId: 'srv_incoming_channel' });
+    harness.answer(home, 'POST /v1/session-access/principals/resolve', { body: { v: 1, principals: [
+      { kind: 'account', accountId: ownerAccountId, name: 'Channel owner', firstName: null, lastName: null,
+        username: null, avatarUrl: null },
+    ] } });
+    const homeScopeId = resolveServerProfileScopeIdForIdentifier(home);
+    publishAppliedActiveServerSnapshot({ serverId: homeScopeId, serverUrl: 'https://incoming-channel.test', generation: 1 }, true);
+    storage.setState({ profileScope: { serverId: homeScopeId, accountId: ownerAccountId }, endpointStatus: 'online' });
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    if (!accountLifetime) throw new Error('Expected the incoming Channel Account lifetime');
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'system', pluginId: 'happier.channels', contributionLocalId: 'ingress' },
+      actionId: 'discussion.post', summary: getActionSpec('discussion.post').title,
+      actionArgs: { discussionId: 'opaque-discussion-id', localId: inputLocalId,
+        content: { v: 1, parts: [{ t: 'text', text: messageBody }], externalSource: {
+          kind: 'channel', providerPluginId, conversationDisplayName: 'Billing thread', senderDisplayName: 'Billing sender', inputLocalId,
+        } } },
+      executionOriginV1: { v: 1, authority: 'account_automation', caller: { kind: 'plugin', pluginId: 'happier.channels',
+        contributionLocalId: 'ingress', sourceCustody: { kind: 'development', registeredRootId: 'channels-root' } }, requestId: 'incoming-message',
+        surface: 'plugin', serverId: home, serverIdentityId: 'srv_incoming_channel', accountId: ownerAccountId,
+        actionId: 'discussion.post' },
+    });
+    const artifact = { ...createApprovalArtifact(), header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
+    const projectionValue = {
+      pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, installedPackagesById: {
+        [providerPluginId]: { id: providerPluginId, displayName: 'Email', version: '1.0.0', enabled: true,
+          source: { kind: 'registryPackage', locator: providerPluginId } },
+      } }, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
+      machineId: null, serverId: home, platform: 'web', accountLifetime,
+      reloadConnectedAccountProjection: () => {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
+    } satisfies import('@/components/appShell/plugins/AppShellPluginUiProjection').AppShellPluginUiProjectionValue;
+    const render = (value: typeof projectionValue) => <AppShellPluginUiProjectionValueProvider value={value}>
+      <ApprovalInboxCard artifact={artifact} onPress={() => {}} />
+    </AppShellPluginUiProjectionValueProvider>;
+    const screen = await renderScreen(render(projectionValue));
+    try {
+      await waitForHomeGovernance(async () => {
+        await flushHookEffects({ cycles: 25 });
+        expect(harness.requests.map(read => read.path)).toContain('/v1/session-access/principals/resolve');
+        const firstLine = screen.findByTestId('inbox.approval.artifact-1.summary:title')?.children.join('');
+        const accessibleName = String(screen.findByTestId('inbox.approval.artifact-1')?.props.accessibilityLabel);
+        for (const text of ['Incoming message', 'Email', 'Channel owner', 'Billing thread']) {
+          expect(firstLine).toContain(text);
+          expect(accessibleName).toContain(text);
+        }
+      });
+      const accessibleName = String(screen.findByTestId('inbox.approval.artifact-1')?.props.accessibilityLabel);
+      for (const privateValue of [providerPluginId, ownerAccountId, inputLocalId, 'opaque-discussion-id', messageBody]) {
+        expect(screen.getTextContent()).not.toContain(privateValue);
+        expect(accessibleName).not.toContain(privateValue);
+      }
+      const principalReads = harness.requestsFor('/v1/session-access/principals/resolve');
+      expect(principalReads).toHaveLength(1);
+      expect(principalReads.every(read => read.serverId === home
+        && JSON.stringify(read.input) === JSON.stringify({ v: 1, subjects: [{ kind: 'account', accountId: ownerAccountId }] }))).toBe(true);
+      await screen.update(render(projectionValue));
+      await flushHookEffects({ cycles: 25 });
+      expect(harness.requestsFor('/v1/session-access/principals/resolve')).toHaveLength(principalReads.length);
+
+      const otherHome = await harness.addHome({ name: 'Other Account Home', serverUrl: 'https://other-incoming-channel.test',
+        accountId: 'opaque-other-account', serverIdentityId: 'srv_other_incoming_channel', active: false });
+      const otherHomeScopeId = resolveServerProfileScopeIdForIdentifier(otherHome);
+      publishAppliedActiveServerSnapshot({ serverId: otherHomeScopeId, serverUrl: 'https://other-incoming-channel.test', generation: 2 }, true);
+      storage.setState({ profileScope: { serverId: otherHomeScopeId, accountId: 'opaque-other-account' } });
+      const otherAccountLifetime = captureActiveServerAccountScopeLifetime();
+      if (!otherAccountLifetime) throw new Error('Expected the other Account lifetime');
+      await screen.update(render({ ...projectionValue, serverId: otherHome, accountLifetime: otherAccountLifetime,
+        pluginUiProjection: { ...projectionValue.pluginUiProjection, installedPackagesById: {
+          [providerPluginId]: { ...projectionValue.pluginUiProjection.installedPackagesById[providerPluginId], displayName: 'Other Account integration' },
+        } } }));
+      await flushHookEffects({ cycles: 25 });
+      const scopedTitle = screen.findByTestId('inbox.approval.artifact-1.summary:title')?.children.join('');
+      const scopedAccessibleName = String(screen.findByTestId('inbox.approval.artifact-1')?.props.accessibilityLabel);
+      for (const text of ['Incoming message', 'Channel owner', 'Billing thread']) {
+        expect(scopedTitle).toContain(text);
+        expect(scopedAccessibleName).toContain(text);
+      }
+      expect(screen.getTextContent()).not.toContain('Other Account integration');
+      expect(scopedAccessibleName).not.toContain('Other Account integration');
+    } finally {
+      await screen.unmount();
+      await harness.reset();
+      publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+    }
+  });
+
   it('names the origin Machine of a sessionless daemon approval from its exact Home', async () => {
     const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
     const machine = createMachineFixture({ id: 'daemon-machine', metadata: {
@@ -141,7 +246,7 @@ describe('ApprovalInboxCard', () => {
     storage.getState().applyArtifacts([{ id: 'release-notes', title: 'Notes de version',
       isDecrypted: true, header: { title: 'Notes de version' }, headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }]);
     const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
-      createdBy: { surface: 'cli' }, actionId: 'artifact.public_link.create', summary: 'Create document public link',
+      createdBy: { surface: 'cli' }, actionId: 'artifact.public_link.create', summary: getActionSpec('artifact.public_link.create').title,
       actionArgs: { artifactId: 'release-notes' },
       executionOriginV1: { v: 1, authority: 'account_automation', caller: { kind: 'host' }, requestId: 'public-link-review',
         surface: 'cli', serverId: serverIdB, actionId: 'artifact.public_link.create' },
@@ -149,7 +254,7 @@ describe('ApprovalInboxCard', () => {
     const screen = await renderScreen(<ApprovalInboxCard artifact={{ ...createApprovalArtifact(),
       header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) }} onPress={() => {}} />);
     expect(screen.getTextContent()).toContain('Créer un lien public pour « Notes de version » ?');
-    expect(screen.getTextContent()).not.toContain('Create document public link');
+    expect(screen.getTextContent()).not.toContain(getActionSpec('artifact.public_link.create').title);
   });
   it('names an install from its evaluated review rather than its generic summary or plugin id', async () => {
     const { ApprovalInboxCard } = await import('./ApprovalInboxCard');

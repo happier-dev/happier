@@ -12,8 +12,10 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { presentActionApproval, readActionApprovalSubject, readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { readPluginInstallApprovalChange, readPluginInstallSourceName } from './pluginInstallApprovalFacts';
 import { useApprovalReferenceReading } from './approvalReferenceReading';
+import { useIncomingDiscussionApprovalNames } from './useIncomingDiscussionApprovalNames';
+import type { ActionApprovalPresentationInput } from './actionApprovalPresentation';
 
-export type ApprovalRequestTitleInput = Readonly<{
+export type ApprovalRequestTitleInput = Pick<ActionApprovalPresentationInput, 'executionOriginV1' | 'incomingDiscussionNames'> & Readonly<{
     storedTitle: string | null | undefined;
     /** The request's own generated summary: a first line that only restates it is not a title the person chose. */
     previewSummary?: string | null;
@@ -117,6 +119,7 @@ export function readApprovalArtifactTitleInput(
     actionArgs: parsed.request.actionArgs,
     status: parsed.request.status,
     preview: parsed.request.preview,
+    executionOriginV1: parsed.request.v === 2 ? parsed.request.executionOriginV1 : undefined,
     sessionIds,
   };
 }
@@ -138,8 +141,9 @@ export function readApprovalActionTitle(
 /** Row and page resolve the same declared subject through the same scoped reference reader. */
 export function useApprovalRequestTitle(input: ApprovalRequestTitleInput, serverId: string | null) {
   usePreferredLanguage();
+  const incomingDiscussionNames = useIncomingDiscussionApprovalNames(input, serverId);
   const reference = readActionApprovalSubject({ ...input, actionId: input.actionId ?? '' });
   const reading = useApprovalReferenceReading(reference, reference?.id ?? '', serverId);
   // A subject still being read is not a name yet; the title gains it once the read lands.
-  return resolveApprovalRequestTitle({ ...input, subject: reading.named && !reading.resolving ? reading.text : null });
+  return resolveApprovalRequestTitle({ ...input, incomingDiscussionNames, subject: reading.named && !reading.resolving ? reading.text : null });
 }

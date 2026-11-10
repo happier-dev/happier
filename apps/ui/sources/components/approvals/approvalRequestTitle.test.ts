@@ -9,6 +9,33 @@ import { readActionApprovalReview } from './actionApprovalReview';
 import { resolveApprovalRequestTitle } from './approvalRequestTitle';
 
 describe('resolveApprovalRequestTitle', () => {
+    it('identifies incoming Channel messages by public provenance without revealing routing or message content', () => {
+        const actionArgs = { discussionId: 'private-discussion-id', localId: 'private-binding-delivery-id',
+            content: { v: 1, parts: [{ t: 'text', text: 'Private incoming body' }],
+                externalSource: { kind: 'channel', providerPluginId: 'example.mail',
+                    conversationDisplayName: 'Billing thread', senderDisplayName: 'Jordan' } } };
+        const input = { actionId: 'discussion.post', actionArgs, storedTitle: 'Post a discussion message',
+            incomingDiscussionNames: { providerPluginId: 'example.mail', providerName: 'Email', ownerName: 'Channel owner' } };
+        const result = resolveApprovalRequestTitle(input);
+        for (const name of ['Incoming message', 'Email', 'Channel owner', 'Billing thread']) expect(result.title).toContain(name);
+        for (const value of ['private-discussion-id', 'private-binding-delivery-id', 'example.mail', 'Private incoming body']) expect(result.title).not.toContain(value);
+        expect(result.actionTitle).toBeNull();
+        expect(resolveApprovalRequestTitle({ ...input, storedTitle: 'Review billing before posting' }).title).toBe('Review billing before posting');
+        const unnamed = resolveApprovalRequestTitle({ ...input, incomingDiscussionNames: undefined });
+        expect(unnamed.title).toContain('Incoming message');
+        expect(unnamed.title).toContain('Billing thread');
+        expect(unnamed.title).not.toContain('example.mail');
+        const unreadableProvenance = resolveApprovalRequestTitle({ ...input, actionArgs: { ...actionArgs,
+            content: { ...actionArgs.content, externalSource: { ...actionArgs.content.externalSource, conversationDisplayName: undefined } } } });
+        expect(unreadableProvenance.title).toBe('Post a discussion message');
+        const unrelatedNames = resolveApprovalRequestTitle({ ...input,
+            incomingDiscussionNames: { providerPluginId: 'example.other', providerName: 'Another integration', ownerName: 'Another owner' } });
+        expect(unrelatedNames.title).toContain('Billing thread');
+        expect(unrelatedNames.title).not.toContain('Another');
+        const ordinary = resolveApprovalRequestTitle({ ...input, actionArgs: { discussionId: 'private-discussion-id',
+            content: { v: 1, parts: [{ t: 'text', text: 'Ordinary authored message' }] } } });
+        expect(ordinary.title).toBe('Post a discussion message');
+    });
     it('recognizes a stored generated installation title with punctuation instead of repeating its Action', () => {
         const spec = getActionSpec('machines.managed.bootstrap.respond');
         const result = resolveApprovalRequestTitle({ actionId: spec.id, storedTitle: `${spec.title}.` });
