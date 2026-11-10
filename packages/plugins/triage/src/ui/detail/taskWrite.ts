@@ -178,6 +178,7 @@ function createTaskWriteOperation() {
 }
 type TaskWriteOperation = ReturnType<typeof createTaskWriteOperation>;
 const sharedKey = (ref: TriageEntryRefV1) => `tasks/mounted-write/v1:${triageEntryRowKey(ref)}`;
+const draftKey = (draftId: string) => `tasks/mounted-create-write/v1:${draftId}`;
 function acquire(scope: PluginEphemeralSharedScope | null, key: string) {
   return scope?.acquire(key, () => {
     const value = createTaskWriteOperation();
@@ -215,7 +216,7 @@ export function useTriageTaskCommit(onApplied: () => Promise<void>, address?: Ta
   const host = usePluginHostApi();
   const scope = usePluginUiEphemeralSharedScope();
   const key = address === undefined ? null : 'entryRef' in address ? sharedKey(address.entryRef)
-    : `tasks/mounted-create-write/v1:${address.draftId}`;
+    : draftKey(address.draftId);
   const { snapshot, operation } = useTaskWriteOperation(key);
   React.useEffect(() => {
     if (linkedSessionIds !== undefined) operation()?.observeSessionLinks(linkedSessionIds);
@@ -249,9 +250,9 @@ export function useTriageTaskCommit(onApplied: () => Promise<void>, address?: Ta
   };
 }
 
-/** A row's Status cell subscribes only to its task, with zero reads or work for unrelated writes. */
-export function useTriageTaskWriteState(entryRef: TriageEntryRefV1) {
-  return useTaskWriteOperation(sharedKey(entryRef)).snapshot;
+/** A mounted reader subscribes only to its task or draft, with zero reads or work for unrelated writes. */
+export function useTriageTaskWriteState(address: TriageEntryRefV1 | Readonly<{ draftId: string }> | null) {
+  return useTaskWriteOperation(address === null ? null : 'draftId' in address ? draftKey(address.draftId) : sharedKey(address)).snapshot;
 }
 
 /** Agent/MCP/CLI recovery through the incumbent mounted UI Action, using the same authoritative reader. */

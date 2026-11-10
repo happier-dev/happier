@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { TriageMountedUiInputV1Schema } from './mountedUiProtocol.js';
 import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginClientTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { PluginUiContextEnrichmentV1 } from '@happier-dev/plugin-sdk/ui';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { PLUGIN_MANIFEST } from '../manifest.js';
@@ -27,6 +28,8 @@ import { TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1, TriageReadActionsInputV1Schema 
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
 import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../settings/actions.js';
 import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
+import { useTriageTaskCommit } from '../ui/detail/taskWrite.js';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
 
 /** The New task draft's first line (lab `tasks-create`). */
 const DRAFT_PURPOSE = 'Where does it belong? It\u2019s created there and stays there.';
@@ -42,7 +45,7 @@ async function registeredDraftAction() {
   clients.push(client);
   const handler = client.registration('actions', declaration.id);
   if (!handler) throw new Error('Tasks draft Action was not registered');
-  return { declaration, handler };
+  return { declaration, handler, client };
 }
 
 it('opens its reviewable draft directly without a second host input form', async () => {
@@ -76,7 +79,7 @@ it.each([
 ])('opens a reviewable task draft without writing: $name', async (testCase) => {
   const { fromMessage, input, expected } = testCase;
   const selectedText = 'selectedText' in testCase ? testCase.selectedText : 'Selected answer\nwith details';
-  const { declaration, handler } = await registeredDraftAction();
+  const { declaration, handler, client } = await registeredDraftAction();
   const opened: unknown[] = [];
   const writes: string[] = [];
   const sessionReads: string[] = [];
@@ -135,6 +138,7 @@ it.each([
     // The real destination resolves the same address and opens the existing create owner.
     const { collections } = createTestkitCorpusCollections();
     const accountKv = createTestkitAccountKv();
+    const publishedContexts: (PluginUiContextEnrichmentV1 | null)[] = [];
     const adapter = createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: pageScope });
     let pageMount: Awaited<ReturnType<typeof adapter.mount>> | undefined;
     let page: Awaited<ReturnType<typeof createPluginUiTestkit>> | undefined;
@@ -145,7 +149,8 @@ it.each([
           surface: renderTasksSurface, launchInput: launch, subPath: 'tasks,mine',
           surfaceContext: createSurfaceContextFixture(),
           adapter: { mount: async (input) => { pageMount = await adapter.mount(input); return pageMount; } },
-          handlers: { executeAction: async ({ action, input }) => {
+          handlers: { publishCurrentUiContext: ({ enrichment }) => { publishedContexts.push(enrichment); },
+            executeAction: async ({ action, input }) => {
             if (action === 'tasks/create-v1') { writes.push(action); throw new Error('Opening a draft must not create a task'); }
             if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) return await listTriageEntries(TriageListEntriesInputV1Schema.parse(input), {
               sourceInstances: collections.sourceInstances, readAdmittedSources: async () => [],
@@ -172,6 +177,78 @@ it.each([
       await page!.dispose();
       await mountPage();
       await expect(page!.getByText(DRAFT_PURPOSE)).resolves.toEqual({ content: DRAFT_PURPOSE });
+      if (testCase.name === 'explicit draft') {
+        const mountedHandler = client.registration('actions', 'ui/mounted-v1');
+        if (!mountedHandler) throw new Error('Mounted UI Action was not registered');
+        const readCancel = () => {
+          const command = publishedContexts.at(-1)?.commands?.find(entry => entry.title === 'Cancel');
+          expect(command, 'the visible draft publishes its Cancel command').toBeDefined();
+          if (command?.command.kind !== 'executeAction') throw new Error('Missing draft Cancel Action');
+          const input = TriageMountedUiInputV1Schema.parse(command.command.input);
+          expect(input.operation).toEqual({ kind: 'closeDetail' });
+          return input;
+        };
+        const invokeMounted = (input: ReturnType<typeof TriageMountedUiInputV1Schema.parse>) => mountedHandler(input, {
+          plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+          contribution: { id: 'ui/mounted-v1', qualifiedId: `${PLUGIN_MANIFEST.id}/actions/ui/mounted-v1` },
+          invocationSurface: 'agent', signal: new AbortController().signal,
+          ui: page!.context.hostApi, ephemeralSharedScope: pageScope,
+        });
+        const availableCancel = readCancel();
+        // The actual draft commit owner supplies busy to both the form and command;
+        // only the host write transport is held here, with no Task created.
+        let beginWrite!: () => Promise<unknown>;
+        let settleWrite!: () => void;
+        let writeAttempts = 0;
+        let writeProbe!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
+        await act(async () => { writeProbe = await createPluginUiTestkit({ identity: { instanceId: 'draft-write', mountNonce: 'write' },
+          authorPlugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+          surface: defineUiSurface(() => {
+            const write = useTriageTaskCommit(async () => undefined, { draftId: launch.draftId });
+            beginWrite = () => write.commit('tasks/create-v1', { v: 1,
+              source: INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.source,
+              sourceInstanceId: INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId,
+              kindId: 'task', fields: { title: 'Held transport' } });
+            return null;
+          }),
+          surfaceContext: createSurfaceContextFixture(),
+          adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: pageScope }),
+          handlers: { executeAction: () => {
+            writeAttempts += 1;
+            return new Promise<{ kind: 'refused'; reason: 'unavailable' }>(resolve => {
+              settleWrite = () => resolve({ kind: 'refused', reason: 'unavailable' });
+            });
+          } },
+        }); });
+        let pendingWrite: Promise<unknown> | undefined;
+        try {
+          await act(async () => { pendingWrite = beginWrite(); });
+          expect((await page!.getByRole('button', { name: 'Cancel' })).state?.disabled).toBe(true);
+          expect(publishedContexts.at(-1)?.commands?.some(entry => entry.title === 'Cancel')).toBe(false);
+          await act(async () => { expect(await invokeMounted(availableCancel)).toEqual({ status: 'unavailable' }); });
+          expect(readTriageTaskDraftLaunch(pageScope, launch).status).toBe('ready');
+          expect(writeAttempts).toBe(1);
+        } finally {
+          await act(async () => { settleWrite?.(); await pendingWrite; });
+          await act(async () => { await writeProbe.dispose(); });
+        }
+        expect((await page!.getByRole('button', { name: 'Cancel' })).state?.disabled).not.toBe(true);
+        const cancelDraft = async () => {
+          const input = readCancel();
+          await act(async () => {
+            expect(await invokeMounted(input)).toEqual({ status: 'applied' });
+          });
+          await expect(page!.queryByText(DRAFT_PURPOSE)).resolves.toBeUndefined();
+          expect(publishedContexts.at(-1)?.commands?.some(entry => entry.title === 'Cancel')).toBe(false);
+        };
+        // The real producer's handoff survives remount, then an Agent cancels it through its published command.
+        await cancelDraft();
+        expect(readTriageTaskDraftLaunch(pageScope, launch)).toEqual({ status: 'unavailable' });
+        // The native New task producer reaches the same cancellation owner, without creating a Task.
+        await act(async () => { await page!.press(await page!.getByRole('button', { name: 'New task' })); });
+        await expect(page!.getByText(DRAFT_PURPOSE)).resolves.toBeDefined();
+        await cancelDraft();
+      }
     } finally { if (page !== undefined) await page.dispose(); }
     received.discard();
     expect(readTriageTaskDraftLaunch(pageScope, launch)).toEqual({ status: 'unavailable' });
