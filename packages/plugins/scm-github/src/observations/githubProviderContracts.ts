@@ -1,5 +1,5 @@
-import { QualifiedConnectedAccountRefJsonSchema, type ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
-import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import { QualifiedConnectedAccountRefSchema, type ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '../connectedAccounts/service.js';
 
 export { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '../connectedAccounts/service.js';
@@ -19,22 +19,20 @@ export const GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID = 'automat
 export const GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION = 1;
 export const GITHUB_API_ORIGIN = 'https://api.github.com';
 export const GITHUB_API_VERSION = '2026-03-10';
-export const GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA = {
-  type: 'object', additionalProperties: false,
-  properties: {
-    v: { type: 'integer', const: 1 },
-    repositoryId: { type: 'string', minLength: 1, maxLength: 512, pattern: '^[1-9][0-9]*$' },
-    owner: { type: 'string', minLength: 1, maxLength: 256 },
-    name: { type: 'string', minLength: 1, maxLength: 256 },
-    nameWithOwner: { type: 'string', minLength: 3, maxLength: 512 },
-  }, required: ['v', 'repositoryId', 'owner', 'name', 'nameWithOwner'],
-} satisfies PluginJsonSchema;
+export const GithubRepositorySourceConfigV1Schema = defineProtocolObject({
+  v: defineProtocolLiteral(1),
+  repositoryId: defineProtocolString({ minLength: 1, maxLength: 512, pattern: '^[1-9][0-9]*$' }),
+  owner: defineProtocolString({ minLength: 1, maxLength: 256 }),
+  name: defineProtocolString({ minLength: 1, maxLength: 256 }),
+  nameWithOwner: defineProtocolString({ minLength: 3, maxLength: 512 }),
+}, { policy: 'closed' });
+export const GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA = GithubRepositorySourceConfigV1Schema.jsonSchema;
 /** Source setup, observation and receipt publication retain one exact provider contract. */
-export const GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA = {
-  type: 'object', additionalProperties: false,
-  properties: { v: { type: 'integer', const: 1 }, credentialRef: QualifiedConnectedAccountRefJsonSchema,
-    repository: GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA }, required: ['v', 'credentialRef', 'repository'],
-} satisfies PluginJsonSchema;
+export const GithubAutomationRepositorySourceConfigV1Schema = defineProtocolObject({
+  v: defineProtocolLiteral(1), credentialRef: QualifiedConnectedAccountRefSchema,
+  repository: GithubRepositorySourceConfigV1Schema,
+}, { policy: 'closed' });
+export const GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA = GithubAutomationRepositorySourceConfigV1Schema.jsonSchema;
 /** Known media locations for cooperative network disclosure, not a redirect allowlist. */
 export const GITHUB_PRIVATE_MEDIA_HOST_SUFFIXES_V1 = Object.freeze([
   'actions.githubusercontent.com', 'blob.core.windows.net', 'release-assets.githubusercontent.com',
@@ -183,7 +181,7 @@ export function parseGithubChannelProviderConfig(value: unknown): GithubChannelP
 
 export function isGithubConnectedAccountRef(
   value: unknown,
-  pluginId = GITHUB_PLUGIN_ID,
+  pluginId: string = GITHUB_PLUGIN_ID,
 ): value is ConnectedAccountRef {
   if (!isRecord(value) || !isRecord(value.service)) return false;
   return value.service.pluginId === pluginId

@@ -9,7 +9,7 @@ import type { WorkflowAuthoredInputV1, WorkflowAuthoredProducerRef, WorkflowBloc
 import { workflowBlockOrdinalV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
-import { prepareActionCompletionV1, resumeActionCompletionV1 } from '@happier-dev/protocol/actions/actionCompletion';
+import { prepareActionCompletionV1, resumeActionCompletionV1, type ActionCompletionResult } from '@happier-dev/protocol/actions/actionCompletion';
 import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
@@ -1838,10 +1838,10 @@ async function executeActionBlock(
     captureResult = await context.deps.action.prepareResultCapture?.(target ? formatQualifiedPluginActionId(target) : actionId);
   }
   let noRunsLaunched = false;
-  const prepareCompletion = async (invoked: ActionExecuteResult, serverId?: string) => {
+  const prepareCompletion = async (invoked: ActionExecuteResult, serverId?: string | null) => {
     const declaration = frozen.actionContract!.completion && builtinActionId.success ? getActionSpec(builtinActionId.data).completion : undefined;
     if (frozen.actionContract!.completion && !declaration) return await fail('outcome_uncertain', 'outcome_uncertain');
-    const phase = prepareActionCompletionV1(declaration, invoked, { serverId });
+    const phase = prepareActionCompletionV1(declaration, invoked, { serverId: serverId ?? undefined });
     if (phase.kind === 'awaiting' && row!.execution?.kind === 'action') {
       completionState = phase.state;
       row = await context.deps.store.commitFact({ key: row!.key, lifecycle: 'running', execution: { ...row!.execution, ...completionState } });
@@ -1982,9 +1982,11 @@ async function executeActionBlock(
       if (!observed.ok && isActionOutcomeUnknownErrorCodeV1(observed.errorCode)) return await fail(observed.errorCode, 'outcome_uncertain');
       const phase = prepareActionCompletionV1(undefined, observed);
       if (phase.kind === 'completed') settlement = { kind: 'completed', result: phase.value };
-      else if (phase.kind === 'failed') settlement = { kind: 'failed', code: phase.errorCode,
-        result: phase.value, failureCause: phase.failureCause, message: phase.error };
-      else return await fail('outcome_uncertain', 'outcome_uncertain');
+      else if (phase.kind === 'failed') {
+        const failure: Extract<ActionCompletionResult, { kind: 'failed' }> = phase;
+        settlement = { kind: 'failed', code: failure.errorCode,
+          result: failure.value, failureCause: failure.failureCause, message: failure.error };
+      } else return await fail('outcome_uncertain', 'outcome_uncertain');
     }
     if (!settlement || settlement.kind === 'unresolved') throw new WorkflowControlBoundary('paused', settlement?.code ?? 'approval_unavailable');
     if (settlement.kind === 'outcome_uncertain') return await fail(settlement.code, 'outcome_uncertain');
