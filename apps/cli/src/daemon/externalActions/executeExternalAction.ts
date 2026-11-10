@@ -43,7 +43,7 @@ import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/re
 import { createExternalActionStartDiagnosticRecorder, refuseExternalActionPhase, runExternalActionPhase, traceExternalActionStage, readSessionInputAdmissionDiagnostic } from './externalActionPhase';
 import { setApprovalTraceArtifactId, timeApprovalPhase, timeApprovalPhaseSync, timeWebLatencyPhase, withApprovalActionTrace, withWebLatencyTrace } from './webLatencyTrace';
 import { AccountSettingsContentInvalidError } from '@/settings/accountSettings/accountSettingsRefreshError';
-import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectUnexpectedActionFailureV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { preparedResponse, beforeEffectResponse } from './response';
@@ -140,8 +140,9 @@ export type PrepareExternalActionRequesterAccountContext = (input: Readonly<{
 export type ExecuteExternalActionResult = Readonly<
   | {
     kind: 'invalid_request';
-    errorCode: 'invalid_action' | 'invalid_envelope' | 'invalid_encrypted_envelope' | 'encrypted_action_unsupported' | 'request_too_large' | 'target_required' | 'target_unavailable' | 'project_requester_home_unavailable';
+    errorCode: 'invalid_action' | 'invalid_envelope' | 'invalid_encrypted_envelope' | 'encrypted_action_unsupported' | 'request_too_large' | 'target_required' | 'target_unavailable' | 'project_requester_home_unavailable' | 'internal_error';
     requestId?: string;
+    failureCause?: ActionFailureCauseV1;
   }
   | {
     kind: 'response';
@@ -394,8 +395,8 @@ async function executeExternalActionRequest(input: Readonly<{
     trace('requester_prepare.end');
     requesterContext = preparedRequester.ok ? preparedRequester.value : null;
     if (!requesterContext) {
-      const requesterHomeUnavailable = !preparedRequester.ok
-        && preparedRequester.executionFailure?.errorCode === 'project_requester_home_unavailable';
+      const requesterFailure = !preparedRequester.ok ? preparedRequester.executionFailure : undefined;
+      const requesterHomeUnavailable = requesterFailure?.errorCode === 'project_requester_home_unavailable';
       diagnoseSessionInput('requester_prepare', requesterHomeUnavailable ? 'home_unavailable' : 'refused');
       if (requesterHomeUnavailable) refuseExternalActionPhase('requester_prepare', input.currentMachineId, undefined, {
         ...readSessionInputAdmissionDiagnostic({ actionId: actionId.data, requestId: envelope.data.requestId,
@@ -403,8 +404,8 @@ async function executeExternalActionRequest(input: Readonly<{
         refusalBranch: 'requester_home_unavailable',
       });
       return { kind: 'invalid_request',
-        errorCode: requesterHomeUnavailable ? 'project_requester_home_unavailable'
-          : envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
+        errorCode: requesterFailure?.errorCode ?? (envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope'),
+        ...(requesterFailure?.failureCause ? { failureCause: requesterFailure.failureCause } : {}),
         ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}) };
     }
     diagnoseSessionInput('requester_prepare', 'prepared');

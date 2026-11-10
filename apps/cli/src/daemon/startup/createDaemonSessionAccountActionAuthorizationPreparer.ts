@@ -71,6 +71,7 @@ export function createDaemonSessionAccountActionAuthorizationPreparer(params: Re
       () => Promise.all([
         fetchAccountProfile({
           token: credentials.token,
+          projection: 'self',
           ...(authority.signal ? { signal: authority.signal } : {}),
         }),
         fetchAccountEncryptionCurrentness({

@@ -6794,6 +6794,7 @@ export async function startDaemonSessionControlRuntime(
                 async () => {
                   const profile = await fetchAccountProfile({
                     token: params.credentials.token,
+                    projection: 'self',
                   });
                   if (
                     params.externalActionAccountId &&

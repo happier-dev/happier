@@ -5060,6 +5060,16 @@ Authentication and envelope refusals retain their existing fail-closed results.
 This applies to plain and E2EE Accounts without changing their envelope or key
 requirements.
 
+Requester identity reads consume the Account self-profile projection through
+the existing profile HTTP owner. Unrelated connected-account catalogs and pool
+policies do not participate in identity admission. The requester identity must
+still match, and persisted Account-mode, encryption-currentness and material
+checks remain at their existing owners. A profile parse failure reports
+`internal_error` with a sanitized `requester.profile` Action failure cause before
+protected input is opened. A validated HTTP 426 upgrade requirement retains its
+`client-upgrade-required` cause; neither refusal is evidence of a ciphertext
+failure or permission to reinterpret encrypted content as plain.
+
 Installed Action custody separates its local installation and observed
 encryption checks from fresh Home identity and signed-root verification. After admission, private
 HTTP preparation consumes that same custody; Home still verifies each signed

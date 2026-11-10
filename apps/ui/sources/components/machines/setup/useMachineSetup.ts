@@ -126,15 +126,15 @@ export function useMachineSetup(
           ctx,
         );
         if (!binding.isCurrent()) return;
-        const outcome = classifyHomeActionOutcome(result);
-        if (outcome.kind === 'failed') {
+        if (!result.ok) {
           setFailure({
-            code: homeDomainFailureCode(outcome.failure),
+            code: homeDomainFailureCode(homeDomainFailureFromActionFailure(result)),
             during: 'check',
-            failure: outcome.failure,
+            failure: result,
           });
           return;
         }
+        const outcome = classifyHomeActionOutcome(result);
         const parsed =
           outcome.kind === 'completed'
             ? MachineSetupPlanResultV1Schema.safeParse(outcome.result)
@@ -233,8 +233,8 @@ export function useMachineSetup(
               ? MachineSetupPlanResultV1Schema.safeParse(outcome.result)
               : null;
           prepared =
-            outcome.kind === 'failed'
-              ? outcome.failure
+            !result.ok
+              ? result
               : !parsed?.success
                 ? {
                     ok: false,

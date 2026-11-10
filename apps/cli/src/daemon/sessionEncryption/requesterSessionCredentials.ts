@@ -369,7 +369,7 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
     if (input.boundary.getObservedServerIdentityId && !homeServerIdentityId) return null;
     const readAccountCurrentness = async (signal = currentnessSignal()) => await runWithServerHttpBaseUrl(input.boundary.serverHttpBaseUrl, async () => {
       if (!live || signal.aborted || !await verify(signal)) return null;
-      const profile = await fetchAccountProfile({ token: credentials.token, signal });
+      const profile = await fetchAccountProfile({ token: credentials.token, projection: 'self', signal });
       if (profile.id !== attribution.accountId || !live || signal.aborted) return null;
       observation ??= acquireRequesterAccountEncryptionCurrentness(observationScope);
       const currentness = await observation.read(signal);
@@ -562,7 +562,7 @@ export async function readRequesterMachineAdmissionCurrent(input: Readonly<{
       let context = discovery?.context;
       if (!context) {
         const [profile, machine] = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => Promise.all([
-          timeWebLatencyPhase('requester.machine_profile', () => fetchAccountProfile({ token: input.credentials.token, signal })),
+          timeWebLatencyPhase('requester.machine_profile', () => fetchAccountProfile({ token: input.credentials.token, projection: 'self', signal })),
           timeWebLatencyPhase('requester.machine_access', () => readPublishedMachineRow(input.attribution.machineId, input.credentials, { signal })),
         ]));
         const access = machine?.access;
@@ -733,7 +733,7 @@ export async function resolveRequesterSessionBootstrapFromCustody(input: Readonl
       || boundary.getObservedServerIdentityId && retainedBirth.homeServerIdentityId !== await boundary.getObservedServerIdentityId()
       || expected && !isDeepStrictEqual(expected, retainedBirth.attribution)) return null;
     const profile = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl,
-      () => fetchAccountProfile({ token: credentials.token, signal: input.signal }));
+      () => fetchAccountProfile({ token: credentials.token, projection: 'self', signal: input.signal }));
     const attribution = { serverId: input.serverId, accountId: profile.id,
       machineId: boundary.machineId, installationId: installation.installationId };
     if (!isDeepStrictEqual(retainedBirth.attribution, attribution)
@@ -910,7 +910,7 @@ async function readRequesterSessionCredentialBinding(
         if (before == null) return before;
         const [profile, currentness, session] = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => Promise.all([
           observe('profile', () => discovery.context ? Promise.resolve({ id: discovery.context.actorAccountId })
-            : fetchAccountProfile({ token: input.credentials.token, ...(input.signal ? { signal: input.signal } : {}) })),
+            : fetchAccountProfile({ token: input.credentials.token, projection: 'self', ...(input.signal ? { signal: input.signal } : {}) })),
           observe('encryption', () => readRequesterAccountEncryptionCurrentness({ accountId: input.attribution.accountId,
             token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl,
             ...(input.signal ? { signal: input.signal } : {}) })),

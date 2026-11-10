@@ -146,7 +146,7 @@ export async function dispatchRequesterSessionSpawnNewRpc(params: Readonly<{
     requiredMachineKind: 'persistent', ...(signal ? { signal } : {}) });
   if (!target.access) return null;
   const profile = await runWithServerHttpBaseUrl(params.serverUrl,
-    () => fetchAccountProfile({ token: params.credentials.token, ...(signal ? { signal } : {}) }));
+    () => fetchAccountProfile({ token: params.credentials.token, projection: 'self', ...(signal ? { signal } : {}) }));
   if (target.access.custodian.accountId === profile.id) return null;
   // Raw public V2 input carries no authenticated source Session/permission witness.
   // A nonhuman caller must retain its original authority through the existing

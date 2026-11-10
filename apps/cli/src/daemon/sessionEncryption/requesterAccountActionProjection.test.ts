@@ -304,7 +304,7 @@ describe('admitted requester Action projection', () => {
     } finally { await Promise.all(admitted.map(context => context?.dispose())); }
   });
 
-  it('admits requester identity before opening its observation and Settings floor', async () => {
+  it('admits requester identity independently of unrelated pool data before opening its observation and Settings floor', async () => {
     let releaseProfile!: () => void;
     const profileHeld = new Promise<void>(resolve => { releaseProfile = resolve; });
     let profileStarted = false;
@@ -314,7 +314,7 @@ describe('admitted requester Action projection', () => {
       if (url.endsWith('/v1/account/profile')) {
         profileStarted = true;
         await profileHeld;
-        return { status: 200, data: { id: 'bob' } };
+        return { status: 200, data: { id: 'bob', connectedAccountGroupsV4: [{ policy: { v: 2 } }] } };
       }
       if (url.endsWith('/v1/account/encryption/currentness')) {
         floorStarted = true;

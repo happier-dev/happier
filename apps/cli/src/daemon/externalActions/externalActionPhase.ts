@@ -5,7 +5,7 @@ import type { ActionStartDiagnosticV1 } from '@happier-dev/protocol/actions/exec
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { PluginHttpTraceDiagnostic } from '@happier-dev/cli-common/plugins/http';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 
@@ -119,7 +119,7 @@ export type ExternalActionPhaseFailure = Readonly<{
   phase: string;
   errorClass: string;
   message: string;
-  executionFailure?: ActionExecuteFailure;
+  executionFailure?: ActionExecuteFailure & Readonly<{ errorCode: 'project_requester_home_unavailable' | 'internal_error' }>;
 }>;
 
 /** Private diagnostics must not serialize a thrown value, even a Zod or HTTP Error. */
@@ -137,8 +137,12 @@ export function refuseExternalActionPhase(phase: string, machineId: string | und
       if (method) message = `Schema .${method} is not a function`;
     }
   } catch { /* Thrown values can have hostile prototype or message accessors. */ }
-  const executionFailure = isPluginError(error) && error.code === 'project_requester_home_unavailable'
-    ? { ok: false as const, errorCode: error.code, error: error.code } : undefined;
+  const typedFailure = parseActionExecuteFailure(error);
+  const executionFailure: ExternalActionPhaseFailure['executionFailure'] = isPluginError(error) && error.code === 'project_requester_home_unavailable'
+    ? { ok: false, errorCode: error.code, error: error.code }
+    : typedFailure?.errorCode === 'internal_error' && typedFailure.failureCause
+      ? { ok: false, errorCode: 'internal_error', error: 'internal_error', failureCause: typedFailure.failureCause }
+      : undefined;
   const failure = { ok: false as const, phase, errorClass, message,
     ...(executionFailure ? { executionFailure } : {}) };
   // File-only: no terminal output or remote diagnostic payload. Logging cannot

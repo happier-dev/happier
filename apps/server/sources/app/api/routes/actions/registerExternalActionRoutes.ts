@@ -1100,6 +1100,8 @@ export function registerExternalActionRoutes(
                     undefined,
                     undefined,
                     'phase' in result ? result.phase : undefined,
+                    undefined,
+                    result.failureCause,
                 );
             }
             return sendExternalActionResponse(reply, result.prepared);

@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ExternalActionAuthorizationHttpResult } from '@/api/externalActionAuthorizationHttp';
 import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createDaemonControlRequestLifetime as createRequestLifetime } from '../controlRequestLifetime';
 
 import { ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1, AccountApiTokenEncryptionAccessRequestV1Schema, parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
@@ -67,8 +68,9 @@ function sendExternalActionHttpError(
   code: ExternalActionHttpErrorCode,
   requestId?: string,
   diagnostic?: MachineAvailabilityDiagnosticV1,
+  failureCause?: ActionFailureCauseV1,
 ): FastifyReply {
-  const error = projectExternalActionHttpError(code, requestId, undefined, undefined, undefined, diagnostic);
+  const error = projectExternalActionHttpError(code, requestId, undefined, undefined, undefined, diagnostic, failureCause);
   return sendExternalActionJson(reply, error.statusCode, error.payload);
 }
 
@@ -290,6 +292,8 @@ export function registerDaemonExternalActionRoute(
           reply,
           result.errorCode,
           result.requestId ?? readExternalActionProtectedRequestId(request.body),
+          undefined,
+          result.failureCause,
         );
       }
       return sendExternalActionResponse(reply, result.prepared);

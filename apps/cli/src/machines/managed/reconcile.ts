@@ -159,7 +159,7 @@ async function readBootstrapCredentialValue(params: ManagedMachineReconciliation
     else if (cryptoSnapshot?.material.type === 'legacy') cryptoSnapshot.material.secret.fill(0);
     const readAccountCurrentness = async () => await runWithServerHttpBaseUrl(params.input.serverUrl, async () => {
         const [profile, currentness] = await Promise.all([
-            fetchAccountProfile({ token: credentials.token, signal: params.options.signal }),
+            fetchAccountProfile({ token: credentials.token, projection: 'self', signal: params.options.signal }),
             fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token, serverBaseUrl: params.input.serverUrl, signal: params.options.signal }),
         ]);
         return profile.id === machine.custodianAccountId

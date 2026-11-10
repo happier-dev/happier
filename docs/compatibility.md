@@ -1,5 +1,23 @@
 # Compatibility and version skew
 
+## Requester profile admission (unreleased 0.3)
+
+Requester identity admission in current development source reads the existing
+Account self-profile projection, so an unrelated pool-policy version does not
+invalidate identity. Consumers that need connected-account catalogs still use
+the full profile reader. Installed guests retain their Create-time CLI until
+the existing Machine CLI update operation runs; equal CLI semver does not
+establish equal profile readers.
+
+The current daemon pre-open failure carrier optionally retains the existing
+sanitized Action `failureCause` through direct HTTP and Home relay responses.
+Profile parsing reports `internal_error` with phase `requester.profile`; an
+actual validated HTTP 426 retains its `client-upgrade-required` cause. Older
+producers may omit this diagnostic. Older strict development relay readers need
+an update before accepting the additional field from a new daemon. This does
+not add a version comparison, change Account-mode authority or certify an
+already-running guest.
+
 ## Contributed Action finite refusals (unreleased 0.3)
 
 Finite contributed Actions retain the same closed public refusal as direct

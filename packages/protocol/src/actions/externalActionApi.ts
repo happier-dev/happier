@@ -1703,6 +1703,7 @@ export type ExternalActionDaemonDispatchRequest = z.infer<typeof ExternalActionD
 const ExternalActionDaemonDispatchInvalidRequestBaseSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ExternalActionDaemonDispatchInvalidRequestV1Schema, {
   errorCode: ExternalActionPreOpenFailureCodeSchema,
   requestId: z.optional(ExternalActionRequestIdV1Schema),
+  failureCause: ActionExecuteFailureSchema.shape.failureCause,
 })));
 
 const ExternalActionDaemonDispatchInvalidRequestSchema = lazyZodSchema(() => z.union([

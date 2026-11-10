@@ -40,7 +40,7 @@ export async function createCredentialedFilesystemTransferClient(input: Readonly
 }>) {
   const serverIdentityId = input.serverIdentityId ?? await resolveServerProfileHomeIdentityId(input.serverId);
   const [profile, features] = await runWithServerHttpBaseUrl(input.serverApiUrl, () => Promise.all([
-    fetchAccountProfile({ token: input.credentials.token, ...(input.signal ? { signal: input.signal } : {}) }),
+    fetchAccountProfile({ token: input.credentials.token, projection: 'self', ...(input.signal ? { signal: input.signal } : {}) }),
     fetchServerFeaturesSnapshot({ serverUrl: input.serverApiUrl, token: input.credentials.token, ...(input.signal ? { signal: input.signal } : {}) }),
   ]));
   if (features.status !== 'ready' || features.provenance !== 'authenticated') throw new Error('Authenticated finite transfer trust is unavailable');

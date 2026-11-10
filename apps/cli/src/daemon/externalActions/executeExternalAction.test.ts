@@ -1,4 +1,5 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { AccountStoredContentUpgradeRequiredV1Schema } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -487,7 +488,11 @@ describe('executeExternalAction', () => {
     { kind: 'account', settingsFailure: true, rootFailure: false, rootUnavailable: false },
     { kind: 'account', settingsFailure: false, rootFailure: true, rootUnavailable: false },
     { kind: 'account', settingsFailure: false, rootFailure: false, rootUnavailable: true },
-  ] as const)('opens an own-Account E2EE Browser request through installed custody (%s)', async ({ kind, settingsFailure, rootFailure, rootUnavailable }) => {
+    { kind: 'account', settingsFailure: false, rootFailure: false, rootUnavailable: false, profileFailure: 'schema' },
+    { kind: 'account', settingsFailure: false, rootFailure: false, rootUnavailable: false, profileFailure: 'upgrade' },
+  ] as const)('opens an own-Account E2EE Browser request through installed custody (%s)', async scenario => {
+    const { kind, settingsFailure, rootFailure, rootUnavailable } = scenario;
+    const profileFailure = 'profileFailure' in scenario ? scenario.profileFailure : undefined;
     const phaseLog = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     const accountId = 'browser-own-account';
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(19) };
@@ -507,7 +512,10 @@ describe('executeExternalAction', () => {
     const settings = prepareAccountSettingsV2Content({ credentials, raw: {}, envelopeKind: 'encrypted' });
     const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
-      if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
+      if (path === '/v1/account/profile') return profileFailure === 'upgrade'
+        ? { status: 426, data: AccountStoredContentUpgradeRequiredV1Schema.parse({ error: 'client-upgrade-required',
+          requirement: { v: 1, kind: 'account-stored-content', minimumProtocolVersion: 1 } }) }
+        : { status: 200, data: { id: profileFailure === 'schema' ? null : accountId } };
       if (path === '/v2/account/settings') {
         if (settingsFailure) throw new TypeError('private-account-content must not enter diagnostics');
         return { status: 200, data: { content: settings, version: 1 } };
@@ -543,6 +551,20 @@ describe('executeExternalAction', () => {
       expect(diagnostics).not.toContain(accountId);
       expect(diagnostics).not.toContain(credentials.token);
       expect(diagnostics).not.toContain(envelope.payload.c);
+      if (profileFailure) {
+        expect(result).toMatchObject({ kind: 'invalid_request', errorCode: 'internal_error', requestId: binding.requestId,
+          failureCause: { phase: 'requester.profile', errorClass: profileFailure === 'schema' ? '$ZodError' : 'HttpStatusError',
+            errorCode: profileFailure === 'schema' ? null : 'client-upgrade-required',
+            httpStatus: profileFailure === 'schema' ? null : 426 } });
+        if (result.kind !== 'invalid_request' || !('failureCause' in result)) throw new Error('expected_profile_refusal');
+        expect(parseExternalActionDaemonDispatchResult(result)).toEqual(result);
+        const httpFailure = projectExternalActionHttpError(result.errorCode, result.requestId,
+          undefined, undefined, undefined, undefined, result.failureCause);
+        expect(ExternalActionHttpErrorSchema.parse(httpFailure.payload)).toMatchObject({ error: 'invalid_request',
+          code: 'internal_error', failureCause: result.failureCause });
+        expect(JSON.stringify(result)).not.toContain('private-');
+        return;
+      }
       if (rootUnavailable) {
         expect(result).toEqual({ kind: 'invalid_request', errorCode: 'project_requester_home_unavailable', requestId: binding.requestId });
         if (result.kind !== 'invalid_request') throw new Error('expected_pre_open_refusal');

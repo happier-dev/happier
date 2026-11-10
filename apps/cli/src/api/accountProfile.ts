@@ -1,15 +1,22 @@
-import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders, readCliClientUpgradeRequired } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from '@/api/client/credentialAxios';
-import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
+import { AccountProfileResponseSchema, AccountSelfProfileV1Schema } from '@happier-dev/protocol/account/profile';
+import type { AccountSelfProfileV1 } from '@happier-dev/protocol/account/profile';
 import type { AccountProfileResponse } from '@happier-dev/protocol';
+import { CLIENT_UPGRADE_REQUIRED_HTTP_STATUS } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 
 import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus } from './client/httpStatusError';
 import { projectHomeAuthorizationHttpFailure } from './client/homeAuthorizationHttpFailure';
 import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 
-export async function fetchAccountProfile(opts: Readonly<{ token: string; signal?: AbortSignal;
+type AccountProfileReadOptions = Readonly<{ token: string; signal?: AbortSignal;
     authorizeRequest?: (request: Readonly<{ method: string; path: string }>) => Readonly<Record<string, string>> | null;
-}>): Promise<AccountProfileResponse> {
+}>;
+
+export function fetchAccountProfile(opts: AccountProfileReadOptions & { projection: 'self' }): Promise<AccountSelfProfileV1>;
+export function fetchAccountProfile(opts: AccountProfileReadOptions & { projection?: 'full' }): Promise<AccountProfileResponse>;
+export function fetchAccountProfile(opts: AccountProfileReadOptions & { projection?: 'full' | 'self' }): Promise<AccountProfileResponse | AccountSelfProfileV1>;
+export async function fetchAccountProfile(opts: AccountProfileReadOptions & { projection?: 'full' | 'self' }): Promise<AccountProfileResponse | AccountSelfProfileV1> {
     const authorization = opts.authorizeRequest
         ? opts.authorizeRequest({ method: 'GET', path: '/v1/account/profile' })
         : { Authorization: `Bearer ${opts.token}` };
@@ -32,7 +39,16 @@ export async function fetchAccountProfile(opts: Readonly<{ token: string; signal
         throw createAuthenticationHttpStatusError(response.status, `Authentication failed while fetching account profile (${response.status})`);
     }
     if (response.status < 200 || response.status >= 300) {
+        const upgrade = response.status === CLIENT_UPGRADE_REQUIRED_HTTP_STATUS
+            ? readCliClientUpgradeRequired(response.data) : null;
+        if (upgrade) {
+            throw Object.assign(createHttpStatusError(response.status, 'Account profile requires a client upgrade', upgrade.error), {
+                data: upgrade,
+            });
+        }
         throw createHttpStatusError(response.status, `Failed to fetch account profile (${response.status})`);
     }
-    return AccountProfileResponseSchema.parse(response.data);
+    return opts.projection === 'self'
+        ? AccountSelfProfileV1Schema.parse(response.data)
+        : AccountProfileResponseSchema.parse(response.data);
 }

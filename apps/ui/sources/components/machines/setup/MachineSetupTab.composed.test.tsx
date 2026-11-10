@@ -78,6 +78,31 @@ installApprovalCommonModuleMocks({
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+
+it('retains the plan Action refusal on open and reapply review instead of turning it into an approval failure', async () => {
+  const home = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example',
+    serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
+  const serverId = resolveServerProfileScopeIdForIdentifier(home);
+  await publishManagedDevbox(serverId);
+  harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+  const failure = { ok: false as const, errorCode: 'invalid_encrypted_envelope', error: 'invalid_encrypted_envelope' };
+  harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+    return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.setup.plan',
+      requestId: envelope.requestId, execution: failure }) };
+  } });
+  const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
+  const { useMachineSetup } = await import('./useMachineSetup');
+  const { presentActionFailureOutcome } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
+  const hook = await renderHook(() => useMachineSetup({ serverId, machineId: 'devbox', active: true, online: true, canCheck: true }));
+  onTestFinished(() => hook.unmount());
+  await waitForHomeGovernance(() => expect(hook.getCurrent().failure?.during).toBe('check'));
+  expect(hook.getCurrent().failure?.failure).toMatchObject(failure);
+  expect(presentActionFailureOutcome(hook.getCurrent().failure!.failure!)).toMatchObject({ reason: null, code: failure.errorCode });
+  await act(async () => { await hook.getCurrent().prepare({ kind: 'reapply' }); });
+  expect(hook.getCurrent().failure).toMatchObject({ during: 'review', code: failure.errorCode, failure });
+  expect(harness.requests.some(request => request.path === '/v1/actions/machines.setup.apply')).toBe(false);
+});
 const { resetScopedHomeActionExecutorsForTests } =
   await import('@/sync/ops/actions/scopedHomeActionExecutor');
 // Load the real app singleton after its transport boundaries, outside each

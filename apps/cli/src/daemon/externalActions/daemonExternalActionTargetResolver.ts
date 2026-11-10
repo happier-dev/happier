@@ -492,7 +492,7 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
         : {}),
     }),
     isAccountCurrent: async signal => (await fetchAccountProfile({
-      token: input.credentials.token, ...(signal ? { signal } : {}),
+      token: input.credentials.token, projection: 'self', ...(signal ? { signal } : {}),
     })).id === accountId,
     listAccountApiTokens: async (signal) => {
       const result = await createAccountServerActionDepsForHome().accountApiTokensListAction!({

@@ -19,6 +19,7 @@ import {
 } from "@happier-dev/protocol/actions";
 import { EXTERNAL_ACTION_ENCRYPTED_REQUEST_WITHOUT_RESET_ADMISSION_MAX_BYTES_V2 } from "@happier-dev/protocol/actions/externalActionApi";
 import { createExternalActionDaemonDispatcher } from "@/app/api/socket/externalActionDispatcher";
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { Server } from "socket.io";
 import { symbols, type DestinationStream } from 'pino';
 import { logger } from '@/utils/logging/log';
@@ -699,6 +700,32 @@ describe("registerExternalActionRoutes", () => {
         } finally {
             await app.close();
         }
+    });
+
+    it('retains requester profile failure evidence through the real daemon relay and HTTP route', async () => {
+        const requestId = 'profile-refusal';
+        const failureCause = projectActionFailureCauseV1(new TypeError('PRIVATE_PROFILE_BODY'), 'requester.profile');
+        const dispatch = createExternalActionDaemonDispatcher({ io: new Server(),
+            resolveMachine: async () => 'available', getServerIdentityId: async () => 'srv_test',
+            mintExecutionAuthorization: async binding => ExternalActionExecutionAuthorizationV1Schema.parse({
+                v: 1, token: 'test-authorization', binding: { ...binding,
+                    custodianAccountId: binding.accountId, installationId: 'installation-1' },
+            }),
+            // Network boundary: the real relay validates and correlates the daemon's refusal.
+            forwardRpc: async () => ({ ok: true, result: {
+                kind: 'invalid_request', errorCode: 'internal_error', requestId, failureCause,
+            } }),
+        });
+        const app = createApp({ dispatch });
+        await app.ready();
+        try {
+            const response = await app.inject({ method: 'POST', url: '/v1/actions/browser.diagnostics.snapshot',
+                headers: patHeaders, payload: { v: 2, requestId,
+                    target: { kind: 'machine', machineId: 'machine-1' }, payload: { t: 'encrypted', c: 'opaque' } } });
+            expect(response.statusCode).toBe(500);
+            expect(response.json()).toEqual({ error: 'invalid_request', code: 'internal_error', requestId, failureCause });
+            expect(response.body).not.toContain('PRIVATE_PROFILE_BODY');
+        } finally { await app.close(); }
     });
 
     it("maps a daemon target admission phase to the protected invalid-request response", async () => {

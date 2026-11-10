@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 
 import fastify from 'fastify';
+import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
 import { API_TOKEN_FULL_GRANT_V1, ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1 } from '@happier-dev/protocol';
@@ -41,6 +42,8 @@ import type { DaemonPatVerifier } from '../auth/daemonPatVerifier';
 import type { ExternalActionExecutor, ResolveExternalActionTarget } from './executeExternalAction';
 import { registerDaemonExternalActionRoute } from './registerDaemonExternalActionRoute';
 import { SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
+import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { prepareRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionProjection';
 
 const PAT = `hap_v1_2c67deea-5ae7-4706-9ad6-b5b992df1cba_${'A'.repeat(43)}`;
 
@@ -136,6 +139,41 @@ async function createApp(overrides: Partial<Parameters<typeof registerDaemonExte
 }
 
 describe('registerDaemonExternalActionRoute', () => {
+  it('returns the requester profile refusal cause through direct HTTP before opening or executing', async () => {
+    const actionId = 'session.title.set';
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(24));
+    const target = { kind: 'machine' as const, machineId: 'machine-local' };
+    const envelope = { v: 1 as const, requestId: 'direct-profile-refusal', target,
+      input: { sessionId: 'session-1', title: 'Private title' } };
+    const authorization = sealExternalActionRequesterAccountContextV1({ authorization: { v: 1, token: 'home-proof', binding: {
+      serverIdentityId: 'srv_home', accountId: 'account-1', custodianAccountId: 'account-1',
+      principalId: 'principal-1', credentialId: 'credential-1', grant: API_TOKEN_FULL_GRANT_V1,
+      actionId, requestId: envelope.requestId, target, machineId: target.machineId, installationId: 'installation-1',
+      accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } }, credentials: { token: 'private-requester-token' }, purpose: { kind: 'external_action' },
+      installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+    const actionExecutor = createActionExecutor(createUnavailableActionTransportDeps());
+    // Only the HTTP transport is substituted; requester admission and phase projection remain real.
+    const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { id: null } });
+    const app = await createApp({ executor: actionExecutor,
+      mintExecutionAuthorization: async () => ({ ok: true, authorization }),
+      externalActionMachineRequestPrivateKey: installation.secretKey,
+      resolveInstallationId: () => 'installation-1', verifyExecutionAuthorization: async () => true,
+      prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ authorization: request.authorization,
+        purpose: { kind: 'external_action' }, machineId: target.machineId, installationId: 'installation-1',
+        installationPrivateKey: installation.secretKey, serverId: 'server-local', serverIdentityId: 'srv_home',
+        serverHttpBaseUrl: 'https://profile-home.test', isCurrent: async () => true, createExecutor: () => actionExecutor }),
+    });
+    try {
+      const response = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+        headers: { authorization: `Bearer ${PAT}` }, payload: envelope });
+      expect(response.statusCode).toBe(500);
+      expect(response.json()).toEqual({ error: 'invalid_request', code: 'internal_error', requestId: envelope.requestId,
+        failureCause: { phase: 'requester.profile', errorClass: '$ZodError', errorCode: null, httpStatus: null } });
+      expect(response.body).not.toMatch(/private-requester-token|Private title|issues/);
+    } finally { get.mockRestore(); await app.close(); }
+  });
+
   it('rechecks minted installation authority before a daemon-hosted Action reaches launch', async () => {
     const target = { kind: 'machine' as const, machineId: 'machine-local' };
     const envelope = { v: 1 as const, requestId: 'http-installation-current', target,

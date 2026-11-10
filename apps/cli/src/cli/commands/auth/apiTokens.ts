@@ -103,7 +103,7 @@ async function prepareEncryption(
 ) {
   if (!credentials.encryption) throw new ApiTokenCommandError('api_token_encryption_not_ready');
   const [profile, currentness, features] = await Promise.all([
-    fetchAccountProfile({ token: credentials.token, signal }),
+    fetchAccountProfile({ token: credentials.token, projection: 'self', signal }),
     fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token, serverBaseUrl: serverUrl, signal }),
     fetchServerFeaturesSnapshot({ serverUrl, signal }),
   ]);

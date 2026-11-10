@@ -1,4 +1,6 @@
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isAuthenticationError } from '@/api/client/httpStatusError';
 import type { RequesterAccountActionContext, RetainedRequesterAccountCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import axios from '@/api/client/credentialAxios';
 import { AccountApiTokenEncryptionAccessResponseV1Schema,
@@ -510,7 +512,7 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
     // Admit the requester identity before opening its observation. One witness
     // then supplies both encryption identity and this admission's Settings floor.
     const profile = await trace('requester.profile', () => runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () =>
-      fetchAccountProfile({ token: input.credentials.token, ...(input.signal ? { signal: input.signal } : {}) })));
+      fetchAccountProfile({ token: input.credentials.token, projection: 'self', ...(input.signal ? { signal: input.signal } : {}) })));
     if (profile.id !== parsed.data.binding.accountId) return refused('profile_identity');
     if (input.signal?.aborted) return refused('cancelled');
     phase = 'requester_encryption_currentness';
@@ -631,6 +633,9 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
   } catch (error) {
     refuseAdmission(phase, 'exception', error);
     rethrowRequesterHomeReadFailure(error);
+    if (phase === 'requester_profile' && !isAuthenticationError(error)) throw createActionExecuteFailureError({ ok: false,
+      errorCode: 'internal_error', error: 'Requester Account profile could not be read.',
+      failureCause: projectActionFailureCauseV1(error, 'requester.profile') });
     return null;
   }
   finally { if (!admitted) { live = false; settingsPublication?.dispose(); await observation?.dispose(); } }
