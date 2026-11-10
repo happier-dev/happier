@@ -421,6 +421,9 @@ config.resolver.assetExts.push('wasm', ...artifactOnlyAssetExts);
 // Source: https://shopify.github.io/react-native-skia/docs/getting-started/web/
 // Without this, Skia throws "react-native-reanimated is not installed" error
 // This is cross-platform compatible (iOS, Android, web)
+// Keep development identifiers and source maps while omitting formatting from
+// the source that Hermes and the browser must download and compile.
+config.transformer.unstable_compactOutput = true;
 config.transformer.getTransformOptions = async () => ({
   transform: {
     experimentalImportSupport: false,
