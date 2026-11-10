@@ -9007,6 +9007,16 @@ or reverse-development rollback guarantee. The scoped-clean moving predecessor
 at `ff9a75fe6da334934b568b84df7662d4120c3ed0`, immutable `cli-v0.2.17` and
 `ui-web-v0.2.19` have none of these service identity, detail or review schemas.
 
+The 0.3 development service accounting sample adds optional nullable
+`networkReceivedBytes`, `networkSentBytes` and `restartCount` presentation
+facts per immutable container ID. Existing samples without these fields remain
+valid. The enclosing V1 result and nested samples remain closed: current
+Protocol, daemon, SDK DTO and UI readers reload together; older strict
+development readers refuse the added facts. No epoch, persistence or Action is
+added. The scoped `../0.2` frontier at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no
+`packages/protocol/src/actions/specs/machine/services.ts` contract.
+
 Machine Services' native list Resource is another matching-current-source
 direct cut within the existing closed V1 host-read reference, protected
 original-Action continuation and Resource response. The new

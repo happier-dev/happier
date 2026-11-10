@@ -211,7 +211,10 @@ function MachineServicePresent(props: Readonly<{
       target: { kind: 'host' as const, page: 'machine_service' as const,
         machine: { serverId: props.serverId, machineId: props.machineId }, service: service.identity },
     } : null, [props.active, props.serverId, props.machineId, expectedStop, service.identity, service.state]);
-  const investigation = useInvestigateFailure(investigateSubject, SERVICE_AGENT_ACTIONS);
+  const investigationOptions = React.useMemo(() => ({ ...SERVICE_AGENT_ACTIONS,
+    externalActionTarget: { kind: 'machine' as const, machineId: props.machineId },
+  }), [props.machineId]);
+  const investigation = useInvestigateFailure(investigateSubject, investigationOptions);
   const fallbackInvestigate: readonly InvestigationAgentActionButtonModel[] = [{
     label: t('inbox.work.healthNotice.investigate'), launchMode: 'review', startable: true,
   }];
@@ -330,7 +333,7 @@ function MachineServicePresent(props: Readonly<{
         ) : null}
       </ItemGroup>
       {usage && detail ? (
-        // Usage (lab `services/usage`): each replica's CPU and memory from the detail's one sample, measured on open
+        // Usage (lab `services/usage`): each replica's usage from the detail's one sample, measured on open
         // and again only when asked; the last figures stay while a new measurement reads.
         <ItemGroup title={t('machineServices.usage.title')} surface="none" testID="machine-service-usage">
           <FactStrip facts={usage} testID="machine-service-usage-facts" />
@@ -483,7 +486,7 @@ function serviceFacts(service: MachineServiceRowV1, detail: MachineServiceDetail
 }
 
 /**
- * Each replica's CPU and memory, in sample order ("4% · 3%", "318 · 296 MB"); a replica whose sample omits a figure
+ * Each replica's usage and container-lifetime counters, in sample order ("4% · 3%", "318 · 296 MB"); a replica whose sample omits a figure
  * says so rather than reading as zero. Null when the detail carries no sample.
  */
 function usageFacts(detail: MachineServiceDetailFacts | null): FactStripFact[] | null {
@@ -496,6 +499,14 @@ function usageFacts(detail: MachineServiceDetailFacts | null): FactStripFact[] |
     { key: 'memory', label: t('machineServices.facts.memory'),
       value: samples.map((sample) => sample.memoryBytes === null ? notReported
         : formatMachineBytes(sample.memoryBytes, 'memory')).join(' · ') },
+    { key: 'networkReceived', label: t('machineServices.usage.networkReceived'),
+      value: samples.map((sample) => sample.networkReceivedBytes == null ? notReported
+        : formatMachineBytes(sample.networkReceivedBytes, 'memory')).join(' · ') },
+    { key: 'networkSent', label: t('machineServices.usage.networkSent'),
+      value: samples.map((sample) => sample.networkSentBytes == null ? notReported
+        : formatMachineBytes(sample.networkSentBytes, 'memory')).join(' · ') },
+    { key: 'restarts', label: t('machineServices.usage.restarts'),
+      value: samples.map((sample) => sample.restartCount == null ? notReported : String(sample.restartCount)).join(' · ') },
   ];
 }
 

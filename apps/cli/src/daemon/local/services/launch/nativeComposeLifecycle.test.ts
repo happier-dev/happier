@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setImmediate as nextTurn } from 'node:timers/promises';
+import { MachineServiceAccountingV1Schema } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createNativeComposeLifecycle } from './nativeComposeLifecycle';
 import { openDockerEngineEvents } from './dockerEngineObservation';
@@ -219,7 +220,7 @@ describe('Compose exact native resource lifetime', () => {
             expect(await cancelled).toMatchObject({ name: 'AbortError' });
             expect(reads[0].signal?.aborted).toBe(false);
             reads[0].finish();
-            expect(await last).toEqual({ kind: 'sample', samples: [{ nativeResourceId: id, cpuPercent: 1, memoryBytes: 1024 }] });
+            expect(await last).toEqual({ kind: 'sample', samples: [{ nativeResourceId: id, cpuPercent: 1, memoryBytes: 1024, networkReceivedBytes: null, networkSentBytes: null, restartCount: null }] });
             const pending = capture.lifecycle.readAccounting!({ signal: lastDemand.signal });
             const finalCancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
             await vi.waitFor(() => expect(reads).toHaveLength(2));
@@ -246,8 +247,8 @@ describe('Compose exact native resource lifetime', () => {
         const sampling = new Promise<void>(resolve => { entered = resolve; });
         let failure: unknown;
         let stats: unknown[] = [
-            { ID: ids[0], CPUPerc: '12.5%', MemUsage: '2MiB / 1GiB' },
-            { ID: ids[1], CPUPerc: '--', MemUsage: '-- / --' },
+            { ID: ids[0], CPUPerc: '12.5%', MemUsage: '2MiB / 1GiB', NetIO: '1.5kB / 2MiB' },
+            { ID: ids[1], CPUPerc: '--', MemUsage: '-- / --', NetIO: '0B / --' },
         ];
         const capture = createNativeComposeLifecycle({ args, engineId: 'accounting-test',
             environment: { composeService: 'worker', containerIds: ids }, io: {
@@ -259,7 +260,7 @@ describe('Compose exact native resource lifetime', () => {
                         if (failure) throw failure;
                         return { exitCode: 0, stdout: stats.map(row => JSON.stringify(row)).join('\n') };
                     }
-                    return { exitCode: 0, stdout: JSON.stringify(ids.map(id => ({ ...container(id[0], 'running'), Id: id }))) };
+                    return { exitCode: 0, stdout: JSON.stringify(ids.map(id => ({ ...container(id[0], 'running'), Id: id, ...(id === ids[0] ? { RestartCount: 0 } : {}) }))) };
                 },
             } });
         capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
@@ -275,10 +276,10 @@ describe('Compose exact native resource lifetime', () => {
             ]);
             release();
             const expected = { kind: 'sample', samples: [
-                { nativeResourceId: ids[0], cpuPercent: 12.5, memoryBytes: 2097152 },
-                { nativeResourceId: ids[1], cpuPercent: null, memoryBytes: null },
+                { nativeResourceId: ids[0], cpuPercent: 12.5, memoryBytes: 2097152, networkReceivedBytes: 1500, networkSentBytes: 2097152, restartCount: 0 },
+                { nativeResourceId: ids[1], cpuPercent: null, memoryBytes: null, networkReceivedBytes: 0, networkSentBytes: null, restartCount: null },
             ] };
-            expect(await first).toEqual(expected);
+            expect(MachineServiceAccountingV1Schema.parse(await first)).toEqual(expected);
             expect(await second).toEqual(expected);
             expect(capture.lifecycle.runtimeFacts!().accounting?.memoryBytes).toBeUndefined();
             pending = Promise.resolve();
@@ -292,7 +293,8 @@ describe('Compose exact native resource lifetime', () => {
             expect(capture.lifecycle.runtimeFacts!().accounting?.memoryBytes).toBeUndefined();
             stats = [];
             expect(await capture.lifecycle.readAccounting!()).toEqual({ kind: 'sample', samples: ids.map(nativeResourceId => ({
-                nativeResourceId, cpuPercent: null, memoryBytes: null,
+                nativeResourceId, cpuPercent: null, memoryBytes: null, networkReceivedBytes: null, networkSentBytes: null,
+                restartCount: nativeResourceId === ids[0] ? 0 : null,
             })) });
             failure = new PluginError({ code: 'plugin_exec_termination_incomplete', message: 'Native query custody is unsettled' });
             await expect(capture.lifecycle.readAccounting!()).rejects.toMatchObject({ code: 'plugin_exec_termination_incomplete' });

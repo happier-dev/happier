@@ -118,6 +118,7 @@ export type LocalDaemonServicesActionInputById = {
             protection: 'nonProduction' | 'production';
             deployerMode: 'chosen' | 'managers' | 'members';
             name: string;
+            buildMachineId?: string | undefined;
             projectSourceId?: string | undefined;
             newProject?: undefined | {
                 name: string;
@@ -134,7 +135,6 @@ export type LocalDaemonServicesActionInputById = {
                 principalKind: 'account' | 'teamGroup';
                 principalId: string;
             }[];
-            buildMachineId?: string | undefined;
             managedRetention?: 'keep' | 'until-delete' | undefined;
             controllerMachineId?: string | undefined;
             retainPreviousDeployments?: number | undefined;
@@ -517,6 +517,9 @@ export type LocalDaemonServicesActionResultById = {
                 nativeResourceId: string;
                 cpuPercent: null | number;
                 memoryBytes: null | number;
+                networkReceivedBytes?: null | number | undefined;
+                networkSentBytes?: null | number | undefined;
+                restartCount?: null | number | undefined;
             }[];
         } | {
             kind: 'unavailable';

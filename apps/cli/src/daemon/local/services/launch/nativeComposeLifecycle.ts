@@ -44,6 +44,7 @@ import { admitNativeResticCommand, type NativeResticCommandInput } from './nativ
 import { RESTIC_RUNTIME_V1 } from '@happier-dev/deployments';
 import { createNativeComposeActivatedProject } from './nativeComposeActivatedProject';
 import { readNativeComposePublishedPorts } from './nativeComposePorts';
+import { prepareNativeComposeReferenceNetwork, readNativeComposeReferenceNetwork } from './nativeComposeReferenceNetwork';
 export type { NativeResticCommandInput } from './nativeResticCommand';
 import { activateNativeComposeStartFirst, assertNativeComposeStartFirstConfiguration, type NativeComposeRoutingGeneration, type NativeComposeStartFirstInput,
     type NativeComposeStartFirstResult } from './nativeComposeStartFirst';
@@ -108,6 +109,12 @@ export type NativeComposeEnvironmentProjectInput = Readonly<{
     executionDirectory?: string;
     exec: ExecService;
     envPort: DeploymentExecEnvPortV1;
+    prepareReferenceContainerNetwork?(request: Readonly<{
+        docker: import('@/plugins/runtime/invocation/services/managedProcessSupervisor').ProjectNativeDockerPort;
+        engine: NativeComposeEngineFacts;
+        networkId: string;
+        signal?: AbortSignal;
+    }>): Promise<void>;
     onReferenceAddresses?(addresses: NonNullable<HostAuthorizedPluginExecLaunch['deploymentReferenceAddresses']>): void;
     source: DeploymentSourceMaterializationV1;
     files: readonly string[];
@@ -205,9 +212,9 @@ export async function removeWitnessedContainers(input: Readonly<{ ids: readonly 
 }
 
 /** Docker CLI stats --format emits humanized native units, not host RSS. */
-function nativeMemoryBytes(value: unknown): number | null {
+function nativeBytes(value: unknown): number | null {
     if (typeof value !== 'string') return null;
-    const match = /^(\d+(?:\.\d+)?)\s*(B|kB|KB|MB|GB|TB|PB|KiB|MiB|GiB|TiB|PiB)$/u.exec(value.split('/')[0].trim());
+    const match = /^(\d+(?:\.\d+)?)\s*(B|kB|KB|MB|GB|TB|PB|KiB|MiB|GiB|TiB|PiB)$/u.exec(value.trim());
     if (!match) return null;
     const units: Readonly<Record<string, number>> = { B: 1, kB: 1e3, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12, PB: 1e15,
         KiB: 1024, MiB: 1024 ** 2, GiB: 1024 ** 3, TiB: 1024 ** 4, PiB: 1024 ** 5 };
@@ -215,8 +222,10 @@ function nativeMemoryBytes(value: unknown): number | null {
     return Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : null;
 }
 
-function nativeAccounting(stdout: string, ids: readonly string[]): ProjectNativeAccountingResult {
-    const samples = new Map<string, Readonly<{ nativeResourceId: string; cpuPercent: number | null; memoryBytes: number | null }>>();
+function nativeAccounting(stdout: string, containers: readonly ProjectNativeContainerObservation[]): ProjectNativeAccountingResult {
+    const ids = containers.map(row => row.id);
+    const restarts = new Map(containers.map(row => [row.id, row.restartCount ?? null]));
+    const samples = new Map<string, Extract<ProjectNativeAccountingResult, { kind: 'sample' }>['samples'][number]>();
     try {
         for (const line of stdout.split('\n').filter(line => line.trim())) {
             const row: unknown = JSON.parse(line);
@@ -225,11 +234,15 @@ function nativeAccounting(stdout: string, ids: readonly string[]): ProjectNative
             }
             const cpu = typeof row.CPUPerc === 'string' && /^\d+(?:\.\d+)?%$/u.test(row.CPUPerc) ? Number(row.CPUPerc.slice(0, -1)) : null;
             samples.set(row.ID, { nativeResourceId: row.ID, cpuPercent: cpu !== null && Number.isFinite(cpu) ? cpu : null,
-                memoryBytes: nativeMemoryBytes(row.MemUsage) });
+                memoryBytes: nativeBytes(typeof row.MemUsage === 'string' ? row.MemUsage.split('/')[0] : null),
+                networkReceivedBytes: nativeBytes(typeof row.NetIO === 'string' ? row.NetIO.split('/')[0] : null),
+                networkSentBytes: nativeBytes(typeof row.NetIO === 'string' ? row.NetIO.split('/')[1] : null),
+                restartCount: restarts.get(row.ID) ?? null });
         }
     } catch { return { kind: 'unavailable', reason: 'unavailable' }; }
     // Docker omits stopped containers. Absence is unknown usage, never zero.
-    return { kind: 'sample', samples: ids.map(id => samples.get(id) ?? { nativeResourceId: id, cpuPercent: null, memoryBytes: null }) };
+    return { kind: 'sample', samples: ids.map(id => samples.get(id) ?? { nativeResourceId: id, cpuPercent: null, memoryBytes: null,
+        networkReceivedBytes: null, networkSentBytes: null, restartCount: restarts.get(id) ?? null }) };
 }
 
 /** Docker 29.9 inspect arrays retain immutable IDs even after the Compose YAML is removed. */
@@ -434,11 +447,11 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
         try {
             const result = await run(['stats', '--no-stream', '--no-trunc', '--format', '{{json .}}', ...selected], signal);
             signal.throwIfAborted();
-            const current = nativeContainers?.filter(row => row.service === target).map(row => row.id).sort();
-            if (!current || JSON.stringify(current) !== JSON.stringify(selected) || result.exitCode !== 0) {
+            const current = nativeContainers?.filter(row => row.service === target).sort((a, b) => a.id.localeCompare(b.id));
+            if (!current || JSON.stringify(current.map(row => row.id)) !== JSON.stringify(selected) || result.exitCode !== 0) {
                 return { kind: 'unavailable', reason: 'unavailable' };
             }
-            const sampled = nativeAccounting(result.stdout, selected);
+            const sampled = nativeAccounting(result.stdout, current);
             if (sampled.kind === 'sample' && sampled.samples.length && sampled.samples.every(sample => sample.memoryBytes !== null)) {
                 runtimeFacts = { ...runtimeFacts, accounting: { ...runtimeFacts.accounting,
                     memoryBytes: sampled.samples.reduce((total, sample) => total + sample.memoryBytes!, 0) } };
@@ -990,6 +1003,27 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
             return [{ kind: 'composeProject', dockerEndpoint: engine.id, projectName: admissionProjectName }];
         } finally { await launch.release(); }
     };
+    const prepareReferenceNetwork = async (current: NativeComposeProjectRender, capture: RenderCapture,
+        context?: MachineNativeEffectContext, signal?: AbortSignal): Promise<() => Promise<void>> => {
+        if (!input.prepareReferenceContainerNetwork || input.phase === 'build'
+            || !current.referenceAddresses?.some(address => address.route?.kind === 'iroh')) return async () => {};
+        const referenceAddresses = current.referenceAddresses.filter(address => address.route?.kind === 'iroh')
+            .map(address => address.address);
+        const network = readNativeComposeReferenceNetwork({ model: capture.model, services: current.services, referenceAddresses });
+        if (!network) return async () => {};
+        const docker = await owner.readNativeDocker({ render: current, signal });
+        try {
+            const networkId = context && current.engine.kind === 'native'
+                ? await machineNativeEffectAdmission.runStage(context, () => prepareNativeComposeReferenceNetwork({
+                    docker, model: capture.model, services: current.services, referenceAddresses, projectName,
+                    sourceRoot: input.source.rootPath, directory: root!,
+                    imageReference: imageReferences(current.services[0]!).activationRef, signal }))
+                : network.name;
+            if (networkId) await input.prepareReferenceContainerNetwork({ docker, engine: current.engine, networkId, signal });
+            // Keep the native loan through the following attachment preparation.
+            return docker.dispose;
+        } catch (error) { await docker.dispose(); throw error; }
+    };
     const admittedImageEffect = async <T>(context: MachineNativeEffectContext | undefined,
         effect: (authority: NativeComposeEffectAuthority) => Promise<T>) => {
         if (!context) throw new MachineNativeEffectAdmissionError('admission_unavailable');
@@ -1235,10 +1269,13 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
                     if (activation.health !== proof.health) activation = { ...activation, health: proof.health };
                     return { kind: 'active', activation };
                 }
-                const launch = await authorize([...capture.composeArgs, 'config', '--format', 'json'], request.signal,
+                const releaseNetwork = await prepareReferenceNetwork(request.render, capture, undefined, request.signal);
+                let launch: HostAuthorizedPluginExecLaunch;
+                try { launch = await authorize([...capture.composeArgs, 'config', '--format', 'json'], request.signal,
                     undefined, false, createNativeRuntimeProjectionForHost({ kind: 'configuration', source: input.source,
                         model: capture.unresolvedModel, composeArguments: base, services: request.render.services,
-                        io: input.io, assertCurrent: () => assertCurrent(request.signal) }));
+                        io: input.io, assertCurrent: () => assertCurrent(request.signal) })); }
+                finally { await releaseNetwork(); }
                 try {
                     if (!launch.detachDeploymentEnvironmentForObservation) return nativeRefusal('secret_redaction_unavailable');
                     const prefix = authorizedPrefixes.get(launch)?.prefix ?? nativeRefusal('native_service_admission_required');
@@ -1333,11 +1370,15 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
             await capture.identity.prove(imageReferences(service).activationRef, pin(service));
             return admitNativeServiceCommandForHost({ context,
                 ...(signal ? { signal } : {}), assertCurrent: assertCandidateCurrent,
-                launch: () => authorize(nativeServiceCommandArgs(capture.composeArgs, service, command), signal,
+                launch: async () => {
+                    const releaseNetwork = await prepareReferenceNetwork(current, capture, context, signal);
+                    try { return await authorize(nativeServiceCommandArgs(capture.composeArgs, service, command), signal,
                     undefined, false, createNativeRuntimeProjectionForHost({ kind: 'candidate', source: input.source,
                         model: capture.unresolvedModel, composeArguments: base, service,
                         commandArguments, ...(environmentOverrides ? { environmentOverrides } : {}),
-                        io: input.io, assertCurrent: assertCandidateCurrent })) });
+                        io: input.io, assertCurrent: assertCandidateCurrent })); }
+                    finally { await releaseNetwork(); }
+                } });
         },
         settleNative: input.settleNative,
         async observe(request) {
@@ -1405,8 +1446,11 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
                 kind: 'runtime', source: input.source, model: capture.unresolvedModel,
                 composeArguments: base, services: current.services, commandArguments,
                 io: input.io, assertCurrent: () => assertCurrent(request.signal) });
-            let launch = await authorize(upArgs, request.signal, undefined, false,
-                runtimeProjection(upArgs.slice(capture.composeArgs.length)));
+            const releaseNetwork = await prepareReferenceNetwork(current, capture, request.context, request.signal);
+            let launch: HostAuthorizedPluginExecLaunch;
+            try { launch = await authorize(upArgs, request.signal, undefined, false,
+                runtimeProjection(upArgs.slice(capture.composeArgs.length))); }
+            finally { await releaseNetwork(); }
             let provenServiceIds: ReadonlyMap<string, readonly string[]> | undefined;
             const stopLending = machineNativeEffectAdmission.lendComposeLogMasking(request.context, target => {
                 if (target.sourcePath !== input.source.rootPath) return undefined;

@@ -20,7 +20,7 @@ import type {
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import { PluginDiagnosticDataV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
-import { type ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
+import { type MachineServiceAccountingV1, type ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import { readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import type { ManagedServiceEndpointHostPolicy } from '@happier-dev/protocol';
@@ -164,11 +164,7 @@ export type ProjectNativeStageOutput = Readonly<{
 
 /** Builtin codecs use the same native custody owner without impersonating a plugin. */
 export type ProjectNativeAccountingResult =
-    | Readonly<{ kind: 'sample'; samples: readonly Readonly<{
-        nativeResourceId: string;
-        cpuPercent: number | null;
-        memoryBytes: number | null;
-    }>[] }>
+    | Readonly<{ kind: 'sample'; samples: ReadonlyArray<Extract<MachineServiceAccountingV1, { kind: 'sample' }>['samples'][number]> }>
     | Readonly<{ kind: 'unavailable'; reason: 'unavailable' }>;
 
 export type ProjectBuiltinNativeLifecycle = Readonly<{

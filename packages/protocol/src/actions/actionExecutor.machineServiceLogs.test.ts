@@ -98,7 +98,8 @@ describe('Machine service log Action', () => {
       watchId: 'watch', watchRevision: 'watch-revision',
       capabilities: { start: false, stop: true, restart: false, logs: false, accounting: true } };
     const result = { kind: 'service' as const, service, accounting: { kind: 'sample' as const,
-      samples: [{ nativeResourceId: 'user/worker.service', cpuPercent: null, memoryBytes: 128 }] } };
+      samples: [{ nativeResourceId: 'user/worker.service', cpuPercent: null, memoryBytes: 128,
+        networkReceivedBytes: 0, networkSentBytes: null, restartCount: 3 }] } };
     // The target daemon is the system boundary; shared Detail output parsing stays real.
     const executor = createActionExecutor({ machineServiceAction: async () => result });
     expect(await executor.execute('machines.services.detail', { serverId: 'home', machineId: 'machine', serviceId: service.serviceId },

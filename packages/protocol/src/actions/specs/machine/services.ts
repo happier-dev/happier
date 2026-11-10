@@ -103,6 +103,9 @@ export const MachineServicesDiscoveryResultV1Schema = lazyZodSchema(() => z.disc
 export const MachineServiceAccountingV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('sample'), samples: z.array(z.strictObject({
     nativeResourceId: id(), cpuPercent: z.nullable(z.number()), memoryBytes: z.nullable(z.number()),
+    networkReceivedBytes: z.optional(z.nullable(z.number())),
+    networkSentBytes: z.optional(z.nullable(z.number())),
+    restartCount: z.optional(z.nullable(z.number())),
   })) }), unavailable,
 ]));
 export type MachineServiceAccountingV1 = z.infer<typeof MachineServiceAccountingV1Schema>;
