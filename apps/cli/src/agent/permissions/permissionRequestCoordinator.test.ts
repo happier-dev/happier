@@ -979,6 +979,35 @@ describe('PermissionRequestCoordinator', () => {
         expect(apply).toHaveBeenCalledTimes(1);
     });
 
+    it.each(['conflict', 'refusal'] as const)('retains the actual observed native decision after application %s', async outcome => {
+        const { coordinator, session } = createHarness();
+        const pending = coordinator.requestDecision(bashRequest);
+        const context = coordinator.getResponseContext(bashRequest.requestId)!;
+        const observedCompletion = { result: { decision: 'denied' },
+            completedRequest: { status: 'denied', decision: 'denied' } };
+        const submitted = { decision: 'approved', nativeChoice: {
+            requirementId: 'native-requirement', choiceId: 'actual-submitted-choice',
+        } };
+        let observation: Promise<boolean> | undefined;
+        const response = coordinator.completeResponse({ context,
+            completion: { result: submitted, completedRequest: { status: 'approved', decision: 'approved' } },
+            acknowledgeDecisionApplication: async () => {
+                // The transport reader observes native facts independently of the command ACK.
+                observation = coordinator.completeObservedResponse({ context, completion: observedCompletion });
+                if (outcome === 'refusal') throw new Error('native application refused');
+            },
+        });
+        if (outcome === 'refusal') await expect(response).rejects.toThrow('native application refused');
+        else await expect(response).resolves.toBe(false);
+        await expect(observation).resolves.toBe(true);
+        await expect(pending).resolves.toEqual(observedCompletion.result);
+        expect(session.agentState.completedRequests?.[bashRequest.requestId]).toMatchObject({
+            status: 'denied', decision: 'denied',
+        });
+        expect(session.agentState.completedRequests?.[bashRequest.requestId]).not.toHaveProperty('nativeChoice');
+        await coordinator.dispose();
+    });
+
     it('recovers the observed native result into the original waiter without granting a later request', async () => {
         const session = new RejectingUpdateSession();
         const { coordinator, store } = createHarness(session);

@@ -1,6 +1,7 @@
 import { NativePermissionChoiceAnswerV1Schema, NativePermissionChoicesV1Schema, type NativePermissionChoiceAnswerV1, type NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { readRunScopedExecutionPermissionRequestIdentity } from '@happier-dev/protocol/execution/runs/runPrimitives';
 import { deepEqual } from '@/utils/deterministicJson';
+import { observedPermissionResultMatches } from './nativePermissionChoice';
 import { logger } from '@/ui/logger';
 import { isAgentStructuredQuestionRequest, isDurableAgentStructuredQuestionRequest } from './requestKind';
 import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
@@ -228,7 +229,7 @@ type PendingPermissionRequest<TResult> = {
     completionPersistence: Promise<boolean> | null;
     observedCompletion?: Readonly<{
         completion: PermissionRequestCoordinatorCompletion<TResult>;
-        persistence: Promise<boolean>;
+        persistence?: Promise<boolean>;
     }>;
 };
 
@@ -556,6 +557,26 @@ export class PermissionRequestCoordinator<TResult> {
         const { context, completion } = params;
         const entry = this.pendingRequests.get(context.requestId);
         if (!entry || entry.cancelReason || entry.observedCompletion) return false;
+        if (entry.completionPersistence) {
+            // The native notification may precede its command ACK. Retain the
+            // observation while the existing application owner finishes; only
+            // that ACK can establish the submitted choice as actually accepted.
+            entry.observedCompletion = { completion };
+            try {
+                if (await entry.completionPersistence) return true;
+            } catch {
+                // A rejected command does not erase an independently observed native fact.
+            }
+            return await (entry.observedCompletion?.persistence ?? Promise.resolve(false));
+        }
+        return await this.persistObservedResponse(entry, context, completion);
+    }
+
+    private async persistObservedResponse(
+        entry: PendingPermissionRequest<TResult>,
+        context: PermissionRequestCoordinatorContext,
+        completion: PermissionRequestCoordinatorCompletion<TResult>,
+    ): Promise<boolean> {
         const application = this.store.captureRequestApplication?.(context.requestId);
         if (!application || !isSameAgentStateRequestOccurrence(application.pending, {
             ...entry, tool: entry.toolName, arguments: entry.toolInput,
@@ -600,14 +621,24 @@ export class PermissionRequestCoordinator<TResult> {
                     ? this.store.captureRequestApplication?.(entry.requestId) : null;
                 if (params.acknowledgeDecisionApplication && this.store.captureRequestApplication && !application) return false;
                 if (params.acknowledgeDecisionApplication) {
-                    await params.acknowledgeDecisionApplication(completion.result);
+                    try {
+                        await params.acknowledgeDecisionApplication(completion.result);
+                    } catch (error) {
+                        if (entry.observedCompletion && !entry.observedCompletion.persistence) {
+                            await this.persistObservedResponse(entry, context, entry.observedCompletion.completion);
+                        }
+                        throw error;
+                    }
                 }
-                // The native result can settle during the callback. Never replace its actual
-                // answer with the app's requested answer, even when that callback succeeds.
                 if (entry.observedCompletion) {
                     const observed = entry.observedCompletion;
-                    return await observed.persistence
-                        && deepEqual(observed.completion.result, completion.result);
+                    if (observed.persistence) {
+                        return await observed.persistence && deepEqual(observed.completion.result, completion.result);
+                    }
+                    if (!observedPermissionResultMatches(completion.result, observed.completion.result)) {
+                        await this.persistObservedResponse(entry, context, observed.completion);
+                        return false;
+                    }
                 }
                 const persistence = this.store.completeRequest({
                     requestId: entry.requestId,

@@ -4,6 +4,7 @@ import type { AgentNativeLaunchQualifier } from '../exec.js';
 import type {
   StructuredImageInputV1,
   SessionAuthService,
+  SessionPermissionsService,
   SubagentSummary,
   WorkStateService,
 } from '../services/sessions.js';
@@ -708,6 +709,10 @@ export type AgentSessionHostServices = Readonly<{
  */
 export type AgentExecutionRunHostServicesV1 = Readonly<{
   nativeLaunch?: AgentNativeLaunchQualifier;
+  /** Bound to this Run's existing interaction owner without projecting a Session. */
+  permissions?: SessionPermissionsService;
+  /** Verifies selected files in the Run's admitted directory without Session authority. */
+  inputFiles?: AgentSessionInputFilesService;
   features: AgentFeatureDecisionService;
   hooks: AgentExecutionRunHooksServiceV1;
   fileFollow: AgentTranscriptFileFollowService;

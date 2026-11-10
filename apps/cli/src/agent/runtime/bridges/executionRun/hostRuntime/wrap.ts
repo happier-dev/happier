@@ -3,7 +3,6 @@ import type { ExecutionRunInteractionV1 } from '@happier-dev/protocol';
 import type {
   ExecutionRunHostRuntime,
   ExecutionRunPermissionCapability,
-  RuntimePermissionResponseOutcome,
 } from '../executionRunHostRuntime';
 
 export type ExecutionRunHostRuntimeWrapper = Readonly<{
@@ -25,9 +24,7 @@ export type ExecutionRunHostRuntimeWrapper = Readonly<{
   readActiveTurnAdmissionWitness?: () => ExecutionRunHostRuntime['readActiveTurnAdmissionWitness'];
   cancel: ExecutionRunHostRuntime['cancel'];
   subscribeMessages: ExecutionRunHostRuntime['subscribeMessages'];
-  readRespondToPermission?: () => (
-    (requestId: string, approved: boolean) => Promise<RuntimePermissionResponseOutcome>
-  ) | undefined;
+  readRespondToPermission?: () => ExecutionRunHostRuntime['respondToPermission'];
   readAbortPendingPermissionRequests?: () => ExecutionRunHostRuntime['abortPendingPermissionRequests'];
   readWaitForTurnCompletion?: () => ExecutionRunHostRuntime['waitForTurnCompletion'] | undefined;
   readProbeTurnLiveness?: () => ExecutionRunHostRuntime['probeTurnLiveness'] | undefined;
@@ -93,7 +90,7 @@ export function wrapExecutionRunHostRuntime(
     get respondToPermission() {
       const respondToPermission = wrapper.readRespondToPermission?.();
       return respondToPermission
-        ? async (requestId: string, approved: boolean) => await respondToPermission(requestId, approved)
+        ? async (...args: Parameters<NonNullable<ExecutionRunHostRuntime['respondToPermission']>>) => await respondToPermission(...args)
         : undefined;
     },
     get abortPendingPermissionRequests() {

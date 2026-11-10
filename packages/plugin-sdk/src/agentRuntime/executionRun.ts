@@ -500,6 +500,13 @@ function createExecutionRunRuntimeFromConversation<Event extends AgentExecutionR
         return;
       }
       try {
+        if (event.kind === 'usage-observed' && !options.observeUsage) {
+          // Session-backed callers already own publication through their
+          // explicit observer. Detached finite Runs carry the same payload.
+          const { sessionId: _sessionId, sequence: _sequence, emittedAtMs, ...usage } = event as
+            Extract<Event, { kind: 'usage-observed' }> & { sessionId?: string; sequence?: number };
+          lifecycle.emit(usage, emittedAtMs);
+        }
         // The kind check narrows the generic event to its usage members.
         options.observeUsage?.(event as Extract<Event, { kind: 'usage-observed' | 'skill-usage' }>);
       } catch {

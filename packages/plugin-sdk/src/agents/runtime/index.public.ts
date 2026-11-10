@@ -419,6 +419,7 @@ export type { SessionContextUsageSnapshotV1 } from '../../agentRuntime/projectio
 export { SessionContextUsageSnapshotV1Schema } from '../../agentRuntime/projections.js';
 export type { ShellCommandDialect } from '../../agentRuntime/projections.js';
 export type { SkillCatalogItemV1 } from '../../agentRuntime/projections.js';
+export { SkillCatalogItemV1Schema } from '../../runtime/catalog.js';
 export type { SkillCatalogV1 } from '../../agentRuntime/projections.js';
 export type { TerminalAttachmentId } from '../../agentRuntime/projections.js';
 export type { TerminalControlCapture } from '../../agentRuntime/projections.js';

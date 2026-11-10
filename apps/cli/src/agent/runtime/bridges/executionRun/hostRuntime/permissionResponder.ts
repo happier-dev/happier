@@ -1,8 +1,9 @@
-import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import { toRuntimePermissionResponseOutcome, type ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import type { ExecutionRunPermissionResponder } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import { wrapExecutionRunHostRuntime } from './wrap';
 
 type PermissionHandlerResponder = Readonly<{
-  respondToPermissionRequest?: (requestId: string, approved: boolean) => boolean;
+  respondToPermissionRequest?: ExecutionRunPermissionResponder;
 }>;
 
 /**
@@ -42,11 +43,8 @@ export function withExecutionRunPermissionResponder(
     readActiveTurnAdmissionWitness: () => runtime.readActiveTurnAdmissionWitness?.bind(runtime),
     cancel: (runtimeId) => runtime.cancel(runtimeId),
     subscribeMessages: (handler) => runtime.subscribeMessages(handler),
-    readRespondToPermission: () => async (requestId: string, approved: boolean) => {
-      return responder(requestId, approved)
-        ? { delivered: true as const }
-        : { delivered: false as const, reason: 'unknown_request' as const };
-    },
+    readRespondToPermission: () => async (requestId, approved, response) =>
+      toRuntimePermissionResponseOutcome(await responder(requestId, response ?? approved)),
     readAbortPendingPermissionRequests: () => runtime.abortPendingPermissionRequests?.bind(runtime),
     readWaitForTurnCompletion: () => runtime.waitForTurnCompletion,
     readProbeTurnLiveness: () => runtime.probeTurnLiveness,

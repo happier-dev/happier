@@ -359,8 +359,9 @@ export type SessionPermissionDecisionResultV1 = Readonly<{
    * permission surface. These must survive the engine -> host -> hook path so the provider can
    * apply allowlist/mode changes instead of re-asking. Claude's ExitPlanMode mode clear and
    * Codex "always allow" responses both ride this field.
+   * The payload is vendor-owned and opaque; the receiving engine narrows its own format.
    */
-  updatedPermissions?: readonly SessionPermissionUpdateV1[];
+  updatedPermissions?: unknown;
 }>;
 
 export interface SessionPermissionsServiceV1 {

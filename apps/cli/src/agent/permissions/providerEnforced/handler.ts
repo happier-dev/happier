@@ -38,6 +38,7 @@ import { prepareMcpToolCatalog, resolveMcpToolIdentity, type McpToolPolicyContex
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { parseSessionPermissionModeAlias } from '@happier-dev/protocol/sessions/metadata/permission-modes';
 import { resolveEffectivePermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
+import { resolveNativePermissionImmediateDecision } from '../nativePermissionChoice';
 
 export type { PermissionResult, PendingRequest };
 
@@ -220,8 +221,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     context?: AcpPermissionCallContext,
   ): PermissionResult | null {
     const decision = this.resolveImmediateDecision(toolCallId, toolName, input, context);
-    return context?.nativeChoices && decision?.decision !== 'denied' && decision?.decision !== 'abort'
-      ? null : decision;
+    return resolveNativePermissionImmediateDecision(decision, context?.nativeChoices);
   }
 
   private resolveImmediateDecision(

@@ -141,6 +141,7 @@ export interface ExecutionRunHostBridgeContract {
     params: Readonly<{
       requestId: string;
       approved: boolean;
+      response?: import('@/agent/permissions/BasePermissionHandler').PermissionResult;
       responseTarget?: ExecutionRunParentSessionPermissionResponseTarget | null;
     }>,
   ): Promise<ExecutionRunPermissionResponseBridgeResult>;

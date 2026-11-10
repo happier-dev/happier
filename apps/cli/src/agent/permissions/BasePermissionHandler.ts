@@ -54,9 +54,10 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import type {
     PermissionRequestPushSender as PermissionRequestPushSenderFromSettings,
 } from '@/settings/notifications/permissionRequestPush';
-import { HAPPIER_ACTION_REQUEST_SOURCE, isAgentStructuredQuestionRequest, resolveAgentRequestKind } from './requestKind';
+import { HAPPIER_ACTION_REQUEST_SOURCE, isAgentStructuredQuestionRequest, resolveAgentRequestKind, resolveStructuredQuestionRequestMetadata } from './requestKind';
 import { admitManagerQuestionAnswer, resolveInitialQuestionHandler } from './sessionQuestionManager';
 import { normalizeStructuredQuestionPermissionAnswers } from './structuredQuestionAnswers';
+import { nativePermissionResult, resolveNativePermissionChoice } from './nativePermissionChoice';
 import { AgentStateRequestStore } from './agentStateRequestStore';
 import type {
     AgentStateRequestResponseTarget,
@@ -1515,14 +1516,7 @@ export abstract class BasePermissionHandler {
 
     private buildPermissionResult(response: PermissionResponse): PermissionResult {
         if (response.nativeChoice && response.decision) {
-            return {
-                decision: response.decision,
-                nativeChoice: response.nativeChoice,
-                ...(response.mode !== undefined ? { mode: response.mode } : {}),
-                ...(response.allowedTools !== undefined ? { allowedTools: response.allowedTools } : {}),
-                ...(response.updatedPermissions !== undefined ? { updatedPermissions: response.updatedPermissions } : {}),
-                ...(response.execPolicyAmendment !== undefined ? { execPolicyAmendment: response.execPolicyAmendment } : {}),
-            };
+            return nativePermissionResult({ ...response, decision: response.decision });
         }
         if (response.approved) {
             const wantsExecpolicyAmendment =
@@ -3570,20 +3564,15 @@ export abstract class BasePermissionHandler {
         let selected = response;
         let nativeScope: NativePermissionChoicesV1['choices'][number]['scope'] | undefined;
         if (context.nativeChoices !== undefined) {
-            const offered = NativePermissionChoicesV1Schema.safeParse(context.nativeChoices);
-            const answer = NativePermissionChoiceAnswerV1Schema.safeParse(response.nativeChoice);
-            if (!offered.success || !answer.success || offered.data.requirementId !== answer.data.requirementId) return null;
-            const choice = offered.data.choices.find(candidate => candidate.id === answer.data.choiceId);
-            if (!choice || (answer.data.feedback !== undefined && choice.allowsFeedback !== true)) return null;
+            const native = resolveNativePermissionChoice(context.nativeChoices, response.nativeChoice);
+            if (!native) return null;
+            const { choice } = native;
             nativeScope = choice.scope;
             selected = {
-                ...choice.response,
+                ...native.response,
                 id: response.id,
                 ...(response.turnId !== undefined ? { turnId: response.turnId } : {}),
                 ...(response.answeringClientCategory !== undefined ? { answeringClientCategory: response.answeringClientCategory } : {}),
-                approved: choice.decision !== 'denied' && choice.decision !== 'abort',
-                decision: choice.decision,
-                nativeChoice: answer.data,
             };
         } else if (response.nativeChoice !== undefined || response.approved === undefined
             || !isPermissionResponseAuthorityValid({ response, context })) return null;
@@ -4136,14 +4125,11 @@ export abstract class BasePermissionHandler {
     ): Promise<PermissionResult> {
         const source = typeof options?.source === 'string' ? options.source.trim() : '';
         const existingQuestion = this.requestCoordinator.getResponseContext(toolCallId);
-        const isQuestion = !options?.nativeChoices && isAgentStructuredQuestionRequest({ toolName, source });
-        const questionV1 = isQuestion
-            ? existingQuestion?.questionV1 ?? { mode: 'wait' as const, lasting: false, type: 'decision' as const }
-            : undefined;
-        const currentHandler = isQuestion
-            ? existingQuestion ? existingQuestion.currentHandler ?? { kind: 'person' as const }
-                : { kind: 'person' as const }
-            : undefined;
+        const question = resolveStructuredQuestionRequestMetadata({ toolName, source,
+            nativeChoices: options?.nativeChoices }, existingQuestion);
+        const isQuestion = question !== null;
+        const questionV1 = question?.questionV1;
+        const currentHandler = question?.currentHandler;
         const publish = (currentHandler: SessionQuestionHandlerV1 | undefined): Promise<PermissionResult> => {
             const hasExistingContext = this.requestCoordinator.getResponseContext(toolCallId) !== null;
             if (!hasExistingContext) {

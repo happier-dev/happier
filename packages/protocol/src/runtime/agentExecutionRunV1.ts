@@ -2,6 +2,7 @@ import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
+import { AgentUsageObservedPayloadV1Schema, type AgentUsageObservedPayloadV1 } from './agentUsageObservedPayloadV1.js';
 
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 as LIMITS } from './agentSessionLimitsV1.js';
 import {
@@ -20,6 +21,11 @@ const BaseShape = {
 };
 
 export type AgentExecutionRunEventV1 =
+  | Readonly<AgentUsageObservedPayloadV1 & {
+      sequence: number;
+      runId: string;
+      emittedAtMs: number;
+    }>
   | Readonly<{
       sequence: number;
       runId: string;
@@ -67,6 +73,7 @@ export type AgentExecutionRunEventV1 =
 
 /** Strict closed runtime boundary for finite Agent execution events. */
 export const AgentExecutionRunEventV1Schema: z.ZodMiniType<AgentExecutionRunEventV1> = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.safeExtend(AgentUsageObservedPayloadV1Schema, BaseShape),
   z.strictObject({ ...BaseShape, kind: z.literal('run-start') }),
   z.strictObject({ ...BaseShape, kind: z.literal('run-progress') }),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.strictObject({
