@@ -1,15 +1,17 @@
-import { mkdir, rename, rm } from 'node:fs/promises';
+import { mkdir, rename } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
-import { AGENT_IDS } from '@happier-dev/agents';
 import { ConnectedServiceIdSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
-import type { ConnectedServiceId, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey, ConnectedServiceId, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { resolveCatalogAgentId } from '@/agent/catalog/resolution';
 import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { resolveConnectedServiceAccountHomesDir, resolveConnectedServiceGroupHomeDir } from './resolveConnectedServiceHomeDir';
 import { listExistingConnectedServiceHomeSelections, readConnectedServiceHomeDirectoryNames } from './inventory';
+import { listNativeHomeCredentialTargets } from './listNativeHomeCredentialTargets';
+import { removeConnectedServiceNativeHomeCredentials } from '../stateSharing/materializeConnectedServiceNativeHomeCredentials';
 
 type DeletedGroupCleanupTarget = Readonly<{
   serviceId: ConnectedServiceId;
@@ -21,6 +23,7 @@ type DeletedGroupCleanupTarget = Readonly<{
 type DeletedAccountCleanupTarget = Readonly<{
   account: QualifiedConnectedAccountRef;
   path: string;
+  activeServerDir: string;
 }>;
 
 type DeletedHomeCleanupTarget = DeletedGroupCleanupTarget | DeletedAccountCleanupTarget;
@@ -36,6 +39,8 @@ type GroupHomeTarget = Readonly<{
   groupId: string;
   agentId: CatalogAgentId;
 }>;
+
+type GroupHomeUseTarget = Omit<GroupHomeTarget, 'serviceId'> & Readonly<{ serviceId: ConnectedServiceId | ConnectedAccountServiceKey }>;
 
 export type ConnectedServiceGroupDeletionAuthority = Readonly<{
   status: 'exists' | 'deleted' | 'unknown';
@@ -62,10 +67,6 @@ function targetKey(input: Readonly<{
 }
 
 
-function parseAgentId(value: string): CatalogAgentId | null {
-  return (AGENT_IDS as ReadonlyArray<string>).includes(value) ? value as CatalogAgentId : null;
-}
-
 function authorityFromLegacyGroupExists(exists: boolean): ConnectedServiceGroupDeletionAuthority {
   return exists ? { status: 'exists' } : { status: 'unknown' };
 }
@@ -84,11 +85,7 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
     activeServerDir: string;
     additionalAccountHomeRoots?: readonly string[];
     runtimeRegistry?: ConnectedServiceRuntimeRegistry;
-    hasLiveTarget(input: Readonly<{
-      serviceId: ConnectedServiceId;
-      groupId: string;
-      agentId: CatalogAgentId;
-    }>): boolean;
+    hasLiveTarget(input: GroupHomeUseTarget): boolean;
     hasLiveAccountTarget?(account: QualifiedConnectedAccountRef): boolean;
     groupExists?: GroupExists;
     resolveGroupDeletionAuthority?: ResolveGroupDeletionAuthority;
@@ -120,11 +117,26 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
     }
   }
 
-  private async removeHome(key: string, target: DeletedHomeCleanupTarget): Promise<void> {
+  private async removeHome(key: string, target: DeletedHomeCleanupTarget): Promise<boolean> {
     try {
       // Revoked selected credentials are removed, never retained in the group-history quarantine.
-      await ('account' in target ? this.deps.removePath ?? rm : this.removePath)(target.path, { recursive: true, force: true });
+      if ('account' in target) {
+        if (this.hasLiveAccountTarget(target.account)) return false;
+        let pending = false;
+        const serviceId = buildQualifiedPluginContributionKey(target.account.service);
+        for (const home of await listNativeHomeCredentialTargets({ activeServerDir: target.activeServerDir, account: target.account })) {
+          if (home.groupId !== null && this.hasLiveTarget({ serviceId, groupId: home.groupId, agentId: home.agentId })) {
+            pending = true;
+            continue;
+          }
+          await removeConnectedServiceNativeHomeCredentials({ targetRoot: home.path, declaredSecretEntries: home.secretEntries });
+        }
+        if (pending) return false;
+      } else {
+        await this.removePath(target.path, { recursive: true, force: true });
+      }
       this.pendingDeletedTargetsByKey.delete(key);
+      return true;
     } catch (error) {
       this.pendingDeletedTargetsByKey.set(key, target);
       throw error;
@@ -140,21 +152,22 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
 
   async scheduleDeletedAccountCleanup(input: Readonly<{ account: QualifiedConnectedAccountRef }>): Promise<DeletedHomeCleanupResult> {
     const serviceId = buildQualifiedPluginContributionKey(input.account.service);
+    const path = resolveConnectedServiceAccountHomesDir({ activeServerDir: this.deps.activeServerDir,
+      serviceId, profileId: input.account.accountId });
     const targets = [this.deps.activeServerDir, ...(this.deps.additionalAccountHomeRoots ?? [])].map(activeServerDir => {
       const path = resolveConnectedServiceAccountHomesDir({ activeServerDir, serviceId, profileId: input.account.accountId });
-      return { key: `account\0${path}`, target: { account: input.account, path } };
+      return { key: `account\0${path}`, target: { account: input.account, path, activeServerDir } };
     });
-    const path = targets[0]!.target.path;
     // A failed removal leaves every remaining known root in the existing cleanup queue.
     for (const { key, target } of targets) this.pendingDeletedTargetsByKey.set(key, target);
-    if (this.hasLiveAccountTarget(input.account)) {
-      return { cleaned: false, pending: true, path };
+    let pending = false;
+    for (const { key, target } of targets) {
+      if (!await this.removeHome(key, target)) pending = true;
     }
-    for (const { key, target } of targets) await this.removeHome(key, target);
-    return { cleaned: true, path };
+    return pending ? { cleaned: false, pending: true, path } : { cleaned: true, path };
   }
 
-  private hasLiveTarget(target: GroupHomeTarget): boolean {
+  private hasLiveTarget(target: GroupHomeUseTarget): boolean {
     const serviceKey = readBuiltInLegacyConnectedAccountServiceKeyIngress(target.serviceId);
     return this.deps.runtimeRegistry?.listTargets().some(runtimeTarget => (
       runtimeTarget.agentId === target.agentId
@@ -190,7 +203,7 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
       const serviceId = ConnectedServiceIdSchema.safeParse(selection.serviceDirectoryName);
       if (!serviceId.success) continue;
       for (const agentDirName of await readConnectedServiceHomeDirectoryNames(selection.directory)) {
-        const agentId = parseAgentId(agentDirName);
+        const agentId = resolveCatalogAgentId(agentDirName);
         if (agentId) targets.push({ serviceId: serviceId.data, groupId: selection.selectionId, agentId });
       }
     }
@@ -219,8 +232,7 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
     const cleaned: Array<Readonly<{ cleaned: true; path: string }>> = [];
     for (const [key, target] of this.pendingDeletedTargetsByKey.entries()) {
       if ('account' in target) {
-        if (this.hasLiveAccountTarget(target.account)) continue;
-        await this.removeHome(key, target);
+        if (!await this.removeHome(key, target)) continue;
         cleaned.push({ cleaned: true, path: target.path });
         continue;
       }

@@ -15,7 +15,7 @@ export const KIMI_CONNECTED_ACCOUNT_LAUNCH = {
   switchContinuity: { continuityMode: 'restart_shared_state_required',
     supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected', 'same_connected_group'] },
   stateSharingDescriptor: {
-    nativeHome: { environmentKey: 'KIMI_CODE_HOME', defaultRelativePath: '.kimi-code', materializedDirectoryName: 'kimi-code' },
+    nativeHome: { environmentKey: 'KIMI_CODE_HOME', defaultRelativePath: '.kimi-code', materializedDirectoryName: 'kimi-code', groupHome: 'selectedAccount' },
     providerSupportStatus: 'supported',
     config: { supported: true, modes: ['linked', 'copied', 'isolated'], entries: [{ path: 'config.toml', mode: 'force_copied' }] },
     state: { supported: true, modes: ['isolated', 'shared'],

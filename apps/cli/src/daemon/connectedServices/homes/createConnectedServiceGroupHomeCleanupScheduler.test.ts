@@ -1,8 +1,11 @@
-import { mkdir, rename, stat } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveRequesterSessionRuntimeDirectories } from '../../sessionEncryption/requesterSessionRuntimeDirectories';
 import type { TrackedSession } from '../../types';
 import { createConnectedServiceGroupHomeCleanupScheduler } from './createConnectedServiceGroupHomeCleanupScheduler';
@@ -14,6 +17,19 @@ vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return { ...actual, rename: vi.fn(actual.rename) };
 });
+
+let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
+beforeAll(async () => {
+  runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+    runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
+});
+afterAll(async () => { await runtime?.dispose(); });
+
+async function writeRetainedAccountHome(home: string) {
+  await mkdir(join(home, 'codex-home'), { recursive: true });
+  await writeFile(join(home, 'codex-home', 'auth.json'), 'fake-selected-credential');
+  await writeFile(join(home, 'codex-home', 'retained-history'), 'isolated-session-history');
+}
 
 describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
   it('removes ordinary and admitted same-Account homes after the selected Session releases them', async () => {
@@ -29,7 +45,7 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
       const ownRoots = [root, requesterRoot('owner')];
       const ownHomes = ownRoots.map(homeAt);
       const foreignHome = homeAt(requesterRoot('other-account'));
-      await Promise.all([...ownHomes, foreignHome].map(home => mkdir(home, { recursive: true })));
+      await Promise.all([...ownHomes, foreignHome].map(writeRetainedAccountHome));
       const pidToTrackedSession = new Map<number, TrackedSession>([[123, {
         startedBy: 'daemon', happySessionId: 'session-1', pid: 123,
         spawnOptions: { directory: '/tmp/project', connectedServices: { v: 2, bindingsByServiceId: {
@@ -44,8 +60,11 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
       for (const home of ownHomes) await expect(stat(home)).resolves.toBeTruthy();
       pidToTrackedSession.clear();
       await scheduler.cleanupPendingDeletedGroupHomes();
-      for (const home of ownHomes) await expect(stat(home)).rejects.toMatchObject({ code: 'ENOENT' });
-      await expect(stat(foreignHome)).resolves.toBeTruthy();
+      for (const home of ownHomes) {
+        await expect(stat(join(home, 'codex-home', 'auth.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(await readFile(join(home, 'codex-home', 'retained-history'), 'utf8')).toBe('isolated-session-history');
+      }
+      expect(await readFile(join(foreignHome, 'codex-home', 'auth.json'), 'utf8')).toBe('fake-selected-credential');
     } finally { await removeTempDir(root); }
   });
 
@@ -61,14 +80,15 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
           } } },
       }]]);
       const home = resolveConnectedServiceHomeDir({ activeServerDir: root, serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', agentId: 'codex' });
-      await mkdir(home, { recursive: true });
+      await writeRetainedAccountHome(home);
       const scheduler = createConnectedServiceGroupHomeCleanupScheduler({ activeServerDir: root, pidToTrackedSession });
       await expect(scheduler.scheduleDeletedAccountCleanup({ account })).resolves.toMatchObject({ cleaned: false, pending: true });
       await expect(scheduler.cleanupPendingDeletedGroupHomes()).resolves.toEqual([]);
       await expect(stat(home)).resolves.toBeTruthy();
       pidToTrackedSession.clear();
       await expect(scheduler.cleanupPendingDeletedGroupHomes()).resolves.toEqual([expect.objectContaining({ cleaned: true })]);
-      await expect(stat(home)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(join(home, 'codex-home', 'auth.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await readFile(join(home, 'codex-home', 'retained-history'), 'utf8')).toBe('isolated-session-history');
     } finally { await removeTempDir(root); }
   });
 

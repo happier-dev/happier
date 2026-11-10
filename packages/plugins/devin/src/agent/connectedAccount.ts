@@ -8,6 +8,7 @@ export function devinNativeHome(platform: string) {
     defaultRelativePath: platform === 'win32' ? 'AppData/Roaming' : '.local/share',
     sourceEnvironmentKey: 'HAPPIER_DEVIN_NATIVE_DATA_HOME',
     materializedDirectoryName: 'data-home',
+    groupHome: 'selectedAccount',
     materializedRootOverlay: { privateEntries: ['devin'] },
   } as const;
 }

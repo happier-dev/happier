@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, open } from 'node:fs/promises';
+import { lstat, open, rm } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
 import { writeProtectedLocalStateFileAtomic } from '@/utils/fs/protectedLocalState';
@@ -24,6 +24,14 @@ function declaredNativeHomeFiles(input: Readonly<{ targetRoot: string; declaredS
     paths.set(entry, resolve(input.targetRoot, entry));
   }
   return paths;
+}
+
+/** Revocation removes declared secrets without discarding retained native history. */
+export async function removeConnectedServiceNativeHomeCredentials(input: Readonly<{
+  targetRoot: string;
+  declaredSecretEntries: readonly string[];
+}>): Promise<void> {
+  for (const path of declaredNativeHomeFiles(input).values()) await rm(path, { recursive: true, force: true });
 }
 
 /** Snapshot only this prepared home's declared files; no source-home or arbitrary-path reads. */
