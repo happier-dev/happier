@@ -1,7 +1,7 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
-import { buildApprovalPreviewSummary } from '@happier-dev/protocol/actions/actionExecutor';
+import { buildApprovalPreviewSummary, readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
 import { describeApprovalActionFields, type ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { resolveActionConfirmVerb, resolveActionSummary, resolveActionTitle } from '@/text/actionTitles';
 import { t } from '@/text';
@@ -45,7 +45,7 @@ export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalS
         if (WidgetLayoutFragmentActionIdV1Schema.safeParse(actionId.data).success
             && 'widgetLibraryName' in preview && typeof preview.widgetLibraryName === 'string' && preview.widgetLibraryName.trim()) return storedSummary;
         const spec = getActionSpec(actionId.data);
-        if (readWidgetApprovalPresentationV1(preview)) return presentActionApproval({ actionId: actionId.data,
+        if (readWidgetApprovalPresentationV1(preview) || readTeamCredentialApprovalSources(preview).length) return presentActionApproval({ actionId: actionId.data,
             actionArgs: request?.actionArgs, preview }).summary;
         const summary = spec.approvalPresentation && (spec.inputSchema.safeParse(request?.actionArgs).success
             || spec.approvalPresentation.inputSchema?.safeParse(request?.actionArgs).success)
@@ -143,6 +143,7 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     let canonicalCopySummary: string | null = null;
     const summarySource = buildApprovalPreviewSummary(spec, input.actionArgs, {
         ...(input.formatPath ? { formatPath: input.formatPath } : {}), ...(widgetPresentation ? { widgetPresentation } : {}),
+        teamCredentialSources: readTeamCredentialApprovalSources(input.preview),
         formatSessionVisualCopySummary: summary => {
             canonicalCopySummary = summary.source;
             return t('actionPresentation.sessionVisualCopySummary', summary);

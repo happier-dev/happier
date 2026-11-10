@@ -12,6 +12,8 @@ import { resolveMachineRetentionNativeIntentV1 } from '../../machines/managed/re
 import { resolvePluginLocalizedStringV2Text } from '../../plugins/contributions/publicTypes.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import type { ActionInputOption } from '../actionInputHintsRuntime.js';
+import { selectTeamCredentialSourcesForApproval } from './teamCredentialApproval.js';
+import { readRecord } from '../../inputs/inputRecords.js';
 
 const reviewSchema = lazyZodSchema(() => z.strictObject({
   homeId: z.string(), provider: z.string(), name: z.optional(z.string()), size: z.string(),
@@ -65,6 +67,12 @@ function projectReview(value: unknown) {
 }
 
 export const managedAcquireApprovalPresentation = {
+  teamCredentialSources: (input: unknown) => {
+    const request = readRecord(input);
+    const serverId = readRecord(request.selection).homeId;
+    return { ...selectTeamCredentialSourcesForApproval(request.agentStart),
+      ...(typeof serverId === 'string' ? { serverId } : {}) };
+  },
   projectInput: projectReview,
   inputSchema: reviewSchema,
   inputHints: { fields: [

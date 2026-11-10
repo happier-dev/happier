@@ -7,9 +7,7 @@ import { normalizeResolvedOptions, tryNormalizeExecutionBackendOptionValue } fro
 import { parseBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
 import { BackendTargetKeyV2InputSchema } from '../../backends/targets/backendTargetRefV2.js';
 import { TeamCredentialProviderModelSelectionV1Schema, type TeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/resourceV1.js';
-import { normalizeConnectedServiceSelectionInput } from '../../connect/normalizeConnectedServiceSelectionInput.js';
 import { readRecord, isRecord, hasOwn } from '../../inputs/inputRecords.js';
-import type { ConnectedServiceBindingsV2 } from '../../connect/connectedServiceBindings.js';
 import { resolveExecutionBackendTargetSelectionForValue } from '../resolveActionBackendTargetSelection.js';
 import { buildBackendTargetKey } from '../../backends/targets/backendTargetRef.js';
 import { readExecutionRunStartRunCreation, ExecutionRunStartResponseSchema, ExecutionRunWaitResultSchema, withExecutionRunStartFailureDetails } from '../../execution/runs/responseSchemas.js';
@@ -199,28 +197,7 @@ export function resolveFanoutTeamCredentialModel(
   return { ok: true, selection: parsed.data };
 }
 
-export function resolveFanoutConnectedServicesSelections(
-  data: Readonly<Record<string, unknown>>,
-  targetKeys: readonly string[],
-) {
-  const blanket = normalizeConnectedServiceSelectionInput(data.connectedServices);
-  if (!blanket.ok) return { ok: false as const };
-  const byTarget = data.connectedServicesByBackendTargetKey;
-  if (byTarget !== undefined && !isRecord(byTarget)) return { ok: false as const };
-  const selections = new Map<string, Readonly<{
-    bindings: ConnectedServiceBindingsV2 | null | undefined;
-    defaultServiceIds: readonly string[];
-  }>>();
-  // Normalize every selected target before starting any Run. Named service defaults
-  // remain intent for the existing runtime default owner to merge under explicit pins.
-  for (const key of targetKeys) {
-    const raw = byTarget?.[key];
-    const selection = raw === undefined ? blanket : normalizeConnectedServiceSelectionInput(raw);
-    if (!selection.ok) return { ok: false as const };
-    selections.set(key, selection);
-  }
-  return { ok: true as const, selections };
-}
+export { resolveFanoutConnectedServicesSelections } from '../../connect/normalizeConnectedServiceSelectionInput.js';
 
 export function buildAvailableExecutionBackendOptionKeys(value: unknown): ReadonlySet<string> {
   const keys = new Set<string>();

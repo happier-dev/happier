@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildApprovalPreviewSummary } from '@happier-dev/protocol/actions/actionExecutor';
 import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
-import { presentActionApproval, readActionApprovalSubject } from './actionApprovalPresentation';
+import { presentActionApproval, readActionApprovalSubject, readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { buildRoleCatalog } from '@/sync/domains/roles/roleCatalog';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -12,6 +12,36 @@ import { SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board
 afterEach(() => setPreferredLanguageFromSettings('en'));
 
 describe('the shared Action approval presentation owner', () => {
+    it('retains the admitted Team account source in immediate and saved spawn presentations', () => {
+        const actionArgs = { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'managed' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'example.agent', localId: 'agent' } } };
+        const preview = { teamCredentialSources: [{ teamId: 'team-build', resourceId: 'resource-work',
+            teamName: 'Build Team', accountName: 'Work account' }] };
+        const shown = presentActionApproval({ actionId: 'session.spawn_new', kind: 'confirmation', actionArgs, preview });
+        expect(shown.summary).toContain('Build Team');
+        expect(shown.summary).toContain('Work account');
+        expect(readApprovalPreviewSummary({ ...preview, summary: shown.summary }, { actionId: 'session.spawn_new', actionArgs }))
+            .toBe(shown.summary);
+    });
+    it('names Voice key binding and removal by their credential operation without changing retained approval semantics', () => {
+        const basis = { kind: 'voice_saved_secret', credentialSlotId: 'api-key',
+            expectedSettingsVersion: 1, expectedSecretId: null, expectedSecretUpdatedAt: null };
+        const binding = { anchor: 'voiceConversations.provider.acme.credential', input: {
+            ...basis, operation: 'bind', secretId: 'personal:key',
+        } };
+        const removal = { anchor: binding.anchor, input: { ...basis, operation: 'remove' } };
+        const chosen = presentActionApproval({ actionId: 'settings.invoke', kind: 'confirmation', actionArgs: binding });
+        expect(chosen.title).toBe(t('settingsVoice.local.voiceCredential.useSavedSecretTitle'));
+        expect(chosen.confirmLabel).toBe(chosen.title);
+        const removed = presentActionApproval({ actionId: 'settings.invoke', kind: 'confirmation', actionArgs: removal });
+        expect(removed.title).toBe(t('settingsVoice.local.voiceCredential.deleteTitle'));
+        expect(removed.confirmLabel).toBe(t('common.remove'));
+        expect(presentActionApproval({ actionId: 'settings.invoke', actionArgs: binding }).confirmLabel)
+            .toBe(t('approvals.approve'));
+        expect(presentActionApproval({ actionId: 'settings.invoke', kind: 'confirmation', actionArgs: {
+            anchor: binding.anchor, input: { ...basis, operation: 'bind' },
+        } }).title).not.toBe(chosen.title);
+    });
     it.each(['en', 'fr'] as const)('discloses retained HTML copy network access and exact origins in %s', async language => {
         await preloadTranslations(language);
         setPreferredLanguageFromSettings(language);

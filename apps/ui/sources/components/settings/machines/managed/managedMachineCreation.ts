@@ -6,6 +6,7 @@ import {
     type ManagedMachineActionIdV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
 import type { SessionAgentUpdateNoticeV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -66,6 +67,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     draft: Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt' | 'enrollmentIdentity'> & Partial<Pick<ManagedMachineSelectionDraft, 'archiveEffect'>>;
     acquisition: ManagedMachineAcquisitionDraft;
     agentStart?: ManagedAcquireAgentStartV1;
+    teamCredentialPresentation?: ActionExecutorContext['teamCredentialPresentation'];
     scope: ServerAccountScope;
     signal: AbortSignal;
     isCurrent: () => boolean;
@@ -105,6 +107,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     if (!acquisition.managedId && (input.draft.receipt.optionStatus !== 'current'
         || input.draft.receipt.prerequisites.some(item => item.status === 'unavailable'))) return fail('review_required');
     const context = { surface: 'ui' as const, authority: 'present_user' as const,
+        teamCredentialPresentation: input.teamCredentialPresentation,
         serverId: input.scope.serverId, expectedAccountId: input.scope.accountId, signal: input.signal };
     let controller = input.draft.receipt.controller;
     const withActionDispatch = (dispatch: FrontDoorActionExecute['confirmed']) => async (actionId: ManagedMachineActionIdV1 | 'machines.managed.bootstrap.respond', actionInput: unknown, nativeTarget?: string) =>

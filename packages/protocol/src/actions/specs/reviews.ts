@@ -1,4 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { selectTeamCredentialSourcesForApproval } from './teamCredentialApproval.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { ReviewFindingsApplyInputV1Schema, ReviewFindingsApplyResultV1Schema } from '../../reviews/reviewApplyV1.js';
@@ -15,6 +16,7 @@ function createReviewActionSpecs() {
   return Object.freeze([
   {
     id: 'review.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    approvalPresentation: { teamCredentialSources: selectTeamCredentialSourcesForApproval },
     machineRuntimeDemandForInput: (input, context) => resolveExecutionRunMachineRuntimeDemand(
       readRecord(readRecord(input).target).kind === 'detached'
         || context.actionCaller?.kind === 'workflowRun' && readRecord(input).sessionId === undefined

@@ -1401,6 +1401,14 @@ export function useNewSessionScreenModel(input?: Readonly<{
         enabled: credentialResourcesEnabled,
         agentTargetKey: selectedBackendTargetKey,
     });
+    const teamCredentialPresentation = React.useMemo(() => targetServerId ? {
+        serverId: targetServerId,
+        sources: teamCredentialCatalog.resources.flatMap(resource => {
+            const teamName = teamCredentialCatalog.teamNameById[resource.teamId];
+            return teamName ? [{ teamId: resource.teamId, resourceId: resource.id,
+                teamName, accountName: resource.displayName }] : [];
+        }),
+    } : undefined, [targetServerId, teamCredentialCatalog.resources, teamCredentialCatalog.teamNameById]);
     const selectedAgentScopedPluginSettings = useAgentScopedPluginSettingsSnapshot({
         agentId: selectedRuntimeCarrierAgentId,
         projectionInputs: currentProjectionInputs,
@@ -3928,6 +3936,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         deleteManagedMachineAfterFailedSetup,
         cancelManagedMachineCreation: abortManagedMachineCreation,
     } = useNewSessionCreateSessionAction({
+        teamCredentialPresentation,
         onStartAnother: input?.onStartAnother,
         authoringOrigin: persistedDraft?.authoringOrigin,
         spaceMembership: organizationPlacementState.spaceMembership,

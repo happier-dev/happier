@@ -16,6 +16,7 @@ export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHost
 export type { HostReviewedChildV1, HostReviewedParentV1, HostReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
 export { WorkflowApprovedOperationParentV1Schema as HostReviewedParentV1Schema } from './approvedOperationV1.js';
 export { resolveApprovalSurface } from './actionApprovalSurface.js';
+export { readTeamCredentialApprovalSources } from './specs/teamCredentialApproval.js';
 import { dispatchMachineControls1, dispatchMachineControls2, dispatchMachineControls3 } from './executor/machine/controls.js';
 import { dispatchMachineManaged } from './executor/machine/managed.js';
 import { dispatchAgentsSubagents1, dispatchAgentsSubagents2 } from './executor/agents/subagents.js';
@@ -29,7 +30,7 @@ import { dispatchSessionHandoff } from './executor/session/handoff.js';
 import { dispatchSessionLifecycle1, dispatchSessionLifecycle2 } from './executor/session/lifecycle.js';
 import { dispatchSessionMessages } from './executor/session/messages.js';
 import { dispatchSessionPendingEdit } from './executor/session/pendingEdit.js';
-import { dispatchSessionControls1, dispatchSessionControls2 } from './executor/session/controls.js';
+import { dispatchSessionControls1, dispatchSessionControls2, readOfferedPermissionFollowUp, completeOfferedPermissionChoice } from './executor/session/controls.js';
 import { executeSessionDelete } from './executor/session/delete.js';
 import { dispatchSessionTranscript } from './executor/session/transcript.js';
 import { dispatchAccountSecurity } from './executor/account/security.js';
@@ -493,6 +494,7 @@ import {
   SessionPermissionRemoteGrantRevokeInputV1Schema,
   SessionPermissionRemoteGrantsListInputV1Schema,
   SessionPermissionRemotePendingListInputV1Schema,
+  SessionPermissionRemotePendingListOutputV1Schema,
   SessionPermissionRemoteRespondInputV1Schema,
   SessionUserActionRemoteAnswerInputV1Schema,
 } from '../sessions/permissions/v1.js';
@@ -3932,6 +3934,27 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ...(serverId ? { serverId } : {}),
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         };
+        let followUp: Parameters<typeof completeOfferedPermissionChoice>[1];
+        if (actionId === 'session.permission.remote.respond') {
+          const input = parsed.data as z.infer<typeof SessionPermissionRemoteRespondInputV1Schema>;
+          if (input.nativeChoice) {
+            let cursor: string | null | undefined;
+            do {
+              const pending = completeActionResult(await deps.sessionPermissionRemoteAction({
+                actionId: 'session.permission.remote.pending.list', input: { sessionId, sourceRef: input.sourceRef,
+                  sourceRevisionOrEpoch: input.sourceRevisionOrEpoch, ...(cursor ? { cursor } : {}) }, ...common,
+              }));
+              if (!pending.ok) return pending;
+              const page = SessionPermissionRemotePendingListOutputV1Schema.parse(pending.result);
+              const occurrence = page.requests.find(request => request.requestId === input.requestId && request.turnId === input.turnId);
+              if (occurrence) {
+                followUp = readOfferedPermissionFollowUp(occurrence.kind === 'permission' ? occurrence.nativeChoices : undefined, input.nativeChoice);
+                break;
+              }
+              cursor = page.nextCursor;
+            } while (cursor);
+          }
+        }
         const result = actionId === 'session.permission.remote.pending.list'
           ? await deps.sessionPermissionRemoteAction({
               actionId,
@@ -3961,7 +3984,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                   input: (parsed.data as z.infer<typeof SessionPermissionRemoteGrantRevokeInputV1Schema>),
                   ...common,
                 });
-        return completeActionResult(result);
+        return completeOfferedPermissionChoice(completeActionResult(result), readRecord(result).status === 'applied' ? followUp : undefined,
+          (id, input) => executeChild(id, input, ctx, false));
       }
 
       if (
@@ -5682,7 +5706,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         const dispatchAgentsSubagents2Result = await dispatchAgentsSubagents2({ actionId, deps, data, ctx, parsed });
         if (dispatchAgentsSubagents2Result !== null) return dispatchAgentsSubagents2Result;
-        const dispatchRunsDispatch1Result = await dispatchRunsDispatch1({ actionId, parsed, ctx, deps, data, dispatchFacts, startExecutionRunWithSelection });
+        const dispatchRunsDispatch1Result = await dispatchRunsDispatch1({ actionId, parsed, ctx, deps, data, dispatchFacts, startExecutionRunWithSelection,
+          executeFollowUp: (id, input, context) => executeChild(id, input, context, false) });
         if (dispatchRunsDispatch1Result !== null) return dispatchRunsDispatch1Result;
 
         if (actionId === 'wait') {
@@ -6104,7 +6129,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (dispatchSessionWorkResult !== null) return dispatchSessionWorkResult;
         const dispatchSessionTranscriptResult = await dispatchSessionTranscript({ actionId, data, deps, ctx });
         if (dispatchSessionTranscriptResult !== null) return dispatchSessionTranscriptResult;
-        const dispatchSessionControls2Result = await dispatchSessionControls2({ actionId, parsed, ctx, deps, data, isSameHome });
+        const dispatchSessionControls2Result = await dispatchSessionControls2({ actionId, parsed, ctx, deps, data, isSameHome,
+          executeFollowUp: (childId, childInput, childContext) => executeChild(childId, childInput, childContext, false) });
         if (dispatchSessionControls2Result !== null) return dispatchSessionControls2Result;
         const dispatchSessionAwarenessResult = await dispatchSessionAwareness({ actionId, admittedInput, deps, ctx, data, sameHome: (left, right) => isSameHome(left, right, ctx) });
         if (dispatchSessionAwarenessResult !== null) return dispatchSessionAwarenessResult;

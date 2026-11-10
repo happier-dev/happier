@@ -1,4 +1,5 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
+import { selectTeamCredentialSourcesForApproval } from '../teamCredentialApproval.js';
 import { projectSessionSpawnNewActionInputV2 } from '../../../sessions/creation/sessionSpawnNewInputV2.js';
 import { SessionSpawnNewResultV1Schema, SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 } from '../../../sessions/creation/sessionSpawnNewResultV1.js';
 import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from '../definition.js';
@@ -684,7 +685,8 @@ function createSessionSpawnActionSpecs() {
     id: 'session.spawn_new', executionPlacement: 'machine', originalExecution: { accountRoot: 'allowed', terminalRoot: 'host' }, approval: {result: 'optional',flow: 'deferred'},
     requesterAccountContentDemandForInput: input => Boolean(readRecord(input).machineSetupPlanInput),
     projectObservationInput: projectSessionSpawnNewObservationInput,
-    approvalPresentation: { summary: () => null, projectInput: projectSessionSpawnNewObservationInput, inputSchema: SessionSpawnNewInputSchema },
+    approvalPresentation: { summary: () => null, teamCredentialSources: selectTeamCredentialSourcesForApproval,
+      projectInput: projectSessionSpawnNewObservationInput, inputSchema: SessionSpawnNewInputSchema },
     hostReviewedChildren: normalizedInput => {
       const setup = SessionSpawnNewInputSchema.parse(normalizedInput).machineSetupPlanInput;
       if (!setup) return [];

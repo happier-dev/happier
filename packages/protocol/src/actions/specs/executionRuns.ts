@@ -1,4 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { selectTeamCredentialSourcesForApproval } from './teamCredentialApproval.js';
 import type { ActionSpecSurfaceBindings, PreNormalizedActionSpec } from './definition.js';
 import { EXECUTION_RUN_INTENT_OPTIONS, EXECUTION_RUN_INTENT_POLICY_MATRIX } from '../../execution/runs/intentPolicyMatrix.js';
 import { type ActionInputFieldHint } from '../actionInputHints.js';
@@ -348,6 +349,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
   return Object.freeze([
   {
     id: 'execution.run.start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
+    approvalPresentation: { teamCredentialSources: selectTeamCredentialSourcesForApproval },
     machineRuntimeDemandForInput: resolveExecutionRunMachineRuntimeDemand,
     title: 'Start execution run',
     description: `Start a new execution run. Resolve dependent model, config, and connected-service options with draftInput.backendTargetKey set to the selected backend option.value; then supply the schema-defined backendTarget object to start. Set waitForCompletion=true to wait for a terminal run result. waitTimeoutSeconds only bounds this observation; it never stops, retries, or starts the run. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
@@ -581,6 +583,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'execution.run.ensure_or_start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
+    approvalPresentation: { teamCredentialSources: selectTeamCredentialSourcesForApproval },
     machineRuntimeDemandForInput: resolveExecutionRunMachineRuntimeDemand,
     title: 'Ensure or start execution run',
     description: `Ensure an existing execution run, or start a new one when no run id is supplied. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,

@@ -1,6 +1,7 @@
 import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
 import { canCreateSessionWithInitialAccess, useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 import { t } from '@/text';
 import { getErrorMessage } from '@/utils/errors/getErrorMessage';
@@ -461,6 +462,8 @@ export function useCreateNewSession(params: Readonly<{
     resumeSessionId: string;
     agentNewSessionOptions?: Record<string, unknown> | null;
     authoringDraft?: SessionAuthoringDraft | null;
+    /** Public source names already read by the mounted recipient catalog. Never executable input. */
+    teamCredentialPresentation?: ActionExecutorContext['teamCredentialPresentation'];
     spaceMembership?: import('@happier-dev/protocol/actions').SessionSpaceMembershipTargetV1 | null;
     authoringCommitPending?: boolean;
     /** Fresh admission of inherited Connected Account purpose defaults; explicit choices bypass in their owner. */
@@ -876,6 +879,7 @@ export function useCreateNewSession(params: Readonly<{
                 if (!isCurrent()) return;
                 const result = await runManagedMachineCreation({
                     draft: managedDraft, acquisition, scope, signal: cancellation.signal, isCurrent,
+                    teamCredentialPresentation: current.teamCredentialPresentation,
                     ...(!acquisition.managedId && submitted.authoringDraft ? {
                         agentStart: buildManagedAcquireAgentStartV1FromAuthoringDraft({
                             draft: { ...submitted.authoringDraft, organizationPlacement: preparedOrganizationPlacement,
@@ -1879,6 +1883,7 @@ export function useCreateNewSession(params: Readonly<{
                         }
                         const execution = await executeManualSessionSpawnNewAction(spawnInput, {
                             surface: 'ui',
+                            teamCredentialPresentation: current.teamCredentialPresentation,
                             actionRequestId: launchAttempt.attemptId,
                             signal: sourceDraftCancellation.signal,
                         }, {

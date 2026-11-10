@@ -36,6 +36,7 @@ import { prepareProviderEndpointPolicyReviewFromViewV1, summarizeProviderEndpoin
 import { ProviderErrorV1Schema } from '../../providers/errors.js';
 import { areProviderContributionKeysEqualV1 } from '../../providers/contributionIdentityV1.js';
 import { projectApprovalReviewInput } from '../actionApprovalPresentation.js';
+import { appendTeamCredentialSourceSummary, prepareTeamCredentialSources, readTeamCredentialApprovalSources } from '../specs/teamCredentialApproval.js';
 
 export function mapApprovalCreatedBySurface(surface: ActionExecutorContext['surface']): ApprovalRequestV1['createdBy']['surface'] {
   if (surface === 'voice') return 'voice';
@@ -75,7 +76,7 @@ export function buildApprovalPreviewSummary(spec: ActionSpec, input: unknown, co
     // Presentation cannot become a second effect-admission failure.
   }
   const fallback = String(spec.inputHints?.description ?? spec.title ?? spec.id).trim();
-  return sentenceTerminated(domainSummary ?? (fallback || String(spec.id)));
+  return appendTeamCredentialSourceSummary(sentenceTerminated(domainSummary ?? (fallback || String(spec.id))), context?.teamCredentialSources ?? []);
 }
 
 /** Project from the same normalized operand that admission and dispatch consume. */
@@ -231,6 +232,11 @@ export async function prepareApprovalRequest(params: Readonly<{
   executeCanonicalAction?: RuntimeActionExecuteArgs['executeCanonicalAction'];
 }>): Promise<Readonly<{ actionArgs: unknown; preview: unknown }> | ActionExecuteFailure | null> {
   const spec = getActionSpec(params.actionId);
+  const teamCredentialSources = [
+    ...readTeamCredentialApprovalSources(params.hostReviewedContent),
+    ...await prepareTeamCredentialSources({ deps: params.deps, context: params.context,
+      selection: spec.approvalPresentation?.teamCredentialSources?.(params.input) }),
+  ];
   if (params.actionId === 'machines.reboot') {
     const [{ MachineRebootInputV1Schema }, { MachineServicesListResultV1Schema }, { readMachineDeploymentReferencesV1 }] = await Promise.all([
       import('../specs/machine/reboot.js'), import('../specs/machine/services.js'), import('../../machines/machineReferenceCensusV1.js'),
@@ -319,7 +325,8 @@ export async function prepareApprovalRequest(params: Readonly<{
   if (deployment && !('observePendingOperation' in deployment)) {
     if ('errorCode' in deployment) return deployment;
     return { actionArgs: deployment.input, preview: { actionId: params.actionId, actionArgs: deployment.input,
-      summary: buildApprovalSummary(spec, deployment.input, deployment.preview), deploymentReview: deployment.preview,
+      summary: appendTeamCredentialSourceSummary(buildApprovalSummary(spec, deployment.input, deployment.preview), teamCredentialSources),
+      ...(teamCredentialSources.length ? { teamCredentialSources } : {}), deploymentReview: deployment.preview,
       ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}) } };
   }
   if (params.actionId === 'localServices.launcher.start') {
@@ -420,7 +427,8 @@ export async function prepareApprovalRequest(params: Readonly<{
     ...(params.hostReviewedContent === undefined ? {} : { hostReviewedContent: params.hostReviewedContent }),
     ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}),
     actionArgs: observedInput,
-    summary: buildApprovalPreviewSummary(spec, summaryInput, widgetPresentation ? { widgetPresentation } : undefined),
+    summary: buildApprovalPreviewSummary(spec, summaryInput, { ...(widgetPresentation ? { widgetPresentation } : {}), teamCredentialSources }),
+    ...(teamCredentialSources.length ? { teamCredentialSources } : {}),
     ...(widgetPresentation ? { widgetPresentation } : {}),
     ...(widgetLibraryName ? { widgetLibraryName } : {}),
     ...(params.context.publicProfilePreparedAction?.actionId === params.actionId
@@ -479,7 +487,9 @@ export async function prepareApprovalRequest(params: Readonly<{
     // review schema validates its safe projection, including live-only inputs
     // whose raw operands stay with the originating waiter.
     actionArgs: projectApprovalReviewInput(spec, params.input),
-    summary: customizedSummary || defaultPreview.summary,
+    summary: customizedSummary && customizedSummary !== defaultPreview.summary
+      ? appendTeamCredentialSourceSummary(customizedSummary, teamCredentialSources) : defaultPreview.summary,
+    ...(teamCredentialSources.length ? { teamCredentialSources } : {}),
     // The host's scoped read owns these labels; custom previews cannot replace them.
     ...(nativePermissionAnswer ? { sessionPermissionRequest } : {}),
     ...(widgetLibraryName ? { widgetLibraryName } : {}),

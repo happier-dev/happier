@@ -1,4 +1,5 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
+import { selectTeamCredentialSourcesForApproval } from '../teamCredentialApproval.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 import { PlanStartInputSchema, DelegateStartInputSchema, VoiceAgentStartInputSchema } from '../executionRuns.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
@@ -53,6 +54,7 @@ function createSubagentActionSpecs() {
   return Object.freeze([
   {
     id: 'subagents.plan.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    approvalPresentation: { teamCredentialSources: selectTeamCredentialSourcesForApproval },
     machineRuntimeDemandForInput: (input, context) => resolveExecutionRunMachineRuntimeDemand(
       readRecord(readRecord(input).target).kind === 'detached' ? { sessionId: null } : input, context),
     title: 'Start plan run',
@@ -142,6 +144,7 @@ function createSubagentActionSpecs() {
 	  } satisfies PreNormalizedActionSpec,
   {
     id: 'subagents.delegate.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    approvalPresentation: { teamCredentialSources: selectTeamCredentialSourcesForApproval },
     machineRuntimeDemandForInput: resolveExecutionRunMachineRuntimeDemand,
     title: 'Start delegate run',
     sideEffectClass: 'external',
@@ -236,6 +239,7 @@ function createSubagentActionSpecs() {
 	  } satisfies PreNormalizedActionSpec,
   {
     id: 'voice_agent.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    approvalPresentation: { teamCredentialSources: selectTeamCredentialSourcesForApproval },
     machineRuntimeDemandForInput: resolveExecutionRunMachineRuntimeDemand,
     title: 'Start voice agent run',
     sideEffectClass: 'external',

@@ -22,6 +22,7 @@ import { ActionContextualDefaultsSchema } from '../contextualDefaults.js';
 import { SessionSurfaceItemV1Schema, type SessionSurfaceItemDestinationV1 } from '../../sessions/board/item.js';
 import { readSessionVisualCapabilitiesV1 } from '../../sessions/board/visualPolicy.js';
 import type { UiSurfaceNetworkPolicyV1 } from '../../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
+import type { TeamCredentialApprovalSource, TeamCredentialSourceSelection } from './teamCredentialApproval.js';
 
 export type SessionVisualCopyApprovalSummaryInput = Readonly<{
   source: string;
@@ -31,6 +32,8 @@ export type SessionVisualCopyApprovalSummaryInput = Readonly<{
 
 /** What a presenting app knows that an approval summary may use; every field is optional. */
 export type ApprovalPresentationContext = Readonly<{
+  /** Recipient-safe source names captured before admission, never selected adapter facts. */
+  teamCredentialSources?: readonly TeamCredentialApprovalSource[];
   /** The target Machine's readable form of a path (home-relative). */
   formatPath?: (path: string) => string;
   /** Names captured from the admitted widget/catalog owners; presentation only, never routing. */
@@ -253,6 +256,8 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
   )),
   /** Domain-owned, value-free human description of the exact effect under review. */
   approvalPresentation: z.optional(z.strictObject({
+    /** Selected Team resources whose public names the existing admission preview discloses. */
+    teamCredentialSources: z.optional(z.custom<(input: unknown) => TeamCredentialSourceSelection>((value) => typeof value === 'function')),
     /**
      * The presenting app may pass what only it knows (a Machine's home, to read paths `~/work/app`); without it the
      * summary still reads, so every surface (agent, CLI, MCP) gets the same contract. Optional: a review that only
