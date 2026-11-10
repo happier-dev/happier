@@ -52,6 +52,7 @@ export type DesktopWindowsActionInputById = {
                                 localId: string;
                             };
                             input?: JsonValue;
+                            expectedContributorOccurrenceId?: string;
                             clientId?: string;
                             messageActionReference?: {
                                 v: 1;
@@ -67,6 +68,7 @@ export type DesktopWindowsActionInputById = {
                                     localId: string;
                                 };
                                 input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
                                 clientId?: string;
                                 messageActionReference?: {
                                     v: 1;
@@ -81,6 +83,7 @@ export type DesktopWindowsActionInputById = {
                                     localId: string;
                                 };
                                 input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
                                 clientId?: string;
                                 messageActionReference?: {
                                     v: 1;
@@ -141,6 +144,7 @@ export type DesktopWindowsActionInputById = {
                                 localId: string;
                             };
                             input?: JsonValue;
+                            expectedContributorOccurrenceId?: string;
                             clientId?: string;
                             messageActionReference?: {
                                 v: 1;
@@ -156,6 +160,7 @@ export type DesktopWindowsActionInputById = {
                                     localId: string;
                                 };
                                 input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
                                 clientId?: string;
                                 messageActionReference?: {
                                     v: 1;
@@ -170,6 +175,7 @@ export type DesktopWindowsActionInputById = {
                                     localId: string;
                                 };
                                 input?: JsonValue;
+                                expectedContributorOccurrenceId?: string;
                                 clientId?: string;
                                 messageActionReference?: {
                                     v: 1;

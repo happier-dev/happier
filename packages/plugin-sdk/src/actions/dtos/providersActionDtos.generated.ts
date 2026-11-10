@@ -1567,6 +1567,23 @@ export type ProvidersActionInputById = {
                         sharing?: 'connectionMachine' | undefined;
                         sourceEnvelopeTransport?: 'cpx-v1' | undefined;
                         dependencies?: string[] | undefined;
+                        unavailableConnectedAccounts?: undefined | {
+                            purpose: string;
+                            service: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            unavailableReason: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            title?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
                         connectedAccounts?: undefined | {
                             purpose: string;
                             service: string | {

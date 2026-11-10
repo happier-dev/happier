@@ -188,6 +188,10 @@ export type SessionPermissionsActionResultById = {
                     };
                     rulePreview?: string | undefined;
                     allowsFeedback?: boolean | undefined;
+                    followUp?: undefined | {
+                        actionId: string;
+                        input: JsonValue;
+                    };
                 }[];
                 origin?: undefined | {
                     sessionId: string;

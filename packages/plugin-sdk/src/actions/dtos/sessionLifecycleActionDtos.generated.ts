@@ -112,6 +112,7 @@ export type SessionLifecycleActionInputById = {
                             localId: string;
                         };
                         input?: JsonValue;
+                        expectedContributorOccurrenceId?: string;
                         clientId?: string;
                         messageActionReference?: {
                             v: 1;
@@ -127,6 +128,7 @@ export type SessionLifecycleActionInputById = {
                                 localId: string;
                             };
                             input?: JsonValue;
+                            expectedContributorOccurrenceId?: string;
                             clientId?: string;
                             messageActionReference?: {
                                 v: 1;
@@ -141,6 +143,7 @@ export type SessionLifecycleActionInputById = {
                                 localId: string;
                             };
                             input?: JsonValue;
+                            expectedContributorOccurrenceId?: string;
                             clientId?: string;
                             messageActionReference?: {
                                 v: 1;

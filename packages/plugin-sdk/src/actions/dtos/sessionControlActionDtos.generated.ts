@@ -3085,6 +3085,10 @@ export type SessionControlActionResultById = {
                     };
                     rulePreview?: string | undefined;
                     allowsFeedback?: boolean | undefined;
+                    followUp?: undefined | {
+                        actionId: string;
+                        input: JsonValue;
+                    };
                 }[];
                 origin?: undefined | {
                     sessionId: string;
@@ -3759,6 +3763,10 @@ export type SessionControlActionResultById = {
                                 };
                                 rulePreview?: string | undefined;
                                 allowsFeedback?: boolean | undefined;
+                                followUp?: undefined | {
+                                    actionId: string;
+                                    input: JsonValue;
+                                };
                             }[];
                             origin?: undefined | {
                                 sessionId: string;

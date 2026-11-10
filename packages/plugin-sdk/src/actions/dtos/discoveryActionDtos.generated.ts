@@ -199,6 +199,7 @@ export type DiscoveryActionInputById = {
             localId: string;
         };
         input?: JsonValue;
+        expectedContributorOccurrenceId?: string;
         clientId?: string;
         messageActionReference?: {
             v: 1;
