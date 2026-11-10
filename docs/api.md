@@ -296,6 +296,12 @@ release waiting callers through the incumbent attempt lifecycle. OAuth replies
 use the transaction's existing expiry when the authorization server supplies
 none, or the earlier transaction/provider expiry when both are present.
 
+The shared authentication command executor waits for that same operation when
+`beginConnect`, `beginReconnect`, or `continueConnect` starts a provider flow.
+Native and portable hosts therefore return the published next step or its
+failure. A follow-up Action can route through the acknowledged Account
+attempt address instead of racing its creation.
+
 ## Connected personal metadata (0.3 development source)
 
 Authenticated Account transport exposes two singleton rows at

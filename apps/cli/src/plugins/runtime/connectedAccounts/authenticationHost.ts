@@ -105,10 +105,8 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
             attemptAddresses: transactions.address, settlement: persistence.attempts.settlement,
         });
         return { attempts, configuration, dispose: attempts.dispose, async execute(command, signal, addressedRecord) {
-            const response = await executeConnectedAccountAuthenticationCommand({ attempts, command, signal,
+            return executeConnectedAccountAuthenticationCommand({ attempts, command, signal,
                 ...(addressedRecord ? { addressedRecord } : {}) });
-            return response.status === 'starting' && (command.operation === 'beginConnect' || command.operation === 'beginReconnect')
-                ? attempts.read({ attemptId: response.attemptId, waitForProviderStart: true, signal }) : response;
         } };
     };
     const select = async (service: Readonly<{ pluginId: string; localId: string }>) => {

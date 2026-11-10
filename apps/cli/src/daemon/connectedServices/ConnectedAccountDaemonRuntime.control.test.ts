@@ -220,12 +220,12 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
         expect(callbackEntered).toBe(false);
         return;
       }
-      const begun = await daemon.execute({ operation: 'beginConnect', service, modeId: authentication });
-      expect(begun).toMatchObject({ status: authentication === 'manual' ? 'awaitingManual' : 'starting', attemptId: 'attempt-custody' });
+      const beginning = daemon.execute({ operation: 'beginConnect', service, modeId: authentication });
       if (scenario === 'cancelledOAuthCreate') {
         await vi.waitFor(() => expect(transactionCreateEntered).toBe(true));
         await expect(daemon.execute({ operation: 'cancel', attemptId: 'attempt-custody' })).resolves.toMatchObject({ status: 'cancelled' });
         releaseCallback();
+        expect((await beginning).status).not.toBe('awaitingOAuth');
         await vi.waitFor(() => expect(transactionClosed).toBe(true));
         await vi.waitFor(async () => expect(await daemon.execute({ operation: 'read', attemptId: 'attempt-custody' })).toMatchObject({ status: 'unavailable', code: 'connected_account_attempt_not_found' }));
         await reloadController.adoptPreparedRuntimeRegistry({ registry: createRegistry(true), changedPluginIds: [service.pluginId], runningSessionDisposition: 'retainRunningSessions' });
@@ -233,11 +233,13 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
         return;
       }
       if (scenario === 'oauth') {
-        expect(await daemon.execute({ operation: 'read', attemptId: 'attempt-custody' })).toMatchObject({ status: 'starting' });
+        await vi.waitFor(async () => expect(await daemon.execute({ operation: 'read', attemptId: 'attempt-custody' })).toMatchObject({ status: 'starting' }));
         const ready = daemon.execute({ operation: 'read', attemptId: 'attempt-custody', waitForProviderStart: true });
         releaseCallback();
         expect(await ready).toMatchObject({ status: 'awaitingOAuth' });
       } else if (authentication !== 'manual') await vi.waitFor(async () => expect(await daemon.execute({ operation: 'read', attemptId: 'attempt-custody' })).toMatchObject({ status: authentication === 'oauth' ? 'awaitingOAuth' : 'awaitingDeviceAuthorization' }));
+      const begun = await beginning;
+      expect(begun).toMatchObject({ status: authentication === 'manual' ? 'awaitingManual' : authentication === 'oauth' ? 'awaitingOAuth' : 'awaitingDeviceAuthorization', attemptId: 'attempt-custody' });
       if (scenario === 'cancelledManual') {
         const completion = daemon.execute({ operation: 'submitManual', attemptId: 'attempt-custody', fields: { token: 'original-secret' } });
         await vi.waitFor(() => expect(callbackEntered).toBe(true));

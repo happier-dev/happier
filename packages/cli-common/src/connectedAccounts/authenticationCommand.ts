@@ -19,6 +19,14 @@ export async function executeConnectedAccountAuthenticationCommand(input: Readon
     assertBeginAllowed?(input: BeginAdmission): void | Promise<void>;
 }>): Promise<ConnectedAccountAttemptResponse> {
     const { attempts, command } = input;
+    const finishStart = async (response: ConnectedAccountAttemptResponse): Promise<ConnectedAccountAttemptResponse> => {
+        // Follow-up Actions route by the durable Account address. Provider startup
+        // publishes that address before settling the existing start promise.
+        return response.status === 'starting'
+            ? attempts.read({ attemptId: response.attemptId, waitForProviderStart: true,
+                ...(input.signal ? { signal: input.signal } : {}) })
+            : response;
+    };
     if ('attemptId' in command) {
         const restored = await attempts.ensureRestored({ attemptId: command.attemptId,
             ...(input.addressedRecord ? { record: input.addressedRecord } : {}),
@@ -29,18 +37,18 @@ export async function executeConnectedAccountAuthenticationCommand(input: Readon
         case 'beginConnect':
             await input.assertBeginAllowed?.({ intent: 'connect', service: command.service,
                 authenticationModeId: command.modeId });
-            return attempts.beginConnect({ service: command.service, modeId: command.modeId,
+            return finishStart(await attempts.beginConnect({ service: command.service, modeId: command.modeId,
                 ...(command.expectedConfigurationRevision === undefined ? {}
-                    : { expectedConfigurationRevision: command.expectedConfigurationRevision }) });
+                    : { expectedConfigurationRevision: command.expectedConfigurationRevision }) }));
         case 'beginReconnect':
             await input.assertBeginAllowed?.({ intent: 'reconnect', service: command.account.service });
-            return attempts.beginReconnect({ account: command.account,
+            return finishStart(await attempts.beginReconnect({ account: command.account,
                 ...(command.expectedConfigurationRevision === undefined ? {}
-                    : { expectedConfigurationRevision: command.expectedConfigurationRevision }) });
+                    : { expectedConfigurationRevision: command.expectedConfigurationRevision }) }));
         case 'continueConnect':
-            return attempts.continueConnect({ attemptId: command.attemptId,
+            return finishStart(await attempts.continueConnect({ attemptId: command.attemptId,
                 ...(command.expectedConfigurationRevision === undefined ? {}
-                    : { expectedConfigurationRevision: command.expectedConfigurationRevision }) });
+                    : { expectedConfigurationRevision: command.expectedConfigurationRevision }) }));
         case 'submitManual':
             return attempts.submitManual({ attemptId: command.attemptId, fields: command.fields,
                 ...(command.selectedSecrets ? { selectedSecrets: command.selectedSecrets } : {}),
