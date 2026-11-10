@@ -57,11 +57,11 @@ describe('ModalCardFrame body on native', () => {
           nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 612 } },
         }),
       );
-      // The one scroller is the content's own list: the body stays still and bounds it to its own height.
+      // The one scroller is the content's own list: the body stays still and bounds it to its own height,
+      // exactly for a fixed-height body (iOS QA: under a mere cap the list stayed 1122 pt in a 522 pt body).
       expect(body().props.scrollEnabled).toBe(false);
-      expect(flattenStyle(body().props.contentContainerStyle).maxHeight).toBe(
-        612,
-      );
+      const content = flattenStyle(body().props.contentContainerStyle);
+      expect(scrollHost === 'body' ? content.height : content.maxHeight).toBe(612);
     },
   );
 
