@@ -11,6 +11,8 @@ export type MachineProvisionerNativeCredentialHeadersResultV1 =
     | Readonly<{ ok: false; code: 'native_credential_binding_unavailable' }>;
 
 export interface MachineProvisionersService {
+    /** Wait on the host's native observation cadence with this invocation's cancellation signal. */
+    waitForNativeObservation(): Promise<void>;
     /**
      * Open only this SSH acquire installer's generated guest-host private key.
      * It is distinct from the bootstrap user key. The host retains redaction

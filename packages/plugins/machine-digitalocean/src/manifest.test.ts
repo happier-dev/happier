@@ -31,6 +31,7 @@ async function activated(response: unknown, status = 200, replyForUrl?: (url: st
   const requests: HttpRequest[] = [];
   const credentialContext = { signal: new AbortController().signal, credentials: { get: async () => 'selected-private' } } as unknown as ConnectedAccountReadContext;
   const context = { invokedAtMs: 1234, signal: new AbortController().signal, services: {
+    machineProvisioners: { waitForNativeObservation: async () => {} },
     connectedAccounts: { materialize: async (_purpose: string, request: ConnectedAccountMaterializationRequest) =>
       connectedAccountRuntime.materialize(request, credentialContext) },
     http: { request: async (request: HttpRequest) => {
@@ -46,6 +47,34 @@ async function activated(response: unknown, status = 200, replyForUrl?: (url: st
   return { handlers, context, requests };
 }
 describe('public digitalocean machine provisioner', () => {
+  it.each(['completed', 'errored', 'unavailable', 'ambiguous'] as const)('settles one exact native snapshot Action with truthful coverage after %s', async outcome => {
+    let submitted = false;
+    let observations = 0;
+    const host = await activated(undefined, 200, (url, method) => {
+      const path = new URL(url).pathname;
+      if (method === 'POST') { submitted = true; return { status: 201, body: { action: {
+        id: 91, status: 'in-progress', type: 'snapshot', resource_id: 42, resource_type: 'droplet' } } }; }
+      if (path.endsWith('/actions/91')) {
+        observations++;
+        return outcome === 'unavailable' ? { status: 503, body: { id: 'service_unavailable' } }
+          : { status: 200, body: { action: { id: 91, status: observations === 1 ? 'in-progress' : outcome === 'ambiguous' ? 'completed' : outcome,
+            type: 'snapshot', resource_id: 42, resource_type: 'droplet' } } };
+      }
+      return { status: 200, body: { droplet: { id: 42, name: 'managed', status: 'off', tags: [], volume_ids: ['attached'],
+        snapshot_ids: submitted ? outcome === 'ambiguous' ? [70, 71, 72] : [70, 71] : [70] } } };
+    });
+    const snapshot = host.handlers.get('snapshot');
+    expect(snapshot).toBeTypeOf('function');
+    const result = await snapshot!({ resource, expectedMachineRevision: 3, label: 'Before restore', reason: 'Replace database' }, host.context);
+    expect(result).toMatchObject(outcome === 'completed'
+      ? { kind: 'confirmed', snapshotId: '71', coverage: { rootDisk: true, attachedVolumes: false }, consistency: 'stopped', cost: { kind: 'billed' } }
+      : { kind: outcome === 'errored' ? 'failed' : 'unknown', code: expect.any(String) });
+    const writes = host.requests.filter(request => request.method === 'POST');
+    expect(writes).toHaveLength(1);
+    expect(new URL(writes[0]!.url).pathname).toBe('/v2/droplets/42/actions');
+    expect(JSON.parse(new TextDecoder().decode(writes[0]!.body))).toEqual({ type: 'snapshot', name: 'Before restore' });
+    expect(exports.PLUGIN_MANIFEST.contributes.actions.find(action => action.id === 'snapshot')?.execution.target).toBe('daemon');
+  });
   it('executes portable Account cleanup with one selected credential capture for all native fragments', async () => {
     const accountExports = exports as unknown as { activateAccount?: (api: PluginAccountApi) => unknown };
     expect(accountExports.activateAccount).toBeTypeOf('function');

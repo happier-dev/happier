@@ -2,7 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMachineProvisionersInvocationService } from './machineProvisioners';
 import { createManagedServiceCredentialFileOwner } from './managedServiceCredentialFileOwner';
 import type { PluginInvocationServicesSeed } from './types';
@@ -19,6 +19,29 @@ import { createManagedBootstrapSshCredential, ManagedMachineControllerError, rea
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+
+it('waits for native snapshot observation under the admitted invocation cancellation without opening an SSH key', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let credentialReads = 0;
+    const service = createMachineProvisionersInvocationService({ seed: {
+        plugin: { id: 'fixture.compute', version: '0' },
+        contribution: { id: 'snapshot', qualifiedId: 'fixture.compute/snapshot' },
+        occurrenceId: 'occurrence', correlationId: 'restore', surface: 'plugin',
+        signal: controller.signal, isOccurrenceCurrent: () => true, retainCleanup: () => {},
+        managedBootstrapCredential: { role: 'snapshot', isCurrent: () => true,
+            readBootstrapCredential: async () => { credentialReads++; return new Uint8Array(); } },
+    } });
+    try {
+        const first = service!.waitForNativeObservation();
+        await vi.advanceTimersByTimeAsync(5000);
+        await first;
+        const cancelled = expect(service!.waitForNativeObservation()).rejects.toMatchObject({ code: 'cancelled' });
+        controller.abort();
+        await cancelled;
+        expect(credentialReads).toBe(0);
+    } finally { vi.useRealTimers(); }
+});
 
 describe('DigitalOcean acquire consumes the admitted private guest-host lease', () => {
     async function invocation(status: number, generated = true, privateReader = true) {

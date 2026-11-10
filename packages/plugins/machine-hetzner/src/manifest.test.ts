@@ -32,6 +32,7 @@ async function activated(response: unknown, status = 200, errorOnCreate?: { stat
   const credentialContext = { signal: new AbortController().signal,
     credentials: { get: async () => 'captured-private' } } as unknown as ConnectedAccountReadContext;
   const context = { invokedAtMs: 1234, signal: new AbortController().signal, services: {
+    machineProvisioners: { waitForNativeObservation: async () => {} },
     connectedAccounts: { materialize: async (_purpose: string, request: ConnectedAccountMaterializationRequest) =>
       connectedAccountRuntime.materialize(request, credentialContext) },
     http: { request: async (request: HttpRequest) => {
@@ -44,6 +45,30 @@ async function activated(response: unknown, status = 200, errorOnCreate?: { stat
   return { handlers, context, requests };
 }
 describe('public hetzner machine provisioner', () => {
+  it.each(['success', 'error', 'unavailable'] as const)('settles one exact native snapshot Action with truthful coverage after %s', async outcome => {
+    let observations = 0;
+    const host = await activated(undefined, 200, undefined, (url, method) => {
+      const path = new URL(url).pathname;
+      if (method === 'POST') return { status: 201, body: { action: { id: 91, status: 'running' }, image: { id: 71 } } };
+      if (path.endsWith('/actions/91')) {
+        observations++;
+        return outcome === 'unavailable' ? { status: 503, body: { error: { code: 'service_unavailable' } } }
+          : { status: 200, body: { action: { id: 91, status: observations === 1 ? 'running' : outcome } } };
+      }
+      return { status: 200, body: { server: { id: 41, status: 'running', labels: {}, public_net: { ipv4: null, ipv6: null } } } };
+    });
+    const snapshot = host.handlers.get('snapshot');
+    expect(snapshot).toBeTypeOf('function');
+    const result = await snapshot!({ resource, expectedMachineRevision: 3, label: 'Before restore', reason: 'Replace database' }, host.context);
+    expect(result).toMatchObject(outcome === 'success'
+      ? { kind: 'confirmed', snapshotId: '71', coverage: { rootDisk: true, attachedVolumes: false }, consistency: 'running', cost: { kind: 'billed' } }
+      : { kind: outcome === 'error' ? 'failed' : 'unknown', code: expect.any(String) });
+    const writes = host.requests.filter(request => request.method === 'POST');
+    expect(writes).toHaveLength(1);
+    expect(new URL(writes[0]!.url).pathname).toBe('/v1/servers/41/actions/create_image');
+    expect(JSON.parse(new TextDecoder().decode(writes[0]!.body))).toEqual({ type: 'snapshot', description: 'Before restore' });
+    expect(exports.PLUGIN_MANIFEST.contributes.actions.find(action => action.id === 'snapshot')?.execution.target).toBe('daemon');
+  });
   it('curates server operating systems and declares an available Ubuntu LTS and price-location default', async () => {
     const pair = { net: '1', gross: '1' };
     const image = { architecture: 'x86', type: 'system', status: 'available', deprecated: null };

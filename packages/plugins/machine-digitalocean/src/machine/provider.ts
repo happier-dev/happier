@@ -11,6 +11,7 @@ export function createDigitalOceanProvider(options: Parameters<typeof createDigi
     recover: client.recover,
     observeAction: client.observeAction,
     power: client.power,
+    snapshot: client.snapshot,
     destroy: client.destroy,
     async acquire(raw: Parameters<typeof client.create>[0]) {
       const input = dropletAcquireInputSchema.parse(raw);

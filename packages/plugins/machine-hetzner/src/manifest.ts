@@ -4,11 +4,12 @@ import { machinePresentationLabel, machineCheckPresentation } from './ui/transla
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { observeMachineProvisionerNativeRead, defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas, buildMachineProvisionerPinnedSshBootstrap,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
-  MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
+  MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerSnapshotResultV1Schema,
   MachineProvisionerPowerResultV1Schema, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1, type MachineProvisionerNativeCauseV1, type MachineProvisionerCloudHostKeyV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import { createHetznerProvider } from './machine/provider.js';
+import { HETZNER_SNAPSHOT_FACTS } from './machine/nativeClient.js';
 import { projectHetznerOptions } from './machine/options.js';
 import { HetznerLaunchV1Schema, HetznerResourceV1Schema, HetznerNativeOperationV1Schema, HetznerNativeError } from './machine/schemas.js';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, connectedAccountPortableRuntime, nativeFetch } from './account.js';
@@ -43,7 +44,8 @@ export const MACHINE_PROVISIONER = {
   // Required SSH bootstrap makes the whole browser create path unavailable.
   browserReachable: false,
   billing, retention: { supportedIntents: ['start', 'stop', 'delete'], guestLocalStop: 'poweroff' },
-  actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
+  actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', snapshot: 'snapshot' },
+  snapshot: HETZNER_SNAPSHOT_FACTS,
   reconciliation: { action: 'reconcile', nativeOperationSchema: HetznerNativeOperationV1Schema.jsonSchema },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
@@ -90,6 +92,14 @@ export const PLUGIN = definePlugin({
   } },
   machineProvisioners: { [PROVISIONER_ID]: MACHINE_PROVISIONER },
   actions: {
+    snapshot: { ...defaults, scopes: ['machine'], execution: { target: 'daemon' },
+      title: 'Snapshot Hetzner server disk', dangerLevel: 'externalSideEffect',
+      confirmation: { title: 'Snapshot this Hetzner Server?', body: 'This creates a billable snapshot of the exact managed Server’s root disk. Attached volumes are not included.' },
+      inputSchema: ROLE_SCHEMAS.snapshotInput, resultSchema: MachineProvisionerSnapshotResultV1Schema,
+      async run(input, context) {
+        return (await runtime(context)).snapshot(input.resource, input.label, () => context.services.machineProvisioners.waitForNativeObservation());
+      },
+    },
     reconcile: { ...defaults, title: 'Recover exact Hetzner resource', dangerLevel: 'safe',
       inputSchema: reconciliation.input, resultSchema: reconciliation.result,
       async run(input, context) {

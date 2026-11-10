@@ -22,7 +22,7 @@ export function createHetznerProvider(options: HetznerNativeClientOptions) {
   const native = createHetznerNativeClient(options);
   return {
     check: native.check, options: native.options, inspect: native.inspect,
-    recover: native.recover, power: native.power, destroy: native.destroy,
+    recover: native.recover, power: native.power, destroy: native.destroy, snapshot: native.snapshot,
     async acquire(rawInput: unknown) {
       const input = parseHetznerValue(HetznerAcquireV1Schema, rawInput);
       if (!input.launch.publicNetworking.ipv4 && !input.launch.publicNetworking.ipv6) {

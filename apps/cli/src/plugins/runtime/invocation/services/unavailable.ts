@@ -458,7 +458,9 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
     healthChecks: {
         id: 'healthChecks', publicProperty: 'healthChecks', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['healthChecks'] {
-            return Object.freeze({ read: unavailableMethod('healthChecks', code, diagnostic), setup: unavailableMethod('healthChecks', code, diagnostic) });
+            return Object.freeze({ read: unavailableMethod('healthChecks', code, diagnostic), setup: unavailableMethod('healthChecks', code, diagnostic),
+                readSource: unavailableMethod('healthChecks', code, diagnostic), listKinds: unavailableMethod('healthChecks', code, diagnostic),
+                manageHeartbeat: unavailableMethod('healthChecks', code, diagnostic) });
         },
         createAvailable(context: PluginInvocationServiceDescriptorContext): PluginServices['healthChecks'] | null {
             if (!context.params.healthChecks) return null;
@@ -567,6 +569,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['machineProvisioners'] {
             return Object.freeze({
                 materializeNativeCredentialHeaders: async () => ({ ok: false as const, code: 'native_credential_binding_unavailable' as const }),
+                waitForNativeObservation: unavailableMethod('machineProvisioners', code, diagnostic),
                 materializeGuestHostCredential: unavailableMethod('machineProvisioners', code, diagnostic),
                 materializeBootstrapCredential: unavailableMethod('machineProvisioners', code, diagnostic),
                 withBootstrapCredentialFile: unavailableMethod('machineProvisioners', code, diagnostic),

@@ -1,5 +1,5 @@
 import * as z from 'zod/mini';
-import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { MachineProvisionerNativeCauseV1, MachineProvisionerSnapshotResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { buildMachineProvisionerCloudInit, MACHINE_PROVISIONER_CLOUD_SSH_USER, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import {
   dropletAcquireInputSchema, dropletPowerIntentSchema, dropletResourceSchema,
@@ -44,6 +44,14 @@ type NativePrice = Readonly<{ amount: string; currency: 'USD'; unit: 'hour' | 'm
 const pageLinksSchema = z.optional(z.object({ pages: z.optional(z.object({ next: z.optional(z.string()) })) }));
 // Paid identity survives unavailable readiness facts; inspect keeps the full schema.
 const createReplySchema = z.object({ droplet: z.pick(nativeDropletSchema, { id: true }) });
+const snapshotDropletSchema = z.object({ droplet: z.extend(z.pick(nativeDropletSchema, { id: true, status: true }), {
+  snapshot_ids: z.array(nativeDropletSchema.shape.id),
+}) });
+// REST v2 Droplet Actions and droplet.yml snapshot_ids, read 2026-11-10.
+// Droplet disk snapshots exclude attached Block Storage volumes. Running is
+// disclosed separately: this operation does not claim application quiescence.
+export const DIGITALOCEAN_SNAPSHOT_FACTS = { coverage: { rootDisk: true, attachedVolumes: false },
+  cost: { kind: 'billed', source: 'https://docs.digitalocean.com/products/snapshots/details/pricing/' } } as const;
 
 export function createDigitalOceanNativeClient(options: { token: string; fetch?: typeof fetch; signal?: AbortSignal; now?: () => Date; guestHostKey?: MachineProvisionerCloudHostKeyV1 }) {
   const network = options.fetch ?? fetch;
@@ -147,6 +155,49 @@ export function createDigitalOceanNativeClient(options: { token: string; fetch?:
   }
   return {
     inspect, observeAction, options: nativeOptions,
+    async snapshot(rawResource: DropletResourceV1, label: string, waitForObservation: () => Promise<void>): Promise<MachineProvisionerSnapshotResultV1> {
+      const resource = dropletResourceSchema.parse(rawResource);
+      const failure = (kind: 'unknown' | 'refused', code: string, result?: Unavailable) => ({ kind, code,
+        ...(result?.nativeCause ? { nativeCause: result.nativeCause } : {}) });
+      async function readDroplet() {
+        const response = await request(`/droplets/${resource.dropletId}`);
+        if (response.kind === 'unavailable') return response;
+        const parsed = snapshotDropletSchema.safeParse(response.body);
+        if (!parsed.success) return { kind: 'unavailable', reason: 'invalid-response' } as const;
+        return parsed.data.droplet.id === resource.dropletId
+          ? { kind: 'available', droplet: parsed.data.droplet } as const
+          : { kind: 'unavailable', reason: 'resource-mismatch' } as const;
+      }
+      const before = await readDroplet();
+      if (before.kind === 'unavailable') return failure('refused', 'native_snapshot_preflight_unavailable', before);
+      const submitted = await request(`/droplets/${resource.dropletId}/actions`, 'POST', { type: 'snapshot', name: label });
+      if (submitted.kind === 'unavailable') return failure(submitted.status !== undefined && submitted.status >= 400 && submitted.status < 500
+        ? 'refused' : 'unknown', 'native_snapshot_submission_unavailable', submitted);
+      const decodeAction = (body: unknown) => {
+        const decoded = z.object({ action: nativeActionSchema }).safeParse(body);
+        return decoded.success && decoded.data.action.type === 'snapshot' && decoded.data.action.resource_id === resource.dropletId
+          ? decoded.data.action : undefined;
+      };
+      let action = decodeAction(submitted.body);
+      if (!action) return failure('unknown', 'native_snapshot_action_unavailable');
+      const actionId = action.id;
+      while (action.status === 'in-progress') {
+        try { await waitForObservation(); }
+        catch { return failure('unknown', 'native_snapshot_observation_cancelled'); }
+        const observed = await request(`/actions/${actionId}`);
+        if (observed.kind === 'unavailable') return failure('unknown', 'native_snapshot_observation_unavailable', observed);
+        action = decodeAction(observed.body);
+        if (!action || action.id !== actionId) return failure('unknown', 'native_snapshot_action_mismatch');
+      }
+      if (action.status === 'errored') return { kind: 'failed', code: 'native_snapshot_failed' };
+      const after = await readDroplet();
+      if (after.kind === 'unavailable') return failure('unknown', 'native_snapshot_identity_unavailable', after);
+      const previous = new Set(before.droplet.snapshot_ids);
+      const created = after.droplet.snapshot_ids.filter(id => !previous.has(id));
+      if (created.length !== 1) return failure('unknown', 'native_snapshot_identity_ambiguous');
+      return { kind: 'confirmed', snapshotId: String(created[0]), ...DIGITALOCEAN_SNAPSHOT_FACTS,
+        consistency: before.droplet.status === 'active' ? 'running' : before.droplet.status === 'off' ? 'stopped' : 'unknown' };
+    },
     async check() {
       const result = await request('/account');
       const account = result.kind === 'response' ? readDigitalOceanAccountAccess(result.body) : undefined;

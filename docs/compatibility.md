@@ -1,5 +1,22 @@
 # Compatibility and version skew
 
+## Platform upload provenance (unreleased 0.3)
+
+`DeploymentTargetRoleResultV1` adds optional `uploadProvenance` to the existing provider observation. Existing receipts without upload evidence remain valid. New upload results record a source manifest fingerprint and a discriminated build location: `provider`, or `controller` with image, toolchain name/version and output manifest fingerprint. Later observations may omit it; the receipt writer retains the original upload evidence.
+
+This is a development contract cut across the protocol, plugin SDK, provider declarations and their host consumers. Older strict role-result readers reject results containing the new field; update those components together and regenerate bundled provider manifests through their canonical publisher. No migration, new persisted record, alternative parser or released-version compatibility fallback is introduced.
+
+## Machine Setup receiver evidence (unreleased 0.3)
+
+Setup Plan and Apply add optional `backupReceivers` public results. The native
+SSH probe declaration can request `publicHostKeyEvidence`, and the elevated
+settled result can carry its public `sshHostKeys` witness. Matching Protocol,
+CLI, recipe projection and generated SDK Action readers reload together;
+older strict development readers reject these additional fields. This extends
+an unpublished 0.3 contract in place, with no persisted format, wire epoch or
+compatibility adapter. The inspected `../0.2` frontier at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no Machine Setup contracts.
+
 ## Machine service export commitment (unreleased 0.3)
 
 The closed development TCP grant's `scope.serviceExport` now carries only
@@ -14,10 +31,29 @@ contracts under `packages/protocol/src/machines/peer/mediation`.
 
 ## Database copy and reference components (unreleased 0.3)
 
-The public restore input's optional `copy` identifies a source Environment/Link
-and a destination service/database. Ordinary recovery omits it and keeps its
-same-Environment contract. The installed source member consumes the existing
-source grant through `copySourceRead`; no credential transfer format is added.
+Native deploy intent can restrict one operation with an explicit, nonempty
+`services` subset. Preparation retains that restriction in the private receipt
+and pending intent while keeping the complete `sourceIntent` unchanged. Native
+review refuses dependency expansion beyond the restriction. Omitting it keeps
+the ordinary full deployment behavior. A successful preview database provision
+can retain `previewCleanup` with its exact observed Machine and owned named
+volume identities in the receipt and Action result; ordinary subset deployments
+do not produce this cleanup authority.
+
+These closed development request, pending and receipt fields require matching
+Protocol, CLI and Home readers to reload together; older strict development
+readers reject the additional fields. They add no wire epoch or compatibility
+adapter. The inspected `../0.2` frontier at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no deployment protocol or native
+deployment implementation, including scoped local changes.
+
+The public restore input's `source` selects a repository snapshot or an upload.
+A repository source's optional `origin` identifies the source Environment/Link
+for cross-Environment copy; `destination` selects the database or volume to
+restore. Home admits Manage on both Environments and the source member once.
+Ordinary recovery omits `origin` and keeps its same-Environment contract. The
+installed source member consumes the existing source grant through
+`copySourceRead`; no credential transfer format or removed-`copy` adapter is added.
 
 An Environment variable reference can optionally select `component: 'host'` or
 `'port'`. Existing references without that field still resolve to the complete
@@ -188,16 +224,18 @@ route remains unavailable (404). The format basis is the scoped-clean
 
 The existing closed private Account invocation confirmation also carries settled
 UI consent for a Plugin-origin `action.invoke`, without changing the Plugin caller
-or its automation authority. The receiver binds the same exact operand, approved
-target source and declaration, Account, Home, request and execution target before its target
-gate consumes the confirmation.
+or its automation authority. The receiver binds the same exact operand,
+Account, Home, request and execution target when it consumes the confirmation
+once. Plugin declaration, source, version and newly computed policy are not
+compared after approval; the approved operands remain the operation's input.
 Host confirmation and reviewed-parent admission keep their existing restrictions.
 
 The private record shape and persisted approval formats do not change. The closed
 `action.invoke` input gains optional `expectedContributorOccurrenceId`; raw host
 repair relays retain that existing target-selection constraint through the
 generic Action path. Earlier development readers reject the Plugin confirmation
-and the new optional operand, so UI, Protocol and daemon reload together under the
+and the new optional operand. The input-only consent digest also changes within
+unpublished 0.3; UI, Protocol and daemon reload together under the
 unpublished 0.3 direct cut.
 The inspected `../0.2` frontier at
 `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no private requester-invocation
@@ -411,7 +449,18 @@ selector as JSON; the Home route decodes it before strict input validation.
 Preview-template edits use the existing Environment content-update proof and
 sole template schema. The authored patch carries the private operand; prepared
 Home storage rejects it and accepts only the rewritten Artifact reference plus
-the remaining metadata patch. Existing template content keeps its wire shape.
+the remaining metadata patch. Own-server template selections optionally retain
+`copyFrom` source capture coordinates and explicit `destinationBackup` authoring
+inputs. Child preparation owns fresh generated bindings; source credentials and
+grants are not copied. Repository Compose remains the sole content owner: the
+selected PostgreSQL service must already be declared by the repository, and
+template preparation supplies bindings and metadata without an overlay. The
+unpublished augmentation field has been removed rather than retained as a
+compatibility path. Older selections without these optional operands remain
+readable; native copying requires the explicit source and destination choices.
+The reviewed Create child uses the canonical backup Configure Action and its
+actual configured revision; generic Environment updates do not configure backups.
+These are unreleased 0.3 fields consumed by matching development readers.
 
 Matching development Protocol, Home, daemon/CLI, SDK, UI and GitHub plugin must
 load together. Older strict development readers may reject the new fields or
@@ -7769,6 +7818,22 @@ predecessor adapter is introduced.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 GitHub PR Preview child results accept optional `controller`,
+using the canonical Deployment controller availability schema exposed through the
+SDK protocol facade. Both receipt-backed and unavailable child results can carry
+the fact; omission makes no controller availability claim. Matching SDK, plugin
+and UI readers consume this additive projection together. Older strict
+development readers reject the extra field. There is no persisted format change,
+new wire epoch or compatibility adapter.
+
+Unreleased 0.3 Triage Environment investigation subjects accept optional
+`readiness: { projectId, fact }` context. The existing Environment read verifies
+Project membership; the context supplies no authority or caller-authored verdict.
+Matching Triage protocol, plugin and UI readers reload together. Older strict
+development readers reject the extra context; omitted context preserves existing
+Environment handoffs. No new Action, Session writer, persistence format or wire
+epoch is introduced.
+
 Unreleased 0.3 runtime usage observations share the closed payload schema in
 `runtime/agentUsageObservedPayloadV1.ts`, independent of Session and finite-Run
 envelopes. A witnessed `accounting.nativeSessionId` permits an observation with
@@ -8005,9 +8070,10 @@ request, persisted format or wire epoch; the predecessor basis above has no
 Storage domain. Current clients need the measurement-aware reader to distinguish
 an unmeasured result from an empty inventory.
 
-Unreleased 0.3 backup restore accepts optional `backupOperationId` to select an
-exact retained scheduled run alongside its snapshot `restoreBackupId`. Omitting
-it preserves pre-migration receipt selection. Backup run results optionally retain
+Unreleased 0.3 backup restore accepts optional `source.backupOperationId` to
+select an exact retained scheduled run alongside its repository
+`source.snapshotId`. Omitting it preserves pre-migration receipt selection.
+Backup run results optionally retain
 typed `restoreCaptures` using the existing closed source/configuration/native-target
 capture schema, now owned by Protocol and re-exported by deployment-protocol.
 Older manifest-only results remain readable and recoverable against a compatible
@@ -8787,6 +8853,16 @@ evidence preserves `may-exist`, while only running acquire/retry evidence can
 classify it as creating. Host correlation and translated recovery remain owned
 by their existing adapters.
 
+The unpublished 0.3 machine-provisioner contract also adds optional
+`actions.snapshot`, paired coverage/cost facts, and the closed snapshot role
+input/result through that entrypoint. Missing support remains unsupported.
+Snapshot failure or uncertainty cannot be dropped into a successful restore:
+the existing restore parent retains the result and requires a fresh explicit
+choice to continue without it. Host and plugin source must match for the new
+`machineProvisioners.waitForNativeObservation` service method. These direct
+development changes introduce no persisted format, new epoch or adapter for an
+earlier development host.
+
 The existing Plugin UI Resource V1 reference union adds the closed
 `{ hostRead: 'machines.managed.list', input: { homeId } }` arm. Both envelope and
 input reject unknown fields, including selectors this active-inventory
@@ -9172,6 +9248,19 @@ web, iOS, and Android; React, React Native, Expo, Hermes, and app patch versions
 are not artifact admission keys. Artifact bytes are addressed by digest. A
 daemon-process-local occurrence establishes contribution currentness, but it
 must not become a second byte identity or mount-compatibility gate.
+
+In unreleased 0.3 source, caller-supplied UI `executeAction` and `openNewSession`
+request ids reuse the existing closed host envelope and grant no authority.
+Exact operation observation exposes the existing V2 `requestIdentity` filter
+through `action.operations.list`; its plugin binding can fill an omitted Home
+and Machine from the captured mounted runtime only when that exact filter is
+present. Core Action input remains fully qualified. SDK, Action schema and
+mounted host changes load together through the normal app/plugin reload. Older
+strict development Action readers refuse the new filter rather than dropping
+it and returning unrelated operations. The inspected 0.2 predecessor at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no corresponding public operation
+Action/schema or SDK UI owner. This direct development cut adds no wire epoch,
+persisted record, compatibility adapter or alternate lookup endpoint.
 
 Hosted Plugin UI also negotiates each SDK client's semantic API generation
 within wire epoch 1. Installed 1.0 SDKs have a closed method enum and require an

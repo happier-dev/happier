@@ -3,7 +3,7 @@ import type { MachineProvisionersService, MachineProvisionerBootstrapCredentialL
 import type { PluginInvocationServicesSeed } from './types';
 import type { ManagedServiceCredentialFileOwner, ManagedServiceCredentialFileCleanup } from './managedServicesAdapter';
 import { sshPublicKey } from '@/machines/managed/bootstrapSshPublicKey';
-import { createManagedBootstrapCredentialByteService } from '@happier-dev/cli-common/machines/managed';
+import { createManagedBootstrapCredentialByteService, createManagedNativeObservationWait } from '@happier-dev/cli-common/machines/managed';
 
 /** Binds only the original admitted operation's implicit retained credential. */
 export function createMachineProvisionersInvocationService(params: Readonly<{
@@ -22,6 +22,7 @@ export function createMachineProvisionersInvocationService(params: Readonly<{
         isCurrent: seed.isOccurrenceCurrent, retainCleanup, unavailable,
         registerRawForRedaction: params.registerRawForRedaction });
     const { assertActive } = byteService;
+    const waitForNativeObservation = createManagedNativeObservationWait(seed.signal);
     function materializeCredential(request: Readonly<{ kind: 'bytes' | 'file' }>):
         Promise<MachineProvisionerBootstrapCredentialLeaseV1> {
         if (request.kind === 'bytes') return byteService.materializeBootstrapCredential();
@@ -68,6 +69,9 @@ export function createMachineProvisionersInvocationService(params: Readonly<{
         return materialization;
     }
     return Object.freeze({
+        async waitForNativeObservation(): Promise<void> {
+            await waitForNativeObservation();
+        },
         materializeGuestHostCredential(): ReturnType<MachineProvisionersService['materializeGuestHostCredential']> {
             return byteService.materializeGuestHostCredential();
         },

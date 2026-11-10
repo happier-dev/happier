@@ -1,6 +1,6 @@
 import * as mini from 'zod/mini';
 import { buildMachineProvisionerCloudInit, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { MachineProvisionerNativeCauseV1Schema, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { MachineProvisionerNativeCauseV1Schema, type MachineProvisionerNativeCauseV1, type MachineProvisionerSnapshotResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { HetznerAcquireV1Schema, HetznerCorrelationSchema, HetznerDeleteOperationV1Schema, HetznerNativeError, HetznerPowerIntentSchema, HetznerResourceV1Schema, parseHetznerValue } from './schemas.js';
 import type { HetznerResourceV1 } from './schemas.js';
 
@@ -55,6 +55,12 @@ export type HetznerAcquireResult =
 export type HetznerNativeClientOptions = Readonly<{ token: string; fetch?: typeof fetch; signal?: AbortSignal;
   guestHostKey?: MachineProvisionerCloudHostKeyV1 }>;
 const billing = { location: 'cloud' as const, stoppedBilling: 'billed' as const };
+// REST v1 snapshots cover the server disk, excluding attached Volumes. Actual
+// storage determines billing; no compute price is substituted for snapshot cost.
+export const HETZNER_SNAPSHOT_FACTS = {
+  coverage: { rootDisk: true, attachedVolumes: false },
+  cost: { kind: 'billed', source: 'https://docs.hetzner.com/cloud/billing/faq/' },
+} as const;
 const apiOrigin = 'https://api.hetzner.cloud/v1';
 function powerFact(status: string) {
   if (status === 'running') return 'running' as const;
@@ -193,6 +199,32 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
       } catch (error) { return { kind: 'unknown', code: codeOf(error), correlation: input.correlation }; }
     },
     inspect,
+    async snapshot(rawResource: unknown, label: string, waitForObservation: () => Promise<void>): Promise<MachineProvisionerSnapshotResultV1> {
+      const resource = parseHetznerValue(HetznerResourceV1Schema, rawResource);
+      let submitted = false;
+      let acknowledged = false;
+      try {
+        const observed = await inspectServer(resource);
+        if (observed.kind === 'absent') return { kind: 'refused', code: 'native_identity_not_found' };
+        submitted = true;
+        const reply = await request(`/servers/${resource.serverId}/actions/create_image`, 'POST', { type: 'snapshot', description: label });
+        acknowledged = true;
+        const created = decode(mini.object({ action: actionSchema, image: mini.object({ id: nativeId() }) }), reply);
+        let action = created.action;
+        while (action.status === 'running') {
+          await waitForObservation();
+          action = decode(mini.object({ action: actionSchema }), await request(`/servers/${resource.serverId}/actions/${created.action.id}`)).action;
+          if (action.id !== created.action.id) return { kind: 'unknown', code: 'native_identity_mismatch' };
+        }
+        if (action.status === 'error') return { kind: 'failed', code: 'native_snapshot_failed' };
+        return { kind: 'confirmed', snapshotId: String(created.image.id), ...HETZNER_SNAPSHOT_FACTS,
+          consistency: observed.power === 'running' || observed.power === 'stopped' ? observed.power : 'unknown' };
+      } catch (error) {
+        const cause = error instanceof HetznerNativeError ? error.nativeCause : undefined;
+        return { kind: !submitted || !acknowledged && cause?.httpStatusClass === '4xx' ? 'refused' : 'unknown', code: codeOf(error),
+          ...(cause ? { nativeCause: cause } : {}) };
+      }
+    },
     async recover(rawCorrelation: string): Promise<Exclude<HetznerAcquireResult, { kind: 'rejected' }> | { kind: 'rejected'; code: 'managed_not_found' }> {
       const correlation = parseHetznerValue(HetznerCorrelationSchema, rawCorrelation);
       try {

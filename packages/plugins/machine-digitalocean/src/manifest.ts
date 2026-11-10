@@ -1,14 +1,15 @@
-import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
+import { definePlugin, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { observeMachineProvisionerNativeRead, buildMachineProvisionerPinnedSshBootstrap, defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
-  MachineProvisionerPowerResultV1Schema, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerCloudHostKeyV1,
+  MachineProvisionerPowerResultV1Schema, MachineProvisionerSnapshotResultV1Schema, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerCloudHostKeyV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import { createDigitalOceanProvider } from './machine/provider.js';
+import { DIGITALOCEAN_SNAPSHOT_FACTS } from './machine/nativeClient.js';
 import { dropletLaunchSchema, dropletResourceSchema, dropletNativeOperationSchema } from './machine/schemas.js';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, nativeFetch } from './account.js';
 
@@ -25,7 +26,7 @@ const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess:
 const accountDefaults = { ...defaults, scopes: ['global'],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
-async function accountRuntime(context: PluginAccountActionContext, guestHostKey?: MachineProvisionerCloudHostKeyV1) {
+async function accountRuntime(context: PluginAccountActionContext | PluginInvocationContext, guestHostKey?: MachineProvisionerCloudHostKeyV1) {
   const material = await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
     { kind: 'httpHeaders', origin: 'https://api.digitalocean.com', headerNames: ['authorization'] }, { signal: context.signal });
   context.signal.throwIfAborted();
@@ -43,7 +44,8 @@ export const MACHINE_PROVISIONER = {
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [],
   // Guest poweroff is the same retained Stop; host admin policy decides availability.
   billing, retention: { supportedIntents: ['start', 'stop', 'delete'], guestLocalStop: 'poweroff' },
-  actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
+  actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', snapshot: 'snapshot' },
+  snapshot: DIGITALOCEAN_SNAPSHOT_FACTS,
   reconciliation: { action: 'reconcile', nativeOperationSchema: dropletNativeOperationSchema.jsonSchema },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
@@ -102,6 +104,14 @@ export const PLUGIN = definePlugin({
   ] },
   machineProvisioners: { [PROVISIONER_ID]: MACHINE_PROVISIONER },
   actions: {
+    snapshot: { ...defaults, surfaces: ['ui', 'cli', 'plugin'], title: 'Snapshot exact DigitalOcean Droplet', dangerLevel: 'externalSideEffect',
+      confirmation: { title: 'Snapshot this DigitalOcean Droplet?', body: 'This creates a billable snapshot of the exact managed Droplet’s root disk. Attached volumes are not included.' },
+      inputSchema: ROLE_SCHEMAS.snapshotInput, resultSchema: MachineProvisionerSnapshotResultV1Schema,
+      async run(input, context) {
+        return (await accountRuntime(context)).snapshot(input.resource, input.label,
+          () => context.services.machineProvisioners.waitForNativeObservation());
+      },
+    },
     reconcile: { ...accountDefaults, title: 'Recover exact DigitalOcean resource', dangerLevel: 'safe',
       inputSchema: reconciliation.input, resultSchema: reconciliation.result,
       async run(input, context) {

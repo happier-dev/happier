@@ -20,6 +20,28 @@ import { PluginContributesV2Schema } from './v2.js';
 import { compilePluginJsonSchema } from '../actions/jsonSchemaValidation.js';
 import { ManagedControllerIntentReportV1Schema, ManagedControllerReportV1Schema } from '../../machines/managed/actionsV1.js';
 
+it('admits an exact snapshot operand and preserves truthful root-disk coverage through the public role', () => {
+  const native = defineProtocolObject({ id: defineProtocolNumber({ integer: true, minimum: 1 }) }, { policy: 'closed' });
+  const roles = provisioners.defineMachineProvisionerSchemas({ launch: native, resource: native });
+  const input = { resource: { id: 42 }, expectedMachineRevision: 3, label: 'Before replacement', reason: 'Replace data disk' };
+  expect(roles.snapshotInput.parse(input)).toEqual(input);
+  expect(roles.snapshotInput.safeParse({ ...input, parentActionId: 'invented' }).success).toBe(false);
+  const result = { kind: 'confirmed', snapshotId: 'native-7', coverage: { rootDisk: true, attachedVolumes: false },
+    consistency: 'running', cost: { kind: 'billed', source: 'https://provider.example/pricing' } };
+  expect(provisioners.MachineProvisionerSnapshotResultV1Schema.parse(result)).toEqual(result);
+  expect(compilePluginJsonSchema(provisioners.MachineProvisionerSnapshotResultV1Schema.jsonSchema)(result)).toBe(true);
+  expect(provisioners.MachineProvisionerSnapshotResultV1Schema.safeParse({ ...result,
+    coverage: { rootDisk: true } }).success).toBe(false);
+});
+
+it('retains unsupported native snapshots as a typed outcome instead of success or refusal', () => {
+  const result = { kind: 'unsupported', code: 'native_snapshot_unsupported' };
+  const schema = provisioners.MachineProvisionerSnapshotResultV1Schema;
+  expect(schema.parse(result)).toEqual(result);
+  expect(compilePluginJsonSchema(schema.jsonSchema)(result)).toBe(true);
+  expect(schema.safeParse({ ...result, snapshotId: 'invented' }).success).toBe(false);
+});
+
 it('carries configuration-specific prerequisites through the closed options read and authored role', () => {
   const prerequisite = { requirement: { kind: 'systemTool', id: 'devcontainer' }, status: 'unavailable',
     repairAction: { action: { pluginId: 'fixture.compute', localId: 'install' }, input: { tool: 'devcontainer' } } };
