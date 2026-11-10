@@ -890,7 +890,9 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
     deploymentChildMachineRead?: DeploymentChildMachineRead;
     deploymentChildAdmission?: DeploymentChildAdmission;
     /** The receipt owner accepted this exact root and installed controller. */
-    acceptedDeploymentReceipt?: Readonly<{ read?: Readonly<{ environmentId?: string; deploymentId?: string }> }>;
+    acceptedDeploymentReceipt?: Readonly<{ read?: Readonly<{ environmentId?: string; deploymentId?: string;
+        /** Exact finite native read, including its captured content custody. */
+        contentCustody?: true }> }>;
     /** Exact Environment selected by an admitted finite registry update check. */
     registryAppUpdateRead?: Readonly<{ environmentId: string }>;
     deploymentChildArtifactRead?: Readonly<{ content: import('@happier-dev/protocol').DeploymentArtifactContentReferenceV1; requesterAccountId: string }>;
@@ -2360,51 +2362,75 @@ async function isDeploymentNativeReadHttpPurpose(verified: VerifiedExternalActio
 }
 
 /** Backup and restore spend finite native admission; resource readers retain their own content boundary. */
-async function isDeploymentBackupHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
-    proof: ExternalActionExecutionRequestProof): Promise<boolean> {
+type DeploymentBackupHttpPurpose = Pick<VerifiedExternalActionExecutionRequest,
+    'acceptedDeploymentReceipt' | 'deploymentChildArtifactRead' | 'deploymentPreparationSourceRead'>;
+async function readDeploymentBackupHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
+    proof: ExternalActionExecutionRequestProof): Promise<DeploymentBackupHttpPurpose | false> {
     const admission = verified.binding.deploymentNativeAdmission;
     if (!admission || !('kind' in admission) || admission.kind !== 'restore' && admission.kind !== 'backup') return false;
-    const environment = await db.deploymentEnvironment.findUnique({ where: { id: admission.environmentId },
-        select: { projectSourceId: true, contentArtifactId: true } });
-    const link = await db.deploymentTargetLink.findFirst({ where: { id: admission.targetLinkId,
-        environmentId: admission.environmentId }, select: { contentArtifactId: true, activeDeploymentId: true } });
-    if (!environment || !link) return false;
-    const receipts = await db.deployment.findMany({ where: { environmentId: admission.environmentId,
-        targetLinkId: admission.targetLinkId, id: { in: [admission.deploymentId, ...(link.activeDeploymentId ? [link.activeDeploymentId] : [])] } },
-        select: { id: true, contentArtifactId: true, actionOperationId: true } });
-    if (verified.effectActionId === 'deployments.environments.get') return isAccountActionHttpOperation(verified.effectActionId, proof)
-        && sameManagedInput(proof.routeInput, { serverId: verified.binding.serverIdentityId, environmentId: admission.environmentId });
-    if (verified.effectActionId === 'deployments.receipts.get') return isAccountActionHttpOperation(verified.effectActionId, proof)
-        && receipts.some(receipt => sameManagedInput(proof.routeInput, { serverId: verified.binding.serverIdentityId,
-            environmentId: admission.environmentId, deploymentId: receipt.id }));
-    if (verified.effectActionId === 'projects.sources.read') return proof.method.toUpperCase() === 'GET' && proof.body === undefined
-        && proof.path === `/v1/projects/sources/${encodeURIComponent(environment.projectSourceId)}?serverId=${encodeURIComponent(verified.binding.serverIdentityId)}`
-        && (proof.routeInput === undefined || sameManagedInput(proof.routeInput,
-            { serverId: verified.binding.serverIdentityId, id: environment.projectSourceId }));
-    if (verified.effectActionId !== verified.binding.actionId) return false;
-    if (proof.method.toUpperCase() === 'POST') {
-        if (proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
-            const selection = ProjectAccountRowListRequestV1Schema.safeParse(proof.body);
-            // Workspace references use requester-local profile aliases; the row reader owns Account isolation.
-            return selection.success && selection.data.kinds?.length === 1 && selection.data.kinds[0] === 'workspace-ref'
-                && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, selection.data));
+    const copy = admission.kind === 'restore' ? admission.copy : undefined;
+    const destination = { environmentId: admission.environmentId, targetLinkId: admission.targetLinkId,
+        secretKind: 'deployment' as const };
+    const scopes = copy ? [{ ...copy.source, secretKind: 'copySourceRead' as const }, destination] : [destination];
+    for (const scope of scopes) {
+        const environment = await db.deploymentEnvironment.findUnique({ where: { id: scope.environmentId },
+            select: { projectSourceId: true, contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } });
+        const link = await db.deploymentTargetLink.findFirst({ where: { id: scope.targetLinkId,
+            environmentId: scope.environmentId }, select: { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true, activeDeploymentId: true } });
+        if (!environment || !link) continue;
+        const receipts = await db.deployment.findMany({ where: { environmentId: scope.environmentId,
+            targetLinkId: scope.targetLinkId, id: { in: [admission.deploymentId,
+                ...(scope.secretKind !== 'copySourceRead' && link.activeDeploymentId ? [link.activeDeploymentId] : [])] } },
+            select: { id: true, contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true, actionOperationId: true } });
+        const admittedRead = (deploymentId?: string): DeploymentBackupHttpPurpose => copy
+            ? { acceptedDeploymentReceipt: { read: { environmentId: scope.environmentId,
+                ...(deploymentId ? { deploymentId } : {}), contentCustody: true } } } : {};
+        if (verified.effectActionId === 'deployments.environments.get' && isAccountActionHttpOperation(verified.effectActionId, proof)
+            && sameManagedInput(proof.routeInput, { serverId: verified.binding.serverIdentityId, environmentId: scope.environmentId })) return admittedRead();
+        if (verified.effectActionId === 'deployments.receipts.get' && isAccountActionHttpOperation(verified.effectActionId, proof)
+            && receipts.some(receipt => sameManagedInput(proof.routeInput, { serverId: verified.binding.serverIdentityId,
+                environmentId: scope.environmentId, deploymentId: receipt.id }))) {
+            const request = DeploymentActionInputSchemasV1['deployments.receipts.get'].parse(proof.routeInput);
+            return admittedRead(request.deploymentId);
         }
-        const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
-        if (!secret.success || secret.data.materialization.kind !== 'deployment') return false;
-        const body = secret.data, materialization = secret.data.materialization;
-        const active = receipts.find(receipt => receipt.id === link.activeDeploymentId);
-        return !!active && proof.path === `/v1/deployments/environments/${encodeURIComponent(admission.environmentId)}/secret-launch-admission`
-            && body.serverId === verified.binding.serverIdentityId && body.environmentId === admission.environmentId
-            && body.targetLinkId === admission.targetLinkId && body.machineId === admission.machineId
-            && body.installationId === admission.installationId && materialization.deploymentId === active.id
-            && materialization.actionOperationId === active.actionOperationId
-            && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, body));
+        if (verified.effectActionId === 'projects.sources.read' && proof.method.toUpperCase() === 'GET' && proof.body === undefined
+            && proof.path === `/v1/projects/sources/${encodeURIComponent(environment.projectSourceId)}?serverId=${encodeURIComponent(verified.binding.serverIdentityId)}`
+            && (proof.routeInput === undefined || sameManagedInput(proof.routeInput,
+                { serverId: verified.binding.serverIdentityId, id: environment.projectSourceId }))) {
+            if (!copy) return {};
+            const { readProjectSourceCustodyInTx } = await import('@/app/projects/sources/projectSourceService');
+            const custody = await readProjectSourceCustodyInTx(db, environment.projectSourceId);
+            return custody ? { deploymentPreparationSourceRead: { source: custody.source, canManage: false } } : false;
+        }
+        if (verified.effectActionId !== verified.binding.actionId) continue;
+        if (proof.method.toUpperCase() === 'POST') {
+            if (proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
+                const selection = ProjectAccountRowListRequestV1Schema.safeParse(proof.body);
+                // Workspace references use requester-local profile aliases; the row reader owns Account isolation.
+                return selection.success && selection.data.kinds?.length === 1 && selection.data.kinds[0] === 'workspace-ref'
+                    && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, selection.data)) ? {} : false;
+            }
+            const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
+            if (!secret.success || secret.data.materialization.kind !== scope.secretKind) continue;
+            const body = secret.data, materialization = secret.data.materialization;
+            if (materialization.kind !== 'deployment' && materialization.kind !== 'copySourceRead') continue;
+            const generation = receipts.find(receipt => receipt.id === (scope.secretKind === 'copySourceRead'
+                ? admission.deploymentId : link.activeDeploymentId));
+            if (!!generation && proof.path === `/v1/deployments/environments/${encodeURIComponent(scope.environmentId)}/secret-launch-admission`
+                && body.serverId === verified.binding.serverIdentityId && body.environmentId === scope.environmentId
+                && body.targetLinkId === scope.targetLinkId && body.machineId === admission.machineId
+                && body.installationId === admission.installationId && materialization.deploymentId === generation.id
+                && materialization.actionOperationId === generation.actionOperationId
+                && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, body))) return {};
+            continue;
+        }
+        if (!isReadOnlyArtifactHttpPurpose(proof)) return false;
+        if (isAccountEncryptionCurrentnessHttpRead(proof)) return {};
+        const artifact = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(proof.path);
+        const content = artifact && [environment, link, ...receipts].find(reference => encodeURIComponent(reference.contentArtifactId) === artifact[1]);
+        if (content) return copy ? { deploymentChildArtifactRead: { content, requesterAccountId: verified.binding.accountId } } : {};
     }
-    if (!isReadOnlyArtifactHttpPurpose(proof)) return false;
-    if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
-    const artifact = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(proof.path);
-    return artifact !== null && [environment.contentArtifactId, link.contentArtifactId, ...receipts.map(receipt => receipt.contentArtifactId)]
-        .some(id => encodeURIComponent(id) === artifact[1]);
+    return false;
 }
 
 function readDeploymentNativeTransition(binding: ExternalActionExecutionAuthorizationBindingV1,
@@ -3062,6 +3088,7 @@ export async function verifyExternalActionDomainExecutionRequest(
     let deploymentChildMachineRead: DeploymentChildMachineRead | undefined;
     let deploymentChildArtifactRead: VerifiedExternalActionExecutionRequest['deploymentChildArtifactRead'];
     let registryAppUpdateRead: VerifiedExternalActionExecutionRequest['registryAppUpdateRead'];
+    let backupHttpPurpose: DeploymentBackupHttpPurpose | undefined;
     if (verified.acceptedDeploymentReceipt && verified.binding.actionId === 'deployments.teardown'
         && verified.effectActionId === verified.binding.actionId) {
         const artifactId = readArtifactGetHttpPurpose(proof);
@@ -3167,7 +3194,11 @@ export async function verifyExternalActionDomainExecutionRequest(
             content: artifactContent, requesterAccountId: verified.binding.accountId,
         };
     } else if (verified.binding.actionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(verified.binding.actionId)) {
-        if (!isAdmittedRootRelay && !readsExecutionMachine && !await isDeploymentBackupHttpPurpose(verified, proof)) return refuseExternalActionExecutionRequest('deployment_restore_purpose', proof);
+        if (!isAdmittedRootRelay && !readsExecutionMachine) {
+            const purpose = await readDeploymentBackupHttpPurpose(verified, proof);
+            if (!purpose) return refuseExternalActionExecutionRequest('deployment_restore_purpose', proof);
+            backupHttpPurpose = purpose;
+        }
     } else if (verified.binding.actionId === 'deployments.restart') {
         // Restart consumes its native handle, not Environment, receipt or Artifact
         // content. Only transport of the exact admitted root/codec remains.
@@ -3501,7 +3532,7 @@ export async function verifyExternalActionDomainExecutionRequest(
     const { signedChildPurpose: _signedChildPurpose, ...publicVerified } = verified;
     const result = { ...publicVerified, ...(deploymentChildMachineRead ? { deploymentChildMachineRead } : {}),
         ...(registryAppUpdateRead ? { registryAppUpdateRead } : {}),
-        ...(deploymentChildArtifactRead ? { deploymentChildArtifactRead } : {}) };
+        ...(deploymentChildArtifactRead ? { deploymentChildArtifactRead } : {}), ...backupHttpPurpose };
     return snapshotBatch ? { ...result, sessionSnapshotBatchAdmitted: true,
         ...(managedGuestActivity ? { managedGuestActivity } : {}) }
         : managedGuestActivity ? { ...result, managedGuestActivity } : result;

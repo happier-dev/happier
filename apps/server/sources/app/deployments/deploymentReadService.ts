@@ -171,7 +171,8 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
     if (loaded.row.runtimeTargetLinkId && !targetLinks.some(link => link.id === loaded.row.runtimeTargetLinkId)) return deploymentFailure('deployment_unavailable');
     // Registry admission already selected this Environment. Its Artifact GET
     // consumes the current reference through the existing mode/envelope reader.
-    const failures = registryEnvironment ? [] : await admitDeploymentStoredContentsInTx(tx, actorAccountId, loaded.admission.owner, [
+    const failures = registryEnvironment || acceptedRead?.contentCustody && acceptedEnvironmentRead(acceptedRead, input.environmentId)
+        ? [] : await admitDeploymentStoredContentsInTx(tx, actorAccountId, loaded.admission.owner, [
         { reference: loaded.row, expectedStoredKind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, access: 'read', pendingDeploy: pending.pendingDeploy },
         ...targetLinks.map(reference => ({ reference, expectedStoredKind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, access: 'read' as const })),
     ]);
@@ -221,7 +222,8 @@ export async function readDeploymentReceiptInTx(tx: Tx, actorAccountId: string,
     const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, row.environmentId, authentication,
         acceptedEnvironmentRead(acceptedRead, row.environmentId, row.id));
     if (!loaded.ok) return loaded;
-    const contentFailure = await admitDeploymentStoredContentInTx(tx, actorAccountId, loaded.admission.owner, row, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, 'read');
+    const contentFailure = acceptedRead?.contentCustody && acceptedEnvironmentRead(acceptedRead, row.environmentId, row.id)
+        ? null : await admitDeploymentStoredContentInTx(tx, actorAccountId, loaded.admission.owner, row, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, 'read');
     if (contentFailure) return contentFailure;
     const deployment = projectDeploymentReceiptHeader(row);
     return DeploymentReceiptGetResultV1Schema.parse({ ok: true, deployment,

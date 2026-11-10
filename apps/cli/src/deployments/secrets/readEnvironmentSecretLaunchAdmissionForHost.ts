@@ -178,7 +178,7 @@ async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionR
                 ? input.materialization.buildMachineId ? 'deployments.environments.update' : 'deployments.bindings.set'
                 : input.materialization.kind === 'domain' && !input.materialization.use
                     ? 'deployments.domains.add'
-                    : input.materialization.kind === 'deployment' && (input.context.externalActionExecutionAuthorization?.binding.actionId === 'deployments.backups.restore'
+                    : (input.materialization.kind === 'deployment' || input.materialization.kind === 'copySourceRead') && (input.context.externalActionExecutionAuthorization?.binding.actionId === 'deployments.backups.restore'
                         || isDeploymentBackupActionIdV1(input.context.externalActionExecutionAuthorization?.binding.actionId ?? ''))
                     ? input.context.externalActionExecutionAuthorization?.binding.actionId : undefined);
         const parsed = EnvironmentSecretLaunchAdmissionResultV1Schema.safeParse(response.data);

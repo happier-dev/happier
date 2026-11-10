@@ -1,15 +1,16 @@
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { projectEnvironmentSecretBindingRequiredUsesV1 } from '@happier-dev/deployments';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { computeEnvironmentSecretLaunchAdmissionDigestV1,
-    EnvironmentSecretLaunchAdmissionResultV1Schema, type EnvironmentSecretAdmissionRequestV1,
+    EnvironmentSecretLaunchAdmissionResultV1Schema, readDeploymentBindingSavedSecretRevisionsV1, type EnvironmentSecretAdmissionRequestV1,
     type EnvironmentSecretLaunchAdmissionResultV1, type MachineConnectorSecretGrantInputV1,
     type MachineConnectorSecretGrantResultV1 } from '@happier-dev/deployment-protocol';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import type { DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { admitDeploymentMachineInTx, admitDeploymentMachinesInTx, canDeployDeploymentEnvironment, deploymentFailure, type DeploymentAuthentication } from './deploymentAdmission';
-import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentForInstalledMachineInTx, projectDeploymentEnvironmentHeader } from './deploymentEnvironmentService';
+import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, loadDeploymentEnvironmentForInstalledMachineInTx, projectDeploymentEnvironmentHeader } from './deploymentEnvironmentService';
 import { readEnvironmentMachineSecretGrantsInTx, readMachineConnectorSecretGrantInTx,
     setMachineConnectorSecretGrantInTx } from './environmentSecretGrantRepository';
 import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/machineAccess';
@@ -133,7 +134,15 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
         if (grants.length !== 1) return { ok: false, error: 'secret_missing' };
         return { ok: true, grants };
     }
-    const loaded = input.materialization.kind === 'deployment'
+    const copySourceRead = input.materialization.kind === 'copySourceRead';
+    if (copySourceRead && (!admittedBackup || admittedBackup.kind !== 'restore' || !admittedBackup.copy
+        || admittedBackup.copy.source.environmentId !== input.environmentId
+        || admittedBackup.copy.source.targetLinkId !== input.targetLinkId
+        || admittedBackup.machineId !== input.machineId || admittedBackup.installationId !== input.installationId)) {
+        return deploymentFailure('deployment_access_denied');
+    }
+    const loaded = copySourceRead ? await loadDeploymentEnvironmentCustodyInTx(tx, input)
+        : input.materialization.kind === 'deployment'
         ? await loadDeploymentEnvironmentForInstalledMachineInTx(tx, input)
         : await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
     if (!loaded.ok) return loaded;
@@ -149,19 +158,19 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
         return deploymentFailure('deployment_access_denied');
     }
     const runtime = link.machines.some(member => member.machineId === input.machineId && member.installationId === input.installationId);
-    const receipt = input.materialization.kind === 'deployment'
+    const receipt = input.materialization.kind === 'deployment' || input.materialization.kind === 'copySourceRead'
         ? await tx.deployment.findFirst({ where: { id: input.materialization.deploymentId, environmentId: loaded.row.id,
             targetLinkId: link.id, actionOperationId: input.materialization.actionOperationId } }) : null;
-    if (input.materialization.kind === 'deployment'
-        && (!receipt || (admittedBackup
+    if ((input.materialization.kind === 'deployment' || copySourceRead)
+        && (!receipt || (copySourceRead ? receipt.id !== admittedBackup?.deploymentId : admittedBackup
             ? receipt.id !== link.activeDeploymentId || !['succeeded', 'running_unverified'].includes(receipt.state)
             : receipt.cancelRequestedAt || !['queued', 'running'].includes(receipt.state)))) return deploymentFailure('deployment_unavailable');
     const accepted = receipt ? readDeploymentAcceptedExecution(receipt) : null;
-    if (input.materialization.kind === 'deployment' && !accepted) return deploymentFailure('deployment_access_denied');
+    if ((input.materialization.kind === 'deployment' || copySourceRead) && !accepted) return deploymentFailure('deployment_access_denied');
     const build = input.materialization.kind === 'deployment'
         ? accepted?.builder?.machineId === input.machineId && accepted.builder.installationId === input.installationId
         : loaded.row.buildMachineId === input.machineId;
-    if (!runtime && !build) {
+    if (!copySourceRead && !runtime && !build) {
         return deploymentFailure('deployment_access_denied');
     }
     const machineFailure = 'owner' in loaded ? null : await admitDeploymentMachineInTx(tx, owner,
@@ -169,6 +178,23 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
     if (machineFailure) return machineFailure;
     const grants = await readEnvironmentMachineSecretGrantsInTx(tx, { environmentId: loaded.row.id,
         machineId: input.machineId, installationId: input.installationId });
+    if (copySourceRead) {
+        const captures = readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions);
+        const backupCaptures = captures?.flatMap(capture => {
+            // Retain unknown routing so the capture owner reports incomplete;
+            // it cannot be guessed from possession of an installation seal.
+            if (!capture.requiredBindings) return [capture];
+            const requiredBindings = capture.requiredBindings.filter(binding => binding.purpose === 'backupDestination');
+            return requiredBindings.length ? [{ ...capture, requiredBindings }] : [];
+        });
+        const required = projectEnvironmentSecretBindingRequiredUsesV1({ referencedSavedSecretRevisions: backupCaptures,
+            runtimeInstallations: [{ machineId: input.machineId, installationId: input.installationId }] });
+        if (required.status !== 'complete') return { ok: false, error: 'secret_missing' };
+        const backupGrants = grants.filter(grant => grant.kind === 'secret' && required.requiredSecretUses.some(use =>
+            grant.resourceId === use.resourceId && grant.resourceRevision === use.resourceRevision));
+        if (backupGrants.length !== required.requiredSecretUses.length) return { ok: false, error: 'secret_missing' };
+        return { ok: true, grants: backupGrants };
+    }
     // Binding CAS records consent; the resource mutation owner prunes seals on
     // withdrawal or revision changes. Installed delivery consumes those rows.
     return { ok: true, grants };

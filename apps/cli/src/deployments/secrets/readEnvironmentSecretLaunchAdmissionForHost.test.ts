@@ -163,7 +163,7 @@ describe('installed Environment secret launch reader', () => {
         expect(result).toEqual(domainAdmission);
     });
 
-    it('signs standalone restore secret acquisition for the current generation original operation', async () => {
+    it.each(['deployment', 'copySourceRead'] as const)('signs %s acquisition for the current generation original operation', async kind => {
         install();
         const actionId = 'deployments.backups.restore' as const;
         const target = { kind: 'machine' as const, machineId: 'machine' };
@@ -174,6 +174,8 @@ describe('installed Environment secret launch reader', () => {
             environmentId: 'environment', deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, {
                 mode: 'prepare', serverId: 'home', environmentId: 'environment', deploymentId: 'failed-capture',
                 targetLinkId: 'link', machineId: 'machine', installationId: 'installation', restoreBackupId: 'backup', expectedRevision: 2,
+                ...(kind === 'copySourceRead' ? { copy: { source: { environmentId: 'environment', targetLinkId: 'link' },
+                    destination: { service: 'database', database: 'copied_database' } } } : {}),
             }),
         } });
         const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root, serverId: 'home',
@@ -195,10 +197,11 @@ describe('installed Environment secret launch reader', () => {
         });
         const { readEnvironmentSecretLaunchAdmissionForHost } = await import('./readEnvironmentSecretLaunchAdmissionForHost');
         const admitted = await readEnvironmentSecretLaunchAdmissionForHost({ ...request,
-            materialization: { kind: 'deployment', deploymentId: 'current-generation' }, actionOperationId: 'original-operation',
+            materialization: kind === 'copySourceRead' ? { kind, deploymentId: 'current-generation', actionOperationId: 'original-operation' }
+                : { kind, deploymentId: 'current-generation' }, actionOperationId: 'original-operation',
             context: { operationAcceptance: { operationId: 'restore-operation', accept() {} }, externalActionExecutionAuthorization: authorization } });
         expect(admitted.grants).toEqual([]);
-        expect(observed).toEqual([{ materialization: { kind: 'deployment', deploymentId: 'current-generation', actionOperationId: 'original-operation' },
+        expect(observed).toEqual([{ materialization: { kind, deploymentId: 'current-generation', actionOperationId: 'original-operation' },
             authorization: undefined, signed: true, installed: true }]);
         expect(boundary).toHaveBeenCalledTimes(1);
         await admitted.release?.();

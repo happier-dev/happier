@@ -6,7 +6,11 @@ import { DeploymentBackupNativeFailureV1Schema } from './deploymentBackupActions
 
 const restoreTarget = () => ({ serverId: id, environmentId: id, machineId: id, installationId: id,
   targetLinkId: id, deploymentId: id, restoreBackupId: id, expectedRevision: revision,
-  backupOperationId: z.optional(id) });
+  backupOperationId: z.optional(id),
+  copy: z.optional(z.strictObject({
+    source: z.strictObject({ environmentId: id, targetLinkId: id }),
+    destination: z.strictObject({ service: id, database: id }),
+  })) });
 export const DeploymentBackupRestorePrepareInputV1Schema = z.strictObject({
   ...restoreTarget(), mode: z.literal('prepare'),
 });

@@ -2382,6 +2382,19 @@ while the server enforces the existing mode, envelope, authority and exact
 Artifact-reference revision contract. There is no second credential or backup
 status record at this storage boundary.
 
+In current development source, cross-Environment copy extends
+`deployments.backups.restore` with an explicit `copy` operand. Home admits Manage
+on both Environments once and binds the source capture to the signed root's
+`deploymentId`. The read-only `copySourceRead` purpose consumes that admission
+for the exact source Environment, Link, receipt and installed executor. Complete
+capture routing selects only the original backup Saved Secret grant ciphertext;
+incomplete routing returns `secret_missing` for binding preparation. The existing
+backup materializer opens only the source capture's declared bindings. Nothing is relabeled,
+re-bound or sealed for another Machine. Version one executes on a source member
+that already holds those grants and requires a reachable destination database;
+cross-Machine credential transfer is not implemented. Ordinary restore retains
+its same-Environment admission and generation rules.
+
 The Project deployment read controller opens Environment collection content and
 visible history receipt content through the existing Account Artifact reader.
 Compact Environment rows expose optional `backupConfigured`, derived from that

@@ -7,6 +7,9 @@ import { createPrepareDeploymentBindingsForHost } from '../../../../cli/src/depl
 import { admitRequesterAccountActionContext } from '../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '../../../../cli/src/testkit/backends/requesterCurrentnessSocketHarness';
 import { readOrCreateInstallationIdentity } from '../../../../cli/src/daemon/identity/store';
+import { openMachineSecretGrant, sealMachineSecretGrant } from '../../../../cli/src/deployments/secrets/machineSecretGrant';
+import { prepareEnvironmentSecretBindingsForLaunch } from '../../../../cli/src/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { configuration, reloadConfiguration } from '../../../../cli/src/configuration';
 import { registerAccountProfileRoute } from '@/app/api/routes/account/registerAccountProfileRoute';
 import { registerAccountSettingsRoutes } from '@/app/api/routes/account/registerAccountSettingsRoutes';
@@ -24,8 +27,9 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-pro
 import { DeploymentBindingsSetStorageInputV1Schema, DeploymentDomainContentV1Schema, readDeploymentDomainArtifactV1,
     computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema,
     EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema,
-    type MachineConnectorSecretGrantBodyV1 } from '@happier-dev/deployment-protocol';
-import { API_TOKEN_FULL_GRANT_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER,
+    readDeploymentEnvironmentArtifactV1, captureDeploymentBindingSavedSecretRevisionsV1,
+    type EnvironmentSecretBindingV1, type MachineConnectorSecretGrantBodyV1 } from '@happier-dev/deployment-protocol';
+import { API_TOKEN_FULL_GRANT_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, sealSavedSecretResourceStoredContentV1,
     encodePlainMachineStoredContent, encodePlainArtifactStoredContent, type DeploymentChildRpcV1, projectDeploymentChildRoutingV1,
     computeDeploymentTransitionRequestDigestV1, ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DeploymentReceiptResultV1Schema, DeploymentReceiptListInputV1Schema,
     DeploymentChildRpcV1Schema, DeploymentTeardownReviewChildRpcV1Schema, DeploymentTransitionInputV1Schema, type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
@@ -197,10 +201,11 @@ describe('deployment children retain their controller Action authority', () => {
                 repository: { nameWithOwner: 'child/app', cloneUrl: 'https://github.com/child/app.git' } } }));
         if (!source.ok) throw new Error(source.error);
         const artifactKeys = new Map<string, Uint8Array>();
-        async function content(kind: string) {
+        async function content(kind: string, storedBody?: unknown) {
             const contentKey = nacl.randomBytes(32);
             const header = { kind, title: 'Child' };
-            const body = options.readableEnvironment && kind === 'deployment-environment.v1'
+            const body = storedBody !== undefined ? { body: JSON.stringify(storedBody) }
+                : options.readableEnvironment && kind === 'deployment-environment.v1'
                 ? { body: JSON.stringify(createDeploymentEnvironmentDetailV1().content) } : {};
             const seal = async (value: unknown) => contentMode === 'plain' ? privacyKit.decodeBase64(encodePlainArtifactStoredContent(value))
                 : new Uint8Array(await sealSessionDataKeyBundleV0(value, contentKey));
@@ -1202,6 +1207,227 @@ describe('deployment children retain their controller Action authority', () => {
             }, { authentication: 'real' });
         }
         expect((await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } })).activeDeploymentId).toBe(f.receipt.id);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('admits copy source read only for the exact source-member restore in %s', async contentMode => {
+        const f = await fixture('team', 'account', { contentMode, separateContentOwner: true, separateMemberCustodian: true });
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'failed' } });
+        const sourceActive = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), state: 'succeeded',
+            ...await f.content('deployment-receipt.v1') } });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: sourceActive.id } });
+        const destinationSource = await inTx(tx => createProjectSourceInTx(tx, f.account.id, { serverId,
+            requestKey: crypto.randomUUID(), name: 'Copy destination', audience: [], owner: { kind: 'team', teamId: f.team!.id }, repository: { protocol: 'https',
+                provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                repository: { nameWithOwner: 'copy/destination', cloneUrl: 'https://github.com/copy/destination.git' } } }));
+        if (!destinationSource.ok) throw new Error(destinationSource.error);
+        const destination = await db.deploymentEnvironment.create({ data: { projectSourceId: destinationSource.source.id,
+            createdByAccountId: f.account.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: f.controller.id, ...await f.content('deployment-environment.v1') } });
+        const destinationLink = await db.deploymentTargetLink.create({ data: { environmentId: destination.id,
+            createdByAccountId: f.account.id, role: 'runtime', state: 'deployed', sourceKind: 'host',
+            hostTargetId: 'own-server', targetKind: 'ownServer', ...await f.content('deployment-target-link.v1'),
+            machines: { create: [{ machineId: f.builder.id, installationId: f.builder.installationId, position: 0, state: 'active' }] } } });
+        await db.deploymentEnvironment.update({ where: { id: destination.id }, data: { runtimeTargetLinkId: destinationLink.id } });
+        const activeDestination = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
+            environmentId: destination.id, targetLinkId: destinationLink.id, requestKey: crypto.randomUUID(),
+            actionOperationId: crypto.randomUUID(), state: 'succeeded', ...await f.content('deployment-receipt.v1') } });
+        await db.deploymentTargetLink.update({ where: { id: destinationLink.id }, data: { activeDeploymentId: activeDestination.id } });
+        const resourceId = crypto.randomUUID();
+        const resourceContent = { v: 1 as const, name: 'Copy repository password', kind: 'password' as const,
+            value: 'private-copy-repository-password' };
+        await db.savedSecretResource.create({ data: { id: resourceId, ownerAccountId: f.account.id,
+            displayName: resourceContent.name, kind: resourceContent.kind, encryptionMode: contentMode,
+            storedContent: JSON.stringify(sealSavedSecretResourceStoredContentV1(contentMode === 'plain'
+                ? { resourceId, mode: contentMode, content: resourceContent }
+                : { resourceId, mode: contentMode, content: resourceContent,
+                    resourceDataKey: nacl.randomBytes(32), randomBytes: nacl.randomBytes })) } });
+        const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: f.environment.id,
+            machineId: f.member.id, installationId: f.member.installationId,
+            resourceId, resourceRevision: 1 }, installationPublicKey: f.member.keys.publicKey,
+            content: { kind: 'secret', value: 'private-copy-repository-password' } });
+        const sourceUses = (['repositoryPassword', 'accessKeyId', 'secretAccessKey'] as const).map(role => ({
+            purpose: 'backupDestination' as const, configKey: 'destination' as const, role,
+            source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 },
+        }));
+        const unusedResourceId = crypto.randomUUID();
+        const unusedContent = { ...resourceContent, name: 'Unused runtime secret', value: 'unused-source-sentinel' };
+        await db.savedSecretResource.create({ data: { id: unusedResourceId, ownerAccountId: f.account.id,
+            displayName: unusedContent.name, kind: unusedContent.kind, encryptionMode: contentMode,
+            storedContent: JSON.stringify(sealSavedSecretResourceStoredContentV1(contentMode === 'plain'
+                ? { resourceId: unusedResourceId, mode: contentMode, content: unusedContent }
+                : { resourceId: unusedResourceId, mode: contentMode, content: unusedContent,
+                    resourceDataKey: nacl.randomBytes(32), randomBytes: nacl.randomBytes })) } });
+        const unusedBinding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'UNUSED_SOURCE_VALUE',
+            source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(unusedResourceId), resourceRevision: 1 } };
+        const sourceContent = { ...createDeploymentEnvironmentDetailV1().content, bindings: [...sourceUses, unusedBinding] };
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: {
+            ...await f.content('deployment-environment.v1', sourceContent),
+            referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(sourceContent.bindings),
+        } });
+        // This other SavedSecret is source-bound, but it is never a backup credential.
+        const unused = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: f.environment.id,
+            machineId: f.member.id, installationId: f.member.installationId,
+            resourceId: unusedResourceId, resourceRevision: 1 },
+            installationPublicKey: f.member.keys.publicKey,
+            content: { kind: 'secret', value: unusedContent.value } });
+        const destinationGrant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: destination.id,
+            machineId: f.member.id, installationId: f.member.installationId, resourceId, resourceRevision: 1 },
+            installationPublicKey: f.member.keys.publicKey, content: { kind: 'secret', value: 'destination-sentinel' } });
+        await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: f.environment.id, grants: [grant, unused] }));
+        await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: destination.id, grants: [destinationGrant] }));
+        const actionId = 'deployments.backups.restore' as const;
+        const target = { kind: 'machine' as const, machineId: f.member.id };
+        const input = { mode: 'prepare' as const, serverId, environmentId: destination.id,
+            targetLinkId: destinationLink.id, deploymentId: f.receipt.id, machineId: f.member.id,
+            installationId: f.member.installationId, expectedRevision: destination.revision, restoreBackupId: 'source-snapshot',
+            copy: { source: { environmentId: f.environment.id, targetLinkId: f.link.id },
+                destination: { service: 'database', database: 'copied_database' } } };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const mint = (value = input, accountId = f.account.id) => {
+            const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
+            const executionTarget = { kind: 'machine' as const, machineId: value.machineId };
+            const wire = contentMode === 'e2ee' ? sealExternalActionRequestV2({
+                projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding: { serverIdentityId: serverId, accountId, authentication, actionId,
+                    requestId: envelope.requestId, target: executionTarget }, input: value,
+                material: { type: 'dataKey', machineKey: f.member.contentKey }, randomBytes: nacl.randomBytes })
+                : { ...envelope, target: executionTarget, input: value };
+            const deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope: wire });
+            return auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId, accountId, authentication,
+                actionId, machineId: value.machineId, target: executionTarget,
+                requestId: envelope.requestId, admittedMachineRole: 'use',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(wire) },
+            { input: wire.v === 1 ? value : deploymentNativeAdmission, deploymentNativeAdmission });
+        };
+        const authorization = await mint();
+        await expect(mint({ ...input, machineId: f.outsider.id, installationId: f.outsider.installationId }))
+            .rejects.toMatchObject({ code: 'credential_scope_denied' });
+        const otherAccount = await db.account.create({ data: { encryptionMode: contentMode } });
+        await expect(mint(input, otherAccount.id)).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        // Keep caller, source Manage and Machine authority fixed; withdraw only destination Manage.
+        await db.projectSource.update({ where: { id: destinationSource.source.id }, data: { owner: { kind: 'account', accountId: otherAccount.id } } });
+        await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await db.projectSource.update({ where: { id: destinationSource.source.id }, data: { owner: { kind: 'team', teamId: f.team!.id } } });
+        await expect(mint({ ...input, deploymentId: activeDestination.id })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } } });
+        // Withdrawal applies to the next admission; the already admitted finite copy retains its source custody.
+        await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        const headers = (path: string, body: unknown, method = 'POST', effectActionId: string = actionId) => ({
+            ...currentAccountStoredContentCompatibilityHeaders,
+            [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+            [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                effectActionId, target, installationId: f.member.installationId,
+                requestId: authorization.binding.requestId, method, path, body, privateKey: f.member.keys.secretKey }),
+        });
+        const secretBody = { serverId, environmentId: f.environment.id, targetLinkId: f.link.id,
+            machineId: f.member.id, installationId: f.member.installationId,
+            materialization: { kind: 'copySourceRead', deploymentId: f.receipt.id, actionOperationId: f.receipt.actionOperationId } };
+        const signed = (body: typeof secretBody) => ({ ...body, proof: signMachineInstallationProof({ payload: { version: 1,
+            accountId: f.account.id, machineId: body.machineId, installationId: body.installationId,
+            deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(
+                EnvironmentSecretLaunchAdmissionBodyV1Schema.parse(body)) } }, privateKey: f.member.keys.secretKey }) });
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); projectSourceRoutes(app); }, async app => {
+            const path = `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`;
+            const body = signed(secretBody);
+            const models: string[] = [];
+            const stop = observeSqliteRequests({ before: query => { if (query.model) models.push(query.model); } });
+            const response = await app.inject({ method: 'POST', url: path, payload: body, headers: headers(path, body) }).finally(stop);
+            expect(response.statusCode, response.body).toBe(200);
+            const delivered = EnvironmentSecretLaunchAdmissionResultV1Schema.parse(response.json());
+            expect(delivered).toMatchObject({ ok: true });
+            if (!delivered.ok) throw new Error(delivered.error);
+            expect(delivered.grants).toEqual([grant]);
+            expect(openMachineSecretGrant({ grant: delivered.grants.find(value => value.kind === 'secret')!, machineId: f.member.id,
+                installationId: f.member.installationId, installationPrivateSeed: f.member.keys.secretKey.slice(0, 32) }))
+                .toEqual({ kind: 'secret', value: 'private-copy-repository-password' });
+            expect(openMachineSecretGrant({ grant, machineId: f.outsider.id, installationId: f.outsider.installationId,
+                installationPrivateSeed: f.outsider.keys.secretKey.slice(0, 32) })).toBeNull();
+            let deliveredSourceBindings: readonly EnvironmentSecretBindingV1[] | undefined;
+            const sourceEnvironment = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } });
+            const receiptSpec = getActionSpec('deployments.receipts.get');
+            if (!receiptSpec.serverTransport) throw new Error('Receipt transport unavailable');
+            const receiptTransport = receiptSpec.serverTransport;
+            const receiptPath = (environmentId: string, deploymentId: string) => bindHomeDomainHttpRequestV1({ transport: receiptTransport,
+                inputSchema: receiptSpec.inputSchema, input: { serverId, environmentId, deploymentId } }).path;
+            for (const [readPath, effect] of [
+                [`/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`, 'deployments.environments.get'],
+                [receiptPath(f.environment.id, f.receipt.id), 'deployments.receipts.get'],
+                [`/v1/projects/sources/${f.environment.projectSourceId}?serverId=${serverId}`, 'projects.sources.read'],
+                [`/v1/artifacts/${sourceEnvironment.contentArtifactId}`, actionId],
+                [`/v1/deployments/environments/${destination.id}?serverId=${serverId}`, 'deployments.environments.get'],
+                [receiptPath(destination.id, activeDestination.id), 'deployments.receipts.get'],
+                [`/v1/artifacts/${destination.contentArtifactId}`, actionId],
+            ]) {
+                const stopRead = observeSqliteRequests({ before: query => { if (query.model) models.push(query.model); } });
+                const read = await app.inject({ method: 'GET', url: readPath, headers: headers(readPath, undefined, 'GET', effect) }).finally(stopRead);
+                expect(read.statusCode, `${readPath}: ${read.body}`).toBe(200);
+                if (readPath === `/v1/artifacts/${sourceEnvironment.contentArtifactId}`) {
+                    const artifact = ArtifactHttpReadV1Schema.parse(read.json());
+                    const key = contentMode === 'e2ee' ? openEncryptedDataKeyEnvelopeV1({
+                        envelope: privacyKit.decodeBase64(artifact.dataEncryptionKey), recipientSecretKeyOrSeed: f.accountKeys.secretKey }) : null;
+                    const decode = async (value: string) => {
+                        if (contentMode === 'plain') return decodePlainArtifactStoredContent(value);
+                        if (!key) throw new Error('Original requester envelope unavailable');
+                        const opened = await openSessionDataKeyBundleV0(privacyKit.decodeBase64(value), key);
+                        if (opened.status !== 'authenticated') throw new Error('Source content did not authenticate');
+                        return opened.value;
+                    };
+                    const opened = readDeploymentEnvironmentArtifactV1(sourceEnvironment, { artifactId: artifact.id,
+                        revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion },
+                        header: ArtifactHeaderMetadataV1Schema.parse(await decode(artifact.header)),
+                        body: ArtifactBodyEnvelopeV1Schema.parse(await decode(artifact.body)).body });
+                    if (!opened.ok) throw new Error(opened.error);
+                    deliveredSourceBindings = opened.content.bindings;
+                }
+            }
+            expect(models.filter(model => ['Team', 'TeamMembership', 'MachineTeamGrant', 'MachineAccountGrant', 'AccessKey'].includes(model))).toEqual([]);
+            if (!deliveredSourceBindings) throw new Error('Source binding capture was not delivered');
+            const scratch = await mkdtemp(join(tmpdir(), 'happier-copy-source-'));
+            try {
+                const materialized = await prepareEnvironmentSecretBindingsForLaunch({ environmentId: f.environment.id,
+                    machineId: f.member.id, installationId: f.member.installationId,
+                    installationPrivateSeed: f.member.keys.secretKey.slice(0, 32), bindings: deliveredSourceBindings,
+                    backupDestinationUses: deliveredSourceBindings.filter((binding): binding is Extract<EnvironmentSecretBindingV1, { purpose: 'backupDestination' }> => binding.purpose === 'backupDestination'),
+                    grants: delivered.grants, backupConfigBaseDir: scratch,
+                    assertCurrent: async () => {} });
+                try {
+                    expect(materialized.refs).toEqual([{ resourceId, resourceRevision: 1 }]);
+                    expect(materialized.secretValues).toEqual(['private-copy-repository-password']);
+                    expect(materialized.env).not.toHaveProperty('UNUSED_SOURCE_VALUE');
+                    expect(JSON.stringify(materialized)).not.toContain('destination-sentinel');
+                } finally { materialized.dispose(); }
+                await expect(prepareEnvironmentSecretBindingsForLaunch({ environmentId: f.environment.id,
+                    machineId: f.member.id, installationId: f.member.installationId,
+                    installationPrivateSeed: f.member.keys.secretKey.slice(0, 32), bindings: [],
+                    backupDestinationUses: sourceUses, grants: delivered.grants, backupConfigBaseDir: scratch,
+                    assertCurrent: async () => {} })).rejects.toMatchObject({ code: 'secret_missing' });
+            } finally { await rm(scratch, { recursive: true, force: true }); }
+            const staleArtifactPath = `/v1/artifacts/${f.environment.contentArtifactId}`;
+            expect((await app.inject({ method: 'GET', url: staleArtifactPath,
+                headers: headers(staleArtifactPath, undefined, 'GET') })).statusCode).toBe(401);
+            for (const wrong of [
+                { ...secretBody, environmentId: destination.id, targetLinkId: destinationLink.id },
+                { ...secretBody, machineId: f.outsider.id, installationId: f.outsider.installationId },
+                { ...secretBody, materialization: { ...secretBody.materialization, actionOperationId: crypto.randomUUID() } },
+                { ...secretBody, materialization: { ...secretBody.materialization,
+                    deploymentId: sourceActive.id, actionOperationId: sourceActive.actionOperationId } },
+            ]) {
+                const refusedBody = signed(wrong);
+                const refusedPath = `/v1/deployments/environments/${wrong.environmentId}/secret-launch-admission`;
+                const denied = await app.inject({ method: 'POST', url: refusedPath, payload: refusedBody,
+                    headers: headers(refusedPath, refusedBody) });
+                expect(denied.statusCode).toBe(401);
+                expect(denied.json()).not.toHaveProperty('grants');
+            }
+            await db.deploymentEnvironment.update({ where: { id: f.environment.id },
+                data: { referencedSavedSecretRevisions: [{ resourceId, revision: 1 }] } });
+            const incomplete = await app.inject({ method: 'POST', url: path, payload: body, headers: headers(path, body) });
+            expect(incomplete.json()).toEqual({ ok: false, error: 'secret_missing' });
+            expect(incomplete.json()).not.toHaveProperty('grants');
+        }, { authentication: 'real' });
     });
 
     it.each(['plain', 'e2ee'] as const)('admits standalone restore of a failed capture in %s without changing the code receipt', async contentMode => {

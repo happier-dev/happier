@@ -11,7 +11,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import type { DeploymentOwnServerContentV1, DeploymentEnvironmentDetailV1, DeploymentReceiptHeaderV1, DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentOwnServerContentV1, DeploymentEnvironmentDetailV1, DeploymentReceiptHeaderV1, DeploymentSourceIntentV1,
+    EnvironmentSecretLaunchAdmissionBodyV1 } from '@happier-dev/deployment-protocol';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol';
 import { decodeBase64 } from '@/api/encryption';
 import { configuration } from '@/configuration';
@@ -42,7 +43,8 @@ export type OwnServerSecretLaunchAdmissionRequest = Readonly<{
     machineId: string;
     installationId: string;
     environmentId: string;
-    materialization: OwnServerDeploymentMaterialization;
+    materialization: OwnServerDeploymentMaterialization
+        | Extract<EnvironmentSecretLaunchAdmissionBodyV1['materialization'], { kind: 'copySourceRead' }>;
     /** Restoration consumes the current receipt's original accepted generation. */
     actionOperationId?: string;
     targetLinkId: string;

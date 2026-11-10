@@ -14,6 +14,7 @@ export const EnvironmentSecretLaunchAdmissionBodyV1Schema = z.strictObject({
     materialization: z.discriminatedUnion('kind', [
         z.strictObject({ kind: z.literal('review'), contentArtifactId: id }),
         z.strictObject({ kind: z.literal('deployment'), deploymentId: id, actionOperationId: id }),
+        z.strictObject({ kind: z.literal('copySourceRead'), deploymentId: id, actionOperationId: id }),
         z.strictObject({ kind: z.literal('bindings'), expectedRevision: revision, buildMachineId: z.optional(id), domainIds: z.optional(z.array(id)) }),
         z.strictObject({ kind: z.literal('domain'), domainId: id, expectedDomainRevision: revision,
             actionOperationId: id, capture: DeploymentDomainPlacementV1Schema,

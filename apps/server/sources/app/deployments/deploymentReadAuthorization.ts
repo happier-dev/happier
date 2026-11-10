@@ -7,6 +7,9 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import type { DeploymentAuthentication } from './deploymentAdmission';
 import type { DeploymentContentReference } from './deploymentStoredContent';
+import { admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
+    DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, type ProjectSourceOwnerV1 } from '@happier-dev/protocol';
 
 /** Registry demand selects current metadata only; the Environment remains its private-content authority. */
 export async function readRegistryAppUpdateAuthorizationInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
@@ -54,8 +57,10 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
 /** One metadata selector serves read roots and native member admission after Source authority is decided. */
 export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
     environment: Readonly<{ id: string; deletedAt: Date | null; runtimeTargetLinkId: string | null;
-        controllerMachineId: string | null; revision: number; contentArtifactId: string }>,
+        controllerMachineId: string | null; revision: number; contentArtifactId: string;
+        contentHeaderVersion: number; contentBodyVersion: number }>,
     admission: DeploymentReadAdmissionV1 | DeploymentRestartNativeAdmissionV1 | DeploymentRestoreNativeAdmissionV1 | DeploymentBackupNativeAdmissionV1,
+    contentAdmission?: Readonly<{ actorAccountId: string; owner: ProjectSourceOwnerV1 }>,
 ): Promise<Readonly<{ artifactIds: readonly string[] }> | null> {
     if (admission.actionId === 'deployments.health.current') {
         const link = await tx.deploymentTargetLink.findFirst({ where: {
@@ -72,12 +77,13 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
             include: { machines: true } }),
         tx.deployment.findUnique({ where: { id: admission.deploymentId } }),
     ]);
-    if (!link || !receipt || receipt.environmentId !== environment.id || receipt.targetLinkId !== link.id) return null;
+    const copy = admission.actionId === 'deployments.backups.restore' && admission.copy;
+    if (!link || !receipt || !copy && (receipt.environmentId !== environment.id || receipt.targetLinkId !== link.id)) return null;
     if (admission.actionId !== 'deployments.logs.read') {
         if (environment.deletedAt || environment.runtimeTargetLinkId !== link.id || link.deletedAt || link.detachedAt
             || link.role !== 'runtime' || link.sourceKind !== 'host' || link.targetKind !== 'ownServer'
             || admission.actionId !== 'deployments.backups.restore' && link.activeDeploymentId !== receipt.id
-            || !link.machines.some(member => member.machineId === admission.machineId
+            || !copy && !link.machines.some(member => member.machineId === admission.machineId
                 && member.installationId === admission.installationId && member.state === 'active')
             || ('expectedRevision' in admission && (admission.actionId === 'deployments.drift.read'
                 || admission.actionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(admission.actionId)))
@@ -85,9 +91,19 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
     }
     if (admission.actionId === 'deployments.backups.restore') {
         const active = link.activeDeploymentId ? await tx.deployment.findFirst({ where: { id: link.activeDeploymentId,
-            environmentId: environment.id, targetLinkId: link.id }, select: { contentArtifactId: true } }) : null;
+            environmentId: environment.id, targetLinkId: link.id },
+            select: { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } }) : null;
         if (!active) return null;
-        return { artifactIds: [environment.contentArtifactId, link.contentArtifactId, receipt.contentArtifactId, active.contentArtifactId] };
+        if (contentAdmission) {
+            const failures = await admitDeploymentStoredContentsInTx(tx, contentAdmission.actorAccountId, contentAdmission.owner, [
+                { reference: environment, expectedStoredKind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, access: 'read' },
+                { reference: link, expectedStoredKind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, access: 'read' },
+                ...(copy ? [active] : [receipt, active]).map(reference => ({ reference, expectedStoredKind: DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, access: 'read' as const })),
+            ]);
+            if (failures.some(failure => failure !== null)) return null;
+        }
+        return { artifactIds: [environment.contentArtifactId, link.contentArtifactId,
+            ...(copy ? [] : [receipt.contentArtifactId]), active.contentArtifactId] };
     }
     // Historical logs deliberately do not infer captured build placement from
     // today's builder or active head. Their native owner proves that private fact.
