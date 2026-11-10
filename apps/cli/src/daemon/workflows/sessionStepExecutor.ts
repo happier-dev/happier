@@ -13,6 +13,7 @@ import { createSpawnedSession, type CreateSpawnedSessionParams } from '@/session
 import { buildSessionCreationCorrespondence } from '@/session/shared/sessionCreationCorrespondence';
 import { createSessionCreationSpawnNonce } from '@/session/shared/spawnNonce';
 import { deriveWorkflowSessionCreationTag } from './workflowSessionStartup';
+import { resolveWorkflowSessionLaunch } from './sessionStepLaunch';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionCompletionOperation } from '@happier-dev/protocol/actions/actionCompletion';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -191,10 +192,12 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
         || await isServerProfileHomeIdentity(deps.serverId, launch.executionTarget.serverId);
       if (!sameHome || launch.executionTarget.machineId !== deps.machineId
         || launch.directory.kind !== 'path'
-        || !canonicalAbsolutePathsEqual(launch.directory.path, workspace.directory)
         || launch.checkoutCreationDraft != null) {
         throw new WorkflowSessionCompositionError('target_unavailable');
       }
+      // Participant selection freezes the model recipe. The resolved step workspace
+      // owns placement, including generated worktrees; never mutate the frozen input.
+      launch = resolveWorkflowSessionLaunch({ launch, selection: authoredSelection, workspace });
     }
     if (launch?.roleId && frozenRole?.roleId !== launch.roleId) {
       throw new WorkflowSessionCompositionError('role_target_unavailable');

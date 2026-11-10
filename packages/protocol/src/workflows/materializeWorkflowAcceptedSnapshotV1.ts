@@ -669,7 +669,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
               || !sameStrictJsonValue(frozen.participantBindings.reference, participantBinding))
             || !frozen && (leaf.execution?.permissionMode !== undefined && leaf.execution.permissionMode !== 'read-only'
               || Object.keys(leaf.execution ?? {}).some(key => key !== 'participant' && key !== 'permissionMode' && key !== 'approvalProfileId'
-              && !(key === 'workspace' && leaf.execution?.workspace?.kind === 'inherit')
+              && key !== 'workspace'
               && !(key === 'executionTarget' && leaf.execution?.executionTarget?.kind === 'session')))) return invalidInput(leaf.id);
           boundParticipants = { reference: participantBinding, selections: [] };
           for (const inputs of frameInputs) {
@@ -691,6 +691,9 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
               if (frozen && !accepted) return invalidInput(leaf.id);
               if (boundParticipants.selections.some(choice => sameStrictJsonValue(choice.value, value))) continue;
               if (value.kind === 'session') {
+                // Existing Sessions retain their authenticated cwd; fresh models
+                // can instead be placed in the step's explicitly chosen workspace.
+                if (leaf.execution?.workspace && leaf.execution.workspace.kind !== 'inherit') return invalidInput(leaf.id);
                 const target = await input.effects.resolveSessionTarget?.(value.session);
                 if (!target || !sameStrictJsonValue(target.address, value.session) || !target.machineId.trim()) return invalidInput(leaf.id);
                 if (accepted && (accepted.participant.kind !== 'session' || accepted.participant.machineId !== target.machineId)) return invalidInput(leaf.id);

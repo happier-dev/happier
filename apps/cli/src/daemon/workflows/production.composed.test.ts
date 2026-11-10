@@ -272,6 +272,41 @@ async function commandOutputAdmissionFixture(mode: 'plain' | 'e2ee', fault?: 're
 }
 
 describe('production workflow coordinator', () => {
+  it('materializes an explicitly selected model worktree before fresh Session creation', async () => {
+    const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const authored: WorkflowDefinitionV1 = { version: 1, defaults: {}, inputs: [{ name: 'chosen', valueType: 'json', required: true,
+      inputType: { hostType: 'agentParticipant' } }], blocks: [{ ...onlyStep, execution: {
+        participant: { kind: 'input', name: 'chosen' }, workspace: { kind: 'new_worktree', source: { kind: 'original' } },
+      } }] };
+    const { projectDiscussionModelParticipantLaunchV1 } = await import('@happier-dev/protocol/discussions/participants');
+    const launch = projectDiscussionModelParticipantLaunchV1({ executionTarget: { serverId: 'server-1', machineId },
+      directory: { kind: 'path', path: '/repo' }, agentTarget });
+    const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: authored, context: {
+      source: { kind: 'inline' }, inputs: { chosen: { kind: 'model', launch } }, machineId, executionTarget: { kind: 'session' },
+      workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' }, originalCommittedRevision: 'a'.repeat(40) },
+      origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } },
+    }, admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+    if (!accepted.ok) throw new Error(JSON.stringify(accepted.error));
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: accepted.snapshot,
+    }));
+    const boundary = createWorkflowRunStorageTestkit({ runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
+    const scmBoundary = new Error('worktree_materialization_reached');
+    const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage: boundary,
+      execution: productionExecution(),
+      resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
+      resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      isAcceptedAuthorizationCurrent: async () => true,
+      // Stop at the OS SCM boundary: this regression concerns production preparation,
+      // before the separately tested Git materialization and Session launch owners.
+      workspaceScm: { realizeWorktree: async intent => {
+        expect(intent).toMatchObject({ sourceDirectory: '/repo', baseRef: 'a'.repeat(40) });
+        throw scmBoundary;
+      }, inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+    });
+    await expect(coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope,
+      accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } })).rejects.toBe(scmBoundary);
+  });
   it('projects progress from admitted slots without reading future authored slots on startup or facts', async () => {
     const fixture = await commandOutputAdmissionFixture('plain');
     let futureSlotVisits = 0;

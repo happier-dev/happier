@@ -2141,6 +2141,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
                   },
                 }
               : executionParams.participant?.kind === 'model' && executionParams.participant.launch.directory.kind === 'path'
+                && (!executionParams.execution.workspace || executionParams.execution.workspace.kind === 'inherit')
                 ? { conversationWorkspace: {
                     machineId: executionParams.participant.launch.executionTarget.machineId,
                     directory: executionParams.participant.launch.directory.path,

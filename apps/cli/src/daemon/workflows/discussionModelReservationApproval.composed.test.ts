@@ -14,13 +14,17 @@ describe('Workflow model reservation approval custody', () => {
   it.each(['missing-run', 'wrong-discussion', 'wrong-slot', 'wrong-invocation', 'wrong-request', 'wrong-launch',
     'wrong-authorization', 'cancelled', 'terminal', 'cancel-requested', 'reclaim',
     'cancel-after-admission',
-    'cancelled-root', 'terminal-root', 'missing-starter', 'substituted-starter', 'causal'] as const)(
+    'cancelled-root', 'terminal-root', 'missing-starter', 'substituted-starter', 'causal', 'generated-workspace', 'read-only-workspace', 'wrong-generated-launch'] as const)(
     'replays only the exact live accepted invitation (%s)', async variant => {
       const runId = 'accepted-run';
       const slot = `workflow:${runId}:invocation-1`;
       const launch = { executionTarget: { serverId: 'home', machineId: 'machine' },
         directory: { kind: 'path' as const, path: '/repo' },
         agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
+      const generatedWorkspace = variant === 'generated-workspace' || variant === 'read-only-workspace' || variant === 'wrong-generated-launch';
+      const inviteLaunch = generatedWorkspace ? { ...launch, directory: { kind: 'path' as const,
+        path: variant === 'wrong-generated-launch' ? '/other' : '/worktrees/candidate' },
+        ...(variant === 'read-only-workspace' ? { permissionMode: 'read-only' as const } : {}) } : launch;
       const origin = { kind: 'direct' as const, authenticatedStarterV1: {
         requestRef: 'authenticated-start', requester: { serverId: 'srv_home', accountId: 'account' },
       }, ...(variant === 'causal' ? { actionRequestAttributionV1: { requestRef: 'original-cause',
@@ -32,16 +36,19 @@ describe('Workflow model reservation approval custody', () => {
         definition: { version: 1, defaults: {}, inputs: [{ name: 'reviewer', valueType: 'json', required: true,
           inputType: { hostType: 'agentParticipant' } }], blocks: [{ kind: 'step', id: 'review', input: [],
           result: { kind: 'text' }, document: { text: 'Review', references: [], attachments: [] },
-          execution: { participant: { kind: 'input', name: 'reviewer' } } }] },
+          execution: { participant: { kind: 'input', name: 'reviewer' },
+            ...(generatedWorkspace ? { workspace: { kind: 'new_worktree', source: { kind: 'original' } } } : {}),
+            ...(variant === 'read-only-workspace' ? { permissionMode: 'read-only' } : {}) } }] },
         context: { source: { kind: 'inline' }, inputs: { reviewer: { kind: 'model', launch } }, machineId: 'machine',
           executionTarget: { kind: 'session' }, workspaceTarget: { project: {
-            machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' } }, origin,
+            machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' },
+            ...(generatedWorkspace ? { originalCommittedRevision: 'a'.repeat(40) } : {}) }, origin,
           authorization: { principal: { kind: 'host' } } },
         admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
       });
       if (!materialized.ok) throw new Error(materialized.error.code);
       const accepted = materialized.snapshot;
-      const input = { discussionId: 'discussion', participant: { kind: 'model', participantSlotId: slot, launch } };
+      const input = { discussionId: 'discussion', participant: { kind: 'model', participantSlotId: slot, launch: inviteLaunch } };
       let request = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
         createdBy: { surface: 'agent' }, requestedSurface: 'agent', summary: 'Review invitation',
         actionId: 'discussion.invite', actionArgs: input, approval: { flow: 'deferred', result: 'none' },
@@ -71,6 +78,9 @@ describe('Workflow model reservation approval custody', () => {
         const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
           invocationPath: { blockId: root ? '$root' : 'review', scope: [] }, blockKind: root ? 'root' : 'step',
           attempt: '0', logicalInvocationRecordId: id,
+          ...(!root && generatedWorkspace ? { workspace: { descriptor: {
+            machineId: 'machine', directory: '/worktrees/candidate', checkoutRootPath: '/worktrees/candidate',
+          } } } : {}),
           ...(!root ? { execution: { kind: 'action', actionId: 'discussion.invite',
             actionRequestId: `${slot}:discussion.invite`, localInputId: slot, input,
             output: { kind: 'approval_request_created', artifactId: 'approval', actionId: 'discussion.invite' } } } : {}),
@@ -124,7 +134,7 @@ describe('Workflow model reservation approval custody', () => {
       }
       if (variant === 'wrong-request') forged.executionOriginV1.requestId = 'not-a-workflow-request';
       if (variant === 'wrong-launch') forged.actionArgs = { ...input, participant: { ...input.participant,
-        launch: { ...launch, directory: { kind: 'path', path: '/other' } } } };
+        launch: { ...inviteLaunch, directory: { kind: 'path', path: '/other' } } } };
       if (variant === 'wrong-authorization') caller.authorization = { principal: { kind: 'session', sessionId: 'forged' },
         admittedPermissionCeiling: 'default' };
       if (variant === 'missing-starter') delete caller.authenticatedStarterV1;
@@ -149,7 +159,7 @@ describe('Workflow model reservation approval custody', () => {
         },
         discussionAction: async () => { reservations++; return { discussionId: 'discussion', ownerAccountId: 'account',
           access: 'owner', grants: [], changed: true, modelParticipant: { participant: { kind: 'model', participantSlotId: slot },
-            launch, sessionId: null, answerPolicy: 'when_addressed', createdAt: 1 } }; },
+            launch: inviteLaunch, sessionId: null, answerPolicy: 'when_addressed', createdAt: 1 } }; },
         sessionSpawnNew: async () => { starts++; throw new Error('Workflow alone starts Sessions'); },
       });
       const result = await executor.replayApprovedApprovalRequest({ artifactId: 'approval', callerAuthority: 'present_user',
@@ -161,7 +171,8 @@ describe('Workflow model reservation approval custody', () => {
         expect(request.status).toBe('approved');
         return;
       }
-      if (variant === 'reclaim' || variant === 'cancel-after-admission' || variant === 'causal') {
+      if (variant === 'reclaim' || variant === 'cancel-after-admission' || variant === 'causal'
+        || variant === 'generated-workspace' || variant === 'read-only-workspace') {
         // Admission-only ruling: no DB/currentness recheck follows the execution
         // claim. A later DB control change is not the executor's local Stop signal.
         // A removable orphan reservation may remain, never a native Session start.

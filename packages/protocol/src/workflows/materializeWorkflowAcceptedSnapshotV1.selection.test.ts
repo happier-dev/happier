@@ -10,6 +10,7 @@ import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.
 import { RoleArtifactV1Schema } from '../prompts/roles/roleArtifactV1.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '../actions/actionCatalog.js';
+import { projectDiscussionModelParticipantLaunchV1 } from '../discussions/modelParticipantLaunch.js';
 
 const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const context = {
@@ -27,6 +28,26 @@ function materialize(overrides: Partial<MaterializeWorkflowAcceptedSnapshotV1Inp
 }
 
 describe('accepted Workflow selection bindings', () => {
+  it.each(['project_checkout', 'new_worktree'] as const)('admits a fresh model participant with an explicit %s workspace', async kind => {
+    const launch = projectDiscussionModelParticipantLaunchV1({ executionTarget: { serverId: 'home', machineId: 'machine' },
+      directory: { kind: 'path', path: '/project' }, agentTarget });
+    const workspace = kind === 'new_worktree' ? { kind, source: { kind: 'original' as const } } : { kind };
+    const authored = { version: 1, defaults: {}, inputs: [{ name: 'chosen', valueType: 'json', required: true,
+      inputType: { hostType: 'agentParticipant' } }], blocks: [{ ...definition.blocks[0],
+      execution: { participant: { kind: 'input', name: 'chosen' }, workspace } }] };
+    const result = await materialize({ definition: authored, context: { ...context,
+      inputs: { chosen: { kind: 'model', launch } }, workspaceTarget: { ...context.workspaceTarget, originalCommittedRevision: 'a'.repeat(40) } } });
+    expect(result).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{
+      participant: { kind: 'model', launch }, authoredWorkspace: workspace,
+    }] } });
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(await materialize({ definition: authored, context: { ...context, inputs: result.snapshot.inputs,
+      workspaceTarget: result.snapshot.workspaceTarget }, replay: { snapshot: result.snapshot } })).toMatchObject({ ok: true });
+    const session = { serverId: 'home', sessionId: 'existing' };
+    expect(await materialize({ definition: authored, context: { ...context, inputs: { chosen: { kind: 'session', session } } },
+      effects: { resolveTargetAvailability: available, resolveSessionTarget: async () => ({ address: session, machineId: 'machine' }) } }))
+      .toMatchObject({ ok: false, error: { code: 'invalid_input', blockId: 'work' } });
+  });
   it.each([
     { defaults: {}, execution: undefined, expected: 'profile:origin' },
     { defaults: { approvalProfileId: 'profile:default' }, execution: undefined, expected: 'profile:default' },

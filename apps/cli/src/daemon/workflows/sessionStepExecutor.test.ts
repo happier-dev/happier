@@ -15,6 +15,11 @@ import { resolveWorkflowAcceptedStepSelectionV1 } from '@happier-dev/protocol/wo
 import { LaunchProfileV2Schema } from '@happier-dev/protocol/profiles/v2/schema';
 import { logger } from '@/ui/logger';
 import fs from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol/discussions/participants';
 import { statSync } from 'node:fs';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { createSpawnConnectedServicesTeamResourceCatalogResolver } from '@/session/services/spawnConnectedServicesDefaults';
@@ -2505,7 +2510,7 @@ describe('workflow Session step executor', () => {
     expect(workflowRecipe).toEqual(ordinaryRecipe);
   });
 
-  it('keeps the accepted model participant launch intact through run-step creation', async () => {
+  it.each([false, true])('preserves the model recipe and applies the accepted read-only step restriction (%s)', async restricted => {
     const launches = installSessionCreationTransport();
     const create = createProductionFreshWorkflowSessionConversation({
       credentials: { token: 'token', encryption: null }, serverId: 'server-1', machineId: 'machine-1',
@@ -2519,19 +2524,19 @@ describe('workflow Session step executor', () => {
     const launch = {
       executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
       directory: { kind: 'path' as const, path: '/review' }, agentTarget, modelSelection,
-      profileId: 'chosen-profile', permissionMode: 'read-only' as const, agentModeId: 'plan',
+      profileId: 'chosen-profile', permissionMode: 'default' as const, agentModeId: 'plan',
       configuration: { mode: { value: 'plan', updatedAtMs: 9 }, model: { value: 'chosen-model', updatedAtMs: 12 },
-        permissionIntent: { value: 'read-only' as const, updatedAtMs: 10 }, workspaceWrites: 'deny' as const,
+        permissionIntent: { value: 'default' as const, updatedAtMs: 10 }, workspaceWrites: 'deny' as const,
         options: { reasoning_effort: { value: 'high', updatedAtMs: 11 } } },
       connectedServices: { v: 2 as const, bindingsByServiceId: {} },
       organizationPlacement: { folderId: null, tagIds: [] }, memoryEnabled: false,
       title: 'Chosen participant', transcriptStorage: 'direct' as const,
     };
-    await expect(create({ selection: {}, launch, workspace: { machineId: 'machine-1', directory: '/review', checkoutRootPath: '/review' },
+    await expect(create({ selection: restricted ? { permissionMode: 'read-only' } : {}, launch, workspace: { machineId: 'machine-1', directory: '/review', checkoutRootPath: '/review' },
       creationKey: 'workflow:run-model:inv-1' })).resolves.toMatchObject({ sessionId: 'new-session' });
     expect(launches).toEqual([expect.objectContaining({
       originKind: 'run_step', originRunId: 'run-model', directory: '/review', agentTarget, modelSelection,
-      profileId: 'chosen-profile', permissionMode: 'read-only', agentModeId: 'plan', workspaceWrites: 'deny',
+      profileId: 'chosen-profile', permissionMode: restricted ? 'read-only' : 'default', agentModeId: 'plan', workspaceWrites: 'deny',
       sessionConfigOptionOverrides: expect.objectContaining({ overrides: { reasoning_effort: { value: 'high', updatedAt: 11 } } }),
       connectedServices: { v: 2, bindingsByServiceId: {} }, memoryEnabled: false,
       initialTitle: 'Chosen participant', transcriptStorage: 'direct',
@@ -2941,7 +2946,34 @@ describe('workflow Session step executor', () => {
     })]);
   });
 
-  it('refuses a model launch outside the accepted coordinator workspace before spawn', async () => {
+  it('rebases a frozen model launch onto a real generated worktree before Session spawn', async () => {
+    const launches = installSessionCreationTransport();
+    const root = await fs.mkdtemp(join(tmpdir(), 'workflow-model-worktree-'));
+    onTestFinished(() => fs.rm(root, { recursive: true, force: true }));
+    const git = promisify(execFile);
+    const source = join(root, 'source');
+    const worktree = join(root, 'candidate');
+    await fs.mkdir(source);
+    await git('git', ['init', source]);
+    await git('git', ['-C', source, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial']);
+    await git('git', ['-C', source, 'worktree', 'add', '--detach', worktree]);
+    const create = createProductionFreshWorkflowSessionConversation({
+      credentials: { token: 'token', encryption: null }, serverId: 'server-1', machineId: 'machine-1',
+      workDepth: 0, originRunId: 'worktree-run', machineAdmissionTransport: vi.fn(),
+    });
+    const launch = projectDiscussionModelParticipantLaunchV1({ executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+      directory: { kind: 'path' as const, path: source }, connectedServices: { v: 2 as const, bindingsByServiceId: {} },
+      agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } });
+    const conversation = await create({ selection: {}, launch,
+      workspace: { machineId: 'machine-1', directory: worktree, checkoutRootPath: worktree },
+      creationKey: 'workflow:worktree-run:implementation' });
+    expect(conversation.directory).toBe(worktree);
+    expect(launches).toEqual([expect.objectContaining({ directory: worktree })]);
+    expect(launch.directory).toEqual({ kind: 'path', path: source });
+    expect((await git('git', ['rev-parse', '--show-toplevel'], { cwd: launches[0]!.directory })).stdout.trim()).toBe(worktree);
+  });
+
+  it('refuses a model launch on another Machine before spawn', async () => {
     const launches = installSessionCreationTransport();
     const create = createProductionFreshWorkflowSessionConversation({
       credentials: { token: 'token', encryption: null }, serverId: 'server-1', machineId: 'machine-1',

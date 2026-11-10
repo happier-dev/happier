@@ -28,6 +28,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { resolveWorkflowAcceptedStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { WorkflowDiscussionPublicationUnavailable } from './workflowDiscussionPublication';
 import { hasRetainedWorkflowActionOperation, LOST_ACTION_OPERATION_CODE } from './actionOperationObservation';
+import { resolveWorkflowSessionLaunch } from './sessionStepLaunch';
 import { WORKFLOW_RECOVERABLE_INVOCATION_LIFECYCLES_V1 as RECOVERABLE_INVOCATION_LIFECYCLES } from '@happier-dev/protocol/workflows';
 
 const TERMINAL_RUN_STATES = new Set([
@@ -503,8 +504,11 @@ export async function isWorkflowDiscussionModelReservationCurrent(params: Workfl
   const frozen = accepted.materializedLeaves.find(leaf => leaf.sourceKey === structure.sourceKey && leaf.blockId === structure.leaf.id);
   if (!frozen) return false;
   const selected = resolveWorkflowAcceptedStepSelectionV1(frozen, structure.frame.item?.value, structure.inputs);
-  return selected.executionTarget.kind === 'session' && selected.participant?.kind === 'model'
-    && sameStrictJsonValue(selected.participant.launch, invite.data.participant.launch) && !params.signal?.aborted;
+  if (selected.executionTarget.kind !== 'session' || selected.participant?.kind !== 'model') return false;
+  const workspace = invocation.progress.workspace?.descriptor;
+  const launch = workspace ? resolveWorkflowSessionLaunch({ launch: selected.participant.launch, selection: selected.selection, workspace })
+    : selected.participant.launch;
+  return sameStrictJsonValue(launch, invite.data.participant.launch) && !params.signal?.aborted;
 }
 
 async function recoverInvocationCustody(params: Readonly<{
