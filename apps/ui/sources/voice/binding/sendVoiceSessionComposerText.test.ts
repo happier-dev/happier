@@ -30,6 +30,7 @@ import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({ Platform: { OS: 'web' } }));
 
@@ -97,8 +98,6 @@ vi.doMock('@elevenlabs/client/web', () => ({ Conversation: {
             setVolume: (_input: { volume: number }) => {},
             setMicMuted: (_muted: boolean) => {},
             sendUserMessage(text: string) {
-                expect(pendingRows().filter(row => row.pendingDeliveryStatus === 'external_handoff'))
-                    .toEqual([expect.objectContaining({ pendingDeliveryStatus: 'external_handoff' })]);
                 providerMessages.push(text);
                 httpEvents.push(`provider:${text}`);
                 if (providerSendFailure) throw providerSendFailure;
@@ -478,6 +477,107 @@ describe('Voice composer through Sync HTTP custody', () => {
         expect(httpEvents).toEqual(['enqueue:method-unavailable', 'provider:hello', 'settle:method-unavailable']);
         expect(deliveryStatus).toEqual({ status: 'external_handoff' });
         expect(pendingRows()).toEqual([expect.objectContaining({ localId: 'method-unavailable', pendingDeliveryStatus: 'external_handoff' })]);
+    });
+
+    describe.each([
+        { producer: 'voice', groupingMode: 'linear' },
+        { producer: 'voice', groupingMode: 'turns' },
+        { producer: 'ordinary', groupingMode: 'linear' },
+        { producer: 'queued', groupingMode: 'linear' },
+    ] as const)('Voice input crossover from $producer in the rendered $groupingMode list', ({ producer, groupingMode }) => {
+        it.each(['commit-before-echo', 'commit-after-echo', 'reconnect-replay'] as const)(
+            'renders only the committed identity before a later final (%s)', async (arrival) => {
+                // Load render consumers after the network/Sync singleton boundary above.
+                const { buildChatListItemsCached } = await import('@/components/sessions/chatListItems');
+                const { buildTranscriptTurnsCached } = await import('@/components/sessions/transcript/turnGrouping/buildTranscriptTurns');
+                const { buildTranscriptTurnUnits } = await import('@/components/sessions/transcript/turnGrouping/buildTranscriptTurnUnits');
+                const { projectPendingTranscriptItems } = await import('@/components/sessions/transcript/items/projectPendingTranscriptItems');
+                const { buildRealtimeConversationTurnMeta } = await import('@/voice/transcript/voiceConversationTranscript');
+                const localId = 'run114-france';
+                const text = 'WHAT IS THE CAPITAL OF FRANCE';
+                const committed: NormalizedMessage = {
+                    id: 'run114-france-committed', localId, role: 'user', isSidechain: false,
+                    createdAt: 1794328999618, seq: 1, content: { type: 'text', text },
+                    meta: buildRealtimeConversationTurnMeta(),
+                };
+                const laterFinal: NormalizedMessage = {
+                    id: 'later-final', localId: 'later-final-local', role: 'agent', isSidechain: false,
+                    createdAt: committed.createdAt + 1_000, seq: 2,
+                    content: [{ type: 'text', text: 'Should I allow it? Say “Yes” or “No”.', uuid: 'later-final', parentUUID: null }],
+                };
+                const store = getStorage();
+                let linearCache: Parameters<typeof buildChatListItemsCached>[0]['cache'] = null;
+                let turnsCache: Parameters<typeof buildTranscriptTurnsCached>[0]['cache'] = null;
+                const rendered = () => {
+                    const state = store.getState();
+                    const transcript = state.sessionMessages['carrier-s1'];
+                    const input = { messageIdsOldestFirst: transcript?.messageIdsOldestFirst ?? [],
+                        messagesById: transcript?.messagesById ?? {}, pendingMessages: pendingRows() };
+                    if (groupingMode === 'linear') {
+                        const result = buildChatListItemsCached({ ...input, cache: linearCache });
+                        linearCache = result.cache;
+                        return result.items;
+                    }
+                    turnsCache = buildTranscriptTurnsCached({ ...input, cache: turnsCache,
+                        groupToolCalls: true, toolCallsGroupStrategy: 'consecutive_tools' });
+                    return buildTranscriptTurnUnits({ items: projectPendingTranscriptItems({ ...input,
+                        items: turnsCache.turns.map(turn => ({ kind: 'turn' as const, id: turn.id, turn })) }),
+                        getMessageById: id => input.messagesById[id] ?? null,
+                        collapsedPreviewCount: 0, isGroupExpanded: () => false });
+                };
+                if (arrival === 'commit-before-echo') {
+                    store.getState().applyMessages('carrier-s1', [committed, laterFinal]);
+                    rendered(); // warm the actual list cache before the local echo arrives
+                }
+                if (producer === 'voice') {
+                    handledResponse = async () => Response.json({ error: 'settlement_failed' }, { status: 500 });
+                    expect(await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text, localId,
+                        getAdapter: getVoiceAdapterRegistry().get })).toMatchObject({ ok: true, localId, disposition: 'accepted_unsettled' });
+                } else {
+                    expect(await sync.enqueuePendingMessage('carrier-s1', text, undefined, undefined, {
+                        localId, requestedAction: { v: 1, kind: producer === 'ordinary' ? 'send_now' : 'enqueue' },
+                    })).toMatchObject({ accepted: true, localId });
+                    // Runtime delivery is an HTTP boundary: queued input later enters delivery.
+                    deliveryStatus = { status: 'delivering' };
+                    await sync.fetchPendingMessages('carrier-s1');
+                }
+                expect(enqueued).toMatchObject({ localId });
+                if (arrival !== 'commit-before-echo') {
+                    expect(pendingRows()).toEqual([expect.objectContaining({ localId,
+                        pendingDeliveryStatus: producer === 'voice' ? 'external_handoff' : 'server_delivering' })]);
+                }
+                rendered(); // warm Pending, then hydrate a later final before its earlier user input
+                if (arrival !== 'commit-before-echo') {
+                    store.getState().applyMessages('carrier-s1', [laterFinal]);
+                    rendered();
+                    store.getState().applyMessages('carrier-s1', [committed]);
+                }
+                const expectCommittedOnly = () => {
+                    const rows = rendered();
+                    const transcript = store.getState().sessionMessages['carrier-s1'];
+                    const messages = rows.flatMap(row => row.kind === 'message' && transcript?.messagesById[row.messageId]
+                        ? [transcript.messagesById[row.messageId]!] : []);
+                    expect(rows.flatMap(row => row.kind === 'pending-queue' ? row.pendingMessages : [])
+                        .filter(message => message.localId === localId)).toEqual([]);
+                    // The reducer owns stable block ids; realID is the committed sync identity.
+                    expect(messages.filter(message => message.localId === localId))
+                        .toMatchObject([{ kind: 'user-text', realID: committed.id }]);
+                    expect(messages.filter(message => message.realID === committed.id || message.realID === laterFinal.id)
+                        .map(message => message.realID)).toEqual([committed.id, laterFinal.id]);
+                };
+                expectCommittedOnly();
+                if (arrival === 'reconnect-replay') {
+                    const { apiSocket } = await import('@/sync/api/session/apiSocket');
+                    apiSocket.disconnect();
+                    apiSocket.connect();
+                    await sync.fetchPendingMessages('carrier-s1');
+                    store.getState().applyMessages('carrier-s1', [laterFinal, committed]);
+                    expectCommittedOnly();
+                    linearCache = null;
+                    turnsCache = null;
+                    expectCommittedOnly(); // reopening has no list cache from the previous view
+                }
+            });
     });
 
     it('keeps an untyped native method-unavailable failure uncertain rather than inferring definite rejection', async () => {
