@@ -161,6 +161,7 @@ import {
     createMachineFixture,
     createSessionFixture,
     createPlainAccountEncryptionCurrentnessFixture,
+    invokeTestInstanceHandler,
     flushHookEffects,
     renderScreen,
 } from '@/dev/testkit';
@@ -326,7 +327,7 @@ const pluginSurfaceConnectivity = {
 // consume. Mocking the hooks module does not update already-bound public
 // storage exports and conceals admission failures beneath the mounted host.
 let surfaceFixtureStorage: typeof import('@/sync/domains/state/storage').storage | null = null;
-function createPluginSurfaceMachines() {
+function createPluginSurfaceMachines(accountId: string) {
     const machineIds = ['machine_1', 'machine-1', 'machine_docs', 'origin-machine',
         'settings-machine', 'ambient-machine', 'machine-ambient', 'machine-origin',
         'machine-stale', 'machine-old', 'machine-new', 'machine-current', 'machine-compose', 'machine_a'];
@@ -337,7 +338,9 @@ function createPluginSurfaceMachines() {
             // supersede the Machine owner's newer observed presence.
             activeAt: Date.now(), daemonStateVersion: pluginSurfaceConnectivity.daemonStateVersion,
             ...(realResourceTransport.settingsEnabled
-                ? { storageMode: 'plain' as const, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } : {}),
+                ? { storageMode: 'plain' as const, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                    access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage' as const,
+                        resourceMode: 'plain' as const, accessState: 'ready' as const } } : {}),
         });
     });
 }
@@ -345,7 +348,7 @@ function applyPluginSurfaceConnectivity() {
     const storage = surfaceFixtureStorage;
     const scope = captureActiveServerAccountScopeLifetime()?.scope;
     if (!scope || !storage) return;
-    const rows = createPluginSurfaceMachines();
+    const rows = createPluginSurfaceMachines(scope.accountId);
     act(() => {
         storage.setState({ endpointStatus: pluginSurfaceConnectivity.endpointStatus });
         storage.getState().applyMachines(rows, true, { sourceServerId: scope.serverId });
@@ -422,7 +425,7 @@ const pluginSurfaceAccountLifetime = {
                     if (response) return response;
                 }
                 if (realResourceTransport.request) {
-                    const machines = createPluginSurfaceMachines();
+                    const machines = createPluginSurfaceMachines(scope.accountId);
                     const readMachine = (id: string) => createPlainMachineRowFixture({ id, accountId: scope.accountId,
                         machine: machines.find(machine => machine.id === id) ?? createMachineFixture({ id, activeAt: Date.now() }) });
                     if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
@@ -434,7 +437,7 @@ const pluginSurfaceAccountLifetime = {
                     }
                 }
                 if (options.request) return options.request(url, init);
-                if (path === '/v1/machines') return Response.json(createPluginSurfaceMachines().map(machine =>
+                if (path === '/v1/machines') return Response.json(createPluginSurfaceMachines(scope.accountId).map(machine =>
                     createPlainMachineRowFixture({ id: machine.id, accountId: scope.accountId, machine })));
                 // Plugin-specific responses must not receive Sync's neighboring
                 // Account reads. A normal missing HTTP route is a 404, whereas
@@ -527,7 +530,7 @@ async function serveCredentialedSurfaceHomes(homes: readonly Readonly<{
                         hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } },
                 } }));
             }
-            const machines = createPluginSurfaceMachines();
+            const machines = createPluginSurfaceMachines('account-a');
             if (request.path === '/v1/machines') return Response.json(machines.map(machine =>
                 createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine })));
             const init: RequestInit = { method: request.method,
@@ -2897,7 +2900,7 @@ function primeExactTargetedContributions(input: Readonly<{
             ? {}
             : { targetedSurfaceMounts: input.targetedSurfaceMounts }),
     });
-    return Object.freeze({ mountedTarget, targetedContributions });
+    return Object.freeze({ mountedTarget, targetedContributions, projection: exactProjection });
 }
 
 function withMountedTargetPackage(
@@ -18095,17 +18098,20 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
 
     const crossPathEntry = `react-native/${reactNativeCacheIdentity.artifactId}/entry.cjs.bundle`;
     const crossPathBytes = new TextEncoder().encode('export function renderSurface() { return null; }');
-    const crossPathFileDigest = 'sha256:1111111111111111111111111111111111111111111111111111111111111111';
+    const crossPathFileDigest = computePluginUiArtifactSha256DigestV1(crossPathBytes);
     const crossPathIdentity = {
         ...reactNativeCacheIdentity,
-        artifactDigest: PluginUiArtifactDigestV1Schema.parse('sha256:2222222222222222222222222222222222222222222222222222222222222222'),
+        artifactDigest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: crossPathEntry, bytes: crossPathBytes }]),
         platform: 'web' as const,
     };
 
     async function primeCrossPathArtifact(): Promise<void> {
         const { getInstalledPluginReactNativeBundleCache } = await import('@/components/plugins/reactNative/bundleCache');
-        getInstalledPluginReactNativeBundleCache().putInstalledArtifact({
+        const cache = getInstalledPluginReactNativeBundleCache();
+        cache.bindAccountLifetime(pluginSurfaceAccountLifetime.value!);
+        expect(cache.putInstalledArtifact({
             identity: crossPathIdentity,
+            accountScope: pluginSurfaceAccountLifetime.value!.scope,
             bytes: crossPathBytes,
             entryRelativePath: crossPathEntry,
             format: 'plainJs',
@@ -18115,7 +18121,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
                 byteSize: crossPathBytes.byteLength,
                 bytes: crossPathBytes,
             }],
-        });
+        })).toMatchObject({ ok: true });
     }
 
     /**
@@ -18127,6 +18133,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
         bindingInput: PluginUiDestinationBindingInputV1,
         options: Readonly<{
             exactProjection?: PluginProjectionV2;
+            hostApiMethods?: PluginUiHostMethodV1[];
         }> = {},
     ) {
         const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
@@ -18187,7 +18194,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
                             contributionId: 'native-panel',
                             generatedV2: true,
                             pluginVersion: '3.2.1',
-                            hostApi: { minVersion: '1.0.0', methods: ['context', 'executeAction'] },
+                            hostApi: { minVersion: '1.0.0', methods: options.hostApiMethods ?? ['context', 'executeAction'] },
                             artifactGraph: {
                                 artifactId: crossPathIdentity.artifactId,
                                 tier: 'reactNative',
@@ -18205,7 +18212,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
                             runtime: {
                                 decision: { state: 'load', reason: 'compatible', diagnostics: [] },
                                 loadPolicy: { source: 'installedArtifact' },
-                                cacheKey: `cross-path-${binding.destination.localId}`,
+                                cacheKey: derivePluginReactNativeBundleCacheKey(crossPathIdentity),
                                 cacheIdentity: { artifactDigest: crossPathIdentity.artifactDigest },
                             },
                         },
@@ -18219,7 +18226,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
         });
         const placement = model.surfacePlacementsById[placementId];
         expect(placement, `the projection must carry ${placementId}`).toBeTruthy();
-        return { model, placement: placement! };
+        return { model, placement: placement!, targetFixture };
     }
 
     function bindingDeclaration(input: Readonly<{
@@ -18308,7 +18315,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
         } finally { await screen.unmount(); }
     });
 
-    it.each(['approve', 'sourceUnavailable', 'reject', 'retire'] as const)('presents a plugin-page deferred approval from its exact Artifact without changing the plugin caller (%s)', async disposition => {
+    async function createApprovalPageFixture(requireApproval = true) {
         const { createHomeGovernanceHarness } = await import('@/dev/testkit/harness/homeGovernanceHarness');
         const homes = createHomeGovernanceHarness();
         onTestFinished(() => homes.reset());
@@ -18318,15 +18325,16 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
             ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } },
         } } });
         for (const path of ['/v1/features', '/v1/features/authenticated']) homes.answer(serverId, path, { body: features });
-        await homes.requireActionApproval(serverId, 'widgets.fragment.update', 'plugin');
+        if (requireApproval) await homes.requireActionApproval(serverId, 'widgets.fragment.update', 'plugin');
+        realResourceTransport.settingsEnabled = true;
+        realResourceTransport.targetedEnabled = true;
         await pluginSurfaceAccountLifetime.setScope({ serverId, accountId: 'account-a' },
             (path, init) => {
-                if (path === '/v1/machines') return Response.json([ExternalActionMachineBootstrapV1Schema.parse({
-                    id: 'machine_1', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
-                    installationId: 'approval-origin-installation', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, runnerContentKeyBinding: null,
-                    access: { custodian: { accountId: 'account-a', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+                if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({
+                    id: 'machine_1', accountId: 'account-a',
                 })]);
-                return createEmptyAccountBootstrapHttpResponse(path, init)
+                return createPlainMachineReadHttpResponseFixture(path, init, 'account-a')
+                    ?? createEmptyAccountBootstrapHttpResponse(path, init)
                     ?? homes.request(`https://server-1${path}`, init);
             }, { serverIdentityId, currentAccount: true });
         // The mounted route addresses its local profile; Account custody uses
@@ -18334,6 +18342,12 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
         expect(pluginSurfaceAccountLifetime.value!.scope.serverId).toBe(serverIdentityId);
         expect(serverId).not.toBe(serverIdentityId);
         expect(areServerProfileIdentifiersEquivalent(serverId, serverIdentityId)).toBe(true);
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { resolveServerScopedMachine } = await import('@/sync/domains/machines/resolveServerScopedMachine');
+        const { canManageMachine } = await import('@/sync/domains/machines/canManageMachine');
+        const machine = resolveServerScopedMachine(storage.getState(), serverId, 'machine_1');
+        expect(canManageMachine(machine), JSON.stringify(machine)).toBe(true);
+        expect(machine).toMatchObject({ storageMode: 'plain', access: { role: 'manage', resourceMode: 'plain', accessState: 'ready' } });
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
         const restoreLoader = await installRealActionExecutorModuleLoader();
@@ -18346,9 +18360,137 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
         } }, { surface: 'ui', authority: 'present_user', serverId })).toMatchObject({ ok: true });
         reactNativeSurfaceProps.length = 0;
         await primeCrossPathArtifact();
-        const { placement, model } = await projectPlacementFromBinding(bindingDeclaration({
+        const { placement, model, targetFixture } = await projectPlacementFromBinding(bindingDeclaration({
             id: 'approval-page', container: 'appPage', target: { kind: 'app' },
-        }));
+        }), { hostApiMethods: ['context', 'executeAction', 'openNewSession'] });
+        const daemonRequests: Array<Readonly<{ method: string; payload: unknown }>> = [];
+        realResourceTransport.request = async (method, payload) => {
+            daemonRequests.push({ method, payload });
+            if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                DaemonContributionRegistryProjectionDescribeRequestSchema.parse(payload);
+                return { protocolVersion: 1, projection: targetFixture.projection };
+            }
+            if (method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) {
+                return { status: 'current', targetedContributions: targetFixture.targetedContributions, targetedSurfaceMounts: [] };
+            }
+            return { error: 'Method not found' };
+        };
+        return { homes, serverId, serverIdentityId, account, placement, model, daemonRequests };
+    }
+
+    let renderApprovalOrigin: () => React.ReactNode = () => null;
+    const ApprovalOriginRouteBody = () => renderApprovalOrigin();
+
+    it.each([true, false])('keeps the originating plugin caller available for the settled New Session seed (approval=%s)', async requireApproval => {
+        const { homes, serverId, account, placement, model, daemonRequests } = await createApprovalPageFixture(requireApproval);
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const { WorkspaceProvider } = await import('@/components/appShell/workspace/WorkspaceProvider');
+        const { WorkspaceShell } = await import('@/components/appShell/workspace/WorkspaceShell');
+        const { registerWorkspaceRouteContext } = await import('@/components/appShell/workspace/workspaceRouteContext');
+        const { workspaceRouteFiles } = await import('@/components/appShell/workspace/workspaceRoutes');
+        const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+        const { decideApprovalAsInbox } = await import('@/dev/testkit/harness/approvalInbox');
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        const { createNewSessionComposerDocumentOwner } = await import('@/components/sessions/composer/newSessionComposerDocumentOwner');
+        const { router } = await import('expo-router');
+        const { resetSessionDraftRepositoryForTests } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        resetSessionDraftRepositoryForTests();
+        await prepareSessionDraftPersistenceStorage();
+        const push = vi.spyOn(router, 'push');
+        onTestFinished(() => push.mockRestore());
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: true, workflows: false, friends: false,
+        } });
+        renderApprovalOrigin = () => <PluginSurfacePlacementHost placement={placement} pluginUiProjection={model}
+            machineId="machine_1" serverId={serverId} platform="web" reactNativeLoaderBackend={{
+                backendId: 'commonJs', available: true, loadInstalledBundle: async () => () => null,
+            }} />;
+        const modules: Record<string, unknown> = {
+            [workspaceRouteFiles['']!]: { WorkspaceRouteBody: ApprovalOriginRouteBody },
+            // Expo's native screen composition is the boundary. Its real Inbox
+            // decision below still executes against the Home.
+            [workspaceRouteFiles['inbox/approvals/[id]']!]: { WorkspaceRouteBody: () => React.createElement('NativeApprovalScreen') },
+        };
+        registerWorkspaceRouteContext(Object.assign((key: string) => modules[key], { keys: () => Object.keys(modules) }));
+        let navigation!: import('@/components/appShell/workspace/WorkspaceNavigationContext').WorkspaceNavigationContextValue;
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>
+            {value => {
+                navigation = value;
+                return <WorkspaceShell catalog={catalog} />;
+            }}
+        </WorkspaceProvider>);
+        try {
+            await act(async () => {
+                invokeTestInstanceHandler(screen.findByTestId('split-canvas-host'), 'onLayout', {
+                    nativeEvent: { layout: { x: 0, y: 0, width: 1000, height: 600 } },
+                });
+                invokeTestInstanceHandler(screen.findByTestId(`split-canvas-content-slot-${navigation.state.focusedGroupId}`), 'onLayout', {
+                    nativeEvent: { layout: { x: 0, y: 40, width: 1000, height: 560 } },
+                });
+            });
+            await vi.waitFor(() => expect(reactNativeSurfaceProps.length, JSON.stringify({
+                active: navigation.active, state: navigation.state, text: screen.getTextContent(),
+                surface: JSON.parse(surfaceFixtureDiagnostics(screen, 'acme.browser')),
+                daemonRequests,
+            })).toBeGreaterThan(0));
+            expect(navigation.active).toBe(true);
+            const originTabId = navigation.state.groups[navigation.state.focusedGroupId].activeTabId;
+            const originTarget = navigation.state.tabs[originTabId]!.target;
+            const originContext = (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext;
+            const caller = readMountedHostApi();
+            await vi.waitFor(async () => {
+                const context = await caller.context();
+                expect(context.machineExecutionReady, JSON.stringify(context)).toBe(true);
+            });
+            let result: unknown;
+            await act(async () => {
+                result = await caller.executeAction('widgets.fragment.update', {
+                    account, artifactId: 'page-saved-group', patch: { name: 'Ready to ship' },
+                });
+            });
+            if (requireApproval) {
+                expect(result).toMatchObject({ kind: 'approval_request_created' });
+                const approvalId = homes.artifacts(serverId).list().find(row => row.id !== 'page-saved-group')!.id;
+                await vi.waitFor(() => expect(screen.findByTestId('plugin-surface-approval-pending')).not.toBeNull());
+                await screen.pressByTestIdAsync('plugin-surface-approval-pending.open');
+                await flushHookEffects();
+                expect(screen.root.findAllByType('NativeApprovalScreen')).toHaveLength(1);
+                expect(navigation.state.tabs[originTabId]?.target).toEqual(originTarget);
+                expect(originContext.signal.aborted).toBe(false);
+                expect(await decideApprovalAsInbox(serverId, approvalId, 'approve')).toMatchObject({
+                    ok: true, result: { status: 'executed', execution: { ok: true } },
+                });
+            }
+            // The captured caller must remain usable after Review. The paired
+            // composed test covers the pending finite preparation's seed handoff.
+            await caller.openNewSession({ prompt: 'Review the selected pull request and explain the changes.',
+                attachments: [{ attachmentLocalId: 'entry', value: {
+                    key: 'pull-request:42', value: { v: 1, number: 42 }, presentation: { label: 'PR #42' },
+                } }],
+                checkoutIntent: 'reuseWorkspace', placement: { kind: 'exactTarget', serverId,
+                    machineId: 'machine_1', directory: '/workspaces/review-final' } });
+            const route = push.mock.calls.map(([href]) => href).find(href =>
+                typeof href === 'object' && href !== null && 'pathname' in href && href.pathname === '/new') as
+                { pathname: '/new'; params: { draftId: string } } | undefined;
+            expect(route).toBeDefined();
+            expect(readNewSessionDraftFromRepository({ scope: pluginSurfaceAccountLifetime.value!.scope, draftId: route!.params.draftId }))
+                .toMatchObject({ input: 'Review the selected pull request and explain the changes.', selectedPath: '/workspaces/review-final',
+                    composerAttachmentSeeds: [expect.objectContaining({ pluginId: 'acme.browser', attachmentLocalId: 'entry',
+                        value: { key: 'pull-request:42', value: { v: 1, number: 42 }, presentation: { label: 'PR #42' } } })] });
+            expect(createNewSessionComposerDocumentOwner({ scope: pluginSurfaceAccountLifetime.value!.scope,
+                ref: { kind: 'newSession', instanceId: route!.params.draftId } }).read().document.text)
+                .toBe('Review the selected pull request and explain the changes.');
+            expect(originContext.signal.aborted).toBe(false);
+        } finally {
+            await screen.unmount();
+            renderApprovalOrigin = () => null;
+            registerWorkspaceRouteContext(Object.assign(() => undefined, { keys: () => [] }));
+        }
+    });
+
+    it.each(['approve', 'sourceUnavailable', 'reject', 'retire'] as const)('presents a plugin-page deferred approval from its exact Artifact without changing the plugin caller (%s)', async disposition => {
+        const { homes, serverId, serverIdentityId, account, placement, model } = await createApprovalPageFixture();
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const { decideApprovalAsInbox } = await import('@/dev/testkit/harness/approvalInbox');
         const { buildApprovalHref } = await import('@/components/approvals/approvalNavigation');
@@ -18415,7 +18557,18 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
                 if (disposition === 'sourceUnavailable') {
                     // The Account owns this deferred effect. Losing the page's
                     // source projection does not revoke its admitted proposal.
-                    targetedContributionsReadMock.mockResolvedValue({ supported: false, reason: 'unavailable' });
+                    const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjection');
+                    const request = realResourceTransport.request!;
+                    let unavailableRead = false;
+                    realResourceTransport.request = async (method, payload) => {
+                        if (method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) {
+                            unavailableRead = true;
+                            return { status: 'unavailable', code: 'plugin_targeted_contributions_target_unavailable' };
+                        }
+                        return request(method, payload);
+                    };
+                    await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine_1', serverId }, 'authority'));
+                    await vi.waitFor(() => expect(unavailableRead).toBe(true));
                 }
                 const decision = await decideApprovalAsInbox(serverId, approvalId!, disposition === 'sourceUnavailable' ? 'approve' : disposition);
                 expect(decision, JSON.stringify(decision.ok ? { ok: true } : {

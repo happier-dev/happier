@@ -4255,7 +4255,7 @@ function PluginSurfaceHostMount(props: Readonly<(
         {pluginActionApproval.approvalPending && pluginActionApproval.approvalId ? (
             <ActionApprovalPendingNotice testID="plugin-surface-approval-pending"
                 message={t('approvals.status.open')} summary={pluginActionApproval.approvalSummary}
-                onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(pluginActionApproval.approvalId!)}?serverId=${encodeURIComponent(accountLifetime?.scope.serverId ?? serverId ?? '')}`)} />
+                onOpenApproval={pluginActionApproval.openApproval} />
         ) : null}
         </InputTypePickerHostProvider>
         </PluginSurfacePresentation>
