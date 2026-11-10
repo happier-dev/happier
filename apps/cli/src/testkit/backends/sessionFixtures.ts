@@ -162,6 +162,9 @@ export function createApiSessionClientFixture(options?: {
         async fetchRecentTranscriptTextItemsForAcpImport() {
             return [];
         },
+        async readSessionTurnsProjection() {
+            return null;
+        },
         async fetchEarliestCommittedUserMessageLocalId() {
             return null;
         },
@@ -243,6 +246,9 @@ export function createMutableApiSessionClientFixture<TMetadata extends Record<st
         },
         async fetchRecentTranscriptTextItemsForAcpImport() {
             return [];
+        },
+        async readSessionTurnsProjection() {
+            return null;
         },
         async fetchLatestUserPermissionIntentFromTranscript() {
             return null;

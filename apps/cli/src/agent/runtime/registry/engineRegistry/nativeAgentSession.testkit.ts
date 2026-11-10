@@ -20,6 +20,7 @@ export async function createNativeAgentLaunchPreparationFixture() {
     const previousFetch = globalThis.fetch;
     const custodianAccountId = 'requester';
     const fixture = await createInstalledProjectAgentLaunchFixture({ homeServerIdentityId: 'srv_native_launch_fixture',
+        preserveLaunchEnvironment: true,
         machineAccess: { custodianAccountId, role: 'manage' } });
     const homeGet = vi.mocked(axios.get).getMockImplementation();
     const homePost = vi.mocked(axios.post).getMockImplementation();
@@ -43,6 +44,7 @@ export async function createNativeAgentLaunchPreparationFixture() {
     return {
         homeGet, homePost, projectLaunchContext,
         happyHomeDir: fixture.f.directory,
+        directory: fixture.cwd,
         requesterIdentity: selectHostRequesterExecutionIdentity({
             sessionRequester: fixture.f.bootstrap.attribution,
             sessionRequesterHomeServerIdentityId: fixture.f.bootstrap.homeServerIdentityId,

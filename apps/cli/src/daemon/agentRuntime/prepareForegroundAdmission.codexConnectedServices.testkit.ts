@@ -33,14 +33,22 @@ export async function createMuseForegroundConnectedAccountFixture(accountIds: re
   return await createForegroundConnectedAccountFixture(accountIds, 'muse');
 }
 
-async function createForegroundConnectedAccountFixture(accountIds: readonly string[], agentId: 'codex' | 'claude' | 'muse') {
+/** Real shared Anthropic token materializer consumed by another admitted Agent. */
+export async function createAnthropicForegroundConnectedAccountFixture(consumer: Readonly<{
+  pluginId: string; localId: string; purpose: string;
+}>) {
+  return await createForegroundConnectedAccountFixture(['work'], 'anthropic', consumer);
+}
+
+async function createForegroundConnectedAccountFixture(accountIds: readonly string[], agentId: 'codex' | 'claude' | 'muse' | 'anthropic',
+  consumer?: Readonly<{ pluginId: string; localId: string; purpose: string }>) {
   const accountId = accountIds[0]!;
-  const pluginId = `happier.agent.${agentId}`;
-  const service = { pluginId, localId: agentId === 'claude' ? 'claude-subscription' : agentId === 'muse' ? 'muse-account' : 'openai-codex' };
-  const authenticationModeId = agentId === 'muse' ? 'api-key' : 'oauth';
+  const pluginId = `happier.agent.${agentId === 'anthropic' ? 'claude' : agentId}`;
+  const service = { pluginId, localId: agentId === 'anthropic' ? 'anthropic' : agentId === 'claude' ? 'claude-subscription' : agentId === 'muse' ? 'muse-account' : 'openai-codex' };
+  const authenticationModeId = agentId === 'anthropic' || agentId === 'muse' ? 'api-key' : 'oauth';
   const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
   const content = sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
-    payload: { v: 1, values: agentId === 'muse'
+    payload: { v: 1, values: agentId === 'anthropic' ? { token: 'synthetic-selected-anthropic-key' } : agentId === 'muse'
       ? { credentialMode: 'manual', inferenceKey: 'synthetic-selected-muse-key' }
       : { accessToken: 'work-access', refreshToken: 'work-refresh', idToken: 'work-id', providerAccountId: 'work-account' } },
     randomBytes: length => new Uint8Array(length),
@@ -67,7 +75,7 @@ async function createForegroundConnectedAccountFixture(accountIds: readonly stri
     const data = path === '/v4/connect/qualified/accounts' ? accounts
       : path === '/v1/account/encryption' ? { mode: 'plain', updatedAt: 0 }
         : path === `/v2/connect/${service.localId}/profiles`
-          ? { serviceId: service.localId, profiles: accountIds.map(id => ({ profileId: id, status: 'connected', kind: 'oauth' })) }
+          ? { serviceId: service.localId, profiles: accountIds.map(id => ({ profileId: id, status: 'connected', kind: agentId === 'anthropic' ? 'token' : 'oauth' })) }
           : path === '/v4/connect/qualified/credential'
             ? {
                 ref: credentialRef,
@@ -91,8 +99,8 @@ async function createForegroundConnectedAccountFixture(accountIds: readonly stri
   };
   let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
   const account = createForegroundPurposeOwnerFixture({
-    consumer: { pluginId, localId: agentId }, service, accountId,
-    ...(agentId === 'claude' ? { purpose: 'model_upstream' } : agentId === 'muse' ? { purpose: 'muse-native' } : {}),
+    consumer: consumer ? { pluginId: consumer.pluginId, localId: consumer.localId } : { pluginId, localId: agentId }, service, accountId,
+    ...(consumer ? { purpose: consumer.purpose } : agentId === 'claude' ? { purpose: 'model_upstream' } : agentId === 'muse' ? { purpose: 'muse-native' } : {}),
     resolveTarget: async (target) => {
       if (target.kind !== 'account') return null;
       const found = (await readAccounts()).accounts.find(candidate => candidate.ref.accountId === target.account.accountId);

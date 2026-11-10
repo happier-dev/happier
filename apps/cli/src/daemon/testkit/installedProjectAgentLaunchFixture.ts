@@ -35,6 +35,7 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   homeServerIdentityId?: string;
   boundSessionId?: string;
   prepareProject?: boolean;
+  preserveLaunchEnvironment?: boolean;
   machineAccess?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['machineAccess'];
   agentIsolationEnabled?: boolean;
   agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
@@ -151,7 +152,16 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   const resolveTool = async () => ({ executablePath: '/tools/mise', version: '2026.10.4' });
   const environmentIo: ProjectNativeToolchainIoForHost = {
     resolveTool,
-    async run() { nativeEffects++; return { exitCode: 0, stdout: 'PATH=/native/bin\0NATIVE=active\0' }; },
+    async run(request) {
+      nativeEffects++;
+      // `mise exec -- env -0` exports the complete child environment. Some
+      // fixtures deliberately exercise native unsets; composed launches retain
+      // their prepared auth and native-home inputs while activating the Project.
+      const environment = options.preserveLaunchEnvironment
+        ? { ...request.env, NATIVE: 'active' }
+        : { PATH: '/native/bin', NATIVE: 'active' };
+      return { exitCode: 0, stdout: Object.entries(environment).map(([key, value]) => `${key}=${value}\0`).join('') };
+    },
     createInvocation: () => environmentIo,
   };
   const admission = createProjectWorkerAdmission({ machineId: 'machine', admissionDrain: createDaemonAdmissionDrain(),
