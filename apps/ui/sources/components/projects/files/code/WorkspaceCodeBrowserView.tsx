@@ -483,8 +483,9 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         minHeight: 0,
     },
-    // The folder table ends after its rows; a long folder fills the page and scrolls inside.
+    // Web fits short folders to their rows; native recyclers need the page's remaining viewport.
     tableSheet: {
+        flexGrow: Platform.OS === 'web' ? 0 : 1,
         flexShrink: 1,
         minHeight: 0,
     },

@@ -719,9 +719,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             visibility={{ mode: visibilityMode, available: gitIgnoreAvailable, onChange: setVisibilityMode }}
         />
     ) : null;
-    // A composed page sizes its sheet to the listing (a short folder ends after its last row) and lets a
-    // long one fill the page and scroll inside it; a pane host keeps filling its pane.
-    const bodyFill = composed ? COMPOSED_BODY_STYLE : FILL_BODY_STYLE;
+    // Web composition fits short listings; native recyclers and pane hosts fill their viewport.
+    const bodyFill = composed && Platform.OS === 'web' ? COMPOSED_BODY_STYLE : FILL_BODY_STYLE;
     const dropZone = (
         <WebDropTargetView testID="repository-tree-drop-zone" style={bodyFill} {...dropZoneHandlersWithRoot}>
             <View style={[bodyFill, { position: 'relative' }]}>

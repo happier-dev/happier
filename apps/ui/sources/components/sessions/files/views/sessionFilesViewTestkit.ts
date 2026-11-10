@@ -16,6 +16,7 @@ import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { isFilesystemActionId, type FilesystemActionId } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 export type FileViewRpcRequest = Readonly<{ targetId: string; method: string; payload: unknown }>;
@@ -131,9 +132,10 @@ export async function createSessionFilesViewFixture(input: Readonly<{
     const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
     const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
     const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
-    const serverIdentityId = input.serverIdentityId;
     const machineId = input.machine?.id ?? input.machineId ?? 'm1';
     const serverUrl = input.serverUrl ?? 'https://session-file-views.test';
+    // Fixture Homes use short .test URLs; distinct Homes retain distinct admitted identities.
+    const serverIdentityId = input.serverIdentityId ?? `srv_${Buffer.from(serverUrl).toString('base64url')}`;
     const requests: FileViewRpcRequest[] = [];
     type ActionIssuer = Awaited<ReturnType<typeof import('@/dev/testkit/harness/externalActionAccountHttpBoundary').createExternalActionAccountHttpBoundary>>;
     const actionIssuers = new Map<FilesystemActionId, ActionIssuer>();
@@ -157,7 +159,7 @@ export async function createSessionFilesViewFixture(input: Readonly<{
                 machineId: machineId, actionId, tokenEpoch: 0,
                 execute: (actionInput, context) => {
                     const { machineId: targetId = context.target.machineId, ...payload } = actionInput as Record<string, unknown> & { machineId?: string };
-                    return dispatch({ targetId, method: actionId, payload });
+                    return dispatch({ targetId, method: getActionSpec(actionId).bindings?.rpcMethod ?? actionId, payload });
                 } });
             actionIssuers.set(actionId, issuer);
         }
@@ -166,7 +168,7 @@ export async function createSessionFilesViewFixture(input: Readonly<{
     // With an advertised Home identity (required by the Account-carrier Action transport), the Machine's installation key is shared by every Action issuer, so its rows publish the one the carrier seals to.
     const installationPublicKey = (await issuerFor('daemon.filesystem.listDirectory'))?.machine.installationPublicKey;
     const machine = input.machine === null ? null
-        : { ...(input.machine ?? transferMachine({ id: input.machineId ?? 'm1', storageMode: 'plain' })), active: true, activeAt: Date.now(),
+        : { ...(input.machine ?? transferMachine({ id: input.machineId ?? 'm1', storageMode: 'plain', presenceProtocolVersion: 1 })), active: true, activeAt: Date.now(),
             // Seed the same content/installation identity the HTTP boundary serves during bootstrap.
             dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, ...(installationPublicKey ? { installationPublicKey } : {}) };
     // Own-Machine Action admission reads the Machine's ready custody from the full row.
