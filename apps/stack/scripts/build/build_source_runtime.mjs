@@ -31,6 +31,7 @@ import { emitSourceAuthorPackages, isFirstPartyBuiltInput } from './source_autho
 import { readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs';
 import { buildSourceGuestPayload, readSourceGuestPayloadTargets } from './source_guest_payload.mjs';
 import { resolveRuntimeBuildAuthority } from '../runtime/shared/runtime_build_authority.mjs';
+import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_OUTPUT_OPTIONS, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 export { readWorkspacePackages, resolveWorkspaceSource } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -868,7 +869,7 @@ async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, co
       return prepared;
     } finally { if (captureDir) removeOwnedDirectorySync(captureDir); }
   };
-  return await prepare(0);
+  return await withSourceCaptureRetry({ repoDir, env, signal }, () => prepare(0));
 }
 
 /** Build from the execution host's installed source. Stack consumers adopt the
@@ -1149,6 +1150,8 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
     return { ...built, inputIdentity, captureFingerprint,
       sourceCapture, ...(component === 'server'
       ? { serverComponent, dbProvider: dbProvider ?? (serverComponent === 'happier-server-light' ? 'sqlite' : 'postgres') } : {}) };
+  } catch (error) {
+    throw rememberSourceCaptureFailure(error, captured);
   } finally {
     removeOwnedDirectorySync(repoDir);
     esbuild.stop();
@@ -1160,6 +1163,7 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
 // Private finite worker: callers use the public function above so every source
 // build goes through the existing host admission owner before graph construction.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  console.log = (...values) => console.error(...values);
   let options;
   try {
     options = JSON.parse(process.argv[2]);
@@ -1189,7 +1193,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         process.removeListener('SIGINT', interrupt);
         process.removeListener('SIGTERM', interrupt);
       }
-    } else result = await buildSourceRuntimeBundleInProcess(options);
+    } else result = await withSourceCaptureRetry({ ...options, env: process.env,
+      beforeRetry: () => removeOwnedDirectorySync(resolve(options.outputDir)) },
+      () => buildSourceRuntimeBundleInProcess(options));
     process.stdout.write(JSON.stringify(result));
   } catch (error) {
     await diagnoseSourceReloadFailure(error, { ...options, env: process.env });

@@ -29,6 +29,7 @@ import { sourceWebExportArgs } from './sourceWebExportArgs.mjs';
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { SOURCE_WEB_EXPORT_ADMISSION_CLASS } from '../utils/dev_targets/remote_commands.mjs';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
+import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 
 /** Stack starts reuse completed account-free exports through source publication.
  * Explicit outputDir callers keep their private finite producer boundary. */
@@ -126,16 +127,13 @@ function sourceWebCandidateKey({ repoDir, buildOptions }) {
 
 async function prepareSourceWebComponent({ repoDir, env, signal, prepare, preparation, stackBaseDir }) {
   return await prepareSourceComponent({ repoDir, target: 'expo', env, signal, preparation, stackBaseDir, prepare: () => withSingleTrailingBuildPass({ run: async () => {
-    const before = await sourceWebInputIdentity({ repoDir });
     try {
       return await prepare();
     } catch (error) {
-      // Diagnostics alone cannot distinguish a missing watch root from source
-      // churn. Reuse the canonical input-byte identity for this attempt, across
-      // both private and shared subprocess exports, before deciding to retry.
       if (error.code === 'BUILD_INPUTS_CHANGED') throw error;
-      error.sourceDrift = !signal?.aborted && !error.signal
-        && before !== await sourceWebInputIdentity({ repoDir });
+      // The capture owner has already decided and exhausted any source retry.
+      // Do not start another episode from unrelated input edits or diagnostics.
+      error.sourceDrift = false;
       throw error;
     }
   } }) });
@@ -318,7 +316,10 @@ async function consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, sign
   return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, (env, publication) =>
     withSourceWebUiInputs({ repoDir, baseDir, env, signal }, async ({ captured, inventoryPath, uiProjectDir }) => {
     const built = await exportCapturedSourceWebUiInputs({ repoDir, baseDir, outputDir,
-      inventoryPath, uiProjectDir, env, signal, runImpl });
+      inventoryPath, uiProjectDir, env, signal, runImpl }).catch(error => {
+        removeOwnedDirectorySync(resolve(outputDir, 'web'));
+        throw error;
+      });
     return { built: { ...built, dependencyPublication: publication.state,
       sourceCapture: { inputIdentity: captured.inputIdentity, capturedAt: captured.capturedAt } }, captured };
   }));
@@ -334,18 +335,21 @@ export async function withSourceWebUiInputs({ repoDir, baseDir, env = process.en
   // while serving products remain private immutable outputs. Only one export
   // may replace this context's captured inputs until Metro has finished reading.
   const contextDir = resolve(baseDir, 'source-web');
-  return await withJsonOwnerFileLock(async () => {
+  return await withJsonOwnerFileLock(() => withSourceCaptureRetry({ repoDir, env, signal }, async () => {
     const workspace = join(contextDir, 'workspace');
     removeOwnedDirectorySync(workspace);
+    let captured;
     try {
-      const captured = await captureSourceWebBuildInputs({ repoDir, outputDir: workspace, signal });
+      captured = await captureSourceWebBuildInputs({ repoDir, outputDir: workspace, signal });
       await prepareSourcePluginUiInventory({ repoDir, inputRepoDir: captured.repoDir,
         outputDir: contextDir, artifactStoreDir: join(contextDir, 'inputs/artifacts'), env, signal, stdoutStream });
       return await consume({ captured, inventoryPath: join(contextDir, 'inputs/inventory.js'), uiProjectDir: captured.uiProjectDir });
+    } catch (error) {
+      throw rememberSourceCaptureFailure(error, captured);
     } finally {
       removeOwnedDirectorySync(workspace);
     }
-  }, { lockPath: `${contextDir}.lock`, timeoutMs: Infinity, staleAfterMs: Infinity,
+  }), { lockPath: `${contextDir}.lock`, timeoutMs: Infinity, staleAfterMs: Infinity,
     signal, errorLabel: 'source-web capture lock' });
 }
 

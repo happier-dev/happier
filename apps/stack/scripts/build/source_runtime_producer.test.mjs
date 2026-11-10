@@ -13,6 +13,7 @@ import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspa
 import { parseSourceReloadRefusalLine } from '../runtime/shared/source_reload_refusal.mjs';
 import { parseArgs } from '../utils/cli/args.mjs';
 import { isDevStartupSourceDrift } from '../utils/dev/devReloadCoordinator.mjs';
+import { Writable } from 'node:stream';
 
 test('reload freshness defaults to request time and an explicit fix time permits prebuilt adoption', async () => {
   const { resolveSourceRuntimeReloadArguments } = await import('../runtime/launch/prepareSourceRuntimeReload.mjs');
@@ -229,3 +230,41 @@ test('a queued component worker from before the producer cutover translates to t
   assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer']);
   assert.equal(JSON.parse(await readFile(join(stacks[0], 'source-runtime/selected-daemon.json'), 'utf8')).entrypoint, built.entrypoint);
 });
+
+// RELOAD-RETRY-1110: the real producer reads captured bytes while the author fixes live source.
+test('producer JSON entry keeps in-process console diagnostics off stdout', { skip: process.platform !== 'linux' }, async t => {
+  const { fixture, native, repoDir, env } = await createProducerFixture(t);
+  const diagnostic = '[local] refreshing fixture dependencies';
+  const preload = fixture.path('diagnostic.mjs');
+  // An OS process exit listener supplies an in-process writer without replacing
+  // any producer logic or requiring a mutation of the shared dependency tree.
+  await writeFile(preload, `if (process.argv[1] === ${JSON.stringify(native.runtimePath)}) process.on('exit', () => console.log(${JSON.stringify(diagnostic)}));`);
+  const stdout = await native.runSourceCommand({ repoDir, scriptPath: native.runtimePath,
+    args: [JSON.stringify({ repoDir, outputDir: fixture.path('output'), component: 'daemon' })],
+    env: { ...env, NODE_OPTIONS: `${env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(preload).href}` }, captureStderr: true });
+  const built = JSON.parse(stdout);
+  assert.equal((await import(pathToFileURL(built.entrypoint))).value, 1);
+});
+
+for (const mode of ['fixed', 'old', 'still-broken']) {
+  test(`producer capture retry: ${mode}`, { skip: process.platform !== 'linux' }, async t => {
+    const { native, repoDir, cliDir, entry, compilers, env, stacks } = await createProducerFixture(t);
+    await writeFile(entry, 'this is invalid syntax !');
+    const locator = join(cliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
+    const repair = mode === 'old' ? '' : `writeFileSync(${JSON.stringify(entry)}, ${JSON.stringify(mode === 'fixed' ? 'export const value = 42;' : 'this is invalid syntax !')});`;
+    await writeFile(locator, `import {appendFileSync, writeFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(compilers)}, 'attempt\\n'); ${repair} export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS=[];`);
+    let diagnostics = '';
+    const stderrStream = new Writable({ write(chunk, _encoding, done) { diagnostics += chunk; done(); } });
+    const options = { repoDir, component: 'daemon', env, stackBaseDir: stacks[0], waitForSourceChanges: false, stderrStream };
+    if (mode === 'fixed') {
+      const built = await native.build(options);
+      assert.equal((await import(pathToFileURL(built.entrypoint))).value, 42);
+    } else {
+      await assert.rejects(native.build(options), { code: 'source_runtime_producer_failed' });
+    }
+    assert.equal((diagnostics.match(/phase=input-capture /g) ?? []).length, mode === 'old' ? 1 : 2,
+      'only a post-capture edit permits exactly one new producer capture');
+    assert.equal((diagnostics.match(/\[source-capture\] retry file="apps\/cli\/src\/index.ts" capturedAt=\S+ fileMtime=\S+/g) ?? []).length,
+      mode === 'old' ? 0 : 1, 'one retry diagnostic names the failing source and both timestamps');
+  });
+}

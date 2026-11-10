@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 import { runInNewContext } from 'node:vm';
 import { run } from '../utils/proc/proc.mjs';
-import { exportSourceWebUi } from './build_source_web_ui.mjs';
+import { exportSourceWebUi, withSourceWebUiInputs } from './build_source_web_ui.mjs';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { prepareFiniteSourceWebFixture, relocateSourceOwnerImports } from '../testkit/core/source_web_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv, holdNativeAdmissionFixtureMemory, installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
@@ -27,6 +27,28 @@ import { withPatchedProcessEnv } from '../testkit/core/env_scope.mjs';
 import { resolveHeavyweightMemoryFloorKiB } from '../utils/dev_targets/remote_commands.mjs';
 import { isJsonOwnerFileLockActive } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { isWorkspaceBundleLockActive } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
+
+for (const mode of ['fixed', 'old', 'still-broken', 'unnamed']) {
+  test(`web producer capture retry: ${mode}`, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'web-capture-retry-' });
+    const repoDir = fixture.path('repo');
+    const { uiInput } = await prepareFiniteSourceWebFixture({ sourceRepo: fileURLToPath(new URL('../../../../', import.meta.url)), repoDir });
+    let attempts = 0;
+    const build = withSourceWebUiInputs({ repoDir, baseDir: fixture.path('state'),
+      env: { ...process.env, EXPO_PUBLIC_DEBUG: '0' } }, async ({ uiProjectDir }) => {
+        attempts++;
+        if (attempts === 1 || mode === 'still-broken') {
+          if (mode !== 'old') await writeFile(uiInput, 'export const repaired = true;');
+          throw Object.assign(new Error('fixture compiler failure'), { code: 'source_runtime_producer_failed',
+            ...(mode === 'unnamed' ? {} : { firstFailingModule: join(uiProjectDir, 'sources/app/_layout.tsx') }) });
+        }
+        return await readFile(join(uiProjectDir, 'sources/app/_layout.tsx'), 'utf8');
+      });
+    if (mode === 'fixed') assert.equal(await build, 'export const repaired = true;');
+    else await assert.rejects(build, { code: 'source_runtime_producer_failed' });
+    assert.equal(attempts, ['fixed', 'still-broken'].includes(mode) ? 2 : 1);
+  });
+}
 
 test('dependency publication web export discards a spanned candidate and returns only the rebuild', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-web-dependency-publication-' });
@@ -132,7 +154,7 @@ test('unchanged source export failure is terminal despite a Metro source diagnos
   assert.equal(attempts, 1);
 });
 
-test('source export retries a failed attempt only after authored input bytes changed', async t => {
+test('source export retries a failed attempt after its named captured input changed', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-web-changed-failure-' });
   const repoDir = fixture.path('repo');
   const { uiInput } = await prepareFiniteSourceWebFixture({
@@ -148,7 +170,8 @@ test('source export retries a failed attempt only after authored input bytes cha
       if (++attempts === 1) {
         deadline = setTimeout(() => cancellation.abort(), 180000);
         await writeFile(uiInput, 'export const changed = true;');
-        throw Object.assign(new Error('Metro export failed while inputs moved'), { code: 1 });
+        throw Object.assign(new Error('Metro export failed while inputs moved'), { code: 1,
+          firstFailingModule: join(cwd, 'sources/app/_layout.tsx') });
       }
       assert.equal(await readFile(join(cwd, 'sources/app/_layout.tsx'), 'utf8'), 'export const changed = true;');
       const web = args[args.indexOf('--output-dir') + 1];
