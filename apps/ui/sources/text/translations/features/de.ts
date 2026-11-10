@@ -11094,7 +11094,7 @@ const sessionCompanionTranslations = { de: {
         },
         drop: { keepBesideChat: 'Neben dem Chat behalten' },
         sections: { environment: 'Umgebung', running: 'Läuft', usage: 'Nutzung', links: 'Links', commit: 'Committen',
-            pullRequest: "Pull Request", pullRequestOpen: ({ number }) => `#${number} · Offen`, agentsCount: ({ count }) => (count === 1 ? "1 Agent" : `${count} Agenten`), servicesCount: ({ count }) => (count === 1 ? "1 Dienst" : `${count} Dienste`), filesCount: ({ count }) => (count === 1 ? '1 Datei' : `${count} Dateien`), more: ({ count }) => `${count} weitere`, context: 'Kontext', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
+            pullRequest: "Pull Request", pullRequestOpen: ({ number }) => `#${number} · Offen`, agentsCount: ({ count }) => (count === 1 ? "1 Agent" : `${count} Agenten`), servicesCount: ({ count }) => (count === 1 ? "1 Dienst auf diesem Rechner" : `${count} Dienste auf diesem Rechner`), filesCount: ({ count }) => (count === 1 ? '1 Datei' : `${count} Dateien`), more: ({ count }) => `${count} weitere`, context: 'Kontext', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} ist offline`, sessionDisconnected: "Die Sitzung ist nicht verbunden", waitingForUpdates: "Warte auf eine Meldung der Sitzung" },
         needsYouA11y: ({ count }) => `Begleiter, ${count} warten auf dich`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "de">;

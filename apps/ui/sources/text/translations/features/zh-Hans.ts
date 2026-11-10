@@ -11093,7 +11093,7 @@ const sessionCompanionTranslations = { 'zh-Hans': {
         },
         drop: { keepBesideChat: '放在聊天旁边' },
         sections: { environment: '环境', running: '运行中', usage: '用量', links: '链接', commit: '提交',
-            pullRequest: "拉取请求", pullRequestOpen: ({ number }) => `#${number} · 开放`, agentsCount: ({ count }) => (count === 1 ? "1 个智能体" : `${count} 个智能体`), servicesCount: ({ count }) => (count === 1 ? "1 个服务" : `${count} 个服务`), filesCount: ({ count }) => `${count} 个文件`, more: ({ count }) => `另外 ${count} 项`, context: '上下文', machineFolderA11y: ({ machine, folder }) => `${machine}，${folder}` },
+            pullRequest: "拉取请求", pullRequestOpen: ({ number }) => `#${number} · 开放`, agentsCount: ({ count }) => (count === 1 ? "1 个智能体" : `${count} 个智能体`), servicesCount: ({ count }) => (count === 1 ? "这台机器上有 1 个服务" : `这台机器上有 ${count} 个服务`), filesCount: ({ count }) => `${count} 个文件`, more: ({ count }) => `另外 ${count} 项`, context: '上下文', machineFolderA11y: ({ machine, folder }) => `${machine}，${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} 已离线`, sessionDisconnected: "会话未连接", waitingForUpdates: "正在等待会话的消息" },
         needsYouA11y: ({ count }) => `随行面板,${count} 个等你处理`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "zh-Hans">;

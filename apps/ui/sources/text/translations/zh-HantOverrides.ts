@@ -9151,6 +9151,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             runningOn: ({ count, machine }: { count: number; machine: string }) => `${machine} 上有 ${count} 個正在執行`,
             running: ({ count }: { count: number }) => `${count} 個正在執行`,
             nothingRunningOn: ({ machine }: { machine: string }) => `${machine} 上沒有正在執行的服務`,
+            runningInWorkspace: ({ count }: { count: number }) => `此工作區中有 ${count} 個正在執行`,
             nothingRunningInWorkspace: '此工作區中沒有正在執行的服務',
             nothingRunning: '沒有正在執行的服務',
             offlineOn: ({ machine }: { machine: string }) => `${machine} 已離線`,

@@ -11109,7 +11109,7 @@ const sessionCompanionTranslations = { ca: {
         },
         drop: { keepBesideChat: 'Tingues-ho al costat del xat' },
         sections: { environment: 'Entorn', running: 'En marxa', usage: 'Ús', links: 'Enllaços', commit: 'Confirmar',
-            pullRequest: "Pull request", pullRequestOpen: ({ number }) => `#${number} · Oberta`, agentsCount: ({ count }) => (count === 1 ? "1 agent" : `${count} agents`), servicesCount: ({ count }) => (count === 1 ? "1 servei" : `${count} serveis`), filesCount: ({ count }) => (count === 1 ? '1 fitxer' : `${count} fitxers`), more: ({ count }) => `${count} més`, context: 'Context', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
+            pullRequest: "Pull request", pullRequestOpen: ({ number }) => `#${number} · Oberta`, agentsCount: ({ count }) => (count === 1 ? "1 agent" : `${count} agents`), servicesCount: ({ count }) => (count === 1 ? "1 servei en aquesta màquina" : `${count} serveis en aquesta màquina`), filesCount: ({ count }) => (count === 1 ? '1 fitxer' : `${count} fitxers`), more: ({ count }) => `${count} més`, context: 'Context', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} està fora de línia`, sessionDisconnected: "La sessió no està connectada", waitingForUpdates: "Esperant notícies de la sessió" },
         needsYouA11y: ({ count }) => `Acompanyant, ${count} t’esperen`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "ca">;

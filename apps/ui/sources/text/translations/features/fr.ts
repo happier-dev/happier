@@ -11110,7 +11110,7 @@ const sessionCompanionTranslations = { fr: {
         },
         drop: { keepBesideChat: 'Garder à côté du chat' },
         sections: { environment: 'Environnement', running: 'En cours', usage: 'Utilisation', links: 'Liens', commit: 'Valider',
-            pullRequest: "Pull request", pullRequestOpen: ({ number }) => `#${number} · Ouverte`, agentsCount: ({ count }) => (count === 1 ? "1 agent" : `${count} agents`), servicesCount: ({ count }) => (count === 1 ? "1 service" : `${count} services`), filesCount: ({ count }) => (count === 1 ? '1 fichier' : `${count} fichiers`), more: ({ count }) => `${count} de plus`, context: 'Contexte', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
+            pullRequest: "Pull request", pullRequestOpen: ({ number }) => `#${number} · Ouverte`, agentsCount: ({ count }) => (count === 1 ? "1 agent" : `${count} agents`), servicesCount: ({ count }) => (count === 1 ? "1 service sur cette machine" : `${count} services sur cette machine`), filesCount: ({ count }) => (count === 1 ? '1 fichier' : `${count} fichiers`), more: ({ count }) => `${count} de plus`, context: 'Contexte', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} est hors ligne`, sessionDisconnected: "La session n’est pas connectée", waitingForUpdates: "En attente de nouvelles de la session" },
         needsYouA11y: ({ count }) => `Compagnon, ${count} t’attendent`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "fr">;

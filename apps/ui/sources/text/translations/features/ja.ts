@@ -11098,7 +11098,7 @@ const sessionCompanionTranslations = { ja: {
         },
         drop: { keepBesideChat: 'チャットの横に置く' },
         sections: { environment: '環境', running: '実行中', usage: '使用量', links: 'リンク', commit: 'コミット',
-            pullRequest: "プルリクエスト", pullRequestOpen: ({ number }) => `#${number} · オープン`, agentsCount: ({ count }) => (count === 1 ? "1 エージェント" : `${count} エージェント`), servicesCount: ({ count }) => (count === 1 ? "1 サービス" : `${count} サービス`), filesCount: ({ count }) => `${count} ファイル`, more: ({ count }) => `他 ${count} 件`, context: 'コンテキスト', machineFolderA11y: ({ machine, folder }) => `${machine}、${folder}` },
+            pullRequest: "プルリクエスト", pullRequestOpen: ({ number }) => `#${number} · オープン`, agentsCount: ({ count }) => (count === 1 ? "1 エージェント" : `${count} エージェント`), servicesCount: ({ count }) => (count === 1 ? "このマシンで 1 サービス" : `このマシンで ${count} サービス`), filesCount: ({ count }) => `${count} ファイル`, more: ({ count }) => `他 ${count} 件`, context: 'コンテキスト', machineFolderA11y: ({ machine, folder }) => `${machine}、${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} はオフラインです`, sessionDisconnected: "セッションは接続されていません", waitingForUpdates: "セッションからの応答を待っています" },
         needsYouA11y: ({ count }) => `コンパニオン、${count} 件があなたを待っています`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "ja">;

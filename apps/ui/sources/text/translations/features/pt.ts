@@ -11109,7 +11109,7 @@ const sessionCompanionTranslations = { pt: {
         },
         drop: { keepBesideChat: 'Manter ao lado do chat' },
         sections: { environment: 'Ambiente', running: 'Em execução', usage: 'Uso', links: 'Links', commit: 'Commit',
-            pullRequest: "Pull request", pullRequestOpen: ({ number }) => `#${number} · Aberta`, agentsCount: ({ count }) => (count === 1 ? "1 agente" : `${count} agentes`), servicesCount: ({ count }) => (count === 1 ? "1 serviço" : `${count} serviços`), filesCount: ({ count }) => (count === 1 ? '1 arquivo' : `${count} arquivos`), more: ({ count }) => `mais ${count}`, context: 'Contexto', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
+            pullRequest: "Pull request", pullRequestOpen: ({ number }) => `#${number} · Aberta`, agentsCount: ({ count }) => (count === 1 ? "1 agente" : `${count} agentes`), servicesCount: ({ count }) => (count === 1 ? "1 serviço nesta máquina" : `${count} serviços nesta máquina`), filesCount: ({ count }) => (count === 1 ? '1 arquivo' : `${count} arquivos`), more: ({ count }) => `mais ${count}`, context: 'Contexto', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} está offline`, sessionDisconnected: "A sessão não está ligada", waitingForUpdates: "À espera de notícias da sessão" },
         needsYouA11y: ({ count }) => `Companheiro, ${count} à sua espera`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "pt">;

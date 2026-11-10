@@ -233,9 +233,12 @@ function buildHeaderLine(input: Readonly<{
     if (input.runningCount > 0) {
         return {
             leading: input.runningMark,
-            segments: [machine
-                ? t('localServices.pane.runningOn', { count: input.runningCount, machine })
-                : t('localServices.pane.running', { count: input.runningCount })],
+            // A workspace view counts the workspace and says so; the Machine-wide count is the Machine's.
+            segments: [input.scope === 'workspace'
+                ? t('localServices.pane.runningInWorkspace', { count: input.runningCount })
+                : machine
+                    ? t('localServices.pane.runningOn', { count: input.runningCount, machine })
+                    : t('localServices.pane.running', { count: input.runningCount })],
         };
     }
     if (input.scanUnknown) {

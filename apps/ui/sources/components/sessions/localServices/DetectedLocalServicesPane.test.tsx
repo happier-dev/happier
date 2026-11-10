@@ -654,7 +654,7 @@ describe('DetectedLocalServicesPane', () => {
             />,
         ));
         expect(screen.findByTestId('probe-header.subtitle')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('1 running on MacBook Pro');
+        expect(screen.getTextContent()).toContain('1 running in this workspace');
         // The body no longer draws its own "N services · M running" strip.
         expect(screen.findAllByTestId('local-services-pane-count-badge')).toHaveLength(0);
         await pressTestInstanceAsync(screen.findByTestId('local-services-pane-refresh'), 'header refresh');
@@ -698,6 +698,23 @@ describe('DetectedLocalServicesPane', () => {
             expect(collectText(header)).not.toContain('Nothing running');
             await screen.unmount();
         }
+    });
+
+    it('a running Machine scope names the Machine; a workspace scope names the workspace', async () => {
+        const screen = await renderScreen(inHeaderHost(
+            <DetectedLocalServicesPane
+                inventoryState={buildLocalServiceInventoryState({
+                    rows: [buildLocalServiceInventoryRow({ id: 'openable-row', state: 'listening' })],
+                })}
+                launcherState={launcherStateWith([openableTarget], 'session-a')}
+                machine={MACBOOK_ONLINE}
+                sessionId="session-a"
+                scope="machine"
+                testID="local-services-pane"
+            />,
+        ));
+        expect(screen.getTextContent()).toContain('1 running on MacBook Pro');
+        expect(screen.getTextContent()).not.toContain('in this workspace');
     });
 
     it('an empty workspace scope says nothing runs in this workspace, never on the whole machine', async () => {
@@ -1127,7 +1144,7 @@ describe('DetectedLocalServicesPane', () => {
         expect(screen.getTextContent()).toContain('Happier services (1)');
         // Closed by default: its rows are not mounted until the person opens the group.
         expect(screen.findAllByTestId('local-services-pane-row:inventory:happier-ui')).toHaveLength(0);
-        expect(screen.getTextContent()).toContain('1 running on MacBook Pro');
+        expect(screen.getTextContent()).toContain('1 running in this workspace');
         await pressTestInstanceAsync(screen.findByTestId('local-services-pane-happier-item'), 'happier group');
         expect(screen.findByTestId('local-services-pane-row:inventory:happier-ui')).toBeTruthy();
     });

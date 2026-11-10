@@ -11204,6 +11204,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       runningOn: ({ count, machine }: { count: number; machine: string }) => `${count} запущено на ${machine}`,
       running: ({ count }: { count: number }) => `${count} запущено`,
       nothingRunningOn: ({ machine }: { machine: string }) => `На ${machine} ничего не запущено`,
+      runningInWorkspace: ({ count }: { count: number }) => `${count} запущено в этом рабочем пространстве`,
       nothingRunningInWorkspace: 'В этом рабочем пространстве ничего не запущено',
       nothingRunning: 'Ничего не запущено',
       offlineOn: ({ machine }: { machine: string }) => `${machine} не в сети`,

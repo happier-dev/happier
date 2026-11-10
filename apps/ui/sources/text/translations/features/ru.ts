@@ -11134,7 +11134,7 @@ const sessionCompanionTranslations = { ru: {
         },
         drop: { keepBesideChat: 'Держать рядом с чатом' },
         sections: { environment: 'Окружение', running: 'Выполняется', usage: 'Использование', links: 'Ссылки', commit: 'Коммит',
-            pullRequest: "Pull request", pullRequestOpen: ({ number }) => `#${number} · Открыт`, agentsCount: ({ count }) => (count === 1 ? "Агентов: 1" : `Агентов: ${count}`), servicesCount: ({ count }) => (count === 1 ? "Сервисов: 1" : `Сервисов: ${count}`), filesCount: ({ count }) => `Файлов: ${count}`, more: ({ count }) => `Ещё ${count}`, context: 'Контекст', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
+            pullRequest: "Pull request", pullRequestOpen: ({ number }) => `#${number} · Открыт`, agentsCount: ({ count }) => (count === 1 ? "Агентов: 1" : `Агентов: ${count}`), servicesCount: ({ count }) => (count === 1 ? "Сервисов на этой машине: 1" : `Сервисов на этой машине: ${count}`), filesCount: ({ count }) => `Файлов: ${count}`, more: ({ count }) => `Ещё ${count}`, context: 'Контекст', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} не в сети`, sessionDisconnected: "Сессия не подключена", waitingForUpdates: "Ждём сигнала от сессии" },
         needsYouA11y: ({ count }) => `Спутник, ${count} ждут вас`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "ru">;

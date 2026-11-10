@@ -11093,7 +11093,7 @@ const sessionCompanionTranslations = { 'zh-Hant': {
         },
         drop: { keepBesideChat: '放在聊天旁邊' },
         sections: { environment: '環境', running: '執行中', usage: '用量', links: '連結', commit: '提交',
-            pullRequest: "拉取請求", pullRequestOpen: ({ number }) => `#${number} · 開放`, agentsCount: ({ count }) => (count === 1 ? "1 個代理" : `${count} 個代理`), servicesCount: ({ count }) => (count === 1 ? "1 個服務" : `${count} 個服務`), filesCount: ({ count }) => `${count} 個檔案`, more: ({ count }) => `另外 ${count} 項`, context: '上下文', machineFolderA11y: ({ machine, folder }) => `${machine}，${folder}` },
+            pullRequest: "拉取請求", pullRequestOpen: ({ number }) => `#${number} · 開放`, agentsCount: ({ count }) => (count === 1 ? "1 個代理" : `${count} 個代理`), servicesCount: ({ count }) => (count === 1 ? "這台機器上有 1 個服務" : `這台機器上有 ${count} 個服務`), filesCount: ({ count }) => `${count} 個檔案`, more: ({ count }) => `另外 ${count} 項`, context: '上下文', machineFolderA11y: ({ machine, folder }) => `${machine}，${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} 已離線`, sessionDisconnected: "工作階段未連線", waitingForUpdates: "正在等待工作階段的消息" },
         needsYouA11y: ({ count }) => `隨行面板,${count} 個等你處理`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "zh-Hant">;
