@@ -176,6 +176,7 @@ export const AutomationScheduleKind = {
     cron: "cron",
     interval: "interval",
     manual: "manual",
+    once: "once",
 } as const;
 
 export type AutomationScheduleKind = (typeof AutomationScheduleKind)[keyof typeof AutomationScheduleKind];

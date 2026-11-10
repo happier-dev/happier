@@ -3689,6 +3689,9 @@ model DeploymentEnvironment {
     previewPullRequestId String?
     previewTargetLinkId String?
     previewTargetLink DeploymentTargetLink? @relation("DeploymentPreviewTemplateTarget", fields: [previewTargetLinkId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+    previewCompanionOfEnvironmentId String? @unique
+    previewCompanionOfEnvironment DeploymentEnvironment? @relation("DeploymentPreviewDataCompanion", fields: [previewCompanionOfEnvironmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+    previewDataCompanion DeploymentEnvironment? @relation("DeploymentPreviewDataCompanion")
     deployerMode String
     controllerMachineId String
     controllerMachine Machine @relation("DeploymentController", fields: [controllerMachineId], references: [id], onDelete: Restrict)

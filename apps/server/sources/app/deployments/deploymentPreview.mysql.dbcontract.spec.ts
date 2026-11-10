@@ -73,6 +73,17 @@ describe.skipIf(provider !== 'mysql')('MySQL preview Environment relation contra
         for (const field of ['previewTemplateEnvironmentId', 'previewRepositoryId', 'previewTargetLinkId'] as const) {
             await expect(createChild(randomUUID(), { [field]: randomUUID() })).rejects.toMatchObject({ code: 'P2003' });
         }
+        const mainPreview = await createChild('companion-pr');
+        const companion = await db.deploymentEnvironment.create({ data: { ...common, purpose: 'standard' } });
+        const anotherCompanion = await db.deploymentEnvironment.create({ data: { ...common, purpose: 'standard' } });
+        const associate = (environmentId: string, previewId: string) => db.$executeRawUnsafe(
+            'UPDATE `DeploymentEnvironment` SET `previewCompanionOfEnvironmentId` = ? WHERE `id` = ?', previewId, environmentId);
+        await associate(companion.id, mainPreview.id);
+        expect(await db.$queryRawUnsafe('SELECT `previewCompanionOfEnvironmentId` FROM `DeploymentEnvironment` WHERE `id` = ?', companion.id))
+            .toEqual([{ previewCompanionOfEnvironmentId: mainPreview.id }]);
+        await expect(associate(anotherCompanion.id, mainPreview.id)).rejects.toThrow();
+        await expect(associate(anotherCompanion.id, randomUUID())).rejects.toThrow();
+        await expect(db.deploymentEnvironment.delete({ where: { id: mainPreview.id } })).rejects.toMatchObject({ code: 'P2003' });
     });
 
     it('rejects differently cased preview roles in the migrated closed role CHECK', async () => {
