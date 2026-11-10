@@ -2626,7 +2626,8 @@ export function createNativeAgentSessionOperations(
                 sessionConfigOptionsState: {
                     v: 1, agentId: directFacets.context.agent.id, updatedAt: event.emittedAtMs,
                     ...(event.modelConfigOptionId === undefined ? {} : { modelConfigOptionId: event.modelConfigOptionId }),
-                    configOptions: event.configOptions.map(({ options, groups, ...option }) => ({ ...option,
+                    configOptions: event.configOptions.map(({ options, groups, overridesWhenOn, ...option }) => ({ ...option,
+                        ...(overridesWhenOn === undefined ? {} : { overridesWhenOn: { ...overridesWhenOn, optionIds: [...overridesWhenOn.optionIds] } }),
                         ...(options === undefined ? {} : { options: [...options] }),
                         ...(groups === undefined ? {} : { groups: groups.map(group => ({ ...group, options: [...group.options] })) }),
                     })),

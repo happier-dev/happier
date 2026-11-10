@@ -1549,8 +1549,10 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
             templateRef: storedDefinition.data.deploymentPreview, evidence: evidenceContent,
             runId: claim.runId, ...(claim.signal ? { signal: claim.signal } : {}),
           });
-          if (preview.kind === 'skipped') return { state: 'skipped', reason: preview.reason, admission: 'refused' };
-          if (preview.kind === 'refused') return refuse('preview_source', preview.reason);
+          if (preview.kind !== 'available') {
+            if (preview.kind === 'skipped') return { state: 'skipped', reason: preview.reason, admission: 'refused' };
+            return refuse('preview_source', preview.reason);
+          }
           source = { kind: 'inline', definition: preview.definition };
         } else {
           source = await resolveWorkflowTriggerClaimSource({
