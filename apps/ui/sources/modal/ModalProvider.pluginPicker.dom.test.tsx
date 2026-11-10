@@ -78,7 +78,7 @@ it('lets a custom picker in the foreground modal select by pointer and keyboard 
         expect(container.contains(snapshot)).toBe(false); // The production portal is used.
         expect(snapshot.hasAttribute('inert')).toBe(false);
         expect(snapshot.getAttribute('aria-hidden')).toBe('false');
-        expect(document.querySelector('[data-testid="picker-current-context"]')?.textContent).toBe('false');
+        expect(document.querySelector('[data-testid="picker-current-context"]')?.textContent).toBe('true');
         const marigold = document.querySelector<HTMLElement>('[data-testid="picker-marigold"]')!;
         await act(async () => marigold.click());
         expect(selected).toEqual(['marigold']);

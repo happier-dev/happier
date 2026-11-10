@@ -2,9 +2,9 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { installModalComponentCommonModuleMocks } from '@/modal/components/modalComponentTestHelpers';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createProviderSettingsAccountHarness, createProviderSettingsHarness,
     installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { installBundledPluginUiDeclarationsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
@@ -14,16 +14,21 @@ import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/act
 import { ConnectedAccountCatalogRowMutationV1Schema, type ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { PLUGIN_MANIFEST as GITLAB_MANIFEST } from '../../../../../../../packages/plugins/scm-gitlab/src/manifest';
 import { GITLAB_CONNECTED_ACCOUNT_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE, GITLAB_TRIAGE_ACTION_IDS } from '../../../../../../../packages/plugins/scm-gitlab/src/triage/contribution';
+import { GITLAB_PERSONAL_ACCESS_TOKEN_MODE_ID } from '../../../../../../../packages/plugins/scm-gitlab/src/auth/connectedAccountRuntime';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-installModalComponentCommonModuleMocks({ reactNative: async () => {
+// The Account harness imports native UI leaves during collection; install the
+// DOM boundary in the hoisted factory before those imports are evaluated.
+vi.mock('react-native', async () => {
     const { getVitestNodeBuiltin } = await import('@/dev/vitestNodeBuiltins');
     const { createRequire } = getVitestNodeBuiltin<Pick<typeof import('node:module'), 'createRequire'>>('node:module');
     return await vi.importActual(createRequire(import.meta.url).resolve('react-native-web'));
-}, text: async () => await vi.importActual('@/text') });
+});
+vi.mock('@/text', async () => await vi.importActual('@/text'));
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/utils/web/radixCjs', async () => (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsRealModule());
 vi.mock('react-native-keyboard-controller', async () => {
-    const { View } = await vi.importActual<typeof import('react-native-web')>('react-native-web');
+    const { View } = await import('react-native');
     return { KeyboardAvoidingView: View };
 });
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
@@ -42,6 +47,9 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { resetConnectedAccountCatalogEngineForTests } = await import('@/sync/engine/settings/connectedAccountCatalogEngine');
 const { resetConnectedAccountCatalogSnapshotsForTests } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
 const gitlab = PluginPortableReleaseManifestV1Schema.parse(GITLAB_MANIFEST);
+const features = createRootLayoutFeaturesResponse({ capabilities: { connectedServices: {
+    qualifiedAccounts: { protocolVersion: 4 },
+} } });
 function installPurposeDeclarations() {
     return installBundledPluginUiDeclarationsForTests([
         { pluginId: gitlab.id, pluginVersion: gitlab.version, packageName: '@happier-dev/plugins-scm-gitlab',
@@ -60,13 +68,14 @@ afterEach(async () => {
 it.each([390, 1440])('changes the GitLab resource purpose from the real Connect sheet nested picker (%i px)', async (width) => {
     onTestFinished(installPurposeDeclarations());
     onTestFinished(await installRealActionExecutorModuleLoader());
-    const scope = await account.restore({ machines: [], currentAccount: true,
+    const scope = await account.restore({ machines: [], currentAccount: true, features,
         waivedActions: ['connectedServices.purposes.default.set'] });
     const purpose = { consumer: { pluginId: gitlab.id, localId: GITLAB_TRIAGE_ACTION_IDS.listInstances },
         purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE };
     const service = { pluginId: gitlab.id, localId: GITLAB_CONNECTED_ACCOUNT_ID };
     const previous = QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service, accountId: 'previous' },
-        status: 'connected', authenticationModeId: 'pat', revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        status: 'connected', authenticationModeId: GITLAB_PERSONAL_ACCESS_TOKEN_MODE_ID,
+        revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
         configurationReady: true, configurationRevision: null, displayName: 'Previous', scopes: [] });
     const current = { ...previous, ref: { service, accountId: 'current' }, displayName: 'Current' };
     let value: ConnectedPurposeCatalogV1 = { v: 1, bindings: [{ purpose, target: { kind: 'account', account: current.ref } }] };
@@ -120,9 +129,13 @@ it.each([390, 1440])('changes the GitLab resource purpose from the real Connect 
         return { result };
     }
     async function choose(accountId: string) {
-        const choice = Array.from(document.querySelectorAll<HTMLElement>('[data-testid]')).find(node =>
-            node.dataset.testid?.startsWith(`${chooser}:choice:`) && node.dataset.testid.includes(accountId));
-        expect(choice).toBeDefined();
+        const choice = await vi.waitFor(() => {
+            const found = Array.from(document.querySelectorAll<HTMLElement>('[data-testid]')).find(node =>
+                node.dataset.testid?.startsWith(`${chooser}:choice:`) && node.dataset.testid.includes(accountId));
+            expect(found).toBeDefined();
+            expect(found?.getAttribute('aria-disabled')).not.toBe('true');
+            return found!;
+        });
         await act(async () => {
             choice!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
             choice!.click();
@@ -131,7 +144,7 @@ it.each([390, 1440])('changes the GitLab resource purpose from the real Connect 
     const { result } = await openPicker();
     expect(writes).toBe(0);
     await choose('previous');
-    await vi.waitFor(() => expect(writes).toBe(1));
+    await vi.waitFor(() => expect(writes, document.body.textContent ?? '').toBe(1));
     await expect(result).resolves.toEqual({ kind: 'selected', account: previous.ref });
     expect(value.bindings).toEqual([{ purpose, target: { kind: 'account', account: previous.ref } }]);
 
@@ -140,7 +153,7 @@ it.each([390, 1440])('changes the GitLab resource purpose from the real Connect 
     await expect(retiring.result).resolves.toEqual({ kind: 'dismissed' });
     expect(writes).toBe(1);
 
-    const restoredScope = await account.restore({ machines: [], currentAccount: true,
+    const restoredScope = await account.restore({ machines: [], currentAccount: true, features,
         waivedActions: ['connectedServices.purposes.default.set'] });
     replacePluginAccountAvailabilityProjection({ scope: restoredScope, snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
     await readPluginAccountAvailability(restoredScope).ensureCurrentAccountExecution(gitlab.id);
