@@ -266,7 +266,8 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
             }
         },
     );
-    it.each(['off_after_question', 'abort', 'retire'] as const)('keeps the Account writer inert after %s', async (mode) => {
+    // Coordination 2026-11-10 10:44: consent consumes the admitted policy once.
+    it.each(['off_after_question', 'abort', 'retire'] as const)('settles the admitted Account writer after %s', async (mode) => {
         const storage = getStorage();
         const previous = storage.getState();
         const localId = TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1;
@@ -282,7 +283,9 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
             const before = await transport.read();
             const writing = transport.administer({ v: 1, kind: 'delete', actionId: before.actions[0]!.actionId, expectedRevision: before.revision }, { signal: controller.signal });
             // Observe rejection immediately as well, so an abort cannot become an unhandled promise.
-            const rejected = expect(writing).rejects.toMatchObject({ code: mode === 'off_after_question' ? 'denied' : mode === 'retire' ? 'stale_surface' : 'unavailable' });
+            const settled = mode === 'off_after_question'
+                ? expect(writing).resolves.toMatchObject({ status: 'applied' })
+                : expect(writing).rejects.toMatchObject({ code: mode === 'retire' ? 'stale_surface' : 'unavailable' });
             await openedDialog();
             if (mode === 'abort') controller.abort();
             else if (mode === 'retire') host.dispose?.();
@@ -292,8 +295,8 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
                 }) } }));
                 modalHarness.readConfig().props.onConfirm();
             }
-            await rejected;
-            expect(account.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1)).toBeUndefined();
+            await settled;
+            expect(account.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) !== undefined).toBe(mode === 'off_after_question');
         } finally {
             adapter.dispose();
             host.dispose?.();

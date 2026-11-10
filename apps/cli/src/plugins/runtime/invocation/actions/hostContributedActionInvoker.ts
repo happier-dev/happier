@@ -3,9 +3,7 @@ import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { resolvePluginInvocationCallerExecutionOrigin } from '../services/actionCaller';
-import { PluginError } from '@happier-dev/plugin-sdk';
-import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
-import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { projectContributedActionFailure } from './contributedActionFailure';
 
 import type { InvokeContributedAction } from '../services/actions';
 import type {
@@ -124,17 +122,9 @@ export function createHostContributedActionInvoker(params: Readonly<{
             if (result.executionOrigin) context.contributedActionExecutionOrigin?.onExecuted(result.executionOrigin);
             return { ok: true, result: result.value };
         }
-        const failure = { code: result.code, message: result.message,
+        return projectContributedActionFailure({ errorCode: result.code, error: result.message,
             ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
-            ...readPluginActionFailureAuthorPayload(result.data) };
-        const error = result.actionHandlerInvocation === 'notStarted'
-            ? createPluginActionHandlerNotStartedError(failure) : new PluginError(failure);
-        return {
-            ok: false,
-            errorCode: result.code,
-            error: result.message,
-            ...(error.data.failureCause ? { failureCause: error.data.failureCause } : {}),
-            details: error.data,
-        };
+            ...(result.data === undefined ? {} : { data: result.data }),
+            ...(result.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: result.actionHandlerInvocation }) });
     };
 }

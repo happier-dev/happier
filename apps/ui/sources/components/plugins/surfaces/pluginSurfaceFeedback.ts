@@ -312,12 +312,6 @@ export function createPluginSurfaceFeedbackHandlers(
                 )
                 : staleSurface();
         }
-        if (payload?.action !== undefined && outcome.status === 'approved') {
-            const action = PluginUiMountedActionReferenceV1Schema.safeParse(payload.action);
-            const policy = action.success ? input.resolveActionPolicy?.(action.data) : null;
-            if (!policy) return createPluginSurfaceHostApiError('unavailable', ['plugin_surface_confirm_action_unavailable']);
-            if (!policy.enabled) return createPluginSurfaceHostApiError('denied', ['plugin_action_disabled']);
-        }
         return { confirmed: outcome.status === 'approved' };
     };
 

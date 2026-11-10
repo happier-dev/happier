@@ -34,6 +34,8 @@ import { createPluginConnectionSettlement } from './connectionSettlement';
  * must not report the withdrawal as a user decision.
  */
 export type PluginSurfaceHostApiRequestOptions = Readonly<{
+    /** Caller correlation for a finite request; never an authority grant. */
+    requestId?: string;
     /** Mounted control delivery/release belongs to the physical subscription, never author JSON. */
     actionControlSubscription?: Readonly<{
         publish: (event: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1) => void;
@@ -45,6 +47,8 @@ export type PluginSurfaceHostApiRequestOptions = Readonly<{
         retain: (release: () => void) => void;
     }>;
     signal?: AbortSignal;
+    /** Host-private finite admission; the caller's signal becomes subscriber detachment after this point. */
+    onDaemonActionOperationAdmitted?: (requestId: string) => void;
     /** Incumbent host declaration held only beside pre-invocation settlement, never author JSON. */
     expectedContributedAction?: PluginUiActionProjection;
     /** Physical iframe/WebView embedding, measured by its host rather than authored JSON. */
