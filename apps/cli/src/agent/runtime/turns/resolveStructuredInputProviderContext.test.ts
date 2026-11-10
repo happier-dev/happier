@@ -8,6 +8,7 @@ import { TranscriptAnnotationV1Schema, buildTranscriptAnnotationPresentationV1 }
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { createTargetComposerAttachmentRegistry } from '@/plugins/runtime/lifecycle/contributions/targetComposerAttachments';
+import { prepareSessionInputForProviderDispatch } from './prepareSessionInputForProviderDispatch';
 import { prepareComposerAttachmentDraftsForSendV1 } from '@/session/composer/prepareComposerAttachmentDraftsForSendV1';
 
 import {
@@ -743,6 +744,42 @@ describe('resolveStructuredInputProviderContext', () => {
     expect(resolved.structuredInput?.skillMentions?.[0]?.description).toBe('skill-context '.repeat(75).trim());
     expect(resolved.structuredInput?.vendorPluginMentions?.[0]?.label).toBe('vendor-context '.repeat(75).trim());
     expect(renderPromptContext(resolved)).toContain('source-session');
+  });
+
+  it('prepares eight mixed mention kinds and a long instruction without dropping resolved context', async () => {
+    const mentions = Object.values(MENTION_KIND_V1).map(kind => ({
+      kind,
+      ref: kind === MENTION_KIND_V1.skill ? SKILL_REF
+        : kind === MENTION_KIND_V1.vendorPlugin ? VENDOR_REF
+        : buildMentionRefForKindV1(kind, `selected-${kind}`),
+      label: `Selected ${kind}`,
+      token: `@${kind}`,
+    }));
+    const structuredInput = envelope({ mentions: [...mentions, COMPOSER_MENTION] });
+    expect(structuredInput.mentions).toHaveLength(8);
+    const text = 'Keep this complete user instruction. '.repeat(150);
+    const context = 'Selected issue facts. '.repeat(120);
+    const prepared = await prepareSessionInputForProviderDispatch({
+      prompt: { text, localId: 'mixed-mentions', structuredInput },
+      transformedUserText: text, providerNativeCommand: false,
+      signal: new AbortController().signal, localId: 'mixed-mentions',
+      services: {
+        catalogs: catalogs(),
+        // The contributed resolver is an external plugin boundary. The real host
+        // resolver, schemas and final preparation remain in the exercised path.
+        resolveComposerReference: async () => ({ id: 'issue:42', label: 'Issue 42', context }),
+      },
+    });
+    expect(prepared.requiredPrompt.endsWith(text)).toBe(true);
+    expect(prepared.requiredPrompt).toContain(context);
+    expect(prepared.requiredPrompt).toContain('session_id="selected-happier.session"');
+    expect(prepared.requiredPrompt).toContain('path="selected-happier.file"');
+    expect(prepared.requiredPrompt).toContain('workflow_id="selected-happier.workflow"');
+    expect(prepared.requiredPrompt).toContain('widget_id="selected-happier.widget"');
+    expect(prepared.structuredInput?.skillMentions?.[0]?.path).toBe(SKILL_ITEM.path);
+    expect(prepared.structuredInput?.vendorPluginMentions?.[0]?.vendorPluginRef).toBe(VENDOR_ITEM.vendorPluginRef);
+    // workflowInput is an identity-only, inert kind in the dispatch owner.
+    expect(prepared.requiredPrompt).not.toContain('further reference(s) omitted');
   });
 
   it('resolves a qualified composer reference only into the ephemeral prompt block', async () => {
