@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 
 /** Match native_process_priority.sh's user-systemd payload placement, even
  * when the broker itself runs outside the jobs slice. */
-export function readLinuxAdmissionMemory() {
+export function readLinuxAdmissionMemory({ waitingResidentMemoryKiB = 0 } = {}) {
   const memory = readFileSync('/proc/meminfo', 'utf8');
-  const availableMemoryKiB = Number(/^MemAvailable:\s+(\d+)/m.exec(memory)?.[1]);
   const totalMemoryKiB = Number(/^MemTotal:\s+(\d+)/m.exec(memory)?.[1]);
+  const availableMemoryKiB = Math.min(totalMemoryKiB,
+    Number(/^MemAvailable:\s+(\d+)/m.exec(memory)?.[1]) + waitingResidentMemoryKiB);
   const uid = process.getuid();
   const cgroup = `/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service/happier.slice/happier-jobs.slice`;
   const readLimit = name => {

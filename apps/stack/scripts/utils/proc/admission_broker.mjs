@@ -52,15 +52,12 @@ async function socketListening(address) {
 
 /** Physical availability already excludes resident pages. Credit each admitted
  * tree's resident pages once, reserving only the part of its floor still free. */
-export async function readAdmissionMemorySample({ slots = [], readProcesses = readLinuxWorkerProcesses,
+export async function readAdmissionMemorySample({ slots = [], waiters = [], readProcesses = readLinuxWorkerProcesses,
   readMemory = readLinuxAdmissionMemory } = {}) {
-  const memory = await readMemory();
-  if (!Number.isSafeInteger(memory.availableMemoryKiB) || memory.availableMemoryKiB < 0
-    || !Number.isSafeInteger(memory.totalMemoryKiB) || memory.totalMemoryKiB < 0) {
-    throw Object.assign(new Error('Memory observation unavailable'), { code: 'HSTACK_MEMORY_UNAVAILABLE' });
-  }
-  const processes = slots.length ? await readProcesses() : new Map();
+  const processes = slots.length || waiters.length ? await readProcesses() : new Map();
   const roots = new Set(slots.map(slot => slot.pid));
+  const waitingPids = new Set(waiters.map(item => item.pid));
+  let waitingResidentMemoryKiB = 0;
   const residentByRoot = new Map();
   for (const process of processes.values()) {
     let pid = process.pid;
@@ -74,13 +71,25 @@ export async function readAdmissionMemorySample({ slots = [], readProcesses = re
       const exact = Number.isSafeInteger(proportional) && proportional >= 0;
       const resident = exact ? proportional : 0;
       residentByRoot.set(pid, (residentByRoot.get(pid) ?? 0) + resident);
+    } else if (waitingPids.has(process.pid)) {
+      // Credit only the client itself, never its parent or descendants. PSS
+      // avoids counting shared Node pages repeatedly across queued clients.
+      const resident = process.pssKiB;
+      if (Number.isSafeInteger(resident) && resident >= 0) waitingResidentMemoryKiB += resident;
     }
+  }
+  // Apply this host-only credit before the OS owner clamps to the jobs slice.
+  // A queued control client must not consume the capacity it is waiting for.
+  const memory = await readMemory({ waitingResidentMemoryKiB });
+  if (!Number.isSafeInteger(memory.availableMemoryKiB) || memory.availableMemoryKiB < 0
+    || !Number.isSafeInteger(memory.totalMemoryKiB) || memory.totalMemoryKiB < 0) {
+    throw Object.assign(new Error('Memory observation unavailable'), { code: 'HSTACK_MEMORY_UNAVAILABLE' });
   }
   const residentMemoryKiB = [...residentByRoot.values()].reduce((sum, value) => sum + value, 0);
   const creditedResidentMemoryKiB = slots.reduce((sum, slot) => sum + Math.min(slot.floorKiB, residentByRoot.get(slot.pid) ?? 0), 0);
   const reservedMemoryKiB = slots.reduce((sum, slot) => sum + slot.floorKiB, 0);
   const achievableMemoryKiB = Math.min(memory.totalMemoryKiB, memory.availableMemoryKiB + residentMemoryKiB);
-  return { ...memory, reservedMemoryKiB, residentMemoryKiB, creditedResidentMemoryKiB,
+  return { ...memory, reservedMemoryKiB, residentMemoryKiB, creditedResidentMemoryKiB, waitingResidentMemoryKiB,
     achievableMemoryKiB,
     unreservedMemoryKiB: Math.max(0, memory.availableMemoryKiB + creditedResidentMemoryKiB - reservedMemoryKiB) };
 }
@@ -213,7 +222,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   }
   async function observe() {
     sample = { ...(sample.lastFailure ? { lastFailure: sample.lastFailure } : {}),
-      ...await sampleResources({ slots: [...slots.values()].map(({ pid, floorKiB }) => ({ pid, floorKiB })) }) };
+      ...await sampleResources({ slots: [...slots.values()].map(({ pid, floorKiB }) => ({ pid, floorKiB })),
+        waiters: waiting.filter(item => !item.slot).map(({ pid }) => ({ pid })) }) };
     sampleCount += 1;
   }
   function removeWaiting(item) {

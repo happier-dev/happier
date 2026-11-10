@@ -205,15 +205,18 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     }
     return processes;
   };
-  const readMemory = () => {
-    if (existsSync(${JSON.stringify(memoryOverridePath)})) return JSON.parse(readFileSync(${JSON.stringify(memoryOverridePath)}, 'utf8'));
+  const readMemory = ({ waitingResidentMemoryKiB = 0 } = {}) => {
+    if (existsSync(${JSON.stringify(memoryOverridePath)})) {
+      const memory = JSON.parse(readFileSync(${JSON.stringify(memoryOverridePath)}, 'utf8'));
+      return { ...memory, availableMemoryKiB: Math.min(memory.totalMemoryKiB, memory.availableMemoryKiB + waitingResidentMemoryKiB) };
+    }
     const values = execFileSync('awk', ['/MemAvailable:/ {available=$2} /MemTotal:/ {total=$2} END {print available, total}', '/proc/meminfo'], { encoding: 'utf8' }).trim().split(/\\s+/u).map(Number);
-    return { availableMemoryKiB: values[0], totalMemoryKiB: values[1] };
+    return { availableMemoryKiB: Math.min(values[1], values[0] + waitingResidentMemoryKiB), totalMemoryKiB: values[1] };
   };
-  const broker = createAdmissionBroker({ root: ${JSON.stringify(admissionRoot)}, oldLockPath: ${JSON.stringify(join(admissionRoot, 'old-admission.lock'))}, readCpuCapacity: ${totalCpuCores === undefined ? 'undefined' : '() => ' + JSON.stringify(totalCpuCores)}, sampleResources: ({ slots }) => {
+  const broker = createAdmissionBroker({ root: ${JSON.stringify(admissionRoot)}, oldLockPath: ${JSON.stringify(join(admissionRoot, 'old-admission.lock'))}, readCpuCapacity: ${totalCpuCores === undefined ? 'undefined' : '() => ' + JSON.stringify(totalCpuCores)}, sampleResources: ({ slots, waiters }) => {
     appendFileSync(${JSON.stringify(resourceSamplesPath)}, 'sample\\n');
     if (process.env.FIXTURE_SAMPLES) appendFileSync(process.env.FIXTURE_SAMPLES, 'sample\\n');
-    return readAdmissionMemorySample({ slots, readProcesses, readMemory });
+    return readAdmissionMemorySample({ slots, waiters, readProcesses, readMemory });
   } });
   let started = false;
   try { await broker.start(); started = true; process.stdout.write('ready\\n'); }

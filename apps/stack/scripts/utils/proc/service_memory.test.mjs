@@ -214,6 +214,8 @@ test('admission uses jobs cgroup headroom rather than host memory', { skip: proc
     { name: 'zero cgroup limit has zero capacity', high: '0', max: 'max', current: '0', total: 0, available: 0 },
     { name: 'unlimited cgroup preserves host capacity', high: 'max', max: 'max', total: 1000, available: 900 },
     { name: 'absent cgroup preserves host capacity', total: 1000, available: 900 },
+    { name: 'waiting clients cannot enlarge jobs cgroup headroom', high: '614400', max: '819200', current: '409600', total: 600, available: 200, waitingPages: 300 },
+    { name: 'waiting client credit is capped at physical memory', total: 1000, available: 1000, waitingPages: 300 },
   ];
   for (const scenario of cases) await t.test(scenario.name, async t => {
     const readFile = fs.readFileSync;
@@ -230,7 +232,8 @@ test('admission uses jobs cgroup headroom rather than host memory', { skip: proc
     t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
     const sockets = await createTempFixture(t, { parentDir: '/tmp', prefix: 'ha-' });
     const broker = createAdmissionBroker({ root: sockets.root, oldLockPath: join(sockets.root, 'old.lock'),
-      sampleResources: ({ slots }) => readAdmissionMemorySample({ slots, readProcesses: () => new Map() }) });
+      sampleResources: ({ slots }) => readAdmissionMemorySample({ slots, waiters: [{ pid: 10 }],
+        readProcesses: () => new Map([[10, { pid: 10, parentPid: 1, pssKiB: scenario.waitingPages ?? 0 }]]) }) });
     await broker.start();
     t.after(() => broker.close());
     const sample = await requestAdmissionSample(sockets.root);

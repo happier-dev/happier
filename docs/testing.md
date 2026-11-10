@@ -1030,6 +1030,14 @@ own resource changes. A head blocked by an active publication also waits without
 reserving its floor before its first offer. A physically fitting request can wait without an admission
 deadline; `--no-wait` instead returns a typed busy result.
 
+The broker excludes its queued control clients' proportional resident memory
+from host memory pressure during its existing observations. It credits each
+client process once, excluding descendants and pages already attributed to an
+admitted tree. Missing proportional-memory observations receive no credit.
+The jobs cgroup's headroom remains an independent ceiling after this credit;
+waiting clients cannot increase that limit. Retained brokers adopt this change
+only when they next start with current source.
+
 The queued command's wait line reports its one-based position and the count ahead
 among pending requests without an offered reservation, including workspace-blocked
 requests. The broker publishes changes during its existing serialized passes;
