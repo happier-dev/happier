@@ -23,8 +23,20 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
     const modalKeyboardLiftSuppressed = modal?.isKeyboardLiftSuppressedByModal === true;
     const keyboardLiftSuppressed = props.keyboardLiftSuppressed === true
         || (!isInsideModalBoundary && modalKeyboardLiftSuppressed);
+    // The composer is seated at this root's bottom, so the panel's room ends at the root's top in the window: a
+    // Session's own header and page tabs stand above it under no stack header, and a cap from `headerHeight`
+    // alone let an expanded composer run up over them (owner 2026-11-10). The root's top does not move with the
+    // keyboard (the composer lifts by transform), so one read per layout serves.
+    const rootRef = React.useRef<View | null>(null);
+    const [rootTopInWindow, setRootTopInWindow] = React.useState(0);
+    const handleRootLayout = React.useCallback(() => {
+        rootRef.current?.measureInWindow?.((_x, y) => {
+            const next = Number.isFinite(y) ? Math.max(0, Math.round(y)) : 0;
+            setRootTopInWindow((current) => (Math.abs(current - next) > 1 ? next : current));
+        });
+    }, []);
     const layout = useComposerKeyboardLayout({
-        headerHeight: props.headerHeight,
+        headerHeight: Math.max(props.headerHeight ?? 0, rootTopInWindow),
         keyboardLiftSuppressed,
         layoutBottomInset: props.layoutBottomInset,
         safeAreaBottom: props.safeAreaBottom,
@@ -49,6 +61,8 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
     return (
         <ComposerKeyboardProvider layout={layout}>
             <View
+                ref={rootRef}
+                onLayout={handleRootLayout}
                 accessibilityLabel={props.accessibilityLabel}
                 accessibilityRole={props.accessibilityRole}
                 pointerEvents={rootPointer.nativePointerEvents}

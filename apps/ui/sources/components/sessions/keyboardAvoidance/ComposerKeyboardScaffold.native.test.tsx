@@ -140,6 +140,37 @@ describe('ComposerKeyboardScaffold native', () => {
         });
     });
 
+    it('keeps the panel below everything above the scaffold, not only the stack header (owner 2026-11-10)', async () => {
+        // A Session's own header and page tabs sit above the scaffold, under no stack header: an expanded
+        // composer sized from the stack header alone ran up over the page tabs and hid its collapse control.
+        const { ComposerKeyboardScaffold } = await import('./ComposerKeyboardScaffold.native');
+        const rootTopInWindow = 230;
+        const screen = await renderScreen(
+            <ComposerKeyboardScaffold
+                mode="session"
+                headerHeight={106}
+                testID="scaffold"
+                composer={<React.Fragment>composer</React.Fragment>}
+            >
+                <React.Fragment>content</React.Fragment>
+            </ComposerKeyboardScaffold>,
+            {
+                createNodeMock: (element) => ((element.props as { testID?: string }).testID === 'scaffold'
+                    ? { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(0, rootTopInWindow, 402, 600) }
+                    : null),
+            },
+        );
+        const scaffold = findViewByTestID(screen, 'scaffold');
+        if (!scaffold) throw new Error('Expected scaffold root to render as a view');
+        act(() => {
+            scaffold.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 402, height: 600 } } });
+        });
+        expect(scaffoldLayout.lastOptions).toMatchObject({ headerHeight: rootTopInWindow });
+        act(() => {
+            screen.tree.unmount();
+        });
+    });
+
     it('ignores native root layout as an available panel cap', async () => {
         const { ComposerKeyboardScaffold } = await import('./ComposerKeyboardScaffold.native');
         const screen = await renderScreen(
