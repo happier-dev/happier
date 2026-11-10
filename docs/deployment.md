@@ -4,7 +4,7 @@
 
 Platform deployment targets expose their declared Git integration and Upload methods through the shared target chooser. The selected method goes to inspection and the existing `deployments.deploy` intent; choosing Upload does not grant provider Git access or permit arbitrary local-folder publishing. Both methods retain the repository Source and reviewed immutable commit. Vercel uploads source for a remote provider build. Cloudflare Workers and Pages prepare output on the controller through their shared pinned container/toolchain owner, without attaching the platform's variable bindings to local Exec.
 
-The existing `DeploymentTargetRoleResultV1` carries optional `uploadProvenance`: the exact source manifest and a provider build location, or the controller container image, toolchain name/version and prepared-output manifest fingerprint. This evidence lives in the existing receipt's platform observation. The canonical observation writer preserves the original evidence when subsequent status reads return lifecycle state alone; it creates no upload store or additional receipt. Provider preparation's existing `reviewNotice` discloses the upload build location and Cloudflare pins before execution.
+The existing `DeploymentTargetRoleResultV1` carries optional `uploadProvenance`: the exact source manifest and a provider build location, or the controller container image, toolchain name/version and prepared-output manifest fingerprint. This evidence lives in the existing receipt's platform observation, displayed by the receipt and its Build logs through one shared presenter. The canonical observation writer preserves the original evidence when subsequent status reads return lifecycle state alone; it creates no upload store or additional receipt. Provider preparation's existing `reviewNotice` discloses the upload build location and Cloudflare pins before execution.
 
 This document records the server implementation behind deployment. Operator recipes and configuration are owned by the published [self-hosting guide](../apps/docs/content/docs/self-hosting/index.mdx), including [Docker and Kubernetes](../apps/docs/content/docs/self-hosting/docker.mdx#kubernetes).
 
@@ -170,6 +170,22 @@ the reviewed input. UI, CLI and agent paths share the catalog default-binding ow
 
 ## Domain and binding observations (0.3 development)
 
+Configured Domain check transitions publish independent C1 conditions for probes
+and certificate renewal. Each condition recovers only from its own successful
+check; contributed monitor kinds use the same admitted Domain binding.
+
+Native backup run, verification, retention and restore terminal outcomes publish
+update notices, including in production Environments. Public operations,
+pre-migration backups, restore safety snapshots and rollback with data share the
+native settlement path. Environment and check identify the retained notice;
+operation and configuration revisions remain evidence. Inventory, Test and a
+successful restore preparation do not recover a failed execution check. Native
+outcome uncertainty remains open until a successful execution of that check.
+The producer captures the Environment's saved health-source alert selection at
+admission. If that read is unavailable, it retains the Inbox notice with the
+safe reason and skips off-app delivery; it does not treat unavailable settings
+as an absent selection. This source wiring awaits loaded-runtime verification.
+
 Domain health reads reuse `deployments.health.current` and the existing saved
 Domain-bound HTTP and certificate checks. Reading a Domain starts no network
 probe. The shared projection combines retained check evidence with the Domain's
@@ -252,6 +268,12 @@ MySQL uses bound session variables (`@name`), a server-prepared statement and
 `START TRANSACTION READ ONLY`; its native XML result preserves NULL separately
 from text. Parameter values are JSON strings. Neither path substitutes values
 into SQL text or acquires an administrator login for a query.
+
+Native parameter names start with an ASCII lowercase letter and contain only
+lowercase letters, digits or underscores. The `happier_` prefix is reserved.
+The native Action input reports `invalid_query_parameter` for other names;
+managed providers retain their own parameter syntax, including Supabase's
+numeric keys.
 
 Results use the existing public Action response envelope limit from
 `actions/externalActionLimits.ts`, including UTF-8 JSON framing, column metadata

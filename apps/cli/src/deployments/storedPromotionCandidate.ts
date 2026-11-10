@@ -1,5 +1,5 @@
 import { resolveDeploymentStoredDefinitionRevisionV1, DeploymentOwnServerContentV1Schema, type DeploymentContentV1,
-    type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol';
+    type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import type { ActionExecutorContext, DeploymentPromoteActionInputV1 } from '@happier-dev/protocol';
 import type { OwnServerDeploymentTargetHostInput } from './targets/ownServer/ownServerDeploymentTarget';
 import { requireOwnServerDeploymentBuildMachine } from './targets/ownServer/ownServerTargetAdmission';
@@ -7,7 +7,7 @@ import { requireOwnServerDeploymentBuildMachine } from './targets/ownServer/ownS
 /** Controller preparation and installed child review reopen the same pinned
  * source receipt and current destination before deriving replacement content. */
 export async function readStoredPromotionCandidateForHost(request: Readonly<{
-    input: DeploymentPromoteActionInputV1; context: ActionExecutorContext; admittedDeployment?: DeploymentReceiptHeaderV1;
+    input: DeploymentPromoteActionInputV1; context: ActionExecutorContext;
 }>, readers: Pick<OwnServerDeploymentTargetHostInput, 'readEnvironment' | 'readReceipt' | 'readEnvironmentMetadata'>) {
     const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
     const { input, context } = request;
@@ -18,23 +18,18 @@ export async function readStoredPromotionCandidateForHost(request: Readonly<{
         readers.readReceipt({ environmentId: input.sourceEnvironmentId, deploymentId: input.sourceDeploymentId, context }),
         readers.readEnvironment({ environmentId: input.environmentId, context }),
     ]);
-    if (!request.admittedDeployment && (!sourceEnvironment.capabilities.deploy
-        || !destination.environment.capabilities.manage || !destination.environment.capabilities.deploy)) return refuse('deployment_access_denied');
+    if (!sourceEnvironment.capabilities.deploy
+        || !destination.environment.capabilities.manage || !destination.environment.capabilities.deploy) return refuse('deployment_access_denied');
     const prepared = 'contentArtifactId' in input ? input : undefined;
     const targetLinkId = prepared?.targetLinkId ?? destination.environment.runtimeTargetLinkId;
-    const accepted = request.admittedDeployment?.acceptedExecution;
-    if (request.admittedDeployment && (!accepted?.builder || request.admittedDeployment.operation !== 'promote'
-        || request.admittedDeployment.environmentId !== input.environmentId
-        || request.admittedDeployment.targetLinkId !== targetLinkId)) return refuse('deployment_conflict');
     if (sourceEnvironment.id !== input.sourceEnvironmentId
         || sourceReceipt.deployment.environmentId !== input.sourceEnvironmentId || sourceReceipt.deployment.id !== input.sourceDeploymentId
         || destination.environment.id !== input.environmentId
-        || !request.admittedDeployment && prepared && destination.environment.revision !== prepared.expectedRevision) return refuse('deployment_conflict');
+        || prepared && destination.environment.revision !== prepared.expectedRevision) return refuse('deployment_conflict');
     const link = destination.targetLinks.find(item => item.targetLink.id === targetLinkId)?.targetLink;
     if (!link || link.id !== destination.environment.runtimeTargetLinkId
         || prepared && link.revision !== prepared.expectedTargetLinkRevision) return refuse('deployment_conflict');
-    const buildMachineId = requireOwnServerDeploymentBuildMachine(request.admittedDeployment
-        ? accepted?.builder?.machineId : destination.environment.buildMachineId);
+    const buildMachineId = requireOwnServerDeploymentBuildMachine(destination.environment.buildMachineId);
     const candidateEnvironmentContent = prepareStoredPromotionCandidate(sourceReceipt, destination);
     return { sourceReceipt, destination, link, candidateEnvironmentContent, buildMachineId };
 }

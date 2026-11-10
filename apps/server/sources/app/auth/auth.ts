@@ -6,11 +6,12 @@ import { AUTH_TOKEN_AUTHENTICATION_EVIDENCE_MAX_ITEMS, AuthTokenProvenanceSchema
 import { PasswordCredentialMutationDigestV1Schema } from '@happier-dev/protocol/auth/passwordMutationChallenge';
 import { parseAccountApiTokenBearerV1, AccountApiTokenCreateEncryptionV1Schema, AccountApiTokenEncryptionAccessV1Schema, type AccountApiTokenCreateEncryptionV1, type AccountApiTokenEncryptionAccessV1, type AccountApiTokenEncryptionAccessResponseV1, type ParsedAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { ApiTokenGrantV1Schema, StoredApiTokenGrantV1Schema, API_TOKEN_FULL_GRANT_V1, evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, type ApiTokenGrantDenialReasonV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import { isDeploymentReadActionIdV1, isDeploymentPreparationActionIdV1, projectDeploymentNativeAdmissionV1,
-    isDeploymentDomainNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1,
+import { isDeploymentReadAdmissionActionIdV1, isDeploymentPreparationActionIdV1, projectDeploymentNativeAdmissionV1,
+    isDeploymentDomainNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1,
     createDeploymentCandidatePublicationV1, projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentDomainChildActionIdV1, isDeploymentChildRootActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
-import { isDeploymentBackupReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentControllerSetActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentBackupReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentControllerSetActionIdV1,
+    DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EmbedConfigV1Schema, StoredEmbedConfigV1Schema, type EmbedConfigV1 } from '@happier-dev/protocol/embed';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { type AccountStatusV1 } from '@happier-dev/protocol/home/governance';
@@ -593,6 +594,8 @@ class AuthModule {
         const domainRoot = isDeploymentDomainChildActionIdV1(input.actionId);
         const ingressUpdateRoot = input.actionId === 'deployments.environments.update'
             && isDeploymentEnvironmentUpdateNativeAdmissionV1(nativeAdmission);
+        const configureRoot = input.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
+        if (configureRoot && !isDeploymentBackupConfigureNativeAdmissionV1(nativeAdmission)) throw new ApiTokenOperationError('credential_scope_denied');
         const nativeMemberRoot = input.actionId === 'deployments.restart' || input.actionId === 'deployments.backups.restore'
             || isDeploymentBackupActionIdV1(input.actionId);
         // Domain API roots need the canonical sealed requester projection first.
@@ -603,9 +606,10 @@ class AuthModule {
         const admittedPrincipal = context.workflowAdmission?.principal;
         const admittedApiPrincipal = admittedPrincipal && 'grant' in admittedPrincipal ? admittedPrincipal : null;
         const approvalMetadataRoot = isDeploymentApprovalMetadataPreparationActionIdV1(input.actionId);
-        const mintApiTokenPrincipal = (nativeAdmission || input.actionId === 'deployments.targets.link' || approvalMetadataRoot) && !('authentication' in input)
+        const moveDefinitionRoot = input.actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1;
+        const mintApiTokenPrincipal = (nativeAdmission || input.actionId === 'deployments.targets.link' || approvalMetadataRoot || moveDefinitionRoot) && !('authentication' in input)
             ? admittedApiPrincipal ?? await this.verifyCurrentApiTokenPrincipal(input) : null;
-        if ((nativeAdmission || input.actionId === 'deployments.targets.link' || approvalMetadataRoot) && !('authentication' in input)
+        if ((nativeAdmission || input.actionId === 'deployments.targets.link' || approvalMetadataRoot || moveDefinitionRoot) && !('authentication' in input)
             && !mintApiTokenPrincipal) throw new ApiTokenOperationError('invalid_token');
         let nativeSource: Readonly<{ id: string; revision: number }> | undefined;
         if (nativeAdmission && !domainRoot) {
@@ -616,23 +620,26 @@ class AuthModule {
                     ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
             });
             if (!environment.ok) throw new ApiTokenOperationError('credential_scope_denied');
-            if ('kind' in nativeAdmission && nativeAdmission.kind === 'restore' && nativeAdmission.copy) {
+            if ('kind' in nativeAdmission && nativeAdmission.kind === 'restore'
+                && nativeAdmission.source.kind === 'repository' && nativeAdmission.source.origin) {
                 const source = await loadDeploymentEnvironmentInTx(db, input.accountId, input.serverIdentityId,
-                    nativeAdmission.copy.source.environmentId, {
+                    nativeAdmission.source.origin.environmentId, {
                         authenticationAuthority: 'account_automation', authenticationEvidence: 'authentication' in input
                             ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
                     });
                 const { readDeploymentTargetAuthorizationInTx } = await import('@/app/deployments/deploymentReadAuthorization');
+                // The reviewed revision belongs to the destination, not the source read.
+                const { expectedRevision: _expectedRevision, ...sourceAdmission } = nativeAdmission;
                 // Copy executes on an existing source member. Both principals are
                 // admitted here once; the finite signed invocation retains custody.
                 if (!environment.admission.canManage || !source.ok || !source.admission.canManage
                     || !await readDeploymentTargetAuthorizationInTx(db, source.row, {
-                        ...nativeAdmission, copy: undefined, environmentId: source.row.id,
-                        targetLinkId: nativeAdmission.copy.source.targetLinkId, expectedRevision: source.row.revision,
+                        ...sourceAdmission, source: { ...nativeAdmission.source, origin: undefined }, environmentId: source.row.id,
+                        targetLinkId: nativeAdmission.source.origin.targetLinkId,
                     }, { actorAccountId: input.accountId, owner: source.admission.owner })) throw new ApiTokenOperationError('credential_scope_denied');
             }
             if (input.actionId !== 'action.operations.get' && !isDeploymentBackupReadActionIdV1(input.actionId)) {
-                if (!(ingressUpdateRoot ? environment.admission.canManage && !environment.row.deletedAt
+                if (!(ingressUpdateRoot || configureRoot ? environment.admission.canManage && !environment.row.deletedAt
                     : canDeployDeploymentEnvironment(environment.admission, environment.row))) {
                     throw new ApiTokenOperationError('credential_scope_denied');
                 }
@@ -641,16 +648,18 @@ class AuthModule {
                     throw new ApiTokenOperationError('credential_scope_denied', undefined, failure.details, failure.failureCause);
                 }
             }
+            if (configureRoot && isDeploymentBackupConfigureNativeAdmissionV1(nativeAdmission)
+                && environment.row.revision !== nativeAdmission.expectedRevision) throw new ApiTokenOperationError('credential_scope_denied');
             if (nativeMemberRoot) {
                 const { readDeploymentTargetAuthorizationInTx } = await import('@/app/deployments/deploymentReadAuthorization');
                 if (!('kind' in nativeAdmission) || nativeAdmission.kind !== 'restart' && nativeAdmission.kind !== 'restore' && nativeAdmission.kind !== 'backup'
                     || !await readDeploymentTargetAuthorizationInTx(db, environment.row, nativeAdmission,
-                        nativeAdmission.kind === 'restore' && nativeAdmission.copy
+                        nativeAdmission.kind === 'restore' && nativeAdmission.source.kind === 'repository' && nativeAdmission.source.origin
                             ? { actorAccountId: input.accountId, owner: environment.admission.owner } : undefined)) {
                     throw new ApiTokenOperationError('credential_scope_denied');
                 }
             }
-            if (input.actionId !== 'action.operations.get' && !ingressUpdateRoot) {
+            if (input.actionId !== 'action.operations.get' && !ingressUpdateRoot && !configureRoot) {
                 nativeSource = { id: environment.admission.source.id, revision: environment.admission.source.revision };
             }
         }
@@ -663,7 +672,7 @@ class AuthModule {
         if (metadataEnvironmentId !== undefined && nativeAdmission && metadataEnvironmentId !== nativeAdmission.environmentId) {
             throw new ApiTokenOperationError('credential_scope_denied');
         }
-        if (approvalMetadataRoot && !nativeAdmission) {
+        if (approvalMetadataRoot && !nativeAdmission || moveDefinitionRoot) {
             if (!metadataEnvironmentId) throw new ApiTokenOperationError('credential_scope_denied');
             const { loadDeploymentEnvironmentInTx } = await import('../deployments/deploymentEnvironmentService');
             const { canDeployDeploymentEnvironment } = await import('../deployments/deploymentAdmission');
@@ -671,7 +680,7 @@ class AuthModule {
                 authenticationAuthority: 'account_automation', authenticationEvidence: 'authentication' in input
                     ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
             });
-            if (!environment.ok || !(isDeploymentControllerSetActionIdV1(input.actionId)
+            if (!environment.ok || !(isDeploymentControllerSetActionIdV1(input.actionId) || moveDefinitionRoot
                 ? environment.admission.canManage && !environment.row.deletedAt
                 : canDeployDeploymentEnvironment(environment.admission, environment.row))) {
                 throw new ApiTokenOperationError('credential_scope_denied');
@@ -679,7 +688,7 @@ class AuthModule {
         }
         const environmentId = metadataEnvironmentId
             ?? (input.actionId === 'deployments.deploy' || input.actionId === 'action.operations.get'
-                || domainRoot || nativeMemberRoot || ingressUpdateRoot
+                || domainRoot || nativeMemberRoot || ingressUpdateRoot || configureRoot
                 || 'authentication' in input && (input.actionId === 'deployments.rollback' || input.actionId === 'deployments.promote'
                     || input.actionId === 'deployments.teardown')
                 ? nativeAdmission?.environmentId : undefined);
@@ -718,11 +727,11 @@ class AuthModule {
             ...(managedAccountExecutor ? { managedAccountExecutor } : {}),
             ...(automationId ? { automationId } : {}),
             ...(environmentId ? { environmentId } : {}),
-            ...((ingressUpdateRoot || domainRoot && isDeploymentDomainNativeAdmissionV1(nativeAdmission)
+            ...((ingressUpdateRoot || configureRoot || domainRoot && isDeploymentDomainNativeAdmissionV1(nativeAdmission)
                 || nativeMemberRoot && nativeAdmission && 'kind' in nativeAdmission
                     && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup'))
                 ? { deploymentNativeAdmission: nativeAdmission } : {}),
-            ...(nativeAdmission && nativeSource && !domainRoot && !nativeMemberRoot && !ingressUpdateRoot ? { deploymentCandidatePublication: createDeploymentCandidatePublicationV1({
+            ...(nativeAdmission && nativeSource && !domainRoot && !nativeMemberRoot && !ingressUpdateRoot && !configureRoot ? { deploymentCandidatePublication: createDeploymentCandidatePublicationV1({
                 ...input, environmentId: nativeAdmission.environmentId, source: nativeSource,
             }) } : {}),
             accountEncryptionMode: accountMode.encryptionMode,
@@ -755,7 +764,7 @@ class AuthModule {
             if (!workspaceSyncAdmission) throw new ApiTokenOperationError('credential_scope_denied');
             supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied, workspaceSyncAdmission });
         };
-        if (isDeploymentPreparationActionIdV1(supplied.actionId) || supplied.deploymentPreparationAdmission?.operation === 'setup') {
+        if (isDeploymentPreparationActionIdV1(supplied.actionId) || supplied.deploymentPreparationAdmission !== undefined) {
             const { isDeploymentPreparationAuthorizedInTx } = await import('@/app/deployments/deploymentPreparationAuthorization');
             if (!supplied.deploymentPreparationAdmission || !await isDeploymentPreparationAuthorizedInTx(db, supplied,
                 supplied.deploymentPreparationAdmission, { authenticationAuthority: 'account_automation',
@@ -770,7 +779,7 @@ class AuthModule {
                 throw new ApiTokenOperationError('credential_scope_denied');
             }
         }
-        if (isDeploymentReadActionIdV1(supplied.actionId)) {
+        if (isDeploymentReadAdmissionActionIdV1(supplied.actionId)) {
             const { readDeploymentReadAuthorizationInTx } = await import('@/app/deployments/deploymentReadAuthorization');
             if (!supplied.deploymentReadAdmission || !await readDeploymentReadAuthorizationInTx(db, supplied,
                 supplied.deploymentReadAdmission, { authenticationAuthority: 'account_automation',

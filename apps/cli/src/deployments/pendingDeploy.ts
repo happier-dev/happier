@@ -81,6 +81,7 @@ export async function validatePendingDeploymentInputForHost(request: Readonly<{
         : DeploymentPendingDeployIntentV1Schema.parse({ sourceIntent: candidate.content.sourceIntent,
             ...(candidate.content.sourceMethod ? { sourceMethod: candidate.content.sourceMethod } : {}),
             ...(candidate.content.onFailure ? { onFailure: candidate.content.onFailure } : {}),
+            ...(candidate.content.services ? { services: candidate.content.services } : {}),
             requestKey: input.requestKey, targetLinkId: input.targetLinkId, actionOperationId: operationId });
     // Automation owns authenticated occurrence admission. An opened caller
     // reference is not that proof, in either storage mode.
@@ -89,6 +90,8 @@ export async function validatePendingDeploymentInputForHost(request: Readonly<{
         || intent.actionOperationId !== operationId
         || !isDeepStrictEqual(intent.sourceIntent, candidate.content.sourceIntent)
         || intent.sourceMethod !== candidate.content.sourceMethod
+        || !isDeepStrictEqual(intent.services, candidate.content.services)
+        || !isDeepStrictEqual(input.services, candidate.content.services)
         || (intent.onFailure ?? DEFAULT_DEPLOYMENT_ON_FAILURE_V1) !== (candidate.content.onFailure ?? DEFAULT_DEPLOYMENT_ON_FAILURE_V1)
         || input.onFailure !== undefined && input.onFailure !== candidate.content.onFailure) return refuse('deployment_conflict');
     // Never reseal a retained envelope: exact ciphertext is the storage TAKE
@@ -105,12 +108,11 @@ type EnvironmentMetadata = Extract<z.infer<typeof DeploymentEnvironmentGetResult
 /** This wait belongs to the already accepted invocation. Typed Environment
  * changes and reconnects invalidate it; unrelated Account traffic does no reads. */
 export async function waitForPendingDeploymentForHost(request: Readonly<{
-    input: DeploymentDeployInputV1; intent: DeploymentPendingDeployIntentV1;
+    input: DeploymentDeployInputV1;
     result: PendingResult; context: ActionExecutorContext;
 }>, host: Readonly<{
     credentials: StoredCredentials; serverHttpBaseUrl: string;
     readEnvironment(): Promise<EnvironmentMetadata>;
-    readResource(artifactId: string): Promise<Resource | null>;
     readReceipts(): Promise<unknown>;
     resume(): Promise<DeploymentReceiptResultV1 | import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure>;
     cancel(context: ActionOperationCancellationContext): Promise<void>;
@@ -162,9 +164,6 @@ export async function waitForPendingDeploymentForHost(request: Readonly<{
             if (current.environment.id !== request.input.environmentId
                 || !isDeepStrictEqual(current.pendingDeploy, request.input.pendingDeploy)) return refuse('cancelled');
             if (!current.pendingDeploy) return refuse('cancelled');
-            const intent = await readPendingDeploymentIntentForHost({ environment: current.environment,
-                pendingDeploy: current.pendingDeploy }, host);
-            if (!isDeepStrictEqual(intent, request.intent)) return refuse('deployment_conflict');
             const receipts = DeploymentReceiptListResultV1Schema.parse(await host.readReceipts());
             if (!receipts.ok) return refuse(receipts.error);
             if (receipts.items.length > 0) continue;

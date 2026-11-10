@@ -565,7 +565,7 @@ describe('exact deployment source through the public port', () => {
         });
     });
 
-    it('disposes exported bytes on stale review, cancellation and authority withdrawal', async () => {
+    it('allows a recomputed manifest and disposes exported bytes on cancellation and authority withdrawal', async () => {
         await withCommittedSource(async source => {
             const controller = new AbortController();
             let withdrawal: 'cancel' | 'revoke' | null = null;
@@ -580,7 +580,8 @@ describe('exact deployment source through the public port', () => {
                     if (withdrawal === 'revoke') throw Object.assign(new Error('Authority withdrawn'), { code: 'permission_denied' });
                 } };
             } });
-            await expect(port.materialize({ ...request, expectedManifestFingerprint: '0'.repeat(64) })).rejects.toMatchObject({ code: 'deployment_conflict' });
+            const approved = await port.materialize({ ...request, expectedManifestFingerprint: '0'.repeat(64) });
+            await approved.abort();
             expect(await readdir(source.artifactDirectory)).toEqual([]);
             withdrawal = 'cancel';
             await expect(port.materialize(request, { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });

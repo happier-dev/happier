@@ -25,6 +25,13 @@ async function verifyPublishedBuildSource(source: OwnServerDeploymentSourceV1, s
 }
 
 describe('admitted builder receipt production', () => {
+    it('executes the approved build after the trusted native tool version changes', async () => {
+        await withBuilder(async ({ host, request, receipt, nativeRequests }) => {
+            receipt.content.ownServer!.approvedInputBasis.toolVersion = 'reviewed-older-version';
+            expect(await buildOwnServerDeploymentReceipt(host, request)).toMatchObject({ ok: true });
+            expect(nativeRequests.some(call => call.args.includes('--metadata-file'))).toBe(true);
+        });
+    });
     it('retains the actual build reference address after preflight resolves an older address', async () => {
         await withBuilder(async ({ host, request, receipt, nativeRequests }) => {
             expect(await buildOwnServerDeploymentReceipt(host, request)).toMatchObject({ ok: true });

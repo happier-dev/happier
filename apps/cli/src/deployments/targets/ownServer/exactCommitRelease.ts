@@ -232,9 +232,6 @@ export function createDeploymentSourceMaterializationPort(input: Readonly<{
                 try {
                     await assertCurrent();
                     const manifestFingerprint = exported.workspaceExportArtifacts.manifest.fingerprint!;
-                    if (request.expectedManifestFingerprint && request.expectedManifestFingerprint !== manifestFingerprint) {
-                        throw Object.assign(new Error('Reviewed source manifest changed'), { code: 'deployment_conflict' });
-                    }
                     if (admitted.operationLog && (admitted.materializationRole || admitted.restorationForDeploymentId)) {
                         throw Object.assign(new Error('Operation log has a different release placement'), { code: 'deployment_log_unavailable' });
                     }

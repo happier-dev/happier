@@ -931,7 +931,7 @@ describe('installed deployment storage and target composition', () => {
             providerEnvironment: { kind: 'custom', id: 'branch' } });
         const input = DeploymentActionInputSchemasV1['deployments.targets.link'].parse({ serverId: 'home',
             environmentId: environment.environment.id, expectedRevision: environment.environment.revision, requestKey: 'link-data',
-            ...(managed ? { role: 'data', targetId: 'managed-data', targetKind: 'database',
+            ...(managed ? { role: 'data', targetId: 'managed-data', targetKind: 'database', title: 'Customer database',
                 source: { kind: 'plugin', contribution: { pluginId: 'example.data', localId: 'database' } }, machines: [], provider }
                 : { role: 'runtime', targetId: 'own-server', machines: [{ machineId: 'runtime', installationId: 'installation-runtime' }] }) });
         if (admission === 'stale') input.expectedRevision++;
@@ -997,6 +997,7 @@ describe('installed deployment storage and target composition', () => {
         const artifacts = createCredentialedAccountArtifactStore(credentials);
         const opened = await runWithServerHttpBaseUrl('https://link.test', () => artifacts.read(id, { prepareRecipients: false, includeSharedAudience: false }));
         if (!opened || typeof opened.body !== 'string') throw new Error('Expected text link content');
+        expect(opened.header).toEqual({ kind: 'deployment-target-link.v1', title: managed ? 'Customer database' : '' });
         expect(JSON.parse(opened.body)).toEqual(managed ? provider : {});
         if (mode === 'e2ee') expect(JSON.stringify(documents.get(id))).not.toContain('providerResourceId');
     });
@@ -1168,13 +1169,14 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['provider Domain verify', 'provider Domain teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['provider Domain verify', 'provider Domain remove', 'provider Domain teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const variableScenario = scenario.startsWith('variable ');
         const domainScenario = scenario.startsWith('provider Domain');
         const domainTeardown = scenario === 'provider Domain teardown';
-        const domainRole = domainTeardown ? 'domains.remove' as const : 'domains.verify' as const;
+        const domainRemove = scenario === 'provider Domain remove';
+        const domainRole = domainTeardown || domainRemove ? 'domains.remove' as const : 'domains.verify' as const;
         const rootSource = scenario.startsWith('root source ');
         const rootSourceForeign = scenario === 'root source foreign';
         const rootApproval = scenario.startsWith('root source approval ');
@@ -1297,7 +1299,7 @@ describe('installed deployment storage and target composition', () => {
                         actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', uploadDeploy: 'upload-deploy',
                             ...(scenario === 'build logs' ? { logs: { build: 'build-logs-read' } } : {}),
                             ...(variableScenario ? { variables: { read: 'variables-read', sync: 'variables-sync' } } : {}),
-                            ...(domainScenario ? { domains: domainTeardown ? { remove: 'domains-remove' } : { verify: 'domains-verify' } } : {}),
+                            ...(domainScenario ? { domains: domainRole === 'domains.remove' ? { remove: 'domains-remove' } : { verify: 'domains-verify' } } : {}),
                             ...(domainTeardown ? { teardown: 'teardown' } : {}) } }) }] } },
             files: { 'daemon.mjs': `import { PluginError } from '@happier-dev/plugin-sdk/errors';
                 import { readFile } from 'node:fs/promises';
@@ -1324,7 +1326,7 @@ describe('installed deployment storage and target composition', () => {
                 ${roles.map(role => `api.actions.register('${role === 'uploadDeploy' ? 'upload-deploy' : role === 'logs.build' ? 'build-logs-read' : role === 'variables.read' ? 'variables-read' : role === 'variables.sync' ? 'variables-sync' : role === 'domains.verify' ? 'domains-verify' : role === 'domains.remove' ? 'domains-remove' : role}', async (input, context) => {
                     ${role === 'domains.remove' ? `return { v: 1, hostname: input.domain.hostname, state: 'removed', dns: [] };` : ''}
                     ${role === 'domains.verify' ? `return { v: 1, hostname: input.domain.hostname, state: 'pending', dns: [{ type: 'TXT', name: '_verification.example.test', value: 'private-dns-token' }] };` : ''}
-                    ${role === 'variables.read' ? `return { v: 1, variables: [{ key: 'MODE', providerId: 'provider-mode', present: true, secret: false, owned: true, drift: 'current', providerRevision: '10' }] };` : ''}
+                    ${role === 'variables.read' ? `observationCount++; return { v: 1, variables: [{ key: 'MODE', providerId: 'provider-mode', present: true, secret: false, owned: true, drift: 'current', providerRevision: '10' }] };` : ''}
                     ${role === 'variables.sync' ? `if (input.set[0]?.name !== 'MODE' || input.set[0]?.source.value !== 'release' || input.owned.length !== 0) throw new Error('Wrong reviewed variables');
                     return { v: 1, owned: [{ key: 'MODE', providerId: 'provider-mode', desiredRevision: input.desiredRevision, providerRevision: '10' }],
                         variables: [{ key: 'MODE', providerId: 'provider-mode', present: true, secret: false, owned: true, drift: 'current', providerRevision: '10' }], failures: [] };` : ''}
@@ -1500,16 +1502,22 @@ describe('installed deployment storage and target composition', () => {
                     const path = new URL(request.url!).pathname;
                     if (path.endsWith('/domains')) return { status: 200, data: { ok: true, environmentId: environment.environment.id,
                         revision: environment.environment.revision, domains: [domain], nextCursor: null } };
+                    if (domainRemove && path.endsWith(`/domains/${domain.id}/remove`)) {
+                        domain.state = 'removing'; domain.revision++;
+                        environment.environment.revision++;
+                        return { status: 200, data: { ok: true, environmentId: environment.environment.id,
+                            revision: environment.environment.revision, domain } };
+                    }
                     if (path.endsWith(`/domains/${domain.id}`)) return { status: 200, data: { ok: true,
                         environmentId: environment.environment.id, revision: environment.environment.revision, domain } };
                     if (path.endsWith(`/domains/${domain.id}/transitions`)) {
                         const wire = DeploymentDomainTransitionInputV1Schema.parse(request.data);
                         expect(wire).toMatchObject({ observations: [], providerObservation: { placement: domain.providerPlacement,
-                            state: 'warning', proof: expect.any(Object), contentUpdate: { expectedBodyVersion: 1 } } });
+                            state: domainRemove ? 'removed' : 'warning', proof: expect.any(Object), contentUpdate: { expectedBodyVersion: 1 } } });
                         const privateBody = decodePlainArtifactStoredContent(String(wire.providerObservation!.contentUpdate!.body));
-                        expect(privateBody).toMatchObject({ body: expect.stringContaining('private-dns-token') });
+                        expect(privateBody).toMatchObject({ body: domainRemove ? expect.stringContaining('\"state\":\"removed\"') : expect.stringContaining('private-dns-token') });
                         return { status: 200, data: { ok: true, environmentId: environment.environment.id,
-                            revision: environment.environment.revision, domain: { ...domain, state: 'warning', revision: 2, contentBodyVersion: 2 } } };
+                            revision: environment.environment.revision, domain: { ...domain, state: domainRemove ? 'removed' : 'warning', revision: domain.revision + 1, contentBodyVersion: 2 } } };
                     }
                     return previousHttp(request);
                 });
@@ -1527,14 +1535,19 @@ describe('installed deployment storage and target composition', () => {
                     return;
                 }
                 const acquireLease = async () => runtime.controller.tryAcquireRuntimeRegistry() ?? (() => { throw new Error('Retired Domain registry'); })();
+                const operations = createHostActionOperationRuntime({ machineId: 'machine-a', resolveAccountId: async () => 'owner',
+                    generateOperationId: () => 'domain-operation' });
                 const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                    runActionOperation: operations.runActionOperation,
                     listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(runtime.registry, selection),
                     invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: acquireLease }) });
-                const result = await executor.execute('deployments.domains.verify', { serverId: 'home', environmentId: environment.environment.id,
+                const result = await executor.execute(domainRemove ? 'deployments.domains.remove' : 'deployments.domains.verify', { serverId: 'home', environmentId: environment.environment.id,
                     domainId: domain.id, expectedRevision: environment.environment.revision, expectedDomainRevision: domain.revision, requestKey: 'check-domain' },
                     { ...ownerContext, surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home',
-                        serverIdentityId: 'home', runtimeAccountId: 'owner', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
-                expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, domain: { id: domain.id, state: 'warning', revision: 2 } } });
+                        serverIdentityId: 'home', runtimeAccountId: 'owner', actionRequestId: 'domain-request',
+                        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'deployments.domains.remove': ['cli'] } }) });
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, domain: { id: domain.id,
+                    state: domainRemove ? 'removed' : 'warning', revision: domainRemove ? 3 : 2 } } });
                 expect(JSON.stringify(result)).not.toContain('private-dns-token');
                 expect(nativeReads).toBe(0);
                 return;
@@ -1553,10 +1566,18 @@ describe('installed deployment storage and target composition', () => {
                     actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
                         'deployments.bindings.set': ['cli'], 'deployments.observation.get': ['cli'] } }) };
                 if (scenario === 'variable metadata') {
+                    const module = runtime.modulesByPluginId.get(pluginId);
+                    if (!module || !('readObservationCount' in module) || typeof module.readObservationCount !== 'function')
+                        throw new Error('Missing provider observation probe');
+                    const ordinary = await executor.execute('deployments.observation.get', { serverId: 'home',
+                        environmentId: environment.environment.id, targetLinkId: row.targetLink.id }, context);
+                    expect(ordinary, JSON.stringify(ordinary)).toMatchObject({ ok: true, result: { ok: true } });
+                    expect(module.readObservationCount()).toBe(0);
                     const result = await executor.execute('deployments.observation.get', { serverId: 'home',
                         environmentId: environment.environment.id, targetLinkId: row.targetLink.id, variables: true }, context);
                     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, providerVariables: { v: 1,
                         variables: [{ key: 'MODE', present: true, secret: false, owned: true, drift: 'current' }] } } });
+                    expect(module.readObservationCount()).toBe(1);
                     expect(nativeReads).toBe(0);
                     return;
                 }
@@ -2221,6 +2242,8 @@ describe('installed deployment storage and target composition', () => {
         } finally { await requesterPreparation?.dispose(); await runtime.dispose(); }
     });
     it('returns native named-volume backup choices through the public defaults preview before a target exists', async () => {
+        const mounted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
         const serverHttpBaseUrl = 'https://backup-first-configure.test';
         const settings = await persistence.readSettings();
         vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { home: {
@@ -2289,7 +2312,7 @@ describe('installed deployment storage and target composition', () => {
                 { kind: 'volume', sourceId: expect.any(String), service: 'web', volume: 'content', consistency: 'stopDuringCopy' },
             ] });
             expect((await docker.readInvocations()).some(call => call.args.includes('config'))).toBe(true);
-        } finally { await rm(root, { recursive: true, force: true }); }
+        } finally { try { await rm(root, { recursive: true, force: true }); } finally { await mounted.dispose(); } }
     });
 
     it('prepares first-configuration choices through the existing update Action without writing or opening Environment content', async () => {
@@ -3303,7 +3326,7 @@ describe('installed deployment storage and target composition', () => {
         const startedAt = performance.now();
         const milestones: { phase: string; elapsedMs: number; nativeInvocations?: number }[] = [];
         let nativeSummary: { count: number; lastCommand: readonly string[] } | undefined;
-        if (templateSelection || selection === 'stored preparation cost' || selection === 'pending exact SHA' || selection === 'approved exact SHA' || selection === 'configured ref' || selection === 'stale Team grant' || selection === 'trigger claim consent') onTestFailed(() => {
+        if (templateSelection || selection === 'stored preparation cost' || selection === 'pending exact SHA' || selection === 'approved exact SHA' || selection === 'native tool version changes' || selection === 'configured ref' || selection === 'stale Team grant' || selection === 'trigger claim consent') onTestFailed(() => {
             // Content-free phase only: native/runtime setup is not behavior RED.
             console.error('native_review_fixture_phase', { selection, phase: pendingPhase,
                 elapsedMs: Math.round(performance.now() - startedAt), milestones,
@@ -3311,7 +3334,7 @@ describe('installed deployment storage and target composition', () => {
         });
         const phase = (name: string, nativeInvocations?: number) => {
             pendingPhase = name;
-            if (selection !== 'pending exact SHA' && selection !== 'approved exact SHA' && !templateSelection
+            if (selection !== 'pending exact SHA' && selection !== 'approved exact SHA' && selection !== 'native tool version changes' && !templateSelection
                 && selection !== 'stored preparation cost') return;
             const now = performance.now();
             milestones.push({ phase: name, elapsedMs: Math.round(now - startedAt),
@@ -4740,7 +4763,8 @@ describe('installed deployment storage and target composition', () => {
             await rm(root, { recursive: true, force: true });
             phase('cleanup-complete');
         }
-    });
+    // Native composition uses the CLI integration lane's existing test budget.
+    }, 60_000);
     it('refuses a substituted candidate Artifact revision before acquiring native custody or admitting a receipt', async () => {
         const environment = createDeploymentEnvironmentDetailV1();
         const receipt = createDeploymentReceiptDetailV1();

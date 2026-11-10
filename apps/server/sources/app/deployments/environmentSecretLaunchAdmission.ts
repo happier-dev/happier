@@ -9,6 +9,7 @@ import { computeEnvironmentSecretLaunchAdmissionDigestV1,
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import type { DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import type { DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { admitDeploymentMachineInTx, admitDeploymentMachinesInTx, canDeployDeploymentEnvironment, deploymentFailure, type DeploymentAuthentication } from './deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, loadDeploymentEnvironmentForInstalledMachineInTx, projectDeploymentEnvironmentHeader } from './deploymentEnvironmentService';
 import { readEnvironmentMachineSecretGrantsInTx, readMachineConnectorSecretGrantInTx,
@@ -18,6 +19,7 @@ import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
 import { readAcceptedDeploymentDomainSecretDestinationInTx, readDeploymentDomainOperationalDestinationsInTx } from './deploymentDomainService';
 import type { DeploymentChildAdmission } from './deploymentChildAuthorization';
+import { readDeploymentTargetRuntimeInstallations } from './deploymentTargetLinkService';
 
 /** Machine setup storage admission; the configure invocation owns provider/operation currentness and plaintext custody. */
 export async function accessMachineConnectorSecretGrantInTx(tx: Tx, actorAccountId: string,
@@ -87,6 +89,7 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
     input: EnvironmentSecretAdmissionRequestV1, authentication: DeploymentAuthentication = {},
     admittedChild?: DeploymentChildAdmission,
     admittedBackup?: DeploymentRestoreNativeAdmissionV1 | DeploymentBackupNativeAdmissionV1,
+    admittedDataQuery?: Extract<DeploymentReadAdmissionV1, { actionId: 'deployments.data.query' }>,
 ): Promise<EnvironmentSecretLaunchAdmissionResultV1> {
     if ('kind' in input) return readEnvironmentBindingPreparationInTx(tx, actorAccountId, input, authentication);
     const factsOnly = input.materialization.kind === 'domain' && !input.materialization.use;
@@ -107,6 +110,17 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
     if (!verifyMachineInstallationProof({ payload: { version: 1, accountId: actorAccountId, machineId: input.machineId,
         installationId: input.installationId, deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } },
         proof, publicKey: installationPublicKey })) return deploymentFailure('deployment_access_denied');
+    if (input.materialization.kind === 'dataRole') {
+        // The query HTTP-purpose owner has already admitted the exact current
+        // Environment/receipt/receiver. Service and binding selection remain
+        // private to the host; possession of another seal never selects a role.
+        if (!admittedDataQuery) return deploymentFailure('deployment_access_denied');
+        const loaded = await loadDeploymentEnvironmentCustodyInTx(tx, input);
+        if (!loaded.ok) return loaded;
+        return { ok: true, grants: await readEnvironmentMachineSecretGrantsInTx(tx, {
+            environmentId: loaded.row.id, machineId: input.machineId, installationId: input.installationId,
+        }) };
+    }
     if (input.materialization.kind === 'bindings') return readEnvironmentBindingPreparationInTx(tx, actorAccountId,
         { serverId: input.serverId, environmentId: input.environmentId, expectedRevision: input.materialization.expectedRevision,
             domainIds: input.materialization.domainIds,
@@ -135,13 +149,14 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
         return { ok: true, grants };
     }
     const copySourceRead = input.materialization.kind === 'copySourceRead';
-    if (copySourceRead && (!admittedBackup || admittedBackup.kind !== 'restore' || !admittedBackup.copy
-        || admittedBackup.copy.source.environmentId !== input.environmentId
-        || admittedBackup.copy.source.targetLinkId !== input.targetLinkId
-        || admittedBackup.machineId !== input.machineId || admittedBackup.installationId !== input.installationId)) {
+    const admittedCopy = admittedBackup?.kind === 'restore'
+        && admittedBackup.source.kind === 'repository' && !!admittedBackup.source.origin;
+    if (copySourceRead && !admittedCopy) {
         return deploymentFailure('deployment_access_denied');
     }
-    const loaded = copySourceRead ? await loadDeploymentEnvironmentCustodyInTx(tx, input)
+    // Home has bound both copy scopes to the admitted source member. Destination
+    // safety credentials use that custody without requiring destination placement.
+    const loaded = admittedCopy ? await loadDeploymentEnvironmentCustodyInTx(tx, input)
         : input.materialization.kind === 'deployment'
         ? await loadDeploymentEnvironmentForInstalledMachineInTx(tx, input)
         : await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
@@ -157,7 +172,8 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
     if (!link || loaded.row.runtimeTargetLinkId !== link.id) {
         return deploymentFailure('deployment_access_denied');
     }
-    const runtime = link.machines.some(member => member.machineId === input.machineId && member.installationId === input.installationId);
+    const runtime = readDeploymentTargetRuntimeInstallations(link)
+        .some(member => member.machineId === input.machineId && member.installationId === input.installationId);
     const receipt = input.materialization.kind === 'deployment' || input.materialization.kind === 'copySourceRead'
         ? await tx.deployment.findFirst({ where: { id: input.materialization.deploymentId, environmentId: loaded.row.id,
             targetLinkId: link.id, actionOperationId: input.materialization.actionOperationId } }) : null;
@@ -170,7 +186,7 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
     const build = input.materialization.kind === 'deployment'
         ? accepted?.builder?.machineId === input.machineId && accepted.builder.installationId === input.installationId
         : loaded.row.buildMachineId === input.machineId;
-    if (!copySourceRead && !runtime && !build) {
+    if (!admittedCopy && !runtime && !build) {
         return deploymentFailure('deployment_access_denied');
     }
     const machineFailure = 'owner' in loaded ? null : await admitDeploymentMachineInTx(tx, owner,
@@ -217,7 +233,7 @@ async function readEnvironmentBindingPreparationInTx(tx: Tx, actorAccountId: str
         include: { machines: { orderBy: { position: 'asc' } } },
     }) : null;
     if (loaded.row.runtimeTargetLinkId && !link) return deploymentFailure('deployment_access_denied');
-    const runtimeMachines = link?.machines ?? [];
+    const runtimeMachines = link ? readDeploymentTargetRuntimeInstallations(link) : [];
     const domainDestinations = await readDeploymentDomainOperationalDestinationsInTx(tx, {
         environmentId: loaded.row.id, domainIds: input.domainIds ?? [],
     });

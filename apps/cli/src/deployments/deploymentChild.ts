@@ -7,7 +7,7 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { readDeploymentReceiptArtifactV1, readDeploymentEnvironmentArtifactV1,
-    DeploymentOwnServerContentV1Schema, type DeploymentContentV1, type DeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol';
+    DeploymentOwnServerContentV1Schema, type DeploymentContentV1 } from '@happier-dev/deployment-protocol';
 import type { AccountArtifact } from '@/api/artifacts/accountArtifactStore';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { isReviewedDeploymentChild, readReviewedDeploymentDeployInput } from '@/api/externalActionExecutionAuthorization';
@@ -44,24 +44,25 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
     teardown: ReturnType<typeof import('./targets/ownServer/teardown').createOwnServerTeardownForHost>['executeNative'];
     assertCurrent(context: ActionExecutorContext): Promise<void>;
     prepareCandidate(request: DaemonDeploymentCandidateRequest): Promise<DaemonDeploymentCandidateResult>;
+    dataRole?(job: Extract<DeploymentChildRpcV1, { kind: 'dataRole' }>, context: ActionExecutorContext): Promise<unknown>;
+    snapshot?(job: Extract<DeploymentChildRpcV1, { kind: 'snapshot' }>, context: ActionExecutorContext): Promise<unknown>;
 }>) {
     const { target, open, storage, assertCurrent } = ports;
     async function readPromotion(input: DeploymentPromoteInputV1, context: ActionExecutorContext,
-        content: DeploymentContentV1, admittedDeployment?: DeploymentReceiptHeaderV1) {
+        content: DeploymentContentV1) {
         const opened = readDeploymentEnvironmentArtifactV1(input.destinationContent,
             await open(input.destinationContent.contentArtifactId, context));
         if (!opened.ok) throw Object.assign(new Error(opened.error), { code: opened.error });
-        const promotion = await readStoredPromotionCandidateForHost({ input, context, admittedDeployment }, host);
+        const promotion = await readStoredPromotionCandidateForHost({ input, context }, host);
         if (!isDeepStrictEqual(opened.content, promotion.candidateEnvironmentContent)
             || !isDeepStrictEqual(content.sourceIntent, promotion.candidateEnvironmentContent.definition)
             || !isDeepStrictEqual(content.images, promotion.sourceReceipt.content.images)
             || !isDeepStrictEqual(content.machines, promotion.link.machines)
-            // Build adopts the pinned images into this receipt's archive custody.
-            || admittedDeployment === undefined && content.ownServer
+            || content.ownServer
                 && !isDeepStrictEqual(content.ownServer.imageArchives, promotion.sourceReceipt.content.ownServer?.imageArchives)
             || content.buildMachineId !== promotion.buildMachineId
             || !isDeepStrictEqual(content.ingress, promotion.destination.environment.ingress)
-            || admittedDeployment === undefined && (content.steps.length || content.machineResults.length)) {
+            || content.steps.length || content.machineResults.length) {
             throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
         }
         return opened.content;
@@ -73,6 +74,8 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
             const job = parsed.data;
             if (job.input.serverId !== host.serverId || job.machineId !== host.machineId) return failure('target_mismatch');
             await assertCurrent(context);
+            if (job.kind === 'snapshot') return ports.snapshot ? await ports.snapshot(job, context) : failure('unsupported_action');
+            if (job.kind === 'dataRole') return ports.dataRole ? await ports.dataRole(job, context) : failure('unsupported_action');
             if (job.kind === 'domain' || job.kind === 'domainDiscover') return await ports.domainNative(job, context);
             if (job.kind === 'teardown' || job.kind === 'prepare' && job.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1) {
                 if (readInstallationIdentityIfExistsSync()?.installationId !== job.installationId) return failure('target_mismatch');
@@ -153,7 +156,9 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
                 const current = readDeploymentReceiptArtifactV1(deployment, await open(deployment.contentArtifactId, context));
                 if (!current.ok) return failure(current.error);
                 if (job.actionId === 'deployments.deploy') await admitSource(current.content, true, environment);
-                if (job.actionId === 'deployments.promote') await readPromotion(job.input, context, current.content, deployment);
+                if (job.actionId === 'deployments.promote' && (!deployment.acceptedExecution?.builder
+                    || deployment.operation !== 'promote' || deployment.environmentId !== job.input.environmentId
+                    || deployment.targetLinkId !== job.input.targetLinkId)) return failure('deployment_conflict');
                 admitted = { environment, receipt: { deployment, content: DeploymentOwnServerContentV1Schema.parse(current.content) } };
                 if (job.kind === 'build') return await buildOwnServerDeploymentReceipt(host, request, admitted);
             }
